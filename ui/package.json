@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "test": "npm run build && node tests/workbench.cjs"
   },
   "dependencies": {
     "react": "19.3.1",
@@ -14,6 +15,7 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "jsdom": "31.0.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.0"
   }

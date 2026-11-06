@@ -144,3 +144,22 @@ the existing project virtual environment, so this is not an atomic backend relea
 rollback; only service configuration, Caddy configuration, and the frontend link
 are restored on deployment failure. Other projects and database clusters are not
 migrated or stopped.
+
+## Workbench controls (0.3)
+
+Workspace, View, Layout, Navigate and Help menus now share a searchable command
+palette. Ctrl+Shift+P (or Ctrl+P) opens it; arrow keys select a result and Enter
+runs it. Ctrl+B toggles the explorer, Ctrl+Alt+B the inspector, Ctrl+J the bottom
+panel, Ctrl+1–4 selects a group, and Alt+Left/Right switches tabs. Browser or OS
+shortcuts may take priority. Help lists controls in the app.
+
+Drag the panel separators or focus them and use arrow keys to resize. Open Views
+lists tabs across groups. Tabs can move between groups by dragging or using Move.
+Layout presets provide one, two, three or four groups (four uses a 2×2 grid);
+presets replace open groups. Close-other-tabs and focus mode are available.
+Layouts continue to be saved per workspace in this browser. Narrow displays can
+scroll horizontally; enabled panels are no longer silently hidden.
+
+This release improves workstation navigation and layout controls. It does not
+implement a terminal, extension host, arbitrary panel docking, external windows,
+or new trading backend capabilities.

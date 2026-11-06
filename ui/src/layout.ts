@@ -56,7 +56,7 @@ export function restore(raw: string | null): Layout {
       !views.includes(x.activity) ||
       !Array.isArray(x.groups) ||
       x.groups.length < 1 ||
-      x.groups.length > 2 ||
+      x.groups.length > 4 ||
       !Array.isArray(x.active) ||
       x.active.length !== x.groups.length
     )

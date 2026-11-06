@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
   key,
@@ -55,7 +56,8 @@ export default function App() {
     [checking, setChecking] = useState(false),
     [events, setEvents] = useState<string[]>([]),
     [palette, setPalette] = useState(false),
-    [query, setQuery] = useState(""),
+    [help, setHelp] = useState(false),
+    [collapsed, setCollapsed] = useState(false),
     [filter, setFilter] = useState(""),
     [bottomTab, setBottomTab] = useState("Activity"),
     [storageError, setStorageError] = useState(""),
@@ -152,33 +154,28 @@ export default function App() {
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        e.shiftKey &&
-        e.key.toLowerCase() === "p"
-      ) {
-        e.preventDefault();
-        setPalette((x) => !x);
-      }
-      if (e.key === "Escape") setPalette(false);
+      const mod = e.ctrlKey || e.metaKey;
+      const typing = e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable="true"]');
+      if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(x=>!x); return; }
+      if (e.key === 'Escape') { setPalette(false); setHelp(false); }
+      if (typing || palette) return;
+      if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
+      if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); patch({bottom:!layout.bottom}); }
+      if (mod && e.key === '\\') { e.preventDefault(); split(); }
+      if (mod && ['1','2','3','4'].includes(e.key)) {e.preventDefault(); const i=Number(e.key)-1;if(i<layout.groups.length) patch({focus:i});}
+      if (e.altKey && ['ArrowLeft','ArrowRight'].includes(e.key)) {e.preventDefault(); cycle(e.key==='ArrowRight'?1:-1);}
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  useEffect(() => {
-    if (!palette) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const trap = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const nodes = Array.from(document.querySelectorAll<HTMLElement>('.palette input, .palette button:not(:disabled)'));
-      const first = nodes[0], last = nodes[nodes.length - 1];
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", trap);
-    return () => { document.removeEventListener("keydown", trap); previous?.focus(); };
-  }, [palette]);
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  }, [layout, palette]);
+  function cycle(direction:number) {
+    const group=layout.groups[layout.focus];
+    open(group[(group.indexOf(layout.active[layout.focus])+direction+group.length)%group.length]);
+  }
+  function preset(count:number, axis:Layout['axis']) {
+    const selected:View[]=['Overview','Market data','Execution','Operations'];
+    patch({groups:selected.slice(0,count).map(v=>[v]),active:selected.slice(0,count),focus:0,axis,maximized:false});
+  }
   function open(view: View, group = layout.focus) {
     setLayout((x) => {
       const groups = x.groups.map((g) => [...g]),
@@ -189,7 +186,7 @@ export default function App() {
       return { ...x, groups, active, focus: target, activity: view };
     });
     setPalette(false);
-    setQuery("");
+
   }
   function close(view: View, group: number) {
     setLayout((x) => {
@@ -216,13 +213,13 @@ export default function App() {
   }
   function split() {
     setLayout((x) =>
-      x.groups.length === 2
+      x.groups.length >= 4
         ? { ...x, axis: x.axis === "row" ? "column" : "row" }
         : {
             ...x,
             groups: [...x.groups, [x.active[x.focus]]],
             active: [...x.active, x.active[x.focus]],
-            focus: 1,
+            focus: x.groups.length,
             maximized: false,
           },
     );
@@ -359,7 +356,7 @@ export default function App() {
           </div>
           <h1>
             {view === "Overview"
-              ? "Your trading workspace"
+              ? "Workspace overview"
               : "Operational status"}
           </h1>
           <p>Observe → understand → decide → act → reconcile.</p>
@@ -520,6 +517,29 @@ export default function App() {
       </div>
     );
   }
+  const commands:Command[] = [
+    ...views.map(v=>({section:'Navigate',label:`Open ${v}`,run:()=>open(v)})),
+    {section:'Workspace',label:'Command palette',shortcut:'Ctrl+Shift+P',run:()=>setPalette(true)},
+    {section:'Workspace',label:'Close active tab',run:()=>close(active,layout.focus)},
+    {section:'Workspace',label:'Close other tabs in group',run:()=>patch({groups:layout.groups.map((g,i)=>i===layout.focus?[active]:g)})},
+    {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
+    {section:'Workspace',label:'Reset current workspace layout',run:()=>setLayout(defaults(layout.workspace))},
+    {section:'View',label:'Toggle explorer',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
+    {section:'View',label:'Toggle inspector',shortcut:'Ctrl+Alt+B',run:()=>patch({right:!layout.right})},
+    {section:'View',label:'Toggle bottom panel',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
+    {section:'View',label:'Toggle focus mode',run:()=>patch({maximized:!layout.maximized})},
+    {section:'View',label:'Layout settings',run:()=>open('Settings')},
+    {section:'Layout',label:'Single group',run:()=>preset(1,'row')},
+    {section:'Layout',label:'Two columns',run:()=>preset(2,'row')},
+    {section:'Layout',label:'Two rows',run:()=>preset(2,'column')},
+    {section:'Layout',label:'Three columns',run:()=>preset(3,'row')},
+    {section:'Layout',label:'Four groups',run:()=>preset(4,'row')},
+    {section:'Layout',label:'Add workspace group (up to four)',shortcut:'Ctrl+\\',run:split},
+    {section:'Layout',label:'Change split orientation',run:()=>patch({axis:layout.axis==='row'?'column':'row'})},
+    {section:'Navigate',label:'Next tab',shortcut:'Alt+Right',run:()=>cycle(1)},
+    {section:'Navigate',label:'Previous tab',shortcut:'Alt+Left',run:()=>cycle(-1)},
+    {section:'Help',label:'Keyboard shortcuts & workbench guide',run:()=>setHelp(true)},
+  ];
   return (
     <div className="app">
       <header className="top">
@@ -570,6 +590,7 @@ export default function App() {
           ◨
         </button>
       </header>
+      <MenuBar commands={commands}/>
       <div className="shell">
         <nav className="activity" aria-label="Activities">
           {views.map((v, i) => (
@@ -583,14 +604,14 @@ export default function App() {
                 open(v);
               }}
             >
-              {icons[i]}
+              <span aria-hidden="true">{icons[i]}</span>
             </button>
           ))}
         </nav>
         {layout.left && !layout.maximized && (
           <aside className="explorer" style={{ width: layout.leftWidth }}>
             <div className="panel-heading">
-              EXPLORER{" "}
+              EXPLORER <button title="Collapse or expand explorer" aria-expanded={!collapsed} onClick={()=>setCollapsed(!collapsed)}>{collapsed?"▸":"▾"}</button>
               <button
                 title="Hide explorer"
                 onClick={() => patch({ left: false })}
@@ -604,9 +625,12 @@ export default function App() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
+            <details className="open-editors" open><summary>OPEN VIEWS · {layout.groups.reduce((n,g)=>n+g.length,0)}</summary>
+              {layout.groups.map((g,i)=>g.map(v=><button key={i+v} onClick={()=>open(v,i)} className={layout.focus===i&&active===v?'selected':''}><span>▤ {v}</span><small>Group {i+1}</small></button>))}
+            </details>
             <div className="tree">
               <div className="tree-project">⌄ COREI-OS-MINI</div>
-              {views
+              {!collapsed && views
                 .filter((v) =>
                   (v + " " + descriptions[v])
                     .toLowerCase()
@@ -650,6 +674,7 @@ export default function App() {
             </div>
           </aside>
         )}
+        {layout.left && !layout.maximized && <ResizeHandle label="Resize explorer" value={layout.leftWidth} min={160} max={380} change={leftWidth=>patch({leftWidth})}/>}
         <main>
           <div className="workspace-toolbar">
             <span>
@@ -670,7 +695,7 @@ export default function App() {
               <button onClick={() => open("Settings")}>Layout</button>
             </div>
           </div>
-          <div className="groups" style={{ flexDirection: layout.axis }}>
+          <div className={`groups count-${layout.groups.length}`} style={{ flexDirection: layout.axis }}>
             {layout.groups.map(
               (group, i) =>
                 (!layout.maximized || layout.focus === i) && (
@@ -731,6 +756,7 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button title="Close other tabs" onClick={()=>patch({groups:layout.groups.map((g,j)=>j===i?[layout.active[i]]:g)})}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
                     <div
                       className="view"
                       role="tabpanel"
@@ -744,6 +770,7 @@ export default function App() {
           </div>
           {layout.bottom && !layout.maximized && (
             <section className="bottom" style={{ height: layout.bottomHeight }}>
+              <ResizeHandle label="Resize bottom panel" horizontal reverse value={layout.bottomHeight} min={120} max={400} change={bottomHeight=>patch({bottomHeight})}/>
               <div className="bottom-tabs">
                 {[
                   "Activity",
@@ -784,6 +811,7 @@ export default function App() {
             </section>
           )}
         </main>
+        {layout.right && !layout.maximized && <ResizeHandle label="Resize inspector" reverse value={layout.rightWidth} min={200} max={440} change={rightWidth=>patch({rightWidth})}/>}
         {layout.right && !layout.maximized && (
           <aside className="inspector" style={{ width: layout.rightWidth }}>
             <div className="panel-heading">
@@ -823,7 +851,7 @@ export default function App() {
                 onClick={() =>
                   open(
                     active,
-                    layout.focus === 0 && layout.groups.length === 2 ? 1 : 0,
+                    (layout.focus + 1) % layout.groups.length,
                   )
                 }
               >
@@ -861,52 +889,8 @@ export default function App() {
           {layout.groups.length > 1 ? "s" : ""}
         </span>
       </footer>
-      {palette && (
-        <div className="overlay" onClick={() => setPalette(false)}>
-          <div
-            className="palette"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Command palette"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input
-              autoFocus
-              aria-label="Search commands"
-              placeholder="Open a view or change layout…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const first = views.find((v) =>
-                    v.toLowerCase().includes(query.toLowerCase()),
-                  );
-                  if (first) open(first);
-                }
-              }}
-            />
-            {views
-              .filter((v) => v.toLowerCase().includes(query.toLowerCase()))
-              .map((v) => (
-                <button key={v} onClick={() => open(v)}>
-                  <span>Open {v}</span>
-                  <small>{descriptions[v]}</small>
-                </button>
-              ))}
-            <button
-              onClick={() => {
-                split();
-                setPalette(false);
-              }}
-            >
-              Split workspace / change orientation
-            </button>
-            <button onClick={() => setPalette(false)}>
-              Close palette · Esc
-            </button>
-          </div>
-        </div>
-      )}
+      {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
+      {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Workbench controls</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button><p>Drag the explorer, inspector and bottom-panel edges to resize. Drag tabs between groups. Workspace selection saves each layout separately.</p>{commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}<p>Ctrl+1–4 focuses a group. Separator handles also support arrow keys. Layout presets replace the open groups. Browser-reserved shortcuts may vary.</p><div className="notice">Shell controls work locally. Broker connections, orders, positions and strategies still require their backend implementation.</div></div></div>}
     </div>
   );
 }
