@@ -28,4 +28,4 @@ export PATH="$TASK_NODE_BIN:$PATH"
 .venv-workstation/bin/python -m pip install -e ./backend
 npm ci --prefix ui
 npm run build --prefix ui
-printf '%s\n' 'Workstation installed. Start: .venv-workstation/bin/python scripts/run-workstation.py'
+printf '%s\n' 'Workstation built. Server deployment: bash scripts/deploy-workstation.sh' 'Optional local development: .venv-workstation/bin/python scripts/run-workstation.py'

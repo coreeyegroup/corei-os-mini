@@ -105,3 +105,42 @@ A version check alone does not establish runtime readiness. If Python reports th
 The workstation installer prefers this project interpreter, checks SSL and required standard-library modules before installing dependencies, and preserves a broken or different-base virtual environment as `.venv-workstation.backup.<timestamp>.<pid>` before recreating it. Then rerun `bash scripts/install-workstation.sh`. Do not disable certificate verification or use insecure package-index URLs to bypass missing SSL support.
 
 Source checksum: https://www.python.org/downloads/release/python-31410/
+# Ubuntu domain deployment
+
+The new workstation is served at `https://corei-os-mini.coreeye.in/`.
+After pulling this repository, run `bash scripts/deploy-workstation.sh` as the
+normal repository user. It builds the frontend and backend dependencies, then
+requests sudo to deploy. No development server or SSH tunnel is required.
+
+The installer creates `corei-os-mini-workstation.service`, running the repository
+backend as that user on loopback port 18786. Caddy serves the production frontend
+from `/var/www/corei-os-mini-workstation/current`, an atomic symlink to a retained
+build directory. It replaces only the standalone subdomain block, preserves other
+sites, backs up Caddy and any existing service unit, checks backend identity,
+validates Caddy before reload, and attempts to restore prior configuration if
+deployment fails. Unrecognized or ambiguous host configurations fail closed.
+The old `/var/www/corei-os-mini` files and port 8791 are not used by this site.
+
+This is a **public, read-only workstation shell**, not a completed trading release.
+Only GET `/api/workstation` is proxied publicly; other backend routes return 403.
+The service has no database credentials and disables demo mutations. Database
+connectivity therefore appears unavailable. Authenticated operational access must
+be implemented before exposing saved records or trading controls. This deployment
+does not alter the underlying multi-provider/account/instrument/strategy design.
+
+Verify after deployment:
+
+```bash
+systemctl is-active corei-os-mini-workstation
+curl -fsS https://corei-os-mini.coreeye.in/api/workstation
+curl -sSI https://corei-os-mini.coreeye.in/
+```
+
+The root URL should return 200, not redirect to the old path. If a browser retains
+the earlier permanent redirect, open the root in a private window. For startup
+errors use `sudo journalctl -u corei-os-mini-workstation -n 60 --no-pager`.
+Updates use the same pull and deployment command. Dependency installation uses
+the existing project virtual environment, so this is not an atomic backend release
+rollback; only service configuration, Caddy configuration, and the frontend link
+are restored on deployment failure. Other projects and database clusters are not
+migrated or stopped.

@@ -1,0 +1,26 @@
+corei-os-mini.coreeye.in {
+    header Cache-Control "no-store"
+    header X-Content-Type-Options "nosniff"
+
+    @identity {
+        path /api/workstation
+        method GET
+    }
+    handle @identity {
+        reverse_proxy 127.0.0.1:18786
+    }
+    # This public shell exposes only capability status. Operational API access
+    # requires authentication in a later implementation, not a catch-all proxy.
+    @backend path /api /api/* /docs /docs/* /redoc /openapi.json /health
+    handle @backend {
+        respond "Operational API access is not enabled on this public shell." 403
+    }
+    handle /corei-os-mini* {
+        redir / 302
+    }
+    handle {
+        root * /var/www/corei-os-mini-workstation/current
+        try_files {path} /index.html
+        file_server
+    }
+}
