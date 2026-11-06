@@ -1,9 +1,10 @@
-git status --shortfrom __future__ import annotations git diff -- 
-backend/src/corei_os_mini/risk.py from dataclasses import dataclass git add 
-backend/src/corei_os_mini/risk.py from .allocation import ProposedChild from .contracts 
-import AccountCandidate
-git commit -m "Update paper risk checks"
-git push origin main
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .allocation import ProposedChild
+from .contracts import AccountCandidate
+
 
 @dataclass(frozen=True, slots=True)
 class RiskResult:
