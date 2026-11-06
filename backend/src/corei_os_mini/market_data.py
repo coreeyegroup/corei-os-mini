@@ -112,6 +112,7 @@ class FeedAssessment(BaseModel):
 
 
 class MarketDataAssessmentResult(BaseModel):
+    assessment_id: str
     instrument_id: str
     evaluated_at: datetime
     selected_observation_id: str | None
@@ -123,7 +124,10 @@ class MarketDataAssessmentResult(BaseModel):
     )
 
 
-def assess_market_data(request: MarketDataAssessmentRequest) -> MarketDataAssessmentResult:
+def assess_market_data(
+    request: MarketDataAssessmentRequest,
+    assessment_id: str,
+) -> MarketDataAssessmentResult:
     """Validate and deterministically select from explicitly mapped observations."""
     mapping_by_key = {
         (item.provider_id, item.connection_id, item.native_symbol): item
@@ -283,6 +287,7 @@ def assess_market_data(request: MarketDataAssessmentRequest) -> MarketDataAssess
         selection_reason = "NO_ELIGIBLE_OBSERVATION"
 
     return MarketDataAssessmentResult(
+        assessment_id=assessment_id,
         instrument_id=request.instrument_id,
         evaluated_at=request.evaluated_at,
         selected_observation_id=selected.observation_id if selected else None,

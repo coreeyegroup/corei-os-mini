@@ -41,12 +41,13 @@ export COREI_DATABASE_URL='postgresql://corei:change-me@127.0.0.1:5432/corei_os_
 export COREI_ENABLE_DEMO=true
 export COREI_EXECUTION_MODE=paper
 psql "$COREI_DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/001_create_paper_runs.sql
+psql "$COREI_DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/002_create_market_data_assessments.sql
 python -m uvicorn corei_os_mini.api:app --host 127.0.0.1 --port 8781
 ```
 
 The demo route is `POST /api/demo/paper-runs`. The API schema is available at `/docs` while the local server is running. Do not place credentials in source control or command history in a shared environment.
 
-`POST /api/demo/market-data/assess` accepts explicitly mapped demo observations from multiple provider connections. It reports mapping, freshness, clock-confidence, timestamp-order, and sequence checks, summarizes each feed as `READY`, `DEGRADED`, `BLOCKED`, `NO_OBSERVATIONS`, or `DISABLED`, then selects deterministically by configured feed priority and source time. It is an assessment endpoint only: it does not open provider connections or persist observations. A real adapter and persistent feed store require selection of the first provider and its supported market-data contract.
+`POST /api/demo/market-data/assess` accepts explicitly mapped demo observations from multiple provider connections. It reports mapping, freshness, clock-confidence, timestamp-order, and sequence checks, summarizes each feed as `READY`, `DEGRADED`, `BLOCKED`, `NO_OBSERVATIONS`, or `DISABLED`, then selects deterministically by configured feed priority and source time. Each submitted batch and result is saved together in PostgreSQL and can be retrieved at `GET /api/market-data/assessments/{assessment_id}`. This demo assessment does not open provider connections or store a live tick stream. A real adapter and feed store require selection of the first provider and its supported market-data contract.
 
 ## Initial API behavior
 

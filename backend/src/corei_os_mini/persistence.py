@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -74,6 +75,56 @@ def get_run(database_url: str | None, run_id: UUID) -> dict[str, Any] | None:
             ).fetchone()
     except psycopg.Error as exc:
         raise PersistenceUnavailable("PostgreSQL read failed") from exc
+    if row is None:
+        return None
+    return dict(row)
+
+
+def save_market_data_assessment(
+    database_url: str | None,
+    assessment_id: UUID,
+    instrument_id: str,
+    evaluated_at: datetime,
+    request_data: dict[str, Any],
+    result_data: dict[str, Any],
+) -> None:
+    try:
+        with _connect(database_url) as connection:
+            connection.execute(
+                """
+                INSERT INTO corei_market_data_assessments
+                    (assessment_id, instrument_id, evaluated_at, request_json, result_json)
+                VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+                """,
+                (
+                    assessment_id,
+                    instrument_id,
+                    evaluated_at,
+                    json.dumps(request_data, separators=(",", ":")),
+                    json.dumps(result_data, separators=(",", ":")),
+                ),
+            )
+    except psycopg.Error as exc:
+        raise PersistenceUnavailable("PostgreSQL market-data assessment write failed") from exc
+
+
+def get_market_data_assessment(
+    database_url: str | None,
+    assessment_id: UUID,
+) -> dict[str, Any] | None:
+    try:
+        with _connect(database_url) as connection:
+            row = connection.execute(
+                """
+                SELECT assessment_id, instrument_id, evaluated_at,
+                       request_json, result_json, created_at
+                FROM corei_market_data_assessments
+                WHERE assessment_id = %s
+                """,
+                (assessment_id,),
+            ).fetchone()
+    except psycopg.Error as exc:
+        raise PersistenceUnavailable("PostgreSQL market-data assessment read failed") from exc
     if row is None:
         return None
     return dict(row)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
@@ -12,7 +12,9 @@ from .persistence import (
     PersistenceNotConfigured,
     PersistenceUnavailable,
     check_database,
+    get_market_data_assessment,
     get_run,
+    save_market_data_assessment,
     save_run,
 )
 from .market_data import (
@@ -85,7 +87,33 @@ def assess_demo_market_data(
 ) -> MarketDataAssessmentResult:
     if not settings.enable_demo:
         raise HTTPException(status_code=404, detail="Demo workflow is disabled")
-    return assess_market_data(payload)
+    assessment_id = uuid4()
+    output = assess_market_data(payload, str(assessment_id))
+    try:
+        save_market_data_assessment(
+            settings.database_url,
+            assessment_id,
+            payload.instrument_id,
+            payload.evaluated_at,
+            payload.model_dump(mode="json"),
+            output.model_dump(mode="json"),
+        )
+    except (PersistenceNotConfigured, PersistenceUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return output
+
+
+@app.get("/api/market-data/assessments/{assessment_id}")
+def read_market_data_assessment(assessment_id: UUID) -> dict[str, object]:
+    try:
+        row = get_market_data_assessment(settings.database_url, assessment_id)
+    except (PersistenceNotConfigured, PersistenceUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="Market-data assessment not found")
+    row["evaluated_at"] = row["evaluated_at"].isoformat()
+    row["created_at"] = row["created_at"].isoformat()
+    return row
 
 
 @app.get("/api/paper-runs/{run_id}")
