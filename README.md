@@ -163,3 +163,23 @@ scroll horizontally; enabled panels are no longer silently hidden.
 This release improves workstation navigation and layout controls. It does not
 implement a terminal, extension host, arbitrary panel docking, external windows,
 or new trading backend capabilities.
+
+## Appearance and tab controls (0.4)
+
+Choose Standard (neutral dark), Black, Dark Blue or White from the Appearance
+menu, command palette or Settings. Settings also provides interface text size
+(11–16px), Compact/Comfortable density, activity/status bar visibility and tab
+wrapping. Preferences are saved independently of workspace layouts in browser
+storage. Reset appearance restores defaults without changing the trading state.
+Malformed saved preferences fall back to defaults; storage failures are reported.
+
+Right-click a workspace tab to pin/unpin, close, close other unpinned tabs or move
+to the next group. Pinned views sort first and cannot be closed through tab-close
+controls until unpinned. Pinning applies to that view across groups and persists in
+this browser. Layout presets still replace groups. Workspace > Reopen last closed
+tab restores a recently closed view in the active group (session history only).
+
+Run `npm test --prefix ui` to build and run the DOM interaction regression checks.
+These checks cover menus, layout groups, theme switching/persistence, font size,
+visibility, wrapping, context menus, pin protection and reopening. They do not
+replace visual browser review or add backend capabilities.

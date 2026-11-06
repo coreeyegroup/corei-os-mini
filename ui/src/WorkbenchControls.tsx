@@ -10,13 +10,13 @@ export function MenuBar({ commands }: { commands: Command[] }) {
     return () => document.removeEventListener('pointerdown', dismiss);
   }, []);
   return <nav className="menubar" aria-label="Workbench menus" ref={root} onKeyDown={e => {if(e.key==='Escape') setMenu('');}}>
-    {['Workspace', 'View', 'Layout', 'Navigate', 'Help'].map(section => <div className="menu-wrap" key={section}>
+    {['Workspace', 'View', 'Layout', 'Appearance', 'Navigate', 'Help'].map(section => <div className="menu-wrap" key={section}>
       <button aria-expanded={menu===section} onClick={() => setMenu(menu===section?'':section)}>{section}</button>
       {menu===section && <div className="menu-popup" aria-label={`${section} commands`}>
         {commands.filter(c=>c.section===section).map(c=><button key={c.label} onClick={()=>{c.run();setMenu('');}}><span>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
       </div>}
     </div>)}
-    <span className="menu-caption">TRADING WORKBENCH <b>0.3</b></span>
+    <span className="menu-caption">TRADING WORKBENCH <b>0.4</b></span>
   </nav>;
 }
 export function CommandPalette({ commands, dismiss }: { commands: Command[]; dismiss: () => void }) {

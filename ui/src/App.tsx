@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
@@ -50,6 +51,20 @@ function stored() {
   }
 }
 export default function App() {
+  const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
+  const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
+  const [closed,setClosed]=useState<View[]>([]);
+  const [context,setContext]=useState<{view:View;group:number;x:number;y:number}|null>(null);
+  const [appearanceError,setAppearanceError]=useState('');
+  const appearancePatch=(p:Partial<Appearance>)=>setAppearance(a=>({...a,...p}));
+  useEffect(()=>{
+    document.documentElement.dataset.theme=appearance.theme;
+    document.documentElement.style.setProperty('--ui-size',appearance.fontSize+'px');
+    try{localStorage.setItem(appearanceKey,JSON.stringify(appearance));localStorage.setItem('corei-os-mini.pins.v1',JSON.stringify(pinned));setAppearanceError('');}catch{setAppearanceError('Appearance preferences could not be saved.');}
+  },[appearance,pinned]);
+  useEffect(()=>{const dismiss=()=>setContext(null);window.addEventListener('resize',dismiss);return ()=>window.removeEventListener('resize',dismiss);},[]);
+  function togglePin(v:View){setPinned(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v]);}
+  function closeOthers(v:View, group:number){setLayout(x=>({...x,groups:x.groups.map((g,i)=>i===group?g.filter(t=>t===v||pinned.includes(t)):g),active:x.active.map((a,i)=>i===group?v:a)}));}
   const [layout, setLayout] = useState<Layout>(stored),
     [runtime, setRuntime] = useState<Runtime | null>(null),
     [error, setError] = useState(""),
@@ -157,7 +172,7 @@ export default function App() {
       const mod = e.ctrlKey || e.metaKey;
       const typing = e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable="true"]');
       if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(x=>!x); return; }
-      if (e.key === 'Escape') { setPalette(false); setHelp(false); }
+      if (e.key === 'Escape') { setPalette(false); setHelp(false); setContext(null); }
       if (typing || palette) return;
       if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); patch({bottom:!layout.bottom}); }
@@ -189,6 +204,8 @@ export default function App() {
 
   }
   function close(view: View, group: number) {
+    if(pinned.includes(view)) return;
+    setClosed(x=>[view,...x].slice(0,20));
     setLayout((x) => {
       const groups = x.groups.map((g) => [...g]),
         active = [...x.active];
@@ -300,6 +317,13 @@ export default function App() {
             Preferences are saved in this browser. Layout changes do not change
             trading state.
           </p>
+          <div className="appearance-settings">
+            <h2>Color theme</h2><div className="theme-picker">{themes.map(theme=><button key={theme} aria-pressed={appearance.theme===theme} onClick={()=>appearancePatch({theme})}><span className="theme-swatch" data-swatch={theme}/>{theme}{appearance.theme===theme?' ✓':''}</button>)}</div>
+            <label>Interface text size <input aria-label="Interface text size" type="range" min="11" max="16" value={appearance.fontSize} onChange={e=>appearancePatch({fontSize:Number(e.target.value)})}/><output>{appearance.fontSize}px</output></label>
+            <label>Density <select aria-label="Interface density" value={appearance.density} onChange={e=>appearancePatch({density:e.target.value as Appearance['density']})}><option>Compact</option><option>Comfortable</option></select></label>
+            {(['activity','status','wrapTabs'] as const).map(k=><label key={k}><input type="checkbox" checked={appearance[k]} onChange={e=>appearancePatch({[k]:e.target.checked})}/>{k==='activity'?'Activity bar':k==='status'?'Status bar':'Wrap workspace tabs'}</label>)}
+            <button onClick={()=>setAppearance({...defaultAppearance})}>Reset appearance</button>
+          </div>
           <div className="settings">
             {(["left", "right", "bottom"] as const).map((k) => (
               <label key={k}>
@@ -521,7 +545,16 @@ export default function App() {
     ...views.map(v=>({section:'Navigate',label:`Open ${v}`,run:()=>open(v)})),
     {section:'Workspace',label:'Command palette',shortcut:'Ctrl+Shift+P',run:()=>setPalette(true)},
     {section:'Workspace',label:'Close active tab',run:()=>close(active,layout.focus)},
-    {section:'Workspace',label:'Close other tabs in group',run:()=>patch({groups:layout.groups.map((g,i)=>i===layout.focus?[active]:g)})},
+    {section:'Workspace',label:'Close other tabs in group',run:()=>closeOthers(active,layout.focus)},
+    {section:'Workspace',label:'Reopen last closed tab',run:()=>{if(closed.length){open(closed[0]);setClosed(x=>x.slice(1));}}},
+    {section:'Workspace',label:pinned.includes(active)?'Unpin active tab':'Pin active tab',run:()=>togglePin(active)},
+    ...themes.map(theme=>({section:'Appearance',label:`Color theme: ${theme}`,run:()=>appearancePatch({theme})})),
+    {section:'Appearance',label:'Increase text size',run:()=>appearancePatch({fontSize:Math.min(16,appearance.fontSize+1)})},
+    {section:'Appearance',label:'Decrease text size',run:()=>appearancePatch({fontSize:Math.max(11,appearance.fontSize-1)})},
+    {section:'Appearance',label:'Toggle activity bar',run:()=>appearancePatch({activity:!appearance.activity})},
+    {section:'Appearance',label:'Toggle status bar',run:()=>appearancePatch({status:!appearance.status})},
+    {section:'Appearance',label:'Toggle wrapped tabs',run:()=>appearancePatch({wrapTabs:!appearance.wrapTabs})},
+    {section:'Appearance',label:'Appearance settings',run:()=>open('Settings')},
     {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
     {section:'Workspace',label:'Reset current workspace layout',run:()=>setLayout(defaults(layout.workspace))},
     {section:'View',label:'Toggle explorer',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
@@ -541,7 +574,7 @@ export default function App() {
     {section:'Help',label:'Keyboard shortcuts & workbench guide',run:()=>setHelp(true)},
   ];
   return (
-    <div className="app">
+    <div className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""}`}>
       <header className="top">
         <div className="brand">
           <b>◈</b> COREI<span>OS MINI</span>
@@ -592,7 +625,7 @@ export default function App() {
       </header>
       <MenuBar commands={commands}/>
       <div className="shell">
-        <nav className="activity" aria-label="Activities">
+        {appearance.activity && <nav className="activity" aria-label="Activities">
           {views.map((v, i) => (
             <button
               key={v}
@@ -607,7 +640,7 @@ export default function App() {
               <span aria-hidden="true">{icons[i]}</span>
             </button>
           ))}
-        </nav>
+        </nav>}
         {layout.left && !layout.maximized && (
           <aside className="explorer" style={{ width: layout.leftWidth }}>
             <div className="panel-heading">
@@ -728,10 +761,11 @@ export default function App() {
                         }
                       }}
                     >
-                      {group.map((v) => (
+                      {[...group].sort((a,b)=>Number(pinned.includes(b))-Number(pinned.includes(a))).map((v) => (
                         <div
                           className={`tab ${layout.active[i] === v ? "active" : ""}`}
                           key={v}
+                          onContextMenu={e=>{e.preventDefault();setContext({view:v,group:i,x:Math.max(8,Math.min(e.clientX,window.innerWidth-240)),y:Math.max(8,Math.min(e.clientY,window.innerHeight-180))});}}
                           draggable
                           onDragStart={(e) =>
                             e.dataTransfer.setData(
@@ -745,9 +779,11 @@ export default function App() {
                             aria-selected={layout.active[i] === v}
                             onClick={() => open(v, i)}
                           >
-                            {v}
+                            {pinned.includes(v)?"◆ ":""}{v}
                           </button>
                           <button
+                            disabled={pinned.includes(v)}
+                            title={pinned.includes(v)?"Unpin this tab to close it":"Close tab"}
                             aria-label={`Close ${v} in group ${i + 1}`}
                             onClick={() => close(v, i)}
                           >
@@ -756,7 +792,7 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button title="Close other tabs" onClick={()=>patch({groups:layout.groups.map((g,j)=>j===i?[layout.active[i]]:g)})}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
+                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
                     <div
                       className="view"
                       role="tabpanel"
@@ -872,7 +908,7 @@ export default function App() {
           </aside>
         )}
       </div>
-      <footer>
+      {appearance.status && <footer>
         <span>
           <span className={`dot ${runtime ? "ready" : ""}`} />
           {runtime
@@ -882,13 +918,20 @@ export default function App() {
               : "Backend unavailable"}
         </span>
         <span>
-          {storageError || "Local layout · no trading state stored in browser"}
+          {appearanceError || storageError || "Local layout · no trading state stored in browser"}
         </span>
         <span className="push">
           Trading unavailable · {layout.groups.length} workspace group
           {layout.groups.length > 1 ? "s" : ""}
         </span>
-      </footer>
+      </footer>}
+      {context && <div className="context-overlay" onPointerDown={()=>setContext(null)}><div className="tab-context" style={{left:context.x,top:context.y}} role="dialog" aria-label="Tab actions" onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Escape')setContext(null);}}>
+        <button autoFocus onClick={()=>{togglePin(context.view);setContext(null);}}>{pinned.includes(context.view)?'Unpin tab':'Pin tab'}</button>
+        <button disabled={pinned.includes(context.view)} onClick={()=>{close(context.view,context.group);setContext(null);}}>Close tab</button>
+        <button onClick={()=>{closeOthers(context.view,context.group);setContext(null);}}>Close other unpinned tabs</button>
+        <button disabled={layout.groups.length<2} onClick={()=>{moveTab(context.view,context.group,(context.group+1)%layout.groups.length);setContext(null);}}>Move to next group</button>
+        <button onClick={()=>setContext(null)}>Dismiss · Esc</button>
+      </div></div>}
       {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
       {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Workbench controls</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button><p>Drag the explorer, inspector and bottom-panel edges to resize. Drag tabs between groups. Workspace selection saves each layout separately.</p>{commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}<p>Ctrl+1–4 focuses a group. Separator handles also support arrow keys. Layout presets replace the open groups. Browser-reserved shortcuts may vary.</p><div className="notice">Shell controls work locally. Broker connections, orders, positions and strategies still require their backend implementation.</div></div></div>}
     </div>
