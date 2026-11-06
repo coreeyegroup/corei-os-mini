@@ -9,3 +9,5 @@ __pycache__/
 .venv-workstation/
 ui/node_modules/
 ui/dist/
+
+.venv-workstation.backup.*/
