@@ -126,3 +126,29 @@ def read_paper_run(run_id: UUID) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Paper run not found")
     row["created_at"] = row["created_at"].isoformat()
     return row
+
+
+@app.get("/api/workstation")
+def workstation(response: Response) -> dict[str, object]:
+    """Identity and actual capability availability for the new workstation shell."""
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "project_id": "corei-os-mini",
+        "contract_version": 1,
+        "release": "0.2.0-shell",
+        "execution_mode": settings.execution_mode,
+        "database_connected": check_database(settings.database_url),
+        "demo_enabled": settings.enable_demo,
+        "capabilities": [
+            {"id": "assessment", "label": "Saved market-data assessments", "available": True,
+             "reason": "Retrieval is implemented; requires configured PostgreSQL and applied schema."},
+            {"id": "providers", "label": "Provider connectivity", "available": False,
+             "reason": "Provider adapters and registry persistence are not implemented."},
+            {"id": "assignments", "label": "Accounts, instruments and strategy assignments", "available": False,
+             "reason": "Operational registries and eligibility management are not implemented."},
+            {"id": "execution", "label": "Operational execution", "available": False,
+             "reason": "Only synthetic demo paper runs exist; operational order routing is not implemented."},
+            {"id": "portfolio", "label": "Portfolio and reconciliation", "available": False,
+             "reason": "No authoritative portfolio ledger or provider reconciliation exists yet."},
+        ],
+    }

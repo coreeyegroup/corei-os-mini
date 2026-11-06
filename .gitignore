@@ -6,3 +6,6 @@ __pycache__/
 !.env.example
 .ruff_cache/
 .mypy_cache/
+.venv-workstation/
+ui/node_modules/
+ui/dist/
