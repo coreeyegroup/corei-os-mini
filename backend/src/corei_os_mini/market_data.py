@@ -95,11 +95,28 @@ class ObservationAssessment(BaseModel):
     selection_eligible: bool
 
 
+class FeedAssessment(BaseModel):
+    provider_id: str
+    connection_id: str
+    native_symbol: str
+    instrument_id: str
+    enabled: bool
+    priority: int
+    status: Literal["DISABLED", "NO_OBSERVATIONS", "READY", "DEGRADED", "BLOCKED"]
+    observation_count: int
+    eligible_count: int
+    degraded_count: int
+    invalid_count: int
+    latest_source_time: datetime | None
+    latest_received_at: datetime | None
+
+
 class MarketDataAssessmentResult(BaseModel):
     instrument_id: str
     evaluated_at: datetime
     selected_observation_id: str | None
     selection_reason: str
+    feeds: list[FeedAssessment]
     observations: list[ObservationAssessment]
     note: str = (
         "Assessment of supplied observations only. This demo endpoint does not connect to providers."
@@ -203,6 +220,50 @@ def assess_market_data(request: MarketDataAssessmentRequest) -> MarketDataAssess
         )
 
     eligible_results = [item for item in results if item.selection_eligible]
+    feed_results: list[FeedAssessment] = []
+    for mapping in request.mappings:
+        source_rows = [
+            item
+            for item in results
+            if item.provider_id == mapping.provider_id
+            and item.connection_id == mapping.connection_id
+            and item.native_symbol == mapping.native_symbol
+        ]
+        eligible_count = sum(item.selection_eligible for item in source_rows)
+        degraded_count = sum(item.status == "DEGRADED" for item in source_rows)
+        invalid_count = sum(item.status == "INVALID" for item in source_rows)
+        if not mapping.enabled:
+            feed_status = "DISABLED"
+        elif not source_rows:
+            feed_status = "NO_OBSERVATIONS"
+        elif eligible_count == 0:
+            feed_status = "BLOCKED"
+        elif invalid_count or degraded_count:
+            feed_status = "DEGRADED"
+        else:
+            feed_status = "READY"
+        feed_results.append(
+            FeedAssessment(
+                provider_id=mapping.provider_id,
+                connection_id=mapping.connection_id,
+                native_symbol=mapping.native_symbol,
+                instrument_id=mapping.instrument_id,
+                enabled=mapping.enabled,
+                priority=mapping.priority,
+                status=feed_status,
+                observation_count=len(source_rows),
+                eligible_count=eligible_count,
+                degraded_count=degraded_count,
+                invalid_count=invalid_count,
+                latest_source_time=max(
+                    (item.source_time for item in source_rows), default=None
+                ),
+                latest_received_at=max(
+                    (item.received_at for item in source_rows), default=None
+                ),
+            )
+        )
+
     selected = None
     if eligible_results:
         selected = sorted(
@@ -226,5 +287,6 @@ def assess_market_data(request: MarketDataAssessmentRequest) -> MarketDataAssess
         evaluated_at=request.evaluated_at,
         selected_observation_id=selected.observation_id if selected else None,
         selection_reason=selection_reason,
+        feeds=feed_results,
         observations=results,
     )
