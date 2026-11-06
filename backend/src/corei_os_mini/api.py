@@ -15,6 +15,11 @@ from .persistence import (
     get_run,
     save_run,
 )
+from .market_data import (
+    MarketDataAssessmentRequest,
+    MarketDataAssessmentResult,
+    assess_market_data,
+)
 from .workflow import run_paper_workflow
 
 
@@ -69,6 +74,18 @@ def create_paper_run(payload: PaperRunRequest) -> PaperRunResult:
     except (PersistenceNotConfigured, PersistenceUnavailable) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return output
+
+
+@app.post(
+    "/api/demo/market-data/assess",
+    response_model=MarketDataAssessmentResult,
+)
+def assess_demo_market_data(
+    payload: MarketDataAssessmentRequest,
+) -> MarketDataAssessmentResult:
+    if not settings.enable_demo:
+        raise HTTPException(status_code=404, detail="Demo workflow is disabled")
+    return assess_market_data(payload)
 
 
 @app.get("/api/paper-runs/{run_id}")

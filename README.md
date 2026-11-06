@@ -46,6 +46,8 @@ python -m uvicorn corei_os_mini.api:app --host 127.0.0.1 --port 8781
 
 The demo route is `POST /api/demo/paper-runs`. The API schema is available at `/docs` while the local server is running. Do not place credentials in source control or command history in a shared environment.
 
+`POST /api/demo/market-data/assess` accepts explicitly mapped demo observations from multiple provider connections. It reports mapping, freshness, clock-confidence, timestamp-order, and sequence checks, then selects deterministically by configured feed priority and source time. It is an assessment endpoint only: it does not open provider connections or persist observations. A real adapter and persistent feed store require selection of the first provider and its supported market-data contract.
+
 ## Initial API behavior
 
 The request supplies a synthetic price series, strategy window lengths, a target quantity, an explicit group-dispatch mode, and the risk state for each eligible account. The workflow:
