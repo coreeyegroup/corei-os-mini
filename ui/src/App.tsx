@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import RegistryWorkspace from "./RegistryWorkspace";
+import { initialLayout, launchContext, workspaceUrl, type RegistryResource } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -47,12 +48,18 @@ const scopeItems: Record<string, string[]> = {
 };
 function stored() {
   try {
-    return restore(localStorage.getItem(key));
+    return initialLayout(localStorage.getItem(key));
   } catch {
     return defaults();
   }
 }
 export default function App() {
+  const launch = launchContext(window.location.search);
+  const registryViews = useRef<Record<number, RegistryResource>>({});
+  function openWorkspace(view: View, group: number, newWindow: boolean) {
+    const resource = ['Providers','Accounts','Instruments'].includes(view) ? registryViews.current[group] : undefined;
+    window.open(workspaceUrl(view, resource), '_blank', newWindow ? 'popup=yes,width=1440,height=960,noopener,noreferrer' : 'noopener,noreferrer');
+  }
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
@@ -95,6 +102,7 @@ export default function App() {
   const patch = (p: Partial<Layout>) => setLayout((x) => ({ ...x, ...p }));
   useEffect(() => {
     try {
+      if (launch.detached) return; // Detached workspaces must not overwrite the main layout.
       localStorage.setItem(key, JSON.stringify(layout));
       localStorage.setItem(
         `${key}.${layout.workspace}`,
@@ -309,8 +317,8 @@ export default function App() {
     }
   }
   const active = layout.active[layout.focus];
-  function body(view: View) {
-    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view} initial={view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments"}/>;
+  function body(view: View, group: number) {
+    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view} initial={(launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{registryViews.current[group]=r;}}/>;
     if (view === "Settings")
       return (
         <div className="content">
@@ -795,13 +803,13 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
+                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],i,false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],i,true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
                     <div
                       className="view"
                       role="tabpanel"
                       aria-label={layout.active[i]}
                     >
-                      {body(layout.active[i])}
+                      {body(layout.active[i], i)}
                     </div>
                   </section>
                 ),

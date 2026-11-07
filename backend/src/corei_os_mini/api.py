@@ -145,7 +145,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 1,
-        "release": "0.6.0-connector-profiles",
+        "release": "0.6.1-connection-workspace",
         "execution_mode": settings.execution_mode,
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
@@ -154,7 +154,7 @@ def workstation(response: Response) -> dict[str, object]:
         "demo_enabled": settings.enable_demo,
         "capabilities": [
             {"id": "connector_profiles", "label": "Connector configuration", "available": connector_ready,
-             "reason": "Editable connector family, runtime and environment profiles. Requires migration 004. No adapters or runtime sessions yet."},
+             "reason": "Editable connector family, runtime and environment profiles. Requires migration 005. No adapters or runtime sessions yet."},
             {"id": "registries", "label": "Configuration registries", "available": registry_ready,
              "reason": "Authenticated provider, connection, account, instrument and symbol registration. Requires migration 003. No broker sessions or order submission."},
             {"id": "assessment", "label": "Saved market-data assessments", "available": True,

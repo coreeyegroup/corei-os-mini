@@ -348,3 +348,77 @@ regressions including profile create/edit. Backend database calls and browser AP
 responses in those suites are mocked. Real PostgreSQL migration and Windows/Wine
 terminal connectivity are not established by these tests; verify schema readiness
 on Ubuntu after deployment. No live broker connection is claimed.
+
+
+## Connection workspace clarity — release 0.6.1
+
+The provider registry now includes field-level information buttons, related-record
+selection by name, an expandable connection guide, aligned responsive forms, and
+compact tables with expandable full record details. Internal IDs remain available
+without dominating every row. Configuration is distinct from observed runtime state.
+
+- Provider: organisation supplying access. Connection: a named access configuration.
+- Connector profile: platform/protocol and runtime settings for that connection.
+- Account: provider-issued trading login/account identity, currently registered under
+  a connection. Stable identity across multiple connections remains future work.
+- Terminal computer / terminal instance: optional inventory labels added by migration
+  005. These are NOT connection endpoints, authenticated agent identities or credentials.
+  Existing profiles remain valid with blank labels.
+
+Each workspace group's top-right toolbar opens its active view in a new tab or
+requests a new window. Selected registry context is included in a validated URL;
+unsaved forms, passwords and account records are never included. Detached workspaces
+start with one group and do not overwrite the main saved layout. Browser settings
+can open a requested window as a tab or block it. A web app cannot choose a different
+browser executable. Same-browser windows share the operator cookie; logout broadcasts
+a non-secret notification to clear other open registry views. Another browser needs
+its own login. Opening a view does not start another backend or terminal session.
+
+Update using the same pull → configure database → deploy command above. Expected
+release: `0.6.1-connection-workspace`, connector_schema_ready true (migration 005).
+
+### Remote terminal implementation contract (planned; not an active endpoint)
+
+Host A is the Ubuntu COREI VPS. Host B runs Windows MetaTrader or MetaTrader under
+Ubuntu/Wine, at a different IP if needed. Host B signs into the broker using the
+broker account login, password and broker server. The bridge on Host B will make
+outbound TLS-authenticated requests to the COREI domain on 443. Do not expose RDP,
+Wine, terminal desktop ports, or PostgreSQL for this channel. Broker-server identity
+is different from both Host A and Host B addresses. No static public Host B IP is
+required by this design.
+
+The next bridge implementation must provide:
+1. A scoped, revocable bridge credential bound to one terminal instance, connection
+   and expected account/server. This is separate from operator and broker passwords.
+2. Identity handshake including platform, instance, account, broker server,
+   demo/live mode and protocol version; reject mismatches before accepting data.
+3. Sequenced heartbeat/quote envelopes with source and receive timestamps, bounded
+   payloads and queues, retry backoff, duplicate detection and explicit stale state.
+4. Instrument discovery and native-symbol mapping, with no claim that a symbol name
+   alone establishes contract equivalence. Reconnect revalidates account identity.
+5. Read-only market-data validation before any execution channel. Order routing,
+   durable intent, deduplication and uncertain-outcome reconciliation belong to the
+   later execution phase. No HTTP request returning success can imply a fill.
+
+A simple EA HTTPS transport is suitable to validate the remote flow; MetaQuotes
+WebRequest is synchronous and requires an allowed URL. It must use bounded timeouts
+and must not be represented as a proven HFT transport. Measured performance will
+inform a later persistent transport if needed. Windows/Wine compatibility must be
+verified on the actual terminal hosts. No bridge binaries or endpoints are shipped
+in 0.6.1; this section specifies the implementation boundary without inventing a
+working connection.
+
+Research references checked 8 November 2026:
+- Westernpips Webcliker Connections documents Analyse IP using MT4 `.srv` and MT5
+  `.dat` / `config/servers.dat` files. This feature discovers broker endpoints;
+  it is not remote access to a terminal computer and not a substitute for credentials.
+  https://docs.westernpips.com/documentation/westernpips-webcliker/wc-connections/
+- Westernpips separately documents EA terminal connection configuration:
+  https://docs.westernpips.com/documentation/westernpips-private-7/westernpips-private-7-algos/setting-up-a-connection-with-the-mt4-mt5-broker-via-the-ea-connector/
+- MetaQuotes WebRequest:
+  https://www.mql5.com/en/docs/network/webrequest
+
+No `.srv`/`.dat` importer or proprietary MetaTrader direct-server protocol is
+implemented or claimed. A future importer requires format validation and bounded,
+non-executable parsing; discovery metadata must never silently choose the live
+account/server or overwrite a verified connection.

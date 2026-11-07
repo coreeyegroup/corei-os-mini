@@ -15,6 +15,8 @@ class ConnectorProfile(BaseModel):
     environment: Literal['PAPER','SANDBOX','LIVE']
     runtime: Literal['WINDOWS_TERMINAL','UBUNTU_WINE_TERMINAL','SERVER_API']
     server_name: OptionalLabel = ''
+    terminal_host: OptionalLabel = ''
+    terminal_instance: OptionalLabel = ''
     enabled: bool = False
 
     @model_validator(mode='after')

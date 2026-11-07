@@ -34,6 +34,14 @@ class ConnectorProfileTests(unittest.TestCase):
                 ConnectorProfile(**{**self.payload, 'connector_type':family})
             ConnectorProfile(**{**self.payload, 'connector_type':family, 'runtime':'SERVER_API', 'server_name':''})
 
+    def test_terminal_inventory_labels_are_optional_and_bounded(self):
+        profile = ConnectorProfile(**self.payload)
+        self.assertEqual(profile.terminal_host, '')
+        profile = ConnectorProfile(**{**self.payload, 'terminal_host':'remote-windows-01', 'terminal_instance':'mt5-demo-01'})
+        self.assertEqual(profile.terminal_instance, 'mt5-demo-01')
+        with self.assertRaises(ValidationError):
+            ConnectorProfile(**{**self.payload, 'terminal_host':'x'*121})
+
     def test_create_and_edit_do_not_claim_connectivity(self):
         row = {'id':str(uuid4()), **self.payload, 'enabled':True}
         db = MagicMock()

@@ -90,6 +90,13 @@ identifier, PAPER/SANDBOX/LIVE environment, terminal/API runtime and broker serv
 label. Existing records are retained. Configuration does not establish a session.
 Runtime status is explicitly NOT_IMPLEMENTED / NOT_CONNECTED / NOT_OBSERVED.
 
+**Usability checkpoint — 0.6.1:** field help and named selections clarify the
+registries; optional terminal host/instance inventory labels distinguish remote
+terminal machines from broker servers. Workspace views can open separately without
+replacing the main saved layout. These changes do not satisfy runtime verification.
+The README defines the planned outbound authenticated bridge and its acceptance
+requirements, including separate operator, broker and bridge credentials.
+
 The next Phase 1 work is the first authenticated terminal bridge and verified
 account/session binding, instrument discovery, live quote ingestion and recovery.
 The Phase 1 demonstration and gate above have NOT passed yet. MT4/MT5 Windows and

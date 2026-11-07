@@ -166,7 +166,7 @@ def check_connector_schema(database_url: str | None) -> bool:
         return False
     try:
         with _connect(database_url) as connection:
-            connection.execute("SELECT id,connection_id,name,connector_type,adapter_key,environment,runtime,server_name,enabled,created_at FROM corei_connector_profiles LIMIT 0")
+            connection.execute("SELECT id,connection_id,name,connector_type,adapter_key,environment,runtime,server_name,terminal_host,terminal_instance,enabled,created_at FROM corei_connector_profiles LIMIT 0")
         return True
     except psycopg.Error:
         return False
