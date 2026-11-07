@@ -270,7 +270,7 @@ sudo python3 scripts/configure-workstation-login.py
 bash scripts/deploy-workstation.sh
 ```
 
-The login setup prompts locally for a username and password (minimum 12 characters),
+The login setup prompts locally for a username and password (minimum 6 characters),
 stores a salted PBKDF2-SHA256 hash in the existing root-only environment file, and
 preserves configured credentials on reruns. Do not send the password in chat.
 Open Providers and sign in once. The browser receives an eight-hour Secure,
@@ -297,3 +297,15 @@ with FastAPI, psycopg and httpx installed). API tests cover sessions, CSRF heade
 expiry, invalid input, rate limiting and database-error mapping using mocked database
 connections. Live PostgreSQL relationships and deployment must also be verified on
 Ubuntu; these tests do not prove live broker behavior.
+
+Password setup and login accept 6–256 characters. Existing passwords are preserved
+by normal updates. To explicitly replace the existing operator password locally:
+
+```bash
+sudo python3 scripts/configure-workstation-login.py --reset-password
+sudo systemctl restart corei-os-mini-workstation
+```
+
+Reset keeps the username and database settings, prompts for the new password twice,
+and invalidates prior sessions after service restart. Do not put the password in
+shell arguments or chat. Setup without the flag preserves the configured login.

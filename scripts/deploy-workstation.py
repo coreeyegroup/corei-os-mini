@@ -146,7 +146,7 @@ WantedBy=multi-user.target
         temp_link.unlink(missing_ok=True)
     print('Deployed: https://' + HOST + '/')
     print('Caddy backup:', backup)
-    print('Public shell only: database credentials and operational routes are not enabled.')
+    print('Workstation deployed. Registry routes require operator login; provider connectivity and order submission remain unavailable.')
 
 
 if __name__ == '__main__':

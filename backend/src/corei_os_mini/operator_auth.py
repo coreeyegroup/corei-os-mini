@@ -22,7 +22,7 @@ lock = threading.Lock()
 class Login(BaseModel):
     model_config = ConfigDict(extra='forbid')
     username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=6, max_length=256)
 
 
 def credentials():

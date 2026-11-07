@@ -47,7 +47,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/registry/providers',json={},headers={'X-Corei-Request':'workstation','Origin':'https://other.example'}).status_code,403)
 
     def test_password_and_tampered_cookie_rejected(self):
-        self.assertEqual(self.client.post('/api/operator/login',json={'username':'operator','password':'wrong'},headers=self.headers).status_code,401)
+        self.assertEqual(self.client.post('/api/operator/login',json={'username':'operator','password':'wrong-password'},headers=self.headers).status_code,401)
         self.client.cookies.set(auth.COOKIE,'tampered.signature',path='/api')
         self.assertEqual(self.client.get('/api/operator/session').status_code,401)
 
@@ -78,6 +78,15 @@ class RegistryTests(unittest.TestCase):
         self.login()
         with patch('corei_os_mini.operator_auth.time.time',return_value=10**12):
             self.assertEqual(self.client.get('/api/operator/session').status_code,401)
+
+    def test_six_character_password_accepted_five_rejected(self):
+        salt='cd'*16
+        digest=hashlib.pbkdf2_hmac('sha256',b'abc123',bytes.fromhex(salt),600000).hex()
+        with patch.dict(os.environ,{'COREI_OPERATOR_PASSWORD_HASH':f'pbkdf2_sha256$600000${salt}${digest}'}):
+            r=self.client.post('/api/operator/login',json={'username':'operator','password':'abc123'},headers=self.headers)
+            self.assertEqual(r.status_code,200)
+            r=self.client.post('/api/operator/login',json={'username':'operator','password':'abc12'},headers=self.headers)
+            self.assertEqual(r.status_code,422)
 
     def test_login_rate_limit(self):
         for _ in range(10):auth.attempts.append(auth.time.monotonic())
