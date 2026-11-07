@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
+from .operator_auth import router as operator_router
+from .registry import router as registry_router
 from .config import get_settings
 from .contracts import PaperRunRequest, PaperRunResult
 from .persistence import (
@@ -13,6 +15,7 @@ from .persistence import (
     PersistenceUnavailable,
     check_database,
     check_schema,
+    check_registry_schema,
     get_market_data_assessment,
     get_run,
     save_market_data_assessment,
@@ -41,6 +44,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+app.include_router(operator_router)
+app.include_router(registry_router)
 
 @app.get("/health")
 def health(response: Response) -> dict[str, str | bool]:
@@ -132,22 +138,26 @@ def read_paper_run(run_id: UUID) -> dict[str, object]:
 @app.get("/api/workstation")
 def workstation(response: Response) -> dict[str, object]:
     """Identity and actual capability availability for the new workstation shell."""
+    registry_ready = check_registry_schema(settings.database_url)
     response.headers["Cache-Control"] = "no-store"
     return {
         "project_id": "corei-os-mini",
         "contract_version": 1,
-        "release": "0.2.0-shell",
+        "release": "0.5.0-registries",
         "execution_mode": settings.execution_mode,
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
+        "registry_schema_ready": registry_ready,
         "demo_enabled": settings.enable_demo,
         "capabilities": [
+            {"id": "registries", "label": "Configuration registries", "available": registry_ready,
+             "reason": "Authenticated provider, connection, account, instrument and symbol registration. Requires migration 003. No broker sessions or order submission."},
             {"id": "assessment", "label": "Saved market-data assessments", "available": True,
              "reason": "Retrieval is implemented; requires configured PostgreSQL and applied schema."},
             {"id": "providers", "label": "Provider connectivity", "available": False,
-             "reason": "Provider adapters and registry persistence are not implemented."},
+             "reason": "Provider registration is implemented; live provider adapters are not implemented."},
             {"id": "assignments", "label": "Accounts, instruments and strategy assignments", "available": False,
-             "reason": "Operational registries and eligibility management are not implemented."},
+             "reason": "Account and instrument registration is implemented; strategy eligibility assignments are not implemented."},
             {"id": "execution", "label": "Operational execution", "available": False,
              "reason": "Only synthetic demo paper runs exist; operational order routing is not implemented."},
             {"id": "portfolio", "label": "Portfolio and reconciliation", "available": False,

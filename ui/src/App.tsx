@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import RegistryWorkspace from "./RegistryWorkspace";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -309,6 +310,7 @@ export default function App() {
   }
   const active = layout.active[layout.focus];
   function body(view: View) {
+    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view} initial={view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments"}/>;
     if (view === "Settings")
       return (
         <div className="content">

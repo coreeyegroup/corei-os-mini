@@ -44,5 +44,27 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  click('Workspace');await tick();click('Close active tab');await tick();assert.equal(w.document.querySelector('[role="tab"][aria-selected="true"]').textContent.trim(),'Overview');
  click('Workspace');await tick();click('Reopen last closed tab');await tick();assert.ok([...w.document.querySelectorAll('[role="tab"]')].some(t=>t.textContent==='Strategies'&&t.getAttribute('aria-selected')==='true'));
  console.log('PASS: five themes persist, font size, status toggle, wrapped tabs, tab context menu, pin protection, unpin and reopen.');
+
+ let registered=[];
+ w.fetch=async(url,options={})=>{
+   if(url.endsWith('/operator/session'))return {ok:false,status:401,json:async()=>({detail:'Sign in'})};
+   if(url.endsWith('/operator/login'))return {ok:true,json:async()=>({username:'test-operator'})};
+   if(url.includes('/registry/')) {
+     if(options.method==='POST'){const body=JSON.parse(options.body);assert.equal(body.enabled,false);registered.push({id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',...body});return {ok:true,json:async()=>registered[0]};}
+     return {ok:true,json:async()=>({items:url.includes('/providers')?registered:[],total:url.includes('/providers')?registered.length:0,offset:0,limit:50})};
+   }
+   throw Error('Unexpected test request '+url);
+ };
+ click('Navigate');await tick();click('Open Providers');await tick();await tick();
+ assert.match(w.document.body.textContent,/Operator sign in/);
+ const form=w.document.querySelector('.registry-form');
+ const fill=(el,value)=>{Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(el,value);el.dispatchEvent(new w.Event('input',{bubbles:true}));};
+ fill(form.querySelector('input[autocomplete="username"]'),'test-operator');
+ fill(form.querySelector('input[type="password"]'),'a-long-test-password');await tick();
+ form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+ assert.match(w.document.body.textContent,/Operator: test-operator/);
+ const registration=w.document.querySelector('.registry-form');fill(registration.querySelector('input'),'Test broker');await tick();registration.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+ assert.equal(registered.length,1);assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
+ console.log('PASS: registry login, disabled provider creation, refresh and table rendering (mock API).');
  assert.deepEqual(errors,[]);console.log('PASS: production bundle mounts; four groups persist; keyboard toggles; accessible resizing; filtered palette action; two-row layout; help closes; no runtime errors.');w.close();
 })().catch(e=>{console.error(e);process.exit(1)});

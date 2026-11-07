@@ -124,8 +124,8 @@ The old `/var/www/corei-os-mini` files and port 8791 are not used by this site.
 This is a **public, read-only workstation shell**, not a completed trading release.
 Only GET `/api/workstation` is proxied publicly; other backend routes return 403.
 The service loads an optional root-owned database environment file and disables
-demo mutations. Database connectivity appears unavailable until setup succeeds. Authenticated operational access must
-be implemented before exposing saved records or trading controls. This deployment
+demo mutations. Database connectivity appears unavailable until setup succeeds. Registry access uses operator authentication as described below. Other record and
+trading routes remain blocked. This deployment
 does not alter the underlying multi-provider/account/instrument/strategy design.
 
 Verify after deployment:
@@ -241,3 +241,59 @@ Validation: `python3 -m unittest discover -s scripts/tests -v` covers cluster an
 ownership refusal, explicit connection targeting, secret-safe errors and migration
 wrapping. `npm test --prefix ui` covers the production UI bundle. Actual PostgreSQL
 migration and read/write verification runs on Ubuntu during setup.
+
+## Registration slice (0.5)
+
+The Providers, Accounts and Instruments workspaces now contain authenticated
+registry forms and paginated tables. The tabs cover Providers, Connections,
+Accounts, Instruments and Symbol mappings. Register provider → connection →
+account, then instruments and mappings. Select/copy UUIDs to establish relationships.
+Multiple connections per provider, multiple accounts per connection and mappings
+from many connections to a canonical instrument are supported. Account/strategy
+eligibility, account groups, live adapters and feed subscriptions remain unfinished.
+
+New rows default to disabled. Enable/disable controls update configuration only;
+no record creates a session, reserves risk, or submits an order. LIVE is an account
+classification, not an execution switch. Existing names/references are protected by
+scope-specific uniqueness; missing parents are rejected by foreign keys. There is
+no deletion or general record editing in this slice. Do not enter API keys or
+passwords into registry text fields. The first 200 parent records appear as input
+suggestions; UUID input supports any registered parent and lists paginate by 50.
+
+Install/update on Ubuntu:
+
+```bash
+cd /home/coreeye/corei-os-mini
+git pull --ff-only origin main
+bash scripts/configure-workstation-database.sh
+sudo python3 scripts/configure-workstation-login.py
+bash scripts/deploy-workstation.sh
+```
+
+The login setup prompts locally for a username and password (minimum 12 characters),
+stores a salted PBKDF2-SHA256 hash in the existing root-only environment file, and
+preserves configured credentials on reruns. Do not send the password in chat.
+Open Providers and sign in once. The browser receives an eight-hour Secure,
+HttpOnly, SameSite=Strict cookie; passwords are not stored in localStorage. Sign out
+clears the cookie and registry views in this page. Copied session cookies remain
+valid until expiry or credential rotation; this is a single-operator baseline,
+not multi-user RBAC or a central session-revocation system. Login attempts are
+limited to ten/minute per backend process; use the documented single-worker service.
+
+Caddy exposes only `/api/operator/*` and `/api/registry/*` in addition to public
+workstation status. Registry endpoints require the operator session, and mutations
+require a same-origin workstation header. Other operational APIs remain blocked.
+HTTPS is required for login; the localhost development launcher cannot use this
+Secure cookie over plain HTTP. No new external ports are exposed.
+
+Migration 003 creates the registries transactionally. After deployment, workstation
+status reports `release: 0.5.0-registries` and `registry_schema_ready: true` when
+required columns are readable. `schema_ready` continues to report the earlier
+paper/assessment schema separately. Provider connectivity remains unavailable.
+
+Validation: production build and DOM regression tests (`npm test --prefix ui`),
+plus API tests (`PYTHONPATH=backend/src python -m unittest discover -s backend/tests -v`,
+with FastAPI, psycopg and httpx installed). API tests cover sessions, CSRF headers,
+expiry, invalid input, rate limiting and database-error mapping using mocked database
+connections. Live PostgreSQL relationships and deployment must also be verified on
+Ubuntu; these tests do not prove live broker behavior.

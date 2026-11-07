@@ -47,6 +47,24 @@ def check_schema(database_url: str | None) -> bool:
         return False
 
 
+def check_registry_schema(database_url: str | None) -> bool:
+    if not database_url:
+        return False
+    try:
+        with _connect(database_url) as connection:
+            for query in (
+                "SELECT id,name,kind,enabled FROM corei_providers LIMIT 0",
+                "SELECT id,provider_id,name,purpose,enabled FROM corei_connections LIMIT 0",
+                "SELECT id,connection_id,name,external_reference,mode,enabled FROM corei_accounts LIMIT 0",
+                "SELECT id,symbol,asset_class,description,enabled FROM corei_instruments LIMIT 0",
+                "SELECT id,connection_id,instrument_id,native_symbol,enabled FROM corei_symbol_mappings LIMIT 0",
+            ):
+                connection.execute(query)
+        return True
+    except psycopg.Error:
+        return False
+
+
 def save_run(
     database_url: str | None,
     run_id: UUID,

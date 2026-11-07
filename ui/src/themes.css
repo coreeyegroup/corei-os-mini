@@ -90,3 +90,15 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 :root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar {width:3px;height:3px;}
 :root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb {background:rgba(148,163,184,.25);border-radius:2px;}
 :root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb:hover {background:rgba(148,163,184,.5);}
+
+.registry-form {max-width:620px;display:grid;gap:10px;margin:14px 0;padding:14px;border:1px solid var(--line);background:var(--surface);}
+.registry-form label {display:grid;gap:5px;font-size:var(--ui-size);}
+.registry-form input,.registry-form select {width:100%;}
+.registry-tabs {display:flex;gap:5px;flex-wrap:wrap;margin-top:14px;}
+.registry-tabs [aria-pressed=true] {outline:1px solid var(--accent);color:var(--accent);}
+.registry-table {overflow:auto;max-height:430px;}
+.registry-table table {border-collapse:collapse;font-size:11px;width:100%;}
+.registry-table th,.registry-table td {border:1px solid var(--line);padding:8px;text-align:left;white-space:nowrap;}
+.registry-table th {background:var(--surface);position:sticky;top:0;}
+.registry-table code {font-size:10px;user-select:all;}
+.registry-pagination {display:flex;align-items:center;gap:12px;margin-top:10px;}

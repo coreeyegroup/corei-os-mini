@@ -1,0 +1,44 @@
+import {useEffect,useState} from 'react';
+type Resource='providers'|'connections'|'accounts'|'instruments'|'mappings';
+type Row=Record<string,string|boolean>;
+type Page={items:Row[];total:number;offset:number;limit:number};
+type Field={key:string;label:string;options?:string[];reference?:Resource;optional?:boolean};
+const definitions:Record<Resource,{label:string;fields:Field[]}>= {
+ providers:{label:'Providers',fields:[{key:'name',label:'Provider name'},{key:'kind',label:'Type',options:['BROKER','EXCHANGE','DATA_VENDOR']}]},
+ connections:{label:'Connections',fields:[{key:'provider_id',label:'Provider UUID',reference:'providers'},{key:'name',label:'Connection name'},{key:'purpose',label:'Purpose',options:['DATA','EXECUTION','BOTH']}]},
+ accounts:{label:'Accounts',fields:[{key:'connection_id',label:'Connection UUID',reference:'connections'},{key:'name',label:'Account label'},{key:'external_reference',label:'Account reference (not a password)'},{key:'mode',label:'Account environment',options:['PAPER','SANDBOX','LIVE']}]},
+ instruments:{label:'Instruments',fields:[{key:'symbol',label:'Canonical symbol'},{key:'asset_class',label:'Asset class',options:['FX','METAL','CRYPTO','EQUITY','FUTURE','OPTION','OTHER']},{key:'description',label:'Description',optional:true}]},
+ mappings:{label:'Symbol mappings',fields:[{key:'connection_id',label:'Connection UUID',reference:'connections'},{key:'instrument_id',label:'Instrument UUID',reference:'instruments'},{key:'native_symbol',label:'Provider native symbol'}]},
+};
+async function api(path:string,method='GET',body?:unknown,signal?:AbortSignal){
+ const r=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',signal,headers:{'Content-Type':'application/json','X-Corei-Request':'workstation'},body:body===undefined?undefined:JSON.stringify(body)});
+ const data=await r.json().catch(()=>({detail:'Unexpected server response'}));
+ if(!r.ok) throw Object.assign(new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail)),{status:r.status});
+ return data;
+}
+export default function RegistryWorkspace({initial}:{initial:Resource}){
+ const [user,setUser]=useState(''),[username,setUsername]=useState(''),[password,setPassword]=useState('');
+ const [resource,setResource]=useState<Resource>(initial),[page,setPage]=useState<Page|null>(null),[offset,setOffset]=useState(0),[revision,setRevision]=useState(0);
+ const [refs,setRefs]=useState<Partial<Record<Resource,Row[]>>>({}),[draft,setDraft]=useState<Record<string,string>>({}),[error,setError]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[checking,setChecking]=useState(true);
+ useEffect(()=>{const c=new AbortController();api('operator/session','GET',undefined,c.signal).then(x=>setUser(x.username)).catch(e=>{if(!c.signal.aborted && e.status!==401)setError(e.message);}).finally(()=>{if(!c.signal.aborted)setChecking(false);});return ()=>c.abort();},[]);
+ useEffect(()=>{if(!user)return;const c=new AbortController();setPage(null);setError('');
+ Promise.all([api(`registry/${resource}?limit=50&offset=${offset}`,'GET',undefined,c.signal),...(['providers','connections','instruments'] as Resource[]).map(r=>api(`registry/${r}?limit=200`,'GET',undefined,c.signal))]).then(([p,providers,connections,instruments])=>{if(!c.signal.aborted){setPage(p);setRefs({providers:providers.items,connections:connections.items,instruments:instruments.items});}}).catch(e=>{if(!c.signal.aborted){setError(e.message);if(e.status===401){setUser('');setRefs({});}}});return()=>c.abort();},[user,resource,offset,revision]);
+ useEffect(()=>{const signedOut=()=>{setUser('');setPage(null);setRefs({});setDraft({});setNotice('');};window.addEventListener('corei-operator-signout',signedOut);return()=>window.removeEventListener('corei-operator-signout',signedOut);},[]);
+ const fields=definitions[resource].fields;
+ async function signIn(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{const x=await api('operator/login','POST',{username,password});setPassword('');setUser(x.username);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ async function create(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');setNotice('');try{const payload:Record<string,unknown>={enabled:false};for(const f of fields)payload[f.key]=(draft[f.key]??f.options?.[0]??'').trim();await api(`registry/${resource}`,'POST',payload);setDraft({});setNotice('Record saved as disabled configuration. No provider connection or trading action occurred.');setOffset(0);setRevision(x=>x+1);}catch(e){setError((e as Error).message+' If the response was interrupted, refresh the list before retrying.');}finally{setBusy(false);}}
+ async function toggle(row:Row){setBusy(true);setError('');try{await api(`registry/${resource}/${row.id}`,'PATCH',{enabled:!row.enabled});setRevision(x=>x+1);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ const label=(field:Field,value:string|boolean)=>{if(!field.reference)return String(value);const row=refs[field.reference]?.find(r=>r.id===value);return row?`${row.name||row.symbol} · ${value}`:String(value);};
+ return <div className="content registry-workspace"><div className="eyebrow">CONFIGURATION / REGISTRIES</div><h1>{definitions[resource].label}</h1>
+ <div className="notice">Configuration only. Enabled records do not establish broker sessions, authorize an order, or enable live trading. Do not enter broker passwords, API keys or tokens.</div>
+ {error&&<p role="alert" className="danger">{error}</p>}
+ {checking?<p>Checking operator session…</p>:!user?<form className="registry-form" onSubmit={signIn}><h2>Operator sign in</h2><label>Username<input required autoComplete="username" value={username} maxLength={64} onChange={e=>setUsername(e.target.value)}/></label><label>Password<input required type="password" autoComplete="current-password" maxLength={256} value={password} onChange={e=>setPassword(e.target.value)}/></label><button disabled={busy}>{busy?'Signing in…':'Sign in'}</button><p>Use the workstation login created on Ubuntu. The session lasts up to eight hours; the password is not saved in browser storage.</p></form>:<>
+ <div className="section-title"><span>Operator: {user}</span><button disabled={busy} onClick={async()=>{setBusy(true);try{await api('operator/logout','POST');window.dispatchEvent(new Event('corei-operator-signout'));setUser('');setPage(null);setRefs({});setDraft({});}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>Sign out</button></div>
+ <nav className="registry-tabs" aria-label="Configuration registries">{(Object.keys(definitions) as Resource[]).map(r=><button key={r} aria-pressed={r===resource} onClick={()=>{setResource(r);setOffset(0);setDraft({});setNotice('');}}>{definitions[r].label}</button>)}</nav>
+ <form className="registry-form" onSubmit={create}><h2>Register {definitions[resource].label.toLowerCase()}</h2>{fields.map(f=><label key={f.key}>{f.label}{f.options?<select value={draft[f.key]??f.options[0]} onChange={e=>setDraft(x=>({...x,[f.key]:e.target.value}))}>{f.options.map(o=><option key={o}>{o}</option>)}</select>:<><input required={!f.optional} maxLength={f.key==='description'?500:120} list={f.reference?`${resource}-${f.key}`:undefined} value={draft[f.key]??''} onChange={e=>setDraft(x=>({...x,[f.key]:e.target.value}))}/>{f.reference&&<datalist id={`${resource}-${f.key}`}>{refs[f.reference]?.map(row=><option key={String(row.id)} value={String(row.id)}>{row.name||row.symbol}</option>)}</datalist>}</>}</label>)}<button disabled={busy}>{busy?'Saving…':'Save disabled record'}</button><p>Parent fields accept a UUID. Suggestions show the first 200 records; copy another parent UUID from its registry if needed.</p></form>
+ {notice&&<p role="status">{notice}</p>}
+ <div className="section-title"><h2>Registered records {page?`(${page.total})`:''}</h2><button disabled={busy} onClick={()=>setRevision(x=>x+1)}>Refresh records</button></div>
+ {!page?<p>Records not loaded.</p>:<><div className="registry-table"><table><thead><tr><th>ID</th>{fields.map(f=><th key={f.key}>{f.label}</th>)}<th>Configuration</th><th>Control</th></tr></thead><tbody>{page.items.map(row=><tr key={String(row.id)}><td><code>{row.id}</code></td>{fields.map(f=><td key={f.key}>{label(f,row[f.key])}</td>)}<td>{row.enabled?'Enabled':'Disabled'}</td><td><button disabled={busy} onClick={()=>void toggle(row)}>{row.enabled?'Disable':'Enable configuration'}</button></td></tr>)}</tbody></table></div>{!page.items.length&&<p>No records registered in this page.</p>}<div className="registry-pagination"><button disabled={offset===0||busy} onClick={()=>setOffset(Math.max(0,offset-50))}>Previous</button><span>{page.total?offset+1:0}–{offset+page.items.length} of {page.total}</span><button disabled={offset+50>=page.total||busy} onClick={()=>setOffset(offset+50)}>Next</button></div></>}
+ </>}
+ </div>;
+}

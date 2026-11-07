@@ -9,8 +9,14 @@ corei-os-mini.coreeye.in {
     handle @identity {
         reverse_proxy 127.0.0.1:18786
     }
-    # This public shell exposes only capability status. Operational API access
-    # requires authentication in a later implementation, not a catch-all proxy.
+    # Only these operational routes are exposed; backend session checks protect registries.
+    @registry path /api/operator/* /api/registry/*
+    handle @registry {
+        request_body {
+            max_size 32KB
+        }
+        reverse_proxy 127.0.0.1:18786
+    }
     @backend path /api /api/* /docs /docs/* /redoc /openapi.json /health
     handle @backend {
         respond "Operational API access is not enabled on this public shell." 403
