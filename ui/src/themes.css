@@ -72,3 +72,21 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 .content h2 {font-size:var(--ui-size);}
 .menu-popup {max-height:70vh;overflow:auto;}
 .menubar {flex-wrap:wrap;height:auto;min-height:29px;}
+
+/* COREI Orbit palette, source: coreeyegroup/corei, ui/corei-orbit/src/styles/variables.css
+   Source blob: c69bef9c95148349d6b5d226613fab0c70b460bf.
+   Selection uses the source hover color; status matches Orbit's StatusBar.css. */
+:root[data-theme="COREI Orbit"] {
+  --canvas:#0B0E14;--chrome:#0F151E;--surface:#0F151E;--input:#1A2330;
+  --line:#1F2937;--text:#E2E8F0;--muted:#94A3B8;--accent:#00E5A0;
+  --selection:#1A2330;--selected-text:#E2E8F0;--hover:#1A2330;--status:#0F151E;
+  --danger:#FF4D4D;--ready:#00E5A0;--amber:#F59E0B;--scheme:dark;
+}
+.theme-swatch[data-swatch="COREI Orbit"] {background:#0B0E14;border-left-color:#00E5A0;}
+:root[data-theme="COREI Orbit"] footer {color:var(--muted);border-top:1px solid var(--line);}
+:root[data-theme="COREI Orbit"] footer .dot.ready {background:var(--ready);}
+:root[data-theme="COREI Orbit"] .top {background:rgba(15,21,30,.92);backdrop-filter:blur(8px);}
+:root[data-theme="COREI Orbit"] .app * {scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.5) transparent;}
+:root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar {width:3px;height:3px;}
+:root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb {background:rgba(148,163,184,.25);border-radius:2px;}
+:root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb:hover {background:rgba(148,163,184,.5);}

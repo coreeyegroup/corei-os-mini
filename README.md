@@ -183,3 +183,19 @@ Run `npm test --prefix ui` to build and run the DOM interaction regression check
 These checks cover menus, layout groups, theme switching/persistence, font size,
 visibility, wrapping, context menus, pin protection and reopening. They do not
 replace visual browser review or add backend capabilities.
+
+## COREI Orbit theme
+
+Appearance > Color theme: COREI Orbit adds the source Orbit palette while keeping
+all four previous themes and the existing default. It is also available in Settings
+and the command palette, and persists through the existing appearance preference.
+
+Source reviewed: [Orbit variables.css](https://github.com/coreeyegroup/corei/blob/main/ui/corei-orbit/src/styles/variables.css),
+blob `c69bef9c95148349d6b5d226613fab0c70b460bf`, plus theme-dark.css, layout.css,
+TopRibbon.css and StatusBar.css. Primary background `#0B0E14`, panels `#0F151E`,
+hover/input `#1A2330`, borders `#1F2937`, primary text `#E2E8F0`, muted text
+`#94A3B8`, teal `#00E5A0`, danger `#FF4D4D` and amber `#F59E0B` come directly
+from Orbit's variables. Mini's selection surface maps to Orbit's hover color.
+The dark status bar, translucent header and thin scrollbars follow Orbit's source
+styles. This is a color-theme adaptation to mini's existing components; Orbit's
+layout, services and application state are not imported.

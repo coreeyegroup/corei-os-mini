@@ -1,4 +1,4 @@
-export const themes = ['Standard', 'Black', 'Dark Blue', 'White'] as const;
+export const themes = ['Standard', 'Black', 'Dark Blue', 'White', 'COREI Orbit'] as const;
 export type Theme = typeof themes[number];
 export type Appearance = { theme: Theme; fontSize: number; density: 'Compact' | 'Comfortable'; activity: boolean; status: boolean; wrapTabs: boolean };
 export const appearanceKey = 'corei-os-mini.appearance.v1';

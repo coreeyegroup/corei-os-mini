@@ -27,7 +27,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  click('Help');await tick();click('Keyboard shortcuts & workbench guide');await tick();assert.ok(w.document.querySelector('[aria-label="Workbench guide"]'));
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();assert.equal(w.document.querySelector('[aria-label="Workbench guide"]'),null);
 
- for(const theme of ['Black','Dark Blue','White','Standard']) {
+ for(const theme of ['Black','Dark Blue','White','Standard','COREI Orbit']) {
    click('Appearance');await tick();click('Color theme: '+theme);await tick();
    assert.equal(w.document.documentElement.dataset.theme,theme);
    assert.equal(JSON.parse(w.localStorage.getItem('corei-os-mini.appearance.v1')).theme,theme);
@@ -43,6 +43,6 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  click('Navigate');await tick();click('Open Strategies');await tick();
  click('Workspace');await tick();click('Close active tab');await tick();assert.equal(w.document.querySelector('[role="tab"][aria-selected="true"]').textContent.trim(),'Overview');
  click('Workspace');await tick();click('Reopen last closed tab');await tick();assert.ok([...w.document.querySelectorAll('[role="tab"]')].some(t=>t.textContent==='Strategies'&&t.getAttribute('aria-selected')==='true'));
- console.log('PASS: four themes persist, font size, status toggle, wrapped tabs, tab context menu, pin protection, unpin and reopen.');
+ console.log('PASS: five themes persist, font size, status toggle, wrapped tabs, tab context menu, pin protection, unpin and reopen.');
  assert.deepEqual(errors,[]);console.log('PASS: production bundle mounts; four groups persist; keyboard toggles; accessible resizing; filtered palette action; two-row layout; help closes; no runtime errors.');w.close();
 })().catch(e=>{console.error(e);process.exit(1)});
