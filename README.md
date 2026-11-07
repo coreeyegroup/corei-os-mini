@@ -123,8 +123,8 @@ The old `/var/www/corei-os-mini` files and port 8791 are not used by this site.
 
 This is a **public, read-only workstation shell**, not a completed trading release.
 Only GET `/api/workstation` is proxied publicly; other backend routes return 403.
-The service has no database credentials and disables demo mutations. Database
-connectivity therefore appears unavailable. Authenticated operational access must
+The service loads an optional root-owned database environment file and disables
+demo mutations. Database connectivity appears unavailable until setup succeeds. Authenticated operational access must
 be implemented before exposing saved records or trading controls. This deployment
 does not alter the underlying multi-provider/account/instrument/strategy design.
 
@@ -199,3 +199,45 @@ from Orbit's variables. Mini's selection surface maps to Orbit's hover color.
 The dark status bar, translucent header and thin scrollbars follow Orbit's source
 styles. This is a color-theme adaptation to mini's existing components; Orbit's
 layout, services and application state are not imported.
+
+## Dedicated PostgreSQL setup
+
+Continue the provider/market-data phase by configuring persistence first:
+
+```bash
+cd /home/coreeye/corei-os-mini
+git pull --ff-only origin main
+bash scripts/configure-workstation-database.sh
+bash scripts/deploy-workstation.sh
+```
+
+The database installer verifies PostgreSQL major version 18 and data directory
+`/var/lib/postgresql/18/corei_os_mini` on port 5433. It creates database
+`corei_os_mini` and login `corei_os_mini_app` only as needed. PostgreSQL 14 on port
+5432 is not accessed. A generated password stays in the root-owned mode-600
+`/etc/corei-os-mini/workstation.env`; it is not printed or committed. Preserve this
+file in your server backup. Existing credentials are reused, not reset; an existing
+role without the file or a database owned by another role stops setup.
+
+Numbered SQL migrations run under a transaction and advisory lock with a checksum
+ledger. Changed applied migrations stop the run; add a new migration instead.
+The installer checks application read/write access using a rolled-back probe.
+The deployment service reads the environment file through systemd; later deploys
+preserve it. The public domain still exposes only workstation status, not stored
+records or order submission. No provider credentials or live execution are added.
+
+Verify:
+
+```bash
+systemctl is-active corei-os-mini-workstation
+curl -fsS https://corei-os-mini.coreeye.in/api/workstation
+```
+
+Expect `database_connected: true`, `schema_ready: true`, `execution_mode: PAPER`
+and `demo_enabled: false`. Schema readiness checks required readable columns; it
+is not a claim that provider connectivity or the full trading lifecycle is ready.
+
+Validation: `python3 -m unittest discover -s scripts/tests -v` covers cluster and
+ownership refusal, explicit connection targeting, secret-safe errors and migration
+wrapping. `npm test --prefix ui` covers the production UI bundle. Actual PostgreSQL
+migration and read/write verification runs on Ubuntu during setup.

@@ -94,7 +94,7 @@ User={user}
 WorkingDirectory={root}/backend
 Environment=COREI_EXECUTION_MODE=paper
 Environment=COREI_ENABLE_DEMO=false
-Environment=COREI_DATABASE_URL=
+EnvironmentFile=-/etc/corei-os-mini/workstation.env
 ExecStart={python} -m uvicorn corei_os_mini.api:app --host 127.0.0.1 --port {PORT}
 Restart=on-failure
 RestartSec=3

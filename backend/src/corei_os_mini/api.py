@@ -12,6 +12,7 @@ from .persistence import (
     PersistenceNotConfigured,
     PersistenceUnavailable,
     check_database,
+    check_schema,
     get_market_data_assessment,
     get_run,
     save_market_data_assessment,
@@ -138,6 +139,7 @@ def workstation(response: Response) -> dict[str, object]:
         "release": "0.2.0-shell",
         "execution_mode": settings.execution_mode,
         "database_connected": check_database(settings.database_url),
+        "schema_ready": check_schema(settings.database_url),
         "demo_enabled": settings.enable_demo,
         "capabilities": [
             {"id": "assessment", "label": "Saved market-data assessments", "available": True,

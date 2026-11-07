@@ -16,6 +16,7 @@ type Runtime = {
   release: string;
   execution_mode: string;
   database_connected: boolean;
+  schema_ready?: boolean;
   demo_enabled: boolean;
   capabilities: {
     id: string;
@@ -410,7 +411,7 @@ export default function App() {
                     : "Unavailable"
                   : "Unknown"}
               </strong>
-              <span>Connection check only; schema readiness not verified</span>
+              <span>{runtime?.schema_ready === true ? "Required schema verified" : runtime?.database_connected ? "Required schema unavailable or not verified" : "Database setup required"}</span>
             </article>
           </div>
           <div className="section-title">

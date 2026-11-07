@@ -34,6 +34,19 @@ def check_database(database_url: str | None) -> bool:
         return False
 
 
+def check_schema(database_url: str | None) -> bool:
+    """Verify required columns are readable, without returning stored records."""
+    if not database_url:
+        return False
+    try:
+        with _connect(database_url) as connection:
+            connection.execute("SELECT run_id, instrument_id, strategy_id, execution_mode, request_json, result_json, created_at FROM corei_paper_runs LIMIT 0")
+            connection.execute("SELECT assessment_id, instrument_id, evaluated_at, request_json, result_json, created_at FROM corei_market_data_assessments LIMIT 0")
+        return True
+    except psycopg.Error:
+        return False
+
+
 def save_run(
     database_url: str | None,
     run_id: UUID,
