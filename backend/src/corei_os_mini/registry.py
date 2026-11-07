@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 import psycopg
 from psycopg import sql
 
+from .connector_profiles import ConnectorProfile, profile_view
 from .config import get_settings
 from .operator_auth import require_operator
 from .persistence import _connect, PersistenceNotConfigured
@@ -48,7 +49,8 @@ class Toggle(BaseModel):
 
 MODELS = {'providers':('corei_providers', Provider), 'connections':('corei_connections',Connection),
           'accounts':('corei_accounts',Account), 'instruments':('corei_instruments',Instrument),
-          'mappings':('corei_symbol_mappings',Mapping)}
+          'mappings':('corei_symbol_mappings',Mapping),
+          'connector-profiles':('corei_connector_profiles',ConnectorProfile)}
 router = APIRouter(prefix='/api/registry', dependencies=[Depends(require_operator)])
 
 
@@ -74,7 +76,8 @@ def list_records(resource: str, response: Response, limit: int = Query(100, ge=1
         with _connect(get_settings().database_url) as db:
             rows = db.execute(sql.SQL('SELECT * FROM {} ORDER BY created_at,id LIMIT %s OFFSET %s').format(sql.Identifier(table)), (limit,offset)).fetchall()
             total = db.execute(sql.SQL('SELECT count(*) AS total FROM {}').format(sql.Identifier(table))).fetchone()['total']
-        return {'items':rows,'total':total,'limit':limit,'offset':offset}
+        return {'items':[profile_view(r) for r in rows] if resource == 'connector-profiles' else rows,
+                'total':total,'limit':limit,'offset':offset}
     except (psycopg.Error, PersistenceNotConfigured) as exc:
         raise unavailable(exc) from None
 
@@ -90,7 +93,8 @@ def create_record(resource: str, payload: dict):
     query = sql.SQL('INSERT INTO {} ({}) VALUES ({}) RETURNING *').format(sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier,data)),sql.SQL(',').join(sql.Placeholder() for _ in data))
     try:
         with _connect(get_settings().database_url) as db:
-            return db.execute(query, tuple(data.values())).fetchone()
+            row = db.execute(query, tuple(data.values())).fetchone()
+            return profile_view(row) if resource == 'connector-profiles' else row
     except (psycopg.Error, PersistenceNotConfigured) as exc:
         raise unavailable(exc) from None
 
@@ -103,6 +107,22 @@ def toggle_record(resource: str, record_id: UUID, payload: Toggle):
             row = db.execute(sql.SQL('UPDATE {} SET enabled=%s WHERE id=%s RETURNING *').format(sql.Identifier(table)),(payload.enabled,record_id)).fetchone()
             if row is None:
                 raise HTTPException(404,'Record not found')
-            return row
+            return profile_view(row) if resource == 'connector-profiles' else row
+    except (psycopg.Error, PersistenceNotConfigured) as exc:
+        raise unavailable(exc) from None
+
+
+@router.put('/connector-profiles/{record_id}')
+def replace_connector_profile(record_id: UUID, payload: ConnectorProfile):
+    """Edit configuration without changing its owning connection or runtime state."""
+    data = payload.model_dump(exclude={'connection_id'})
+    query = sql.SQL('UPDATE corei_connector_profiles SET {} WHERE id=%s AND connection_id=%s RETURNING *').format(
+        sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in data))
+    try:
+        with _connect(get_settings().database_url) as db:
+            row = db.execute(query, (*data.values(), record_id, payload.connection_id)).fetchone()
+            if row is None:
+                raise HTTPException(404, 'Profile not found for this connection; connection ownership cannot be changed.')
+            return profile_view(row)
     except (psycopg.Error, PersistenceNotConfigured) as exc:
         raise unavailable(exc) from None

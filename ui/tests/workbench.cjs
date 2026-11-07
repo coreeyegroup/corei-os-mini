@@ -45,10 +45,18 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  click('Workspace');await tick();click('Reopen last closed tab');await tick();assert.ok([...w.document.querySelectorAll('[role="tab"]')].some(t=>t.textContent==='Strategies'&&t.getAttribute('aria-selected')==='true'));
  console.log('PASS: five themes persist, font size, status toggle, wrapped tabs, tab context menu, pin protection, unpin and reopen.');
 
- let registered=[];
+ let registered=[]; let profiles=[];
  w.fetch=async(url,options={})=>{
    if(url.endsWith('/operator/session'))return {ok:false,status:401,json:async()=>({detail:'Sign in'})};
    if(url.endsWith('/operator/login'))return {ok:true,json:async()=>({username:'test-operator'})};
+   if(url.includes('/registry/connector-profiles')) {
+     if(options.method==='POST'||options.method==='PUT') {
+       const body=JSON.parse(options.body);
+       const row={id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',...body,adapter_status:'NOT_IMPLEMENTED',session_status:'NOT_CONNECTED',data_health:'NOT_OBSERVED',account_verified:false,execution_available:false};
+       profiles=[row]; return {ok:true,json:async()=>row};
+     }
+     return {ok:true,json:async()=>({items:profiles,total:profiles.length,offset:0,limit:50})};
+   }
    if(url.includes('/registry/')) {
      if(options.method==='POST'){const body=JSON.parse(options.body);assert.equal(body.enabled,false);registered.push({id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',...body});return {ok:true,json:async()=>registered[0]};}
      return {ok:true,json:async()=>({items:url.includes('/providers')?registered:[],total:url.includes('/providers')?registered.length:0,offset:0,limit:50})};
@@ -66,5 +74,23 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const registration=w.document.querySelector('.registry-form');fill(registration.querySelector('input'),'Test broker');await tick();registration.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.equal(registered.length,1);assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
  console.log('PASS: registry login, disabled provider creation, refresh and table rendering (mock API).');
+ click('Connector profiles');await tick();await tick();
+ let pf=w.document.querySelector('.registry-form');
+ const field=(label)=>[...pf.querySelectorAll('label')].find(x=>x.textContent.startsWith(label)).querySelector('input,select');
+ fill(field('Connection UUID'),'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+ fill(field('Profile name'),'Demo terminal');fill(field('Adapter identifier'),'mt5_ea');
+ fill(field('Broker server name'),'Example-Demo');await tick();
+ pf.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+ assert.equal(profiles.length,1);assert.equal(profiles[0].runtime,'WINDOWS_TERMINAL');
+ assert.match(w.document.querySelector('.registry-table').textContent,/NOT_IMPLEMENTED/);
+ click('Edit profile');await tick();pf=w.document.querySelector('.registry-form');
+ assert.ok(field('Connection UUID').disabled);
+ const select=field('Connector family');select.value='BROKER_API';select.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();
+ assert.equal(field('Runtime location').value,'SERVER_API');
+ fill(field('Adapter identifier'),'upstox');await tick();
+ pf.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+ assert.equal(profiles[0].connector_type,'BROKER_API');assert.equal(profiles[0].adapter_key,'upstox');
+ assert.equal(profiles[0].execution_available,false);
+ console.log('PASS: connector profile create/edit, immutable connection ownership, family/runtime selection and truthful unavailable status (mock API).');
  assert.deepEqual(errors,[]);console.log('PASS: production bundle mounts; four groups persist; keyboard toggles; accessible resizing; filtered palette action; two-row layout; help closes; no runtime errors.');w.close();
 })().catch(e=>{console.error(e);process.exit(1)});

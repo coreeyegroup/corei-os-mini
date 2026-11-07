@@ -287,7 +287,7 @@ HTTPS is required for login; the localhost development launcher cannot use this
 Secure cookie over plain HTTP. No new external ports are exposed.
 
 Migration 003 creates the registries transactionally. After deployment, workstation
-status reports `release: 0.5.0-registries` and `registry_schema_ready: true` when
+status reports `registry_schema_ready: true` when
 required columns are readable. `schema_ready` continues to report the earlier
 paper/assessment schema separately. Provider connectivity remains unavailable.
 
@@ -309,3 +309,42 @@ sudo systemctl restart corei-os-mini-workstation
 Reset keeps the username and database settings, prompts for the new password twice,
 and invalidates prior sessions after service restart. Do not put the password in
 shell arguments or chat. Setup without the flag preserves the configured login.
+
+
+## Connector profiles — release 0.6.0
+
+Providers → Connector profiles adds editable connection configuration for MT4 EA,
+MT5 EA, cTrader Open API, broker APIs, exchange APIs, FIX, data feeds and custom
+adapters. Create a provider and connection first, then link a profile using that
+connection UUID. There is one profile per connection; create additional connections
+for independent environments/configurations. Profile edits retain the connection
+identity. This is metadata, not terminal/session creation.
+
+- MT4/MT5 require a Windows or Ubuntu/Wine terminal runtime and broker server label.
+- Other families use SERVER_API. An adapter identifier such as `upstox` names the
+  intended implementation; entering it does not install or load an adapter.
+- API responses derive NOT_IMPLEMENTED, NOT_CONNECTED, NOT_OBSERVED, unverified
+  account and unavailable execution statuses. Enabling configuration cannot change
+  these facts. PAPER/SANDBOX/LIVE labels do not enable execution.
+- Do not enter passwords, tokens or secret-bearing URLs. This release has no broker
+  credential storage, broker authentication, runtime agent, health probe or order route.
+- `.egg-info/` is generated Python installation metadata and is now ignored by Git.
+
+Install/update on the existing Ubuntu server (keeps existing database/login credentials):
+
+```bash
+cd /home/coreeye/corei-os-mini && git pull --ff-only origin main && bash scripts/configure-workstation-database.sh && bash scripts/deploy-workstation.sh
+curl --fail --silent --show-error https://corei-os-mini.coreeye.in/api/workstation | python3 -m json.tool
+```
+
+Expected: release `0.6.0-connector-profiles`, `connector_schema_ready: true`, and
+connector_profiles capability available. Provider connectivity and execution remain
+unavailable. Migration 004 is additive and is applied by the existing transactional,
+checksum-guarded migration runner. Do not modify migrations 001–003.
+
+Validation for this change: backend profile/auth/readiness tests and existing auth
+suite, deployment-script unit tests, TypeScript production build and DOM interaction
+regressions including profile create/edit. Backend database calls and browser API
+responses in those suites are mocked. Real PostgreSQL migration and Windows/Wine
+terminal connectivity are not established by these tests; verify schema readiness
+on Ubuntu after deployment. No live broker connection is claimed.

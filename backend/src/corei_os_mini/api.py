@@ -16,6 +16,7 @@ from .persistence import (
     check_database,
     check_schema,
     check_registry_schema,
+    check_connector_schema,
     get_market_data_assessment,
     get_run,
     save_market_data_assessment,
@@ -139,17 +140,21 @@ def read_paper_run(run_id: UUID) -> dict[str, object]:
 def workstation(response: Response) -> dict[str, object]:
     """Identity and actual capability availability for the new workstation shell."""
     registry_ready = check_registry_schema(settings.database_url)
+    connector_ready = registry_ready and check_connector_schema(settings.database_url)
     response.headers["Cache-Control"] = "no-store"
     return {
         "project_id": "corei-os-mini",
         "contract_version": 1,
-        "release": "0.5.0-registries",
+        "release": "0.6.0-connector-profiles",
         "execution_mode": settings.execution_mode,
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "registry_schema_ready": registry_ready,
+        "connector_schema_ready": connector_ready,
         "demo_enabled": settings.enable_demo,
         "capabilities": [
+            {"id": "connector_profiles", "label": "Connector configuration", "available": connector_ready,
+             "reason": "Editable connector family, runtime and environment profiles. Requires migration 004. No adapters or runtime sessions yet."},
             {"id": "registries", "label": "Configuration registries", "available": registry_ready,
              "reason": "Authenticated provider, connection, account, instrument and symbol registration. Requires migration 003. No broker sessions or order submission."},
             {"id": "assessment", "label": "Saved market-data assessments", "available": True,

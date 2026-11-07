@@ -11,3 +11,5 @@ ui/node_modules/
 ui/dist/
 
 .venv-workstation.backup.*/
+
+*.egg-info/

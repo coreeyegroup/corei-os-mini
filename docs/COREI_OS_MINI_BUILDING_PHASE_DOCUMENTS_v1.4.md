@@ -83,6 +83,24 @@ Build provider/account/instrument registration, provider adapters, feed collecti
 
 **Gate:** connections, mappings, data quality, reconnect behavior, and failure visibility work for the selected providers.
 
+**Implementation checkpoint — connector profiles (0.6.0, 8 November 2026):**
+Provider/account/instrument registries and editable connector profiles are implemented.
+Migration 004 adds one profile per connection: connector family, intended adapter
+identifier, PAPER/SANDBOX/LIVE environment, terminal/API runtime and broker server
+label. Existing records are retained. Configuration does not establish a session.
+Runtime status is explicitly NOT_IMPLEMENTED / NOT_CONNECTED / NOT_OBSERVED.
+
+The next Phase 1 work is the first authenticated terminal bridge and verified
+account/session binding, instrument discovery, live quote ingestion and recovery.
+The Phase 1 demonstration and gate above have NOT passed yet. MT4/MT5 Windows and
+Ubuntu/Wine, cTrader, broker/exchange APIs, FIX and dedicated feeds remain within
+scope; listing a connector family is not implementation of its adapter.
+
+Before operational execution, complete stable account identity across connections,
+contract specifications, strategy/account attribution, shared account risk and
+reservations, durable order identity, uncertain-outcome reconciliation and scoped
+operator controls. These belong within the existing phases, not additional services.
+
 ### Phase 2 — Market analysis, strategies, and signals
 
 Build market snapshots/features, strategy configuration/version, instrument universes, strategy evaluation, conflict/no-trade behavior, signals, decisions, and TradeIntents.
