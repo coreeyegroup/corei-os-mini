@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import RegistryWorkspace from "./RegistryWorkspace";
+import WorkbenchIcon from "./WorkbenchIcon";
 import { initialLayout, launchContext, workspaceUrl, type RegistryResource } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
@@ -39,12 +40,11 @@ const descriptions: Record<View, string> = {
   Operations: "Connection health, service status and operational records",
   Settings: "Workspace layout and navigation preferences",
 };
-const icons = ["◈", "≋", "⇄", "▣", "⌕", "ƒ", "↗", "▤", "◎", "⚙"];
-const scopeItems: Record<string, string[]> = {
-  Providers: ["Connections", "Data sources", "Execution routes"],
-  Accounts: ["Individual accounts", "Account groups", "Eligibility"],
-  Instruments: ["Canonical instruments", "Symbol mappings", "Universes"],
-  Strategies: ["Strategy registry", "Versions", "Assignments"],
+const activityLabels=['Home','Market','Providers','Accounts','Symbols','Strategies','Orders','Portfolio','Monitor','Settings'];
+const registryNavigation:Record<string,{label:string;resource:RegistryResource}[]>={
+ Providers:[{label:'Provider directory',resource:'providers'},{label:'Connections',resource:'connections'},{label:'Connector profiles',resource:'connector-profiles'}],
+ Accounts:[{label:'Trading accounts',resource:'accounts'}],
+ Instruments:[{label:'Instrument directory',resource:'instruments'},{label:'Symbol mappings',resource:'mappings'}],
 };
 function stored() {
   try {
@@ -55,6 +55,7 @@ function stored() {
 }
 export default function App() {
   const launch = launchContext(window.location.search);
+  const [registryTarget,setRegistryTarget]=useState<Partial<Record<View,RegistryResource>>>({});
   const registryViews = useRef<Record<number, RegistryResource>>({});
   function openWorkspace(view: View, group: number, newWindow: boolean) {
     const resource = ['Providers','Accounts','Instruments'].includes(view) ? registryViews.current[group] : undefined;
@@ -318,7 +319,7 @@ export default function App() {
   }
   const active = layout.active[layout.focus];
   function body(view: View, group: number) {
-    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view} initial={(launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{registryViews.current[group]=r;}}/>;
+    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{registryViews.current[group]=r;}}/>;
     if (view === "Settings")
       return (
         <div className="content">
@@ -385,7 +386,7 @@ export default function App() {
       );
     if (view === "Overview" || view === "Operations")
       return (
-        <div className="content">
+        <div className="content overview-workspace">
           <div className="eyebrow">
             {layout.workspace.toUpperCase()} / WORKSTATION
           </div>
@@ -528,7 +529,7 @@ export default function App() {
           the current repository.
         </div>
         <div className="empty">
-          <span className="empty-icon">{icons[views.indexOf(view)]}</span>
+          <span className="empty-icon"><WorkbenchIcon index={views.indexOf(view)}/></span>
           <h2>{view} workspace</h2>
           <p>
             {view === "Execution"
@@ -611,7 +612,7 @@ export default function App() {
         <button className="command" onClick={() => setPalette(true)}>
           Search views and commands <kbd>Ctrl ⇧ P</kbd>
         </button>
-        <span className="tag paper">PAPER WORKSTATION</span>
+        <span className="tag paper"><span className="status-dot"/> PAPER</span>
         <button
           title="Toggle explorer"
           aria-pressed={layout.left}
@@ -648,7 +649,7 @@ export default function App() {
                 open(v);
               }}
             >
-              <span aria-hidden="true">{icons[i]}</span>
+              <WorkbenchIcon index={i}/><small>{activityLabels[i]}</small>
             </button>
           ))}
         </nav>}
@@ -682,12 +683,13 @@ export default function App() {
                 )
                 .map((v) => (
                   <div key={v}>
+                    {({Overview:"WORKSPACE",Providers:"CONFIGURATION",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]&&<div className="nav-section-label">{({Overview:"WORKSPACE",Providers:"CONFIGURATION",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]}</div>}
                     <button
                       className={active === v ? "selected" : ""}
                       onClick={() => open(v)}
                     >
                       <span>
-                        {scopeItems[v] ? "⌄" : "·"} {v}
+                        {registryNavigation[v] ? "⌄" : "·"} {v}
                       </span>
                       <span className="muted">
                         {v === "Overview"
@@ -697,24 +699,13 @@ export default function App() {
                             : "—"}
                       </span>
                     </button>
-                    {scopeItems[v] &&
-                      layout.activity === v &&
-                      scopeItems[v].map((s) => (
-                        <div className="tree-child" key={s}>
-                          {s}
-                          <small>Not configured</small>
-                        </div>
-                      ))}
+                    {registryNavigation[v] && active === v && registryNavigation[v].map(item=><button className="tree-child registry-link" key={item.resource} onClick={()=>{setRegistryTarget(x=>({...x,[v]:item.resource}));open(v);}}>{item.label}</button>)}
                   </div>
                 ))}
             </div>
             <div className="explorer-note">
-              MULTI-DIMENSIONAL MODEL
-              <p>
-                Independent registries.
-                <br />
-                Explicit assignments.
-              </p>
+              COREI OS MINI
+              <p>Paper workspace<br/>Configuration and terminal setup</p>
             </div>
           </aside>
         )}
@@ -803,7 +794,7 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                    <div className="group-actions"><span>GROUP {i+1} / {layout.active[i]}</span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],i,false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],i,true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
+                    <div className="group-actions"><span>Workspace {i+1} <span className="muted">/ {layout.active[i]}</span></span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],i,false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],i,true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
                     <div
                       className="view"
                       role="tabpanel"
@@ -877,19 +868,11 @@ export default function App() {
               <dl>
                 <dt>Workspace</dt>
                 <dd>{layout.workspace}</dd>
-                <dt>Provider</dt>
-                <dd>None selected</dd>
-                <dt>Account / group</dt>
-                <dd>None selected</dd>
-                <dt>Instrument</dt>
-                <dd>None selected</dd>
-                <dt>Strategy</dt>
-                <dd>None selected</dd>
+                <dt>Backend</dt><dd>{runtime?'Verified':'Unavailable'}</dd>
+                <dt>Database</dt><dd>{runtime?.database_connected?'Connected':'Not verified'}</dd>
+                <dt>Operating mode</dt><dd>Paper · execution unavailable</dd>
               </dl>
-              <div className="notice">
-                Execution destination is unset. Navigation does not authorise an
-                order.
-              </div>
+              <div className="context-guidance"><h3>Working here</h3><p>{['Providers','Accounts','Instruments'].includes(active)?'Use the registry tabs to select a directory. Choose New to add configuration or Inspect to review a record. Field information is available beside each label.':active==='Settings'?'Choose a theme, adjust text size and density, or arrange your panels. Preferences are saved in this browser.':'Use the explorer to switch views. Open related views in separate groups to compare information side by side.'}</p></div>
               <h3>Workspace controls</h3>
               <button
                 className="wide"
@@ -911,9 +894,9 @@ export default function App() {
                 Resize panels
               </button>
               <div className="release">
-                FOUNDATION RELEASE
+                {runtime?.release ?? "Backend version unavailable"}
                 <br />
-                No provider adapters configured
+                Provider connectivity pending
               </div>
             </div>
           </aside>

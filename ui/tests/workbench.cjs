@@ -3,7 +3,9 @@ const fs=require('fs');
 const path=require('path');
 const assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'../..');
-const js=fs.readFileSync(path.join(root,'ui/dist/assets',fs.readdirSync(path.join(root,'ui/dist/assets')).find(x=>x.endsWith('.js'))),'utf8');
+const html=fs.readFileSync(path.join(root,'ui/dist/index.html'),'utf8');
+const entry=html.match(/src="([^" ]+\.js)"/)[1].replace(/^\//,'');
+const js=fs.readFileSync(path.join(root,'ui/dist',entry),'utf8');
 const tick=()=>new Promise(r=>setTimeout(r,40));
 (async()=>{
  const dom=new JSDOM('<html><body><div id="root"></div></body></html>',{url:'https://corei-os-mini.coreeye.in',runScripts:'outside-only',pretendToBeVisual:true});
@@ -50,11 +52,11 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.document.querySelector('[aria-label="Open Strategies in new window"]').click();
  assert.equal(opened.length,2);assert.equal(new URL(opened[0][0]).searchParams.get('view'),'Strategies');
  assert.match(opened[0][2],/noopener/);assert.match(opened[1][2],/popup=yes/);
- let registered=[]; let profiles=[];
+ let registered=[]; let profiles=[];let authenticated=false;
  w.fetch=async(url,options={})=>{
    if(url==='/install/manifest.json')return {ok:true,json:async()=>({project_id:'corei-os-mini',version:'0.6.2',status:'LOCAL_DIAGNOSTICS_ONLY',sha256:'a'.repeat(64)})};
-   if(url.endsWith('/operator/session'))return {ok:false,status:401,json:async()=>({detail:'Sign in'})};
-   if(url.endsWith('/operator/login'))return {ok:true,json:async()=>({username:'test-operator'})};
+   if(url.endsWith('/operator/session'))return authenticated?{ok:true,json:async()=>({username:'test-operator'})}:{ok:false,status:401,json:async()=>({detail:'Sign in'})};
+   if(url.endsWith('/operator/login')){authenticated=true;return {ok:true,json:async()=>({username:'test-operator'})};}
    if(url.includes('/registry/connector-profiles')) {
      if(options.method==='POST'||options.method==='PUT') {
        const body=JSON.parse(options.body);
@@ -77,10 +79,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(form.querySelector('input[type="password"]'),'a-long-test-password');await tick();
  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.match(w.document.body.textContent,/Operator: test-operator/);
+ click('New provider');await tick();
  const registration=w.document.querySelector('.registry-form');fill(registration.querySelector('input'),'Test broker');await tick();registration.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.equal(registered.length,1);assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
- console.log('PASS: registry login, disabled provider creation, refresh and table rendering (mock API).');
+ assert.equal(w.document.querySelector('[aria-label="Create record"]'),null);
+ const search=w.document.querySelector('input[placeholder="Filter this page by name or reference…"]');
+ fill(search,'nonmatching');await tick();assert.match(w.document.body.textContent,/No matching records on this page/);
+ fill(search,'Test broker');await tick();assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
+ console.log('PASS: registry login, side-panel create, successful close, page filtering and record list (mock API).');
  click('Connector profiles');await tick();await tick();
+ click('New connector profile');await tick();
  let pf=w.document.querySelector('.registry-form');
  const field=(label)=>[...pf.querySelectorAll('.registry-field')].find(x=>x.querySelector('label').textContent.startsWith(label)).querySelector('input,select');
  fill(pf.querySelector('[aria-label="Connection internal ID"]'),'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
@@ -93,12 +101,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(field('Connection').disabled);
  const select=field('Connector family');select.value='BROKER_API';select.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();
  assert.equal(field('Runtime location').value,'SERVER_API');
+ w.document.querySelector('[aria-label="Information about connector_type"]').click();await tick();
+ assert.match(w.document.querySelector('[role="note"]').textContent,/bridge in the terminal/);
  fill(field('Adapter identifier'),'upstox');await tick();
  pf.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.equal(profiles[0].connector_type,'BROKER_API');assert.equal(profiles[0].adapter_key,'upstox');
  assert.equal(profiles[0].execution_available,false);
- w.document.querySelector('[aria-label="Information about connector_type"]').click();await tick();
- assert.match(w.document.querySelector('[role="note"]').textContent,/bridge in the terminal/);
  w.document.querySelector('[aria-label="Open Providers in new tab"]').click();
  assert.equal(new URL(opened.at(-1)[0]).searchParams.get('registry'),'connector-profiles');
  click('Install terminal files');await tick();await tick();

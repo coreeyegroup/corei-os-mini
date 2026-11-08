@@ -16,7 +16,7 @@ export function MenuBar({ commands }: { commands: Command[] }) {
         {commands.filter(c=>c.section===section).map(c=><button key={c.label} onClick={()=>{c.run();setMenu('');}}><span>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
       </div>}
     </div>)}
-    <span className="menu-caption">TRADING WORKBENCH <b>0.4</b></span>
+    <span className="menu-caption">WORKSPACE CONTROLS</span>
   </nav>;
 }
 export function CommandPalette({ commands, dismiss }: { commands: Command[]; dismiss: () => void }) {

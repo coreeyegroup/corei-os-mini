@@ -1,0 +1,127 @@
+/* Workstation hierarchy. Uses the existing five-theme token contract. */
+:root[data-theme="Standard"],:root:not([data-theme]) {
+ --canvas:#131a23;--chrome:#0e141c;--surface:#19222d;--input:#101720;
+ --line:#2b3643;--text:#e0e6ed;--muted:#9aaabb;--accent:#8dbbd6;
+ --selection:#24394a;--hover:#202e3b;--status:#15212e;
+}
+.app {font-feature-settings:"tnum" 1,"cv02" 1;}
+button,a,input,select,summary {transition:background-color .12s,border-color .12s,color .12s;}
+button {border-radius:4px;}
+.top {height:52px;min-height:52px;padding:0 16px;gap:12px;}
+.brand {font-size:13px;letter-spacing:1.4px;gap:8px;}
+.brand span {font-size:10px;letter-spacing:1px;color:var(--muted);}
+.top .command {max-width:510px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:5px;font-size:12px;text-align:left;}
+.top select {min-height:30px;font-size:12px;}
+.top .paper {display:flex;align-items:center;gap:7px;letter-spacing:.8px;font-size:10px;padding:6px 9px;border:1px solid var(--line);}
+.status-dot {width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--muted);flex-shrink:0;}
+.menubar {min-height:32px;padding:0 12px;gap:4px;border-bottom:1px solid var(--line);}
+.menubar>button {padding:7px 10px;font-size:12px;}
+.activity {width:66px;padding:9px 0;gap:4px;border-right:1px solid var(--line);}
+.activity button {display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:54px;min-height:54px;gap:5px;border-left:2px solid transparent;}
+.activity small {font-size:9px;letter-spacing:.1px;color:inherit;}
+.activity button[aria-current] {border-left-color:var(--accent);color:var(--accent);background:var(--surface);}
+.explorer {min-width:180px;}
+.panel-heading {height:42px;padding:12px 13px;letter-spacing:1px;font-size:10px;font-weight:600;}
+.explorer>input {margin:2px 12px 12px;width:calc(100% - 24px);height:31px;font-size:12px;border-radius:4px;}
+.open-editors summary {font-size:10px;padding:9px 12px;letter-spacing:.5px;background:transparent;}
+.open-editors button {padding:7px 13px;font-size:11px;}
+.tree-project {display:none;}
+.nav-section-label {padding:17px 13px 7px;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:600;}
+.tree button {padding:8px 13px;font-size:12px;border-radius:0;min-height:33px;}
+.tree button.selected {border-left:2px solid var(--accent);padding-left:11px;background:var(--selection);}
+.tree .registry-link {display:block;min-height:29px;width:calc(100% - 22px);padding:6px 8px 6px 18px;margin:1px 0 1px 22px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);text-align:left;}
+.tree .registry-link:hover {color:var(--text);}
+.explorer-note {font-size:9px;letter-spacing:1px;padding:14px;margin-top:auto;}
+.explorer-note p {font-size:11px;letter-spacing:0;margin-bottom:0;}
+.workspace-toolbar {min-height:38px;padding:5px 16px;font-size:12px;border-bottom:1px solid var(--line);}
+.workspace-toolbar button {padding:4px 8px;font-size:11px;}
+.tabs {height:38px;min-height:38px;}
+.tab button {font-size:12px;padding:9px 13px;}
+.tab.active {border-top-width:2px;}
+.group.focused {outline-color:var(--line);}
+.group-actions {min-height:34px;padding:4px 12px;border-bottom:1px solid var(--line);gap:9px;}
+.group-actions>span {font-size:10px;text-transform:none;letter-spacing:.15px;}
+.group-actions button {font-size:10px;color:var(--muted);padding:3px 5px;}
+.group-actions button:hover {color:var(--text);}
+.content {padding:26px 28px;}
+.content h1 {font-size:23px;font-weight:550;letter-spacing:-.5px;margin:7px 0 9px;}
+.content p {font-size:12px;line-height:1.65;}
+.eyebrow {font-size:9px;letter-spacing:1.1px;color:var(--muted);}
+.registry-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.configuration-badge {border:1px solid var(--line);padding:5px 8px;color:var(--muted);font-size:10px;border-radius:4px;}
+.registry-description {max-width:760px;margin:0 0 13px;}
+.registry-safety {display:flex;align-items:center;gap:7px;font-size:11px;line-height:1.5;color:var(--muted);padding:8px 0 12px;}
+.connection-guide {background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0;margin:0 0 4px;}
+.connection-guide>summary {font-size:11px;padding:10px 0;color:var(--muted);}
+.connection-guide[open] {padding-bottom:12px;}
+.registry-commandbar {display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:20px 0 13px;font-size:12px;}
+.registry-actions {display:flex;gap:8px;flex-wrap:wrap;}
+.registry-actions button {min-height:32px;font-size:12px;padding:6px 11px;}
+.registry-actions .primary-action {background:var(--accent);border-color:var(--accent);color:var(--canvas);font-weight:650;}
+.registry-tabs {margin:18px 0 0;gap:3px;}
+.registry-tabs button {padding:10px 11px;font-size:12px;color:var(--muted);}
+.registry-tabs button[aria-pressed=true] {background:transparent;color:var(--text);font-weight:600;}
+.registry-list-tools {display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 12px;}
+.registry-list-tools label {flex:1;max-width:440px;}
+.registry-list-tools input {width:100%;height:33px;font-size:12px;}
+.registry-list-tools button {height:32px;font-size:11px;}
+.sr-only {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+.registry-table {border-radius:5px;max-height:none;}
+.registry-table th {font-size:9px;font-weight:600;color:var(--muted);padding:11px 12px;letter-spacing:.7px;background:var(--chrome);}
+.registry-table td {padding:13px 12px;font-size:12px;}
+.registry-table td:last-child button {font-size:10px;min-height:27px;}
+.registry-table th:first-child,.registry-table td:first-child {min-width:74px;width:74px;}
+.record-state {display:inline-flex;gap:5px;align-items:center;border:1px solid var(--line);color:var(--muted);border-radius:4px;font-size:10px;padding:3px 7px;}
+.record-state.enabled {border-color:var(--accent);color:var(--accent);}
+.registry-empty {padding:42px 20px;text-align:center;border:1px solid var(--line);border-top:0;border-radius:0 0 5px 5px;}
+.registry-empty strong {font-size:13px;font-weight:550;}
+.registry-empty p {margin:6px 0 0;color:var(--muted);}
+.registry-pagination {justify-content:flex-end;font-size:11px;margin-top:14px;}
+.registry-pagination button {font-size:11px;}
+.registry-success {padding:10px 12px;border-left:2px solid var(--ready);background:var(--surface);}
+.registry-editor {position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:100dvh;width:min(520px,100vw);max-width:100vw;padding:0;border:0;border-left:1px solid var(--line);background:var(--canvas);color:var(--text);box-shadow:-20px 0 80px #0005;overflow-y:auto;}
+.registry-editor::backdrop {background:#0008;backdrop-filter:blur(2px);}
+.registry-editor>header {display:flex;align-items:center;justify-content:space-between;padding:23px 24px;border-bottom:1px solid var(--line);}
+.registry-editor>header h2 {font-size:20px;font-weight:550;margin:7px 0 0;}
+.registry-editor>header button {font-size:20px;background:transparent;border:0;}
+.registry-editor .editor-description {padding:16px 24px 0;margin:0;font-size:12px;color:var(--muted);line-height:1.65;}
+.registry-editor .registry-form {display:grid;grid-template-columns:1fr;background:transparent;border:0;margin:0;padding:22px 24px;gap:18px;}
+.registry-editor .registry-form input,.registry-editor .registry-form select {height:38px;}
+.registry-editor .registry-form button[type=submit],.registry-editor .registry-form>button:first-of-type {min-height:36px;padding:8px 14px;background:var(--accent);color:var(--canvas);font-weight:600;}
+.registry-editor .registry-form .form-caption {font-size:11px;}
+.registry-editor .info-note {position:static;width:auto;margin:7px 0;padding:9px;font-size:11px;box-shadow:none;}
+.registry-editor .field-info {position:static;}
+.registry-editor .field-heading {flex-wrap:wrap;}
+.registry-workspace>.registry-form {max-width:500px;}
+.registry-form:has(input[type=password]) {margin-top:24px;padding:24px;grid-template-columns:1fr;gap:16px;}
+.registry-form:has(input[type=password]) h2 {font-size:16px;}
+.overview-workspace .metrics {margin:23px 0;gap:1px;background:var(--line);border-radius:5px;overflow:hidden;}
+.metrics article {background:var(--surface);padding:17px;gap:8px;}
+.metrics small {font-size:9px;letter-spacing:.9px;}
+.metrics strong {font-size:20px;font-weight:550;}
+.metrics span {font-size:11px;}
+.section-title {margin-top:22px;}
+.capabilities article {padding:13px 0;}
+.capabilities strong {font-size:12px;font-weight:550;}
+.capabilities p {font-size:11px;line-height:1.55;max-width:780px;}
+.capabilities .tag {font-size:8px;letter-spacing:.5px;padding:4px 6px;}
+.launchers {gap:10px;}
+.launchers button {padding:16px;text-align:left;border-radius:5px;}
+.launchers strong {font-size:13px;}
+.launchers span {font-size:11px;line-height:1.5;}
+.inspector-body {padding:17px;}
+.inspector dt {font-size:10px;margin-top:17px;}
+.inspector dd {font-size:12px;line-height:1.5;}
+.bottom-tabs {height:37px;}
+.event-log {padding:13px 17px;line-height:1.65;font-size:11px;}
+footer {height:25px;font-size:10px;padding:0 14px;border-top:1px solid var(--line);}
+@container(max-width:600px) {.registry-commandbar {align-items:flex-start;}.registry-actions {width:100%;}.registry-list-tools {align-items:stretch;}.registry-heading h1 {font-size:20px;}}
+@media(max-width:900px) {.content {padding:20px;}.activity {width:54px;}.activity small {font-size:8px;}.top {gap:6px;padding:0 10px;}.brand span {display:none;}}
+.context-guidance {border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0;margin:18px 0;}
+.context-guidance h3 {font-size:11px;font-weight:600;margin:0 0 7px;}
+.context-guidance p {font-size:11px;line-height:1.65;margin:0;color:var(--muted);}
+.inspector h3 {font-size:11px;font-weight:600;margin-top:18px;}
+.registry-table th:first-child {white-space:nowrap;}
+.menu-wrap>button {min-height:31px;padding:6px 10px;}
+.registry-workspace>.section-title {margin-top:8px;margin-bottom:4px;}
+.registry-editor .editor-error {padding:10px 24px;color:var(--danger);font-size:12px;border-left:2px solid var(--danger);}

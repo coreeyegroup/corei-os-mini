@@ -9,5 +9,5 @@ export default defineConfig({
       "/health": "http://127.0.0.1:8786",
     },
   },
-  build: { target: "es2022" },
+  build: { target: "es2022", emptyOutDir: true },
 });

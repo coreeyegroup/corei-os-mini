@@ -9,3 +9,5 @@ createRoot(document.getElementById("root")!).render(
 );
 
 import "./themes.css";
+
+import "./workstation.css";

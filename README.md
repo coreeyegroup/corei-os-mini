@@ -460,3 +460,42 @@ Validation includes frontend build/DOM interactions, reproducible ZIP/checksum
 checks, and executing the Linux installer against temporary terminal directories
 (including spaces, backup preservation and wrong-platform rejection). These tests
 do not establish MetaTrader or broker connectivity.
+
+
+## Workspace experience — release 0.6.3
+
+The workstation now uses a consistent visual hierarchy across the existing themes:
+labeled vector navigation icons, grouped explorer entries, a refined Standard dark
+palette, readable status/context panels, consistent spacing and quieter controls.
+Existing saved themes/layouts, split groups, keyboard controls, tab/window actions
+and terminal installation remain available. The inspector shows real application
+readiness and relevant help instead of unbound provider/account selection placeholders.
+
+Registry pages now prioritise records. Choose New provider/account/instrument/etc.
+to open a native modal side editor, with keyboard focus containment and Escape/close
+controls. Save closes the editor only after success. Validation errors also appear
+inside the editor. Existing connector profile editing and disabled-by-default
+creation are preserved. Filter this page searches only the records already loaded
+on the current paginated page, including resolved parent names; it is not a global
+database search. Information buttons and advanced internal-ID inputs remain.
+
+The explorer's implemented provider, connection, connector-profile, account,
+instrument and symbol-mapping entries now navigate directly to those registries.
+Future strategy/execution capabilities remain explicitly unavailable.
+
+Build output is explicitly cleaned by Vite before rebuilding. The DOM regression
+suite reads the entry script from dist/index.html instead of selecting an arbitrary
+old JavaScript file. This prevents tests from exercising a previous bundle when
+multiple hashed files have accumulated.
+
+Validation: TypeScript/production build and DOM regression suite (including record
+creation/editing, page filtering, installation, five themes, split groups and window
+controls). Chromium checks used mocked API responses, inspected overview, registry
+and side editor screens at 1600x1080 and 1024x768, checked all five themes and verified
+native-dialog focus and Escape. These are UI checks; they do not verify broker
+connectivity. No dependencies, database migration or broker execution changes were
+introduced. The downloadable local terminal-readiness kit remains version 0.6.2.
+
+Update: git pull --ff-only origin main, then bash scripts/deploy-workstation.sh.
+Expected /api/workstation release: 0.6.3-workspace-ux. Existing database and operator
+credentials are retained; no database setup command is required for this release.
