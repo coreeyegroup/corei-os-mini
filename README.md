@@ -538,3 +538,22 @@ backend tests (database calls mocked); Chromium visual checks with populated moc
 records in all five themes at 1440x900 and 1024x768. Backend checks ran on Python
 3.12 with FastAPI 0.115.12 and psycopg 3.2.6, not the deployment's Python 3.14.
 No live broker or PostgreSQL integration is claimed by these tests.
+
+
+### Table-first registry and floating editor — 0.6.5
+
+Registry tables follow the compact search/action bar. Definitions, connection
+guidance and operating limits are collapsed below the records. Installation
+instructions also follow the table. Configuration-only status remains visible.
+
+Add/Edit opens a centred modal window, sized initially to its form content. Drag
+the title strip to move it, drag the bottom-right grip to resize, or use arrow
+keys while focusing either handle. Centre/reset restores the window geometry.
+The window stays within the viewport; its form scrolls when needed. Escape and
+the close button retain dirty-form confirmation. Clicking the backdrop does not
+discard a form. Modal focus containment remains; this is an in-page dialog, not
+a separate browser window. No schema or trading behaviour changes.
+
+Validation: production build and DOM interactions, plus Chromium pointer dragging,
+resizing, reset, dirty-form protection and table/reference order with mocked data
+in all five themes. No live provider connection is claimed.

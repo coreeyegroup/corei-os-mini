@@ -89,6 +89,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: registry login, side-panel create, successful close, server search and record list (mock API).');
  // Dirty editor must not close on Cancel; an accepted discard clears it.
  click('New provider');await tick();
+ const popup=w.document.querySelector('.registry-editor');
+ const initialWidth=parseFloat(popup.style.width);w.document.querySelector('[aria-label="Resize record window"]').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));await tick();assert.equal(parseFloat(popup.style.width),initialWidth+10);
+ const initialLeft=parseFloat(popup.style.left);w.document.querySelector('[aria-label="Move record window"]').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));await tick();assert.equal(parseFloat(popup.style.left),initialLeft+10);
+ const reference=w.document.querySelector('.registry-reference');assert.equal(reference.open,false);assert.ok(w.document.querySelector('.registry-table').compareDocumentPosition(reference)&w.Node.DOCUMENT_POSITION_FOLLOWING);
  const draftForm=w.document.querySelector('.registry-editor .registry-form');fill(draftForm.querySelector('input'),'Unsaved broker');await tick();
  w.confirm=()=>false;w.document.querySelector('[aria-label="Close record editor"]').click();await tick();
  assert.ok(w.document.querySelector('.registry-editor'));assert.match(w.document.querySelector('.registry-editor').textContent,/UNSAVED CHANGES/);
