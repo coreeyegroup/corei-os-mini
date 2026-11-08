@@ -67,7 +67,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    }
    if(url.includes('/registry/')) {
      if(options.method==='POST'){const body=JSON.parse(options.body);assert.equal(body.enabled,false);registered.push({id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',...body});return {ok:true,json:async()=>registered[0]};}
-     return {ok:true,json:async()=>({items:url.includes('/providers')?registered:[],total:url.includes('/providers')?registered.length:0,offset:0,limit:50})};
+     const query=new URL(url,w.location.origin).searchParams.get('q')||'';const rows=url.includes('/providers')?registered.filter(r=>r.name.toLowerCase().includes(query.toLowerCase())):[];return {ok:true,json:async()=>({items:rows,total:rows.length,offset:0,limit:50})};
    }
    throw Error('Unexpected test request '+url);
  };
@@ -83,14 +83,26 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const registration=w.document.querySelector('.registry-form');fill(registration.querySelector('input'),'Test broker');await tick();registration.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.equal(registered.length,1);assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
  assert.equal(w.document.querySelector('[aria-label="Create record"]'),null);
- const search=w.document.querySelector('input[placeholder="Filter this page by name or reference…"]');
- fill(search,'nonmatching');await tick();assert.match(w.document.body.textContent,/No matching records on this page/);
- fill(search,'Test broker');await tick();assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
- console.log('PASS: registry login, side-panel create, successful close, page filtering and record list (mock API).');
+ const search=w.document.querySelector('input[aria-label="Search all records"]');
+ fill(search,'nonmatching');await new Promise(r=>setTimeout(r,350));assert.match(w.document.body.textContent,/No matching records/);
+ fill(search,'Test broker');await new Promise(r=>setTimeout(r,350));assert.match(w.document.querySelector('.registry-table').textContent,/Test broker/);
+ console.log('PASS: registry login, side-panel create, successful close, server search and record list (mock API).');
+ // Dirty editor must not close on Cancel; an accepted discard clears it.
+ click('New provider');await tick();
+ const draftForm=w.document.querySelector('.registry-editor .registry-form');fill(draftForm.querySelector('input'),'Unsaved broker');await tick();
+ w.confirm=()=>false;w.document.querySelector('[aria-label="Close record editor"]').click();await tick();
+ assert.ok(w.document.querySelector('.registry-editor'));assert.match(w.document.querySelector('.registry-editor').textContent,/UNSAVED CHANGES/);
+ const blocked=new w.Event('corei-before-layout-change',{cancelable:true});assert.equal(w.dispatchEvent(blocked),false);
+ w.confirm=()=>true;w.document.querySelector('[aria-label="Close record editor"]').click();await tick();assert.equal(w.document.querySelector('.registry-editor'),null);
+ assert.equal(w.document.querySelector('.registry-tabs').textContent.includes('Accounts'),false);
+ // Plain Ctrl+P remains available to the browser.
+ const printEvent=new w.KeyboardEvent('keydown',{key:'p',ctrlKey:true,bubbles:true,cancelable:true});w.dispatchEvent(printEvent);assert.equal(printEvent.defaultPrevented,false);
+ console.log('PASS: dirty-form cancellation/discard, guarded layout changes, domain-scoped navigation, browser print shortcut.');
  click('Connector profiles');await tick();await tick();
+ assert.ok([...w.document.querySelectorAll('[role=tab][aria-selected=true]')].some(t=>t.textContent==='Connector profiles'));
  click('New connector profile');await tick();
  let pf=w.document.querySelector('.registry-form');
- const field=(label)=>[...pf.querySelectorAll('.registry-field')].find(x=>x.querySelector('label').textContent.startsWith(label)).querySelector('input,select');
+ const field=(label)=>[...pf.querySelectorAll('.registry-field')].find(x=>x.querySelector('label').textContent.startsWith(label)).querySelector('select')||[...pf.querySelectorAll('.registry-field')].find(x=>x.querySelector('label').textContent.startsWith(label)).querySelector('input');
  fill(pf.querySelector('[aria-label="Connection internal ID"]'),'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
  fill(field('Profile name'),'Demo terminal');fill(field('Adapter identifier'),'mt5_ea');
  fill(field('Broker server name'),'Example-Demo');await tick();

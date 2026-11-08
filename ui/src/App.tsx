@@ -62,6 +62,7 @@ export default function App() {
     window.open(workspaceUrl(view, resource), '_blank', newWindow ? 'popup=yes,width=1440,height=960,noopener,noreferrer' : 'noopener,noreferrer');
   }
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
+  const [registryLabels,setRegistryLabels]=useState<Record<number,string>>({});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
   const [context,setContext]=useState<{view:View;group:number;x:number;y:number}|null>(null);
@@ -74,7 +75,7 @@ export default function App() {
   },[appearance,pinned]);
   useEffect(()=>{const dismiss=()=>setContext(null);window.addEventListener('resize',dismiss);return ()=>window.removeEventListener('resize',dismiss);},[]);
   function togglePin(v:View){setPinned(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v]);}
-  function closeOthers(v:View, group:number){setLayout(x=>({...x,groups:x.groups.map((g,i)=>i===group?g.filter(t=>t===v||pinned.includes(t)):g),active:x.active.map((a,i)=>i===group?v:a)}));}
+  function closeOthers(v:View, group:number){if(!allowLayoutChange())return;setLayout(x=>({...x,groups:x.groups.map((g,i)=>i===group?g.filter(t=>t===v||pinned.includes(t)):g),active:x.active.map((a,i)=>i===group?v:a)}));}
   const [layout, setLayout] = useState<Layout>(stored),
     [runtime, setRuntime] = useState<Runtime | null>(null),
     [error, setError] = useState(""),
@@ -90,6 +91,7 @@ export default function App() {
     [record, setRecord] = useState<unknown>(null),
     [recordError, setRecordError] = useState(""),
     [recordBusy, setRecordBusy] = useState(false);
+  const [checkedAt,setCheckedAt]=useState<number|null>(null);
   const alive = useRef(true),
     pending = useRef<AbortController | null>(null),
     recordRequest = useRef<AbortController | null>(null);
@@ -122,8 +124,6 @@ export default function App() {
     setChecking(true);
     setRuntime(null);
     setError("");
-    setRecord(null);
-    recordRequest.current?.abort();
     try {
       const response = await fetch("/api/workstation", {
         signal: controller.signal,
@@ -153,6 +153,7 @@ export default function App() {
         );
       if (alive.current && pending.current === controller) {
         setRuntime(data);
+        setCheckedAt(Date.now());
         log("Backend identity verified · paper mode");
       }
     } catch (e) {
@@ -172,7 +173,9 @@ export default function App() {
   useEffect(() => {
     alive.current = true;
     void refresh();
+    const interval=setInterval(()=>{if(document.visibilityState!=='hidden')void refresh();},30000);
     return () => {
+      clearInterval(interval);
       alive.current = false;
       pending.current?.abort();
       recordRequest.current?.abort();
@@ -182,9 +185,9 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const typing = e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable="true"]');
-      if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(x=>!x); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(x=>!x); return; }
       if (e.key === 'Escape') { setPalette(false); setHelp(false); setContext(null); }
-      if (typing || palette) return;
+      if (typing || palette || document.querySelector('dialog[open]')) return;
       if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); patch({bottom:!layout.bottom}); }
       if (mod && e.key === '\\') { e.preventDefault(); split(); }
@@ -199,6 +202,7 @@ export default function App() {
     open(group[(group.indexOf(layout.active[layout.focus])+direction+group.length)%group.length]);
   }
   function preset(count:number, axis:Layout['axis']) {
+    if(!allowLayoutChange())return;
     const selected:View[]=['Overview','Market data','Execution','Operations'];
     patch({groups:selected.slice(0,count).map(v=>[v]),active:selected.slice(0,count),focus:0,axis,maximized:false});
   }
@@ -215,6 +219,7 @@ export default function App() {
 
   }
   function close(view: View, group: number) {
+    if(!allowLayoutChange())return;
     if(pinned.includes(view)) return;
     setClosed(x=>[view,...x].slice(0,20));
     setLayout((x) => {
@@ -253,6 +258,7 @@ export default function App() {
     );
   }
   function moveTab(view: View, from: number, to: number) {
+    if(!allowLayoutChange())return;
     if (from === to) {
       setLayout((x) => ({
         ...x,
@@ -318,8 +324,11 @@ export default function App() {
     }
   }
   const active = layout.active[layout.focus];
+  const registryLabel=(view:View,group:number)=>{const resource=registryViews.current[group];return ['Providers','Accounts','Instruments'].includes(view)&&resource?resource.replace('connector-profiles','Connector profiles').replace('mappings','Symbol mappings').replace(/^./,c=>c.toUpperCase()):view;};
+  function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
+
   function body(view: View, group: number) {
-    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{registryViews.current[group]=r;}}/>;
+    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{if(layout.active[group]!==view)return;registryViews.current[group]=r;setRegistryLabels(x=>x[group]===r?x:{...x,[group]:r});}}/>;
     if (view === "Settings")
       return (
         <div className="content">
@@ -375,6 +384,7 @@ export default function App() {
             ))}
             <button
               onClick={() => {
+                if(!allowLayoutChange())return;
                 patch({ ...defaults(layout.workspace) });
                 log("Layout reset");
               }}
@@ -426,7 +436,7 @@ export default function App() {
             </article>
           </div>
           <div className="section-title">
-            <h2>Platform capabilities</h2>
+            <h2>{view==='Operations'?'Service readiness':'Platform capabilities'}</h2><span className="muted">{checkedAt?`Checked ${new Date(checkedAt).toLocaleTimeString()} · refresh 30s`:'Not yet verified'}</span>
             <button disabled={checking} onClick={() => void refresh()}>
               Refresh status
             </button>
@@ -542,6 +552,7 @@ export default function App() {
               : `Configure ${view.toLowerCase()} unavailable`}
           </button>
         </div>
+        <div className="readiness-grid"><h2>Required inputs and next actions</h2><table><thead><tr><th>Dependency</th><th>Current state</th><th>Workspace</th></tr></thead><tbody>{([['Provider / connection','Registration available','Providers'],['Trading accounts','Registration available; verification pending','Accounts'],['Instrument mappings','Registration available; contract verification pending','Instruments'],['Live data and execution','Adapters and execution lifecycle pending','Operations']] as const).map(([name,state,target])=><tr key={name}><td>{name}</td><td>{state}</td><td><button onClick={()=>open(target)}>{target} →</button></td></tr>)}</tbody></table></div>
         <div className="principle">
           Provider · connection · account · instrument · strategy
           <br />
@@ -568,7 +579,7 @@ export default function App() {
     {section:'Appearance',label:'Toggle wrapped tabs',run:()=>appearancePatch({wrapTabs:!appearance.wrapTabs})},
     {section:'Appearance',label:'Appearance settings',run:()=>open('Settings')},
     {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
-    {section:'Workspace',label:'Reset current workspace layout',run:()=>setLayout(defaults(layout.workspace))},
+    {section:'Workspace',label:'Reset current workspace layout',run:()=>{if(allowLayoutChange())setLayout(defaults(layout.workspace));}},
     {section:'View',label:'Toggle explorer',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
     {section:'View',label:'Toggle inspector',shortcut:'Ctrl+Alt+B',run:()=>patch({right:!layout.right})},
     {section:'View',label:'Toggle bottom panel',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
@@ -595,6 +606,7 @@ export default function App() {
           aria-label="Workspace"
           value={layout.workspace}
           onChange={(e) => {
+            if(!allowLayoutChange())return;
             const name = e.target.value;
             let saved = defaults(name);
             try {
@@ -699,7 +711,7 @@ export default function App() {
                             : "—"}
                       </span>
                     </button>
-                    {registryNavigation[v] && active === v && registryNavigation[v].map(item=><button className="tree-child registry-link" key={item.resource} onClick={()=>{setRegistryTarget(x=>({...x,[v]:item.resource}));open(v);}}>{item.label}</button>)}
+                    {registryNavigation[v] && active === v && registryNavigation[v].map(item=><button className="tree-child registry-link" key={item.resource} onClick={()=>{if(!allowLayoutChange())return;setRegistryTarget(x=>({...x,[v]:item.resource}));open(v);}}>{item.label}</button>)}
                   </div>
                 ))}
             </div>
@@ -733,8 +745,9 @@ export default function App() {
           <div className={`groups count-${layout.groups.length}`} style={{ flexDirection: layout.axis }}>
             {layout.groups.map(
               (group, i) =>
-                (!layout.maximized || layout.focus === i) && (
+                (
                   <section
+                    hidden={layout.maximized && layout.focus!==i}
                     className={`group ${layout.focus === i ? "focused" : ""}`}
                     key={i}
                     onFocus={() => {
@@ -779,9 +792,11 @@ export default function App() {
                           <button
                             role="tab"
                             aria-selected={layout.active[i] === v}
+                            tabIndex={layout.active[i]===v?0:-1}
+                            onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const tabs=[...e.currentTarget.closest('.tabs')!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];const at=tabs.indexOf(e.currentTarget);const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(at+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus();}}}
                             onClick={() => open(v, i)}
                           >
-                            {pinned.includes(v)?"◆ ":""}{v}
+                            {pinned.includes(v)?"◆ ":""}{['Providers','Accounts','Instruments'].includes(v)&&layout.active[i]===v&&registryLabels[i]?registryLabel(v,i):v}
                           </button>
                           <button
                             disabled={pinned.includes(v)}
@@ -800,7 +815,7 @@ export default function App() {
                       role="tabpanel"
                       aria-label={layout.active[i]}
                     >
-                      {body(layout.active[i], i)}
+                      {group.map(v=><div key={v} hidden={layout.active[i]!==v}>{body(v,i)}</div>)}
                     </div>
                   </section>
                 ),

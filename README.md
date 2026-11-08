@@ -499,3 +499,42 @@ introduced. The downloadable local terminal-readiness kit remains version 0.6.2.
 Update: git pull --ff-only origin main, then bash scripts/deploy-workstation.sh.
 Expected /api/workstation release: 0.6.3-workspace-ux. Existing database and operator
 credentials are retained; no database setup command is required for this release.
+
+
+### Dense workspace UX — 0.6.4
+
+Compact tables, toolbars and state panels prioritize working information. Text
+sizes use the shared interface-size control. Comfortable density and all five
+colour themes remain available. New layouts start with Inspector and bottom panel
+closed; existing saved layouts are preserved and their toggles remain available.
+
+Registry navigation is scoped to its domain. Active tabs show the selected
+registry. Open views remain mounted across ordinary tab switches and focus mode.
+Dirty forms warn before discard or destructive layout changes and page unload;
+this is an in-memory draft, not persistent recovery after browser restart.
+
+Registry queries support bounded server-side `q`, validated `sort`, and
+`direction=asc|desc`. Reference selectors search all records, returning at most
+200 matching suggestions. Record lists have sortable headers and compact selected
+record details. PUT supports configuration corrections in all registries, keeping
+parent/identity fields immutable (account identity/environment, instrument
+symbol/class, and mapping identity require a new record). These controls never
+connect a provider or submit orders. No database migration is needed.
+
+Backend readiness refreshes every 30 seconds while the page is visible and shows
+the last successful check. Future workspaces show dependency/action tables rather
+than large empty panels; the dependencies are not a claim of verified trading
+readiness. Terminal kit remains version 0.6.2, local diagnostics only.
+
+Remaining audit scope: record-specific independent document tabs, saved/custom
+column views, centralized contextual Inspector, resumable multi-step onboarding,
+assessment browser/structured result presentation, and complete menu accessibility.
+Authenticated terminal pairing/quote ingestion and operational trading remain
+separate backend implementation work, not completed by this UX release.
+
+Validation for 0.6.4: TypeScript/Vite build; production-bundle DOM tests including
+search, dirty-form discard/cancel, scoped navigation and browser shortcuts; 15
+backend tests (database calls mocked); Chromium visual checks with populated mock
+records in all five themes at 1440x900 and 1024x768. Backend checks ran on Python
+3.12 with FastAPI 0.115.12 and psycopg 3.2.6, not the deployment's Python 3.14.
+No live broker or PostgreSQL integration is claimed by these tests.

@@ -69,13 +69,19 @@ def unavailable(exc):
 
 
 @router.get('/{resource}')
-def list_records(resource: str, response: Response, limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0)):
-    table, _ = resource_for(resource)
+def list_records(resource: str, response: Response, limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0), q: str = Query("", max_length=120), sort: str = "created_at", direction: Literal["asc", "desc"] = "asc"):
+    table, model = resource_for(resource)
+    if sort not in {*model.model_fields, "created_at", "id"}:
+        raise HTTPException(422, "Unknown sort field")
+    columns = [k for k in model.model_fields if k != "enabled"]
+    where = sql.SQL(" OR ").join(sql.SQL("{}::text ILIKE %s").format(sql.Identifier(k)) for k in columns)
+    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    parameters = tuple(pattern for _ in columns)
     response.headers['Cache-Control'] = 'no-store'
     try:
         with _connect(get_settings().database_url) as db:
-            rows = db.execute(sql.SQL('SELECT * FROM {} ORDER BY created_at,id LIMIT %s OFFSET %s').format(sql.Identifier(table)), (limit,offset)).fetchall()
-            total = db.execute(sql.SQL('SELECT count(*) AS total FROM {}').format(sql.Identifier(table))).fetchone()['total']
+            rows = db.execute(sql.SQL('SELECT * FROM {} WHERE ({}) ORDER BY {} {} ,id LIMIT %s OFFSET %s').format(sql.Identifier(table), where, sql.Identifier(sort), sql.SQL(direction.upper())), (*parameters,limit,offset)).fetchall()
+            total = db.execute(sql.SQL('SELECT count(*) AS total FROM {} WHERE ({})').format(sql.Identifier(table), where), parameters).fetchone()['total']
         return {'items':[profile_view(r) for r in rows] if resource == 'connector-profiles' else rows,
                 'total':total,'limit':limit,'offset':offset}
     except (psycopg.Error, PersistenceNotConfigured) as exc:
@@ -124,5 +130,34 @@ def replace_connector_profile(record_id: UUID, payload: ConnectorProfile):
             if row is None:
                 raise HTTPException(404, 'Profile not found for this connection; connection ownership cannot be changed.')
             return profile_view(row)
+    except (psycopg.Error, PersistenceNotConfigured) as exc:
+        raise unavailable(exc) from None
+
+
+@router.put('/{resource}/{record_id}')
+def update_record(resource: str, record_id: UUID, payload: dict):
+    """Correct labels/classification without moving an existing record's identity."""
+    table, model = resource_for(resource)
+    try:
+        data = model.model_validate(payload).model_dump()
+    except ValidationError as exc:
+        raise HTTPException(422, [{'field':'.'.join(map(str,e['loc'])),'message':e['msg']} for e in exc.errors()]) from None
+    immutable = {
+        'providers': [], 'connections': ['provider_id'],
+        'accounts': ['connection_id', 'external_reference', 'mode'],
+        'instruments': ['symbol', 'asset_class'],
+        'mappings': ['connection_id', 'instrument_id', 'native_symbol'],
+        'connector-profiles': ['connection_id'],
+    }[resource]
+    identity = {k:data.pop(k) for k in immutable}
+    where = sql.SQL(' AND ').join([sql.SQL('id=%s'), *[sql.SQL('{}=%s').format(sql.Identifier(k)) for k in identity]])
+    query = sql.SQL('UPDATE {} SET {} WHERE {} RETURNING *').format(sql.Identifier(table),
+        sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in data), where)
+    try:
+        with _connect(get_settings().database_url) as db:
+            row = db.execute(query, (*data.values(), record_id, *identity.values())).fetchone()
+            if row is None:
+                raise HTTPException(409, 'Record missing or identity changed. Refresh the list. Create a new record to use a different identity or parent.')
+            return profile_view(row) if resource == 'connector-profiles' else row
     except (psycopg.Error, PersistenceNotConfigured) as exc:
         raise unavailable(exc) from None

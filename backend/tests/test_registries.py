@@ -92,4 +92,30 @@ class RegistryTests(unittest.TestCase):
         for _ in range(10):auth.attempts.append(auth.time.monotonic())
         self.assertEqual(self.login().status_code,429)
 
+    def test_search_sort_and_identity_preserving_edits(self):
+        self.login()
+        db=MagicMock()
+        db.execute.return_value.fetchall.return_value=[]
+        db.execute.return_value.fetchone.return_value={'total':0}
+        with patch('corei_os_mini.registry._connect') as connect:
+            connect.return_value.__enter__.return_value=db
+            self.assertEqual(self.client.get('/api/registry/providers?q=demo&sort=name&direction=desc').status_code,200)
+            args=db.execute.call_args_list[0].args
+            self.assertIn('%demo%',args[1])
+            self.assertIn('DESC',args[0].as_string())
+            self.assertEqual(self.client.get('/api/registry/providers?sort=bad').status_code,422)
+            self.assertEqual(self.client.get('/api/registry/providers?direction=bad').status_code,422)
+            rid=str(uuid4()); parent=str(uuid4())
+            body={'name':'Renamed','connection_id':parent,'external_reference':'123','mode':'SANDBOX','enabled':False}
+            db.execute.return_value.fetchone.return_value={'id':rid,**body}
+            response=self.client.put('/api/registry/accounts/'+rid,json=body,headers=self.headers)
+            self.assertEqual(response.status_code,200)
+            query,parameters=db.execute.call_args.args
+            self.assertIn('"connection_id"=%s',query.as_string().split('WHERE')[1])
+            self.assertIn('"external_reference"=%s',query.as_string().split('WHERE')[1])
+            self.assertIn('"mode"=%s',query.as_string().split('WHERE')[1])
+            db.execute.return_value.fetchone.return_value=None
+            self.assertEqual(self.client.put('/api/registry/accounts/'+rid,json=body,headers=self.headers).status_code,409)
+            self.assertEqual(self.client.put('/api/registry/providers/'+rid,json={'name':'','kind':'BROKER'},headers=self.headers).status_code,422)
+
 if __name__=='__main__': unittest.main()
