@@ -1,6 +1,11 @@
 import { defaults, restore, views, type Layout, type View } from './layout';
 export const registryResources = ['providers','connections','connector-profiles','accounts','instruments','mappings'] as const;
 export type RegistryResource = typeof registryResources[number];
+export const registryTitles:Record<RegistryResource,string> = {
+  providers:'Broker & provider directory', connections:'Access connections',
+  'connector-profiles':'Connector settings', accounts:'Trading accounts',
+  instruments:'Instrument directory', mappings:'Symbol mappings',
+};
 export function launchContext(search: string) {
   const p = new URLSearchParams(search);
   const view = p.get('view') as View;

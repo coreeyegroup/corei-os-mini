@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import RegistryWorkspace from "./RegistryWorkspace";
 import WorkbenchIcon from "./WorkbenchIcon";
-import { initialLayout, launchContext, workspaceUrl, type RegistryResource } from "./workspaceLinks";
+import { initialLayout, launchContext, workspaceUrl, registryTitles, type RegistryResource } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -31,8 +31,8 @@ type Runtime = {
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
   "Market data": "Feed selection, source quality and assessment history",
-  Providers: "Broker and exchange connections",
-  Accounts: "Account groups and eligibility assignments",
+  Providers: "Provider organisations, access connections and connector settings",
+  Accounts: "Broker-issued trading account identifiers and account environments",
   Instruments: "Canonical instruments and provider symbol mappings",
   Strategies: "Strategy versions, instrument universes and assignments",
   Execution: "Account allocation, order lifecycle and reconciliation",
@@ -42,9 +42,9 @@ const descriptions: Record<View, string> = {
 };
 const activityLabels=['Home','Market','Providers','Accounts','Symbols','Strategies','Orders','Portfolio','Monitor','Settings'];
 const registryNavigation:Record<string,{label:string;resource:RegistryResource}[]>={
- Providers:[{label:'Provider directory',resource:'providers'},{label:'Connections',resource:'connections'},{label:'Connector profiles',resource:'connector-profiles'}],
- Accounts:[{label:'Trading accounts',resource:'accounts'}],
- Instruments:[{label:'Instrument directory',resource:'instruments'},{label:'Symbol mappings',resource:'mappings'}],
+ Providers:[{label:registryTitles['providers'],resource:'providers'},{label:registryTitles['connections'],resource:'connections'},{label:registryTitles['connector-profiles'],resource:'connector-profiles'}],
+ Accounts:[{label:registryTitles['accounts'],resource:'accounts'}],
+ Instruments:[{label:registryTitles['instruments'],resource:'instruments'},{label:registryTitles['mappings'],resource:'mappings'}],
 };
 function stored() {
   try {
@@ -324,7 +324,7 @@ export default function App() {
     }
   }
   const active = layout.active[layout.focus];
-  const registryLabel=(view:View,group:number)=>{const resource=registryViews.current[group];return ['Providers','Accounts','Instruments'].includes(view)&&resource?resource.replace('connector-profiles','Connector profiles').replace('mappings','Symbol mappings').replace(/^./,c=>c.toUpperCase()):view;};
+  const registryLabel=(view:View,group:number)=>{const resource=registryViews.current[group];return ['Providers','Accounts','Instruments'].includes(view)&&resource?registryTitles[resource]:view;};
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
 
   function body(view: View, group: number) {

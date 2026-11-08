@@ -237,3 +237,40 @@ footer {height:25px;font-size:var(--ui-size);padding:0 14px;border-top:1px solid
 .editor-windowfoot button {cursor:nwse-resize;touch-action:none;padding:1px 5px;min-height:22px;}
 .editor-windowbar:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;}
 @container(max-width:460px) {.floating-editor .registry-form {grid-template-columns:1fr;}}
+
+/* Floating windows have their own surface hierarchy in every theme. */
+:root {--dialog-surface:#30465d;--dialog-title:#405f7c;--dialog-edge:#8dbbd6;--dialog-field:#14202d;--dialog-text:#edf3fa;--dialog-muted:#bdcddd;--dialog-overlay:#03080fa6;--dialog-shadow:0 0 0 1px #0003,0 20px 64px #0009;}
+:root[data-theme="Black"] {--dialog-surface:#303030;--dialog-title:#454545;--dialog-edge:#79c6ff;--dialog-field:#101010;--dialog-text:#f5f5f5;--dialog-muted:#c4c4c4;}
+:root[data-theme="Dark Blue"] {--dialog-surface:#2b4866;--dialog-title:#3b6286;--dialog-edge:#8fd3ff;--dialog-field:#13273c;--dialog-text:#edf6ff;--dialog-muted:#bed2e6;}
+:root[data-theme="COREI Orbit"] {--dialog-surface:#28434b;--dialog-title:#32615f;--dialog-edge:#00e5a0;--dialog-field:#102029;--dialog-text:#edf8f6;--dialog-muted:#b5d1cd;}
+:root[data-theme="White"] {--dialog-surface:#e8f0fa;--dialog-title:#d4e5f7;--dialog-edge:#3575ad;--dialog-field:#ffffff;--dialog-text:#142b42;--dialog-muted:#405a72;--dialog-overlay:#172c466b;--dialog-shadow:0 0 0 1px #3575ad22,0 16px 48px #172c4640;}
+/* Keep menus, command/search panels and help popups on the same raised layer. */
+:is(.registry-editor.floating-editor,.palette,.menu-popup,.tab-context,.info-note) {
+ --surface:var(--dialog-surface);--input:var(--dialog-field);
+ --text:var(--dialog-text);--muted:var(--dialog-muted);--line:var(--dialog-edge);
+ --hover:var(--dialog-title);--selection:var(--dialog-title);--selected-text:var(--dialog-text);
+ background:var(--dialog-surface);color:var(--dialog-text);
+ border:1px solid var(--dialog-edge);
+ box-shadow:var(--dialog-shadow);
+}
+.overlay {background:var(--dialog-overlay);}
+.palette>input {background:var(--dialog-field);border-color:var(--dialog-edge);}
+.palette .palette-hint,.menu-popup .menu-caption {background:var(--dialog-title);}
+.menu-popup button:hover,.tab-context button:hover,.palette button:hover {background:var(--dialog-title);color:var(--dialog-text);}
+.registry-editor.floating-editor {background:var(--dialog-surface);color:var(--dialog-text);border:1px solid var(--dialog-edge);box-shadow:var(--dialog-shadow);}
+.registry-editor.floating-editor::backdrop {background:var(--dialog-overlay);}
+.floating-editor .editor-windowbar {background:var(--dialog-title);color:var(--dialog-text);border-bottom:1px solid var(--dialog-edge);font-weight:600;}
+.floating-editor .editor-body,.floating-editor .registry-form {background:var(--dialog-surface);color:var(--dialog-text);}
+.floating-editor .editor-body>header,.floating-editor .editor-windowfoot {background:var(--dialog-title);color:var(--dialog-text);border-color:var(--dialog-edge);}
+.floating-editor h2,.floating-editor label {color:var(--dialog-text);}
+.floating-editor .eyebrow,.floating-editor p,.floating-editor small,.floating-editor .editor-description {color:var(--dialog-muted);}
+.floating-editor input,.floating-editor select {background:var(--dialog-field);color:var(--dialog-text);border-color:var(--dialog-edge);}
+.floating-editor input::placeholder {color:var(--dialog-muted);}
+.floating-editor .editor-windowbar button,.floating-editor .editor-windowfoot button,.floating-editor .editor-body>header>button {background:var(--dialog-field);color:var(--dialog-text);border-color:var(--dialog-edge);}
+.floating-editor .editor-error {color:var(--danger);}
+
+/* Nested help keeps a visible boundary without the outer window shadow. */
+.floating-editor .info-note {background:var(--dialog-field);border-color:var(--dialog-edge);box-shadow:none;}
+.floating-editor input:focus-visible,.floating-editor select:focus-visible {outline:2px solid var(--dialog-edge);outline-offset:2px;}
+
+.registry-field .field-explanation {display:block;margin-top:4px;color:var(--muted);font-size:calc(var(--ui-size) - 1px);line-height:1.45;}
