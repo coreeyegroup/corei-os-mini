@@ -1,4 +1,5 @@
 import {useEffect,useState} from 'react';
+import RecordEditor from './RecordEditor';
 type Platform='MT4'|'MT5';
 type Host='Windows'|'Ubuntu / Wine';
 export type InstallSelection={platform:Platform;host:Host};
@@ -8,7 +9,7 @@ export default function TerminalInstallation({selection,onClose}:{selection:Inst
  useEffect(()=>{setPlatform(selection.platform);setHost(selection.host);},[selection]);
  useEffect(()=>{const controller=new AbortController();fetch('/install/manifest.json',{cache:'no-store',signal:controller.signal}).then(async r=>{if(!r.ok)throw Error('Installation files are unavailable. Redeploy the workstation.');const x=await r.json();if(x.project_id!=='corei-os-mini'||x.version!=='0.6.2'||x.status!=='LOCAL_DIAGNOSTICS_ONLY'||typeof x.sha256!=='string'||!/^[a-f0-9]{64}$/.test(x.sha256))throw Error('Unexpected installation manifest. Redeploy the workstation.');setChecksum(x.sha256);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});return()=>controller.abort();},[]);
  const extension=platform==='MT5'?'mq5':'mq4',language=platform==='MT5'?'MQL5':'MQL4';
- return <section className="terminal-installation" aria-label="Terminal installation"><div className="section-title"><h2>Terminal installation · source kit 0.6.2</h2><button onClick={onClose}>Close installation</button></div>
+ return <RecordEditor editing={false} close={onClose} title="Terminal installation" dialogLabel="Terminal installation"><section className="terminal-installation" aria-label="Terminal installation instructions"><div className="section-title"><h2>Terminal installation · source kit 0.6.2</h2><button onClick={onClose}>Close installation</button></div>
  <div className="install-status"><strong>Local readiness checker</strong><span>Source available · compilation required · VPS bridge pending</span></div>
  <p>Install on the computer running MetaTrader. Its IP may differ from the COREI VPS. This kit checks the local account, broker server and chart quote timestamp; it does not connect to COREI or place orders.</p>
  <div className="install-selectors"><label>Terminal platform<select value={platform} onChange={e=>setPlatform(e.target.value as Platform)}><option>MT5</option><option>MT4</option></select></label><label>Terminal computer operating system<select value={host} onChange={e=>setHost(e.target.value as Host)}><option>Windows</option><option>Ubuntu / Wine</option></select></label></div>
@@ -19,5 +20,5 @@ export default function TerminalInstallation({selection,onClose}:{selection:Inst
  <li><strong>Attach to a separate chart.</strong> Refresh Expert Advisors in Navigator. Attach the checker, set InstanceLabel, ExpectedLogin and ExpectedServer. Do not replace an existing strategy EA.</li>
  <li><strong>Verify locally.</strong> Read the terminal's Experts log for <code>LOCAL_CHECK</code> and <code>identity=MATCH</code>. <code>VPS=NOT_CONNECTED</code> is expected. A local match does not verify the account at the VPS; a cached quote does not prove fresh data.</li></ol>
  <details><summary>Updates, removal and remote connection</summary><p>Updates preserve an existing source backup. Recompile and reattach after updating; copying source does not update a running compiled EA. To remove it, detach the checker and delete only its source/compiled files from the COREIOSMini Experts folder.</p><p>The future bridge will use separate authenticated outbound HTTPS pairing to {window.location.origin}. No terminal pairing or remote installation status exists in this release. Downloading files never marks a profile connected.</p></details>
- </section>;
+ </section></RecordEditor>;
 }
