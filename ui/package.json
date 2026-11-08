@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "npm run build && node tests/workbench.cjs"
+    "test": "npm run build && node tests/workbench.cjs",
+    "prebuild": "python3 ../scripts/build-terminal-kit.py"
   },
   "dependencies": {
     "react": "19.3.1",

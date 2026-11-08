@@ -422,3 +422,41 @@ No `.srv`/`.dat` importer or proprietary MetaTrader direct-server protocol is
 implemented or claimed. A future importer requires format validation and bounded,
 non-executable parsing; discovery metadata must never silently choose the live
 account/server or overwrite a verified connection.
+
+
+## Terminal installation panel — 0.6.2
+
+Connector profiles → Install terminal files now provides a downloadable source kit,
+platform/OS selectors, PowerShell and Ubuntu/Wine install commands, compile/attach
+instructions, checksum and removal guidance. MT4/MT5 profile rows preselect the
+correct family/runtime. No new migration is required.
+
+The kit contains COREIOSMiniTerminalCheck.mq4/.mq5, install-terminal.ps1,
+install-terminal.sh and INSTALL.txt. The checker prints local account/server
+identity matching and the chart symbol's quote timestamp every 30 seconds. It has
+no network, credential or order functions. VPS=NOT_CONNECTED is expected. This
+installation kit is a readiness stage, not the authenticated bridge promised in
+the Phase 1 roadmap. Do not mark any provider connected after installing it.
+
+Source and installers live in connectors/terminal. The UI prebuild invokes
+scripts/build-terminal-kit.py to generate a deterministic ZIP, individual files,
+SHA256SUMS.txt and manifest.json in ui/public/install (ignored generated output).
+Vite copies those files into the deployed static build. Python 3 is required for
+this packaging step; the Ubuntu install already requires Python. No remote URLs,
+secrets or user-provided scripts are used by the builder.
+
+Installers copy source into the terminal owner's selected data folder and preserve
+an existing source backup. They do not compile, replace a running compiled EA,
+change server files or start broker sessions. Compile with MetaEditor F7, require
+zero errors, and attach to a separate chart. No compiled .ex4/.ex5 files are shipped;
+MetaEditor compilation and Windows/Wine compatibility remain unverified here.
+PowerShell installer was reviewed but not executed in this Linux environment.
+
+Update using git pull and scripts/deploy-workstation.sh. Expected runtime release:
+0.6.2-terminal-installation. Database schema remains migration 005. Validate the
+public kit manifest at /install/manifest.json and download through the workspace.
+
+Validation includes frontend build/DOM interactions, reproducible ZIP/checksum
+checks, and executing the Linux installer against temporary terminal directories
+(including spaces, backup preservation and wrong-platform rejection). These tests
+do not establish MetaTrader or broker connectivity.

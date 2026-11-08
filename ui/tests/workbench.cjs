@@ -52,6 +52,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match(opened[0][2],/noopener/);assert.match(opened[1][2],/popup=yes/);
  let registered=[]; let profiles=[];
  w.fetch=async(url,options={})=>{
+   if(url==='/install/manifest.json')return {ok:true,json:async()=>({project_id:'corei-os-mini',version:'0.6.2',status:'LOCAL_DIAGNOSTICS_ONLY',sha256:'a'.repeat(64)})};
    if(url.endsWith('/operator/session'))return {ok:false,status:401,json:async()=>({detail:'Sign in'})};
    if(url.endsWith('/operator/login'))return {ok:true,json:async()=>({username:'test-operator'})};
    if(url.includes('/registry/connector-profiles')) {
@@ -100,6 +101,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match(w.document.querySelector('[role="note"]').textContent,/bridge in the terminal/);
  w.document.querySelector('[aria-label="Open Providers in new tab"]').click();
  assert.equal(new URL(opened.at(-1)[0]).searchParams.get('registry'),'connector-profiles');
+ click('Install terminal files');await tick();await tick();
+ const install=w.document.querySelector('[aria-label="Terminal installation"]');assert.ok(install);
+ assert.match(install.textContent,/VPS bridge pending/);
+ assert.equal(install.querySelector('a[download]').getAttribute('href'),'/install/corei-os-mini-terminal-kit-0.6.2.zip');
+ const platformSelect=install.querySelector('select');platformSelect.value='MT4';platformSelect.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();
+ assert.ok(install.querySelector('a[href$=".mq4"]'));
+ const hostSelect=install.querySelectorAll('select')[1];hostSelect.value='Ubuntu / Wine';hostSelect.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();
+ assert.match(install.querySelector('pre').textContent,/bash install-terminal.sh MT4/);
+ click('Close installation');await tick();assert.equal(w.document.querySelector('[aria-label="Terminal installation"]'),null);
+ console.log('PASS: terminal installer panel, verified manifest gating, source downloads and platform-specific instructions.');
  w.dispatchEvent(new w.StorageEvent('storage',{key:'corei-os-mini.operator-signout',newValue:'test'}));await tick();
  assert.match(w.document.body.textContent,/Operator sign in/);
  console.log('PASS: connector profile create/edit, immutable connection ownership, family/runtime selection and truthful unavailable status (mock API).');

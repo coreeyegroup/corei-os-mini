@@ -13,3 +13,5 @@ ui/dist/
 .venv-workstation.backup.*/
 
 *.egg-info/
+
+ui/public/install/

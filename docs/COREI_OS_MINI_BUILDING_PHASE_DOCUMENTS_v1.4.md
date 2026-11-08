@@ -97,6 +97,12 @@ replacing the main saved layout. These changes do not satisfy runtime verificati
 The README defines the planned outbound authenticated bridge and its acceptance
 requirements, including separate operator, broker and bridge credentials.
 
+**Installation checkpoint — 0.6.2:** Connector profiles exposes a downloadable
+terminal-readiness source kit, Windows and Ubuntu/Wine installers, checksums and
+compile/attach instructions. This kit performs local diagnostics only. MetaEditor
+compilation and real terminal compatibility remain to be verified; it does not
+complete account verification at the VPS, network pairing or quote ingestion.
+
 The next Phase 1 work is the first authenticated terminal bridge and verified
 account/session binding, instrument discovery, live quote ingestion and recovery.
 The Phase 1 demonstration and gate above have NOT passed yet. MT4/MT5 Windows and

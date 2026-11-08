@@ -148,3 +148,21 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 .group-actions button {min-height:23px;white-space:nowrap;}
 @container(max-width:600px) {.registry-form,.concept-grid {grid-template-columns:1fr;}.registry-form {padding:12px;gap:12px;}}
 .registry-table .info-note {position:static;margin-top:7px;text-transform:none;letter-spacing:normal;font-weight:400;}
+.installation-launch {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px;border:1px solid var(--line);border-radius:4px;background:var(--surface);margin:14px 0;}
+.installation-launch p {margin:5px 0 0;}
+.installation-launch button {white-space:nowrap;}
+.terminal-installation {padding:16px;border:1px solid var(--accent);background:var(--surface);border-radius:4px;margin:14px 0;}
+.terminal-installation>.section-title {margin-top:0;}
+.install-status {display:flex;flex-wrap:wrap;gap:8px 16px;padding:9px 0;color:var(--amber);font-size:12px;}
+.install-selectors {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0;}
+.install-selectors label {display:grid;gap:6px;font-size:12px;}
+.install-selectors select {width:100%;padding:7px;}
+.install-downloads {display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;}
+.install-downloads a {padding:8px 10px;border:1px solid var(--line);color:var(--text);text-decoration:none;border-radius:3px;font-size:12px;}
+.install-downloads .download-primary {border-color:var(--accent);color:var(--accent);}
+.terminal-installation summary {cursor:pointer;font-size:12px;padding:7px 0;}
+.package-checksum {overflow-wrap:anywhere;font-size:11px;}
+.install-steps {padding-left:22px;font-size:12px;line-height:1.6;}
+.install-steps li {margin:12px 0;}
+.install-steps pre {padding:10px;background:var(--canvas);border:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;font-size:11px;}
+@container(max-width:600px) {.install-selectors {grid-template-columns:1fr;}.installation-launch {align-items:flex-start;flex-direction:column;}}
