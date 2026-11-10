@@ -38,6 +38,16 @@ class ModelTests(unittest.TestCase):
             with self.subTest(points=points), self.assertRaises(ValidationError):
                 Mt5Settings.model_validate({'server_name': 'S', 'access_points': points})
 
+    def test_mt5_settings_accept_large_server_lists(self):
+        # MetaQuotes-Demo's servers.dat lists 50 access points, IPv4, IPv6 and hostnames.
+        points = [{'name': f'Access Point {i}', 'host': host, 'port': port} for i, (host, port) in enumerate(
+            [(f'78.140.180.{i}', 443) for i in range(1, 25)] + [(f'2a00:1178:1:60::{i:x}', 1950) for i in range(1, 25)]
+            + [('access.metatrader5.com', 443), ('access.metatrader5.com', 1950)], start=1)]
+        self.assertEqual(len(Mt5Settings.model_validate({'server_name': 'MetaQuotes-Demo', 'access_points': points}).access_points), 50)
+        too_many = [{'name': f'P{i}', 'host': f'10.0.{i // 250}.{i % 250 + 1}', 'port': 443} for i in range(257)]
+        with self.assertRaises(ValidationError):
+            Mt5Settings.model_validate({'server_name': 'S', 'access_points': too_many})
+
     def test_rest_settings_require_secure_urls_and_oauth_redirect(self):
         RestApiSettings.model_validate({'api_base_url': 'https://api.example.com/v2/', 'auth_method': 'API_KEY'})
         for bad in ({'api_base_url': 'http://api.example.com', 'auth_method': 'API_KEY'},

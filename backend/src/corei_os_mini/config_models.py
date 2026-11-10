@@ -62,10 +62,14 @@ class Mt5AccessPoint(_Strict):
             return value
 
 
+MAX_ACCESS_POINTS = 256
+
+
 class Mt5Settings(_Strict):
     server_name: Name
-    # Ordered by preference; the adapter tries them in this order.
-    access_points: Annotated[list[Mt5AccessPoint], Field(min_length=1, max_length=32)]
+    # Ordered by preference; the adapter tries them in this order. Large broker
+    # servers publish dozens (MetaQuotes-Demo lists 50), so allow up to 256.
+    access_points: Annotated[list[Mt5AccessPoint], Field(min_length=1, max_length=MAX_ACCESS_POINTS)]
 
     @model_validator(mode='after')
     def unique_endpoints(self) -> 'Mt5Settings':

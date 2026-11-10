@@ -68,7 +68,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match(w.document.body.textContent,/Sign in/);
  const signin=$('.cfg-signin form');fill(signin.querySelector('[autocomplete="username"]'),'risk-ops');fill(signin.querySelector('[type="password"]'),'secret-pass');
  await submit(signin);
- assert.match($('.cfg-nav').textContent,/risk-ops/);
+ assert.match($('.cfg-user').textContent,/risk-ops/);
  assert.match($('.cfg-nav').textContent,/Order sending/);
  console.log('PASS: operator sign-in and section navigation.');
 
@@ -93,12 +93,28 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('Add access point').click();await tick();
  fill(byLabel('Access point 2 name'),'Access Point 2');fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
  [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
+ // The editor is a floating window: keyboard move/resize, maximise/restore, all eight resize edges.
+ const win=$('.fw');assert.equal(win.getAttribute('role'),'dialog');assert.equal(win.querySelectorAll('.fw-edge').length,8);
+ const left0=parseFloat(win.style.left),width0=parseFloat(win.style.width);
+ $('.fw-title').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.left),left0-16);
+ $('.fw-title').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',shiftKey:true,bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.width),width0-16);
+ $('[aria-label="Maximise window"]').click();await tick();assert.ok($('.fw').classList.contains('fw-max'));
+ $('[aria-label="Restore window"]').click();await tick();assert.ok(!$('.fw').classList.contains('fw-max'));
+ assert.match($('.fw-caption').textContent,/Unsaved/);
+ w.confirm=()=>false;$('.fw').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();assert.ok($('.fw'),'Esc keeps window when discard is declined');w.confirm=()=>true;
  await submit($('.cfg-detail .cfg-form'));
  const conn=db.connections[0];
  assert.equal(conn.platform,'MT5');assert.equal(conn.environment,'DEMO');
  assert.deepEqual(conn.settings.access_points.map(p=>[p.host,p.port]),[['192.0.2.11',444],['192.0.2.10',443]]);
  assert.ok(byLabel('Platform').disabled,'platform fixed after creation');
- console.log('PASS: MT5 connection with ordered access points; platform fixed after creation.');
+ console.log('PASS: MT5 connection with ordered access points; floating window moves, resizes, maximises; platform fixed after creation.');
+ // A broker server with 50 access points (MetaQuotes-Demo) can be entered.
+ button('New connection').click();await tick();
+ for(let i=2;i<=50;i++){button('Add access point').click();await new Promise(r=>setTimeout(r,0));}await tick();
+ assert.match($('.cfg-points-head').textContent,/Access points \(50\)/);
+ assert.equal(button('Add access point').disabled,false);
+ w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();assert.equal($('.fw'),null);
+ console.log('PASS: 50 access points accepted; closing the window with confirmation.');
 
  // Account: readiness shown; password saved write-only
  $('.cfg-nav button:nth-child(3)').click();await tick();await tick();

@@ -3,19 +3,21 @@
 :root[data-theme="White"] { --cfg-warn: #9a6700; }
 .view:has(.cfg:not([hidden] .cfg)) { display: flex; flex-direction: column; }
 .view > div:has(> .cfg) { flex: 1; min-height: 0; }
-.cfg { display: flex; height: 100%; min-height: 0; }
-.cfg-nav { width: 170px; flex: none; border-right: 1px solid var(--line); padding: 10px 0; display: flex; flex-direction: column; background: var(--chrome); }
-.cfg-nav > button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 7px 14px; border: 0; border-left: 2px solid transparent; background: none; color: var(--text); cursor: pointer; }
-.cfg-nav > button span { flex: 1; }
-.cfg-nav > button small { color: var(--muted); font-variant-numeric: tabular-nums; }
-.cfg-nav > button:hover { background: var(--hover); }
-.cfg-nav > button[aria-current="page"] { border-left-color: var(--accent); background: var(--selection); font-weight: 600; }
-.cfg-nav .cfg-live-on { color: var(--danger); font-weight: 700; }
-.cfg-nav-foot { margin-top: auto; padding: 10px 14px; color: var(--muted); font-size: .9em; }
-.cfg-nav-foot .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
-.cfg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 18px; overflow: hidden; }
-.cfg-head h1 { margin: 2px 0; font-size: 1.35em; }
-.cfg-head p { margin: 0 0 10px; color: var(--muted); }
+.cfg { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.cfg-topbar { display: flex; align-items: stretch; gap: 14px; border-bottom: 1px solid var(--line); background: var(--chrome); padding: 0 14px; flex: none; }
+.cfg-topbar > .eyebrow { align-self: center; margin: 0; white-space: nowrap; }
+.cfg-nav { display: flex; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
+.cfg-nav > button { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.cfg-nav > button small { font-variant-numeric: tabular-nums; opacity: .8; }
+.cfg-nav > button:hover { color: var(--text); background: var(--hover); }
+.cfg-nav > button[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.cfg-nav .cfg-live-on { color: var(--danger); font-weight: 700; opacity: 1; }
+.cfg-user { margin-left: auto; align-self: center; color: var(--muted); white-space: nowrap; font-size: .9em; }
+.cfg-user .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.cfg-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 10px 14px; overflow: hidden; }
+.cfg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.cfg-head h1 { margin: 0; font-size: 1.2em; }
+.cfg-head p { margin: 0; color: var(--muted); }
 .cfg-records { display: flex; gap: 14px; flex: 1; min-height: 0; }
 .cfg-list { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .cfg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
@@ -33,10 +35,7 @@
 .cfg-table.compact tbody tr { cursor: default; }
 .cfg-row-actions { display: flex; gap: 2px; }
 .cfg-row-actions button { padding: 0 6px; }
-.cfg-detail { width: 360px; flex: none; overflow: auto; border: 1px solid var(--line); background: var(--surface); padding: 12px 14px; }
-.cfg-detail > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.cfg-detail > header h2 { margin: 0; font-size: 1.1em; }
-.cfg-detail > header button { border: 0; background: none; color: var(--muted); cursor: pointer; }
+.cfg-detail { padding: 2px 4px 8px; }
 .cfg-form, .cfg-credential { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .cfg-credential { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
 .cfg-credential h3, .cfg-blockers h3 { margin: 0; font-size: 1em; }
@@ -76,11 +75,34 @@
 .cfg-audit-detail td { white-space: normal; cursor: default; }
 .cfg-signin .cfg-form { max-width: 320px; }
 @media (max-width: 900px) {
-  .cfg { flex-direction: column; }
-  .cfg-nav { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
-  .cfg-nav > button { width: auto; border-left: 0; border-bottom: 2px solid transparent; }
-  .cfg-nav > button[aria-current="page"] { border-bottom-color: var(--accent); }
-  .cfg-nav-foot { display: none; }
-  .cfg-records { flex-direction: column; }
-  .cfg-detail { width: auto; }
+  .cfg-topbar > .eyebrow, .cfg-user { display: none; }
 }
+
+/* Access point list inside the MT5 settings */
+.cfg-points-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cfg-points { max-height: 300px; overflow: auto; border: 1px solid var(--line); }
+.cfg-points .cfg-table th { z-index: 1; }
+
+/* Floating window (FloatingWindow.tsx) */
+.fw { position: fixed; z-index: 900; display: flex; flex-direction: column; background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 18px 48px rgba(0, 0, 0, .45); overflow: hidden; }
+.fw-title { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 12px; background: var(--chrome); border-bottom: 1px solid var(--line);
+  cursor: move; user-select: none; touch-action: none; flex: none; }
+.fw-max .fw-title { cursor: default; }
+.fw-title:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fw-caption { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fw-caption strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-caption small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-title button { width: 28px; height: 26px; padding: 0; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; }
+.fw-title button:hover { background: var(--hover); color: var(--text); }
+.fw-title button[aria-label="Close window"]:hover { background: var(--danger); color: var(--canvas); }
+.fw-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; }
+.fw-edge { position: absolute; z-index: 2; touch-action: none; }
+.fw-n, .fw-s { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.fw-n { top: -3px; } .fw-s { bottom: -3px; }
+.fw-e, .fw-w { top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.fw-e { right: -3px; } .fw-w { left: -3px; }
+.fw-ne, .fw-nw, .fw-se, .fw-sw { width: 12px; height: 12px; }
+.fw-ne { top: -3px; right: -3px; cursor: nesw-resize; } .fw-sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
+.fw-nw { top: -3px; left: -3px; cursor: nwse-resize; } .fw-se { bottom: -3px; right: -3px; cursor: nwse-resize; }
+.fw-se::after { content: ''; position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); opacity: .6; }

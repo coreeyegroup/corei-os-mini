@@ -8,6 +8,7 @@
  */
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
+import FloatingWindow from './FloatingWindow';
 
 type Row = Record<string, any>;
 type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'controls' | 'audit';
@@ -149,7 +150,9 @@ function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (
         <option value="" disabled>Choose the server for this connection…</option>
         {servers.map(s => <option key={s.server_name} value={s.server_name}>{s.server_name} · {s.access_points.length} access points</option>)}
       </select></Field>}
-    <table className="cfg-table compact"><thead><tr><th>#</th><th>Access point</th><th>Host</th><th>Port</th><th /></tr></thead><tbody>
+    <div className="cfg-points-head"><strong>Access points ({points.length})</strong>
+      {points.length > 1 && <button type="button" onClick={() => { if (window.confirm('Remove all access points except the first?')) change({ ...settings, access_points: points.slice(0, 1) }); }}>Keep first only</button>}</div>
+    <div className="cfg-points"><table className="cfg-table compact"><thead><tr><th>#</th><th>Access point</th><th>Host</th><th>Port</th><th /></tr></thead><tbody>
       {points.map((p, i) => <tr key={i}><td>{i + 1}</td>
         <td><input aria-label={`Access point ${i + 1} name`} required value={p.name} onChange={e => setPoint(i, { name: e.target.value })} /></td>
         <td><input aria-label={`Access point ${i + 1} host`} required value={p.host} onChange={e => setPoint(i, { host: e.target.value })} /></td>
@@ -157,8 +160,8 @@ function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (
         <td className="cfg-row-actions"><button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
           <button type="button" disabled={i === points.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
           <button type="button" disabled={points.length === 1} onClick={() => change({ ...settings, access_points: points.filter((_, j) => j !== i) })} aria-label="Remove">✕</button></td></tr>)}
-    </tbody></table>
-    <button type="button" disabled={points.length >= 32} onClick={() => change({ ...settings, access_points: [...points, { name: '', host: '', port: 443 }] })}>Add access point</button>
+    </tbody></table></div>
+    <button type="button" disabled={points.length >= 256} onClick={() => change({ ...settings, access_points: [...points, { name: '', host: '', port: 443 }] })}>Add access point</button>
     <small>The adapter tries access points in this order.</small>
   </fieldset>;
 }
@@ -342,10 +345,11 @@ function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<st
             {columns.map(([h, cell]) => <td key={h}>{cell(r)}</td>)}</tr>)}
         </tbody></table></div>}
     </div>
-    {draft && <aside className="cfg-detail" aria-label={`${SINGULAR[entity]} details`}>
-      <header><h2>{selected ? `${SINGULAR[entity][0].toUpperCase()}${SINGULAR[entity].slice(1)} · ${selected.code ?? selected.symbol ?? selected.broker_symbol}` : `New ${SINGULAR[entity]}`}</h2>
-        <button aria-label="Close details" onClick={() => { if (!dirty || window.confirm('Discard unsaved changes?')) { setSelected(null); setDraft(null); } }}>✕</button></header>
-      {selected && <p className="cfg-note">Version {selected.version} · updated {new Date(selected.updated_at).toLocaleString()}</p>}
+    {draft && <FloatingWindow storageKey="corei-os-mini.config-window.v1"
+      title={selected ? `${SINGULAR[entity][0].toUpperCase()}${SINGULAR[entity].slice(1)} · ${selected.code ?? selected.symbol ?? selected.broker_symbol}` : `New ${SINGULAR[entity]}`}
+      subtitle={selected ? `Version ${selected.version} · updated ${new Date(selected.updated_at).toLocaleString()}${dirty ? ' · unsaved changes' : ''}` : dirty ? 'Unsaved' : undefined}
+      onClose={() => { if (!dirty || window.confirm('Discard unsaved changes?')) { setSelected(null); setDraft(null); } }}>
+      <div className="cfg-detail">
       {entity === 'accounts' && selected && <div className="cfg-blockers">
         <h3>Readiness</h3>
         {(['data_blockers', 'trading_blockers'] as const).map(k => <div key={k}><strong>{k === 'data_blockers' ? 'Market data and account state' : 'Order sending'}</strong>
@@ -359,7 +363,8 @@ function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<st
       </form>
       {selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
-    </aside>}
+      </div>
+    </FloatingWindow>}
   </div>;
 }
 
@@ -442,16 +447,17 @@ export default function Configuration() {
   const current = SECTIONS.find(s => s.id === section)!;
   const live = summary?.execution_controls?.find((c: Row) => c.environment === 'LIVE');
   return <div className="cfg">
+    <div className="cfg-topbar"><span className="eyebrow">CONFIGURATION</span>
     <nav className="cfg-nav" aria-label="Configuration sections">
       {SECTIONS.map(s => <button key={s.id} aria-current={section === s.id ? 'page' : undefined} onClick={() => {
         if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) setSection(s.id);
       }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small>{summary.counts[s.id]}</small>}
         {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}
-      <div className="cfg-nav-foot">{user} · <button className="link" onClick={() => void signOut()}>Sign out</button>
-        {summary && !summary.credential_storage_ready && <p className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}</div>
     </nav>
+    <div className="cfg-user">{user} · <button className="link" onClick={() => void signOut()}>Sign out</button></div></div>
     <section className="cfg-main">
-      <header className="cfg-head"><div><div className="eyebrow">CONFIGURATION</div><h1>{current.label}</h1><p>{current.hint}</p></div></header>
+      <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
+      {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {section === 'controls' ? <OrderSending changed={() => void loadRefs()} /> : section === 'audit' ? <AuditLog />
         : <Records key={section} entity={section} refs={refs} reloadRefs={() => void loadRefs()} />}
