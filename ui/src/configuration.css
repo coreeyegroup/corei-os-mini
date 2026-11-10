@@ -142,3 +142,20 @@
 .cfg-analyser tbody tr { cursor: pointer; }
 .cfg-analyser td { white-space: nowrap; }
 .cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+/* Connection form: progressive disclosure */
+.cfg-more { border-top: 1px solid var(--line); padding-top: 6px; }
+.cfg-more > summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: .9em; padding: 2px 0; }
+.cfg-more > summary:hover { color: var(--text); }
+.cfg-more[open] > summary { margin-bottom: 8px; color: var(--text); }
+.cfg-more[open] { display: flex; flex-direction: column; gap: 8px; }
+.cfg-more > summary.cfg-points-head { display: list-item; }
+.cfg-server-pick { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.cfg-filebutton { display: inline-block; padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; background: var(--surface); color: var(--text); }
+.cfg-filebutton:hover { background: var(--hover); }
+.cfg-filebutton.primary { background: var(--accent); color: var(--canvas); border-color: var(--accent); font-weight: 600; }
+.cfg-filebutton input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.cfg-points-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cfg-points-tools input { flex: 1; min-width: 160px; }
+.cfg-table.compact td.cfg-port input { width: 80px; min-width: 70px; }
+.cfg-muted-cell { color: var(--muted); }

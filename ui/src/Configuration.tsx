@@ -104,7 +104,7 @@ function Ready({ blockers }: { blockers: string[] }) {
 const blank: Record<Entity, Row> = {
   providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE' },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
-    settings: { server_name: '', access_points: [{ name: '', host: '', port: 443 }] } },
+    settings: { server_name: '', access_points: [{ name: 'Access point 1', host: '', port: 443 }] } },
   accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
     tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
@@ -197,21 +197,21 @@ function ServerFileAnalyser({ catalog, use, close }: { catalog: Row; use: (serve
     catalog.unreadable_extended_records && `${catalog.unreadable_extended_records} extended access records could not be read`].filter(Boolean);
   return <div className="cfg-picker" aria-label="Analyse servers.dat">
     <div className="cfg-points-head"><strong>servers.dat · {catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} access points</strong>
-      <button type="button" onClick={close}>Close</button></div>
+      <button type="button" onClick={close}>Cancel</button></div>
     {warnings.length > 0 && <small className="cfg-note">{warnings.join(' · ')}.</small>}
     <div className="cfg-pair">
-      <Field label="Broker filter" hint="Server name or company, e.g. market"><input aria-label="Broker filter" autoFocus value={broker} onChange={e => setBroker(e.target.value)} /></Field>
-      <Field label="Address or name" hint="IP, host, port or access-point name"><input aria-label="Address filter" value={q} onChange={e => setQ(e.target.value)} /></Field>
+      <Field label="Broker" hint="Server or company name"><input aria-label="Broker filter" autoFocus value={broker} onChange={e => setBroker(e.target.value)} /></Field>
+      <Field label="Address" hint="IP, host, port or name"><input aria-label="Address filter" value={q} onChange={e => setQ(e.target.value)} /></Field>
     </div>
     <small className="cfg-note">{loading ? 'Searching…' : `${total.toLocaleString()} access points on ${servers.toLocaleString()} servers match`}{picked.length ? ` · ${picked.length} selected on ${picked[0].server_name}` : ''}</small>
     {error && <p role="alert" className="cfg-error">{error}</p>}{note && <p role="status" className="cfg-note">{note}</p>}
-    <div className="cfg-points cfg-analyser"><table className="cfg-table compact"><thead><tr><th /><th>Server (address)</th><th>Name</th><th>Company</th><th>Access point</th></tr></thead><tbody>
+    <div className="cfg-points cfg-analyser"><table className="cfg-table compact"><thead><tr><th /><th>Address</th><th>Server</th><th>Access point</th></tr></thead><tbody>
       {rows.map(r => { const on = picked.some(p => key(p) === key(r)); if (r.host == null) return <tr key={key(r)} className="cfg-off">
-        <td /><td className="cfg-note">no readable address</td><td>{r.server_name}</td><td>{r.company_name ?? '—'}</td><td>{r.name}</td></tr>;
+        <td /><td className="cfg-note">no readable address</td><td>{r.server_name}</td><td>{r.name}</td></tr>;
         return <tr key={key(r)} className={on ? 'selected' : ''} onClick={() => toggle(r)}>
         <td><input type="checkbox" aria-label={`Select ${r.host}:${r.port} on ${r.server_name}`} checked={on} onChange={() => toggle(r)} onClick={e => e.stopPropagation()} /></td>
-        <td className="cfg-mono">{r.host.includes(':') ? `[${r.host}]` : r.host}:{r.port}</td><td>{r.server_name}</td><td>{r.company_name ?? '—'}</td><td>{r.name}</td></tr>; })}
-      {!rows.length && !loading && <tr><td colSpan={5} className="cfg-note">No access point matches these filters.</td></tr>}
+        <td className="cfg-mono">{r.host.includes(':') ? `[${r.host}]` : r.host}:{r.port}</td><td title={r.company_name ?? ''}>{r.server_name}</td><td>{r.name}</td></tr>; })}
+      {!rows.length && !loading && <tr><td colSpan={4} className="cfg-note">No access point matches these filters.</td></tr>}
     </tbody></table></div>
     {rows.length < total && <button type="button" disabled={loading} onClick={() => void fetchRows(rows.length)}>Show more ({(total - rows.length).toLocaleString()} more)</button>}
     {detail && <ServerDescription settings={{ server_name: detail.server_name, company_name: detail.company_name, server_details: detail.details }} />}
@@ -220,21 +220,55 @@ function ServerFileAnalyser({ catalog, use, close }: { catalog: Row; use: (serve
         Use {picked.length || ''} selected access point{picked.length === 1 ? '' : 's'}</button>
       <button type="button" disabled={!detail} onClick={() => use(detail!, detail!.access_points)}>Use all {detail ? detail.access_points.length : ''} access points of {detail?.server_name ?? 'server'}</button>
     </div>
-    <small className="cfg-note">Selected access points are used in the order you ticked them; the server's other access points are kept unselected so you can switch later.</small>
   </div>;
 }
 
-function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (s: Row) => void; disabled: boolean }) {
-  const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('');
+/** The access points of the chosen server: which are used, in which order. */
+function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const [q, setQ] = useState('');
   const points: Row[] = settings.access_points ?? [];
   const setPoints = (next: Row[]) => change({ ...settings, access_points: next });
   const setPoint = (i: number, patch: Row) => setPoints(points.map((p, j) => j === i ? { ...p, ...patch } : p));
   const move = (i: number, d: number) => { const next = [...points]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); setPoints(next); };
   const needle = q.trim().toLowerCase();
   const visible = points.map((p, i) => ({ p, i })).filter(({ p }) => !needle || `${p.name} ${p.host} ${p.port} ${p.host}:${p.port}`.toLowerCase().includes(needle));
-  const enabled = points.filter(p => p.enabled !== false).length;
   const visibleOn = visible.filter(({ p }) => p.enabled !== false).length;
   const setVisible = (on: boolean) => { const ids = new Set(visible.map(v => v.i)); setPoints(points.map((p, i) => ids.has(i) ? { ...p, enabled: on } : p)); };
+  return <>
+    <div className="cfg-points-tools">
+      {points.length > 8 && <input aria-label="Search access points" placeholder="Search address or name…" value={q} onChange={e => setQ(e.target.value)} />}
+      <button type="button" disabled={visibleOn === visible.length} onClick={() => setVisible(true)}>Select {needle ? 'shown' : 'all'}</button>
+      <button type="button" disabled={visibleOn === 0} onClick={() => setVisible(false)}>Clear {needle ? 'shown' : 'all'}</button>
+    </div>
+    <div className="cfg-points"><table className="cfg-table compact"><thead><tr>
+      <th><input type="checkbox" aria-label="Select all shown access points" checked={visible.length > 0 && visibleOn === visible.length}
+        ref={el => { if (el) el.indeterminate = visibleOn > 0 && visibleOn < visible.length; }} onChange={e => setVisible(e.target.checked)} /></th>
+      <th>#</th><th>Host</th><th>Port</th><th>Name</th><th /></tr></thead><tbody>
+      {visible.map(({ p, i }) => <tr key={i} className={p.enabled === false ? 'cfg-off' : ''}>
+        <td><input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} /></td>
+        <td>{i + 1}</td>
+        <td><input aria-label={`Access point ${i + 1} host`} required value={p.host} onChange={e => setPoint(i, { host: e.target.value })} /></td>
+        <td className="cfg-port"><input aria-label={`Access point ${i + 1} port`} required type="number" min={1} max={65535} value={p.port} onChange={e => setPoint(i, { port: e.target.value })} /></td>
+        <td className="cfg-muted-cell">{p.name}</td>
+        <td className="cfg-row-actions"><button type="button" disabled={!!needle || i === 0} onClick={() => move(i, -1)} aria-label="Move up" title="Try earlier">↑</button>
+          <button type="button" disabled={!!needle || i === points.length - 1} onClick={() => move(i, 1)} aria-label="Move down" title="Try later">↓</button>
+          <button type="button" disabled={points.length === 1} onClick={() => setPoints(points.filter((_, j) => j !== i))} aria-label="Remove" title="Remove">✕</button></td></tr>)}
+      {!visible.length && <tr><td colSpan={6} className="cfg-note">No access point matches “{q}”.</td></tr>}
+    </tbody></table></div>
+    <div className="cfg-points-tools">
+      <button type="button" disabled={points.length >= 256} onClick={() => { setQ(''); setPoints([...points, { name: `Access point ${points.length + 1}`, host: '', port: 443, enabled: true }]); }}>Add access point</button>
+      <small className="cfg-note">Ticked access points are tried top to bottom.</small>
+    </div>
+  </>;
+}
+
+/** MT5: pick the broker server (from servers.dat or by name) and its access points. */
+function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const points: Row[] = settings.access_points ?? [];
+  const enabled = points.filter(p => p.enabled !== false).length;
+  const [showPoints, setShowPoints] = useState(() => points.some(p => !p.host));
+  const hasDetails = !!settings.company_name || Object.keys(settings.server_details ?? {}).length > 0;
   async function read(file: File) {
     setBusy(true); setError('');
     try { setCatalog(await api('config/mt5/server-file', 'POST', undefined, file)); }
@@ -246,58 +280,44 @@ function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (
     const rest = server.access_points.filter((p: Row) => !wanted.has(id(p)));
     change({ server_name: server.server_name, company_name: server.company_name ?? null, server_details: server.details ?? {},
       access_points: [...first.map(p => ({ ...p, enabled: true })), ...rest.map((p: Row) => ({ ...p, enabled: false }))] });
-    setCatalog(null); setQ('');
+    setCatalog(null);
   }
-  return <fieldset className="cfg-subform" disabled={disabled}>
+  return <fieldset className="cfg-subform">
     <legend>MT5 server</legend>
-    <Field label="Analyze servers.dat" hint="Optional. Reads every broker server and access point in an MT5 servers.dat (terminal: File › Open Data Folder › Config). Nothing is stored until you save.">
-      <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></Field>
-    {busy && <p className="cfg-note">Analysing server file…</p>}
-    {error && <p role="alert" className="cfg-error">{error}</p>}
-    {catalog && <ServerFileAnalyser catalog={catalog} use={use} close={() => setCatalog(null)} />}
-    <Field label="Broker server name" hint="Exactly as the broker supplies it, e.g. ICMarketsSC-Demo">
-      <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>
-    <ServerDescription settings={settings} />
-    <div className="cfg-points-head"><strong>Access points · {enabled} of {points.length} selected</strong>
-      <span className="cfg-row-actions">
-        <button type="button" disabled={visibleOn === visible.length} onClick={() => setVisible(true)}>Select {needle ? 'shown' : 'all'}</button>
-        <button type="button" disabled={visibleOn === 0} onClick={() => setVisible(false)}>Clear {needle ? 'shown' : 'all'}</button>
-        <button type="button" disabled={enabled === points.length || enabled === 0} onClick={() => { if (window.confirm(`Remove the ${points.length - enabled} unselected access points from this connection?`)) setPoints(points.filter(p => p.enabled !== false)); }}>Remove unselected</button>
-      </span></div>
-    <input aria-label="Search access points" placeholder="Search name, host or port…" value={q} onChange={e => setQ(e.target.value)} />
-    {enabled === 0 && <p role="alert" className="cfg-error">Select at least one access point.</p>}
-    <div className="cfg-points"><table className="cfg-table compact"><thead><tr>
-      <th><input type="checkbox" aria-label="Select all shown access points" checked={visible.length > 0 && visibleOn === visible.length}
-        ref={el => { if (el) el.indeterminate = visibleOn > 0 && visibleOn < visible.length; }} onChange={e => setVisible(e.target.checked)} /></th>
-      <th>#</th><th>Access point</th><th>Host</th><th>Port</th><th /></tr></thead><tbody>
-      {visible.map(({ p, i }) => <tr key={i} className={p.enabled === false ? 'cfg-off' : ''}>
-        <td><input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} /></td>
-        <td>{i + 1}</td>
-        <td><input aria-label={`Access point ${i + 1} name`} required maxLength={200} value={p.name} onChange={e => setPoint(i, { name: e.target.value })} /></td>
-        <td><input aria-label={`Access point ${i + 1} host`} required value={p.host} onChange={e => setPoint(i, { host: e.target.value })} /></td>
-        <td><input aria-label={`Access point ${i + 1} port`} required type="number" min={1} max={65535} value={p.port} onChange={e => setPoint(i, { port: e.target.value })} /></td>
-        <td className="cfg-row-actions"><button type="button" disabled={!!needle || i === 0} title={needle ? 'Clear the search to reorder' : undefined} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
-          <button type="button" disabled={!!needle || i === points.length - 1} title={needle ? 'Clear the search to reorder' : undefined} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
-          <button type="button" disabled={points.length === 1} onClick={() => setPoints(points.filter((_, j) => j !== i))} aria-label="Remove">✕</button></td></tr>)}
-      {!visible.length && <tr><td colSpan={6} className="cfg-note">No access point matches “{q}”.</td></tr>}
-    </tbody></table></div>
-    <button type="button" disabled={points.length >= 256} onClick={() => { setQ(''); setPoints([...points, { name: `Access Point ${points.length + 1}`, host: '', port: 443, enabled: true }]); }}>Add access point</button>
-    <small>The adapter tries the selected access points in this order. Unselected ones stay on record but are not used.</small>
+    {catalog ? <ServerFileAnalyser catalog={catalog} use={use} close={() => setCatalog(null)} /> : <>
+      <div className="cfg-server-pick">
+        <label className={`cfg-filebutton${settings.server_name ? '' : ' primary'}`}>{busy ? 'Reading…' : settings.server_name ? 'Change server…' : 'Choose server from servers.dat…'}
+          <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></label>
+        <small className="cfg-note">From the MT5 terminal: File › Open Data Folder › Config › servers.dat</small>
+      </div>
+      {error && <p role="alert" className="cfg-error">{error}</p>}
+      <Field label="Broker server name" hint="Exactly as in MT5, e.g. ICMarketsSC-Demo">
+        <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>
+      {settings.company_name && <p className="cfg-note">Company: {settings.company_name}</p>}
+      <details className="cfg-more" open={showPoints} onToggle={e => setShowPoints((e.target as HTMLDetailsElement).open)}>
+        <summary className="cfg-points-head">Access points · {enabled} of {points.length} in use</summary>
+        <AccessPoints settings={settings} change={change} />
+      </details>
+      {enabled === 0 && <p role="alert" className="cfg-error">Select at least one access point.</p>}
+      {hasDetails && <details className="cfg-more"><summary>Server details</summary><ServerDescription settings={settings} /></details>}
+    </>}
   </fieldset>;
 }
 
-function RestSettings({ settings, change, disabled }: { settings: Row; change: (s: Row) => void; disabled: boolean }) {
-  return <fieldset className="cfg-subform" disabled={disabled}>
+function RestSettings({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const field = (k: string, label: string, hint: string, required = false) => <Field label={label} hint={hint}>
+    <input aria-label={label} required={required} type="url" value={settings[k] ?? ''} onChange={e => change({ ...settings, [k]: e.target.value })} /></Field>;
+  return <fieldset className="cfg-subform">
     <legend>Broker API app</legend>
-    <small>One connection per broker API app. For Upstox: create the app at the Upstox developer portal, then enter its URLs here and its API key and secret under Credential after saving.</small>
-    <Field label="REST base URL" hint="https:// only, e.g. https://api.upstox.com"><input aria-label="REST base URL" required type="url" value={settings.api_base_url ?? ''} onChange={e => change({ ...settings, api_base_url: e.target.value })} /></Field>
-    <Field label="Streaming URL" hint="Optional, wss:// only. Leave empty when the broker issues the feed URL after login (Upstox does)."><input aria-label="Streaming URL" type="url" value={settings.stream_url ?? ''} onChange={e => change({ ...settings, stream_url: e.target.value })} /></Field>
-    <Field label="Authentication"><Choice label="Authentication" value={settings.auth_method ?? 'API_KEY'} options={[['OAUTH2', 'OAuth 2 login (Upstox, Zerodha-style apps)'], ['API_KEY', 'API key and secret only']]}
+    {field('api_base_url', 'REST base URL', 'e.g. https://api.upstox.com', true)}
+    <Field label="Authentication"><Choice label="Authentication" value={settings.auth_method ?? 'API_KEY'} options={[['OAUTH2', 'OAuth 2 login (e.g. Upstox)'], ['API_KEY', 'API key and secret']]}
       onChange={v => change({ ...settings, auth_method: v })} /></Field>
-    {settings.auth_method === 'OAUTH2' && <Field label="OAuth redirect URL" hint="Exactly as registered on the broker app. Production: https://corei-os-mini.coreeye.in/api/oauth/upstox/callback. http://localhost only for local testing.">
-      <input aria-label="OAuth redirect URL" required type="url" value={settings.oauth_redirect_url ?? ''} onChange={e => change({ ...settings, oauth_redirect_url: e.target.value })} /></Field>}
-    <Field label="Notifier webhook URL" hint="Optional, https:// only. Where the broker posts tokens or order updates (Upstox notifier webhook), if registered on the app.">
-      <input aria-label="Notifier webhook URL" type="url" value={settings.notifier_webhook_url ?? ''} onChange={e => change({ ...settings, notifier_webhook_url: e.target.value })} /></Field>
+    {settings.auth_method === 'OAUTH2' && field('oauth_redirect_url', 'OAuth redirect URL', 'Must match the broker app exactly, e.g. https://corei-os-mini.coreeye.in/api/oauth/upstox/callback', true)}
+    <details className="cfg-more"><summary>Optional URLs</summary>
+      {field('stream_url', 'Streaming URL', 'wss:// — leave empty if the broker issues it after login (Upstox does)')}
+      {field('notifier_webhook_url', 'Notifier webhook URL', 'https:// — only if registered on the broker app')}
+    </details>
+    <small>API key and secret are entered after saving.</small>
   </fieldset>;
 }
 
@@ -322,11 +342,21 @@ function suggestId(entity: Entity, d: Row, refs: Record<string, Row[]>): string 
   return /^[A-Z]/.test(id) ? id : '';
 }
 
+function suggestName(d: Row, refs: Record<string, Row[]>): string {
+  const provider = refs.providers.find(p => p.id === d.provider_id);
+  if (!provider) return '';
+  const env = d.environment === 'LIVE' ? 'live' : 'demo';
+  if (d.platform === 'MT5') return `${provider.name} MT5 ${env}${d.settings?.server_name ? ` · ${d.settings.server_name}` : ''}`.slice(0, 120);
+  return `${provider.name} API ${env}`.slice(0, 120);
+}
+
 function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity; draft: Row; setDraft: (r: Row) => void; editing: boolean; refs: Record<string, Row[]> }) {
   const set = (k: string, v: unknown) => {
     const next: Row = { ...draft, [k]: v };
     if (k === 'code') next._codeEdited = v !== '';
     else if (!editing && !next._codeEdited && 'code' in next) next.code = suggestId(entity, next, refs);
+    if (k === 'name') next._nameEdited = v !== '';
+    else if (!editing && !next._nameEdited && entity === 'connections') next.name = suggestName(next, refs);
     setDraft(next);
   };
   const locked = (k: string) => editing && IMMUTABLE[entity].includes(k);
@@ -339,7 +369,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
       <option value="" disabled>Select…</option>{rows.map(r => <option key={r.id} value={r.id}>{show(r)}</option>)}</select></Field>;
   const status = pick('status', 'Status', ['ACTIVE', 'INACTIVE']);
   const code = (label: string, example: string) => text('code', label, { required: true, maxLength: 32, pattern: '[A-Za-z][A-Za-z0-9_]{1,31}' },
-    `Permanent short ID used in logs, audit and deployments. Suggested automatically; e.g. ${example}. Letters, digits, underscore.`);
+    `Filled in for you; cannot change after saving. e.g. ${example}`);
 
   if (entity === 'providers') return <>
     {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand and legal entity, e.g. IC Markets (Raw Trading Ltd), Upstox (RKSV Securities)')}
@@ -348,15 +378,19 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
   if (entity === 'connections') {
     const platform = (v: string) => setDraft({ ...draft, platform: v, settings: v === 'MT5' ? blank.connections.settings : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
-    return <>{ref('provider_id', 'Provider', refs.providers, r => `${r.code} · ${r.name}`)}
-      <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['REST_API', 'Broker REST / WebSocket API']]} onChange={platform} /></Field>
-      {pick('environment', 'Environment', [['DEMO', 'Demo'], ['LIVE', 'Live']], 'Inherited by every account on this connection')}
-      {pick('purpose', 'Purpose', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
-      {code('Connection ID', 'ICMARKETS_MT5_LIVE, UPSTOX_API_LIVE')}
-      {text('name', 'Connection name', { required: true, maxLength: 120 }, draft.platform === 'MT5' ? 'Plain description, e.g. IC Markets MT5 live · ICMarketsSC-MT5-2' : 'Plain description, e.g. Upstox API app · COREI live')}
-      {status}
-      {draft.platform === 'MT5' ? <Mt5Endpoints settings={draft.settings} disabled={false} change={s => set('settings', s)} />
-        : <RestSettings settings={draft.settings} disabled={false} change={s => set('settings', s)} />}</>;
+    return <>{ref('provider_id', 'Provider', refs.providers, r => `${r.name} (${r.code})`)}
+      <div className="cfg-pair">
+        <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['REST_API', 'Broker API']]} onChange={platform} /></Field>
+        {pick('environment', 'Environment', [['DEMO', 'Demo'], ['LIVE', 'Live']])}
+      </div>
+      {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} change={s => set('settings', s)} />
+        : <RestSettings settings={draft.settings} change={s => set('settings', s)} />}
+      {text('name', 'Connection name', { required: true, maxLength: 120 }, 'Filled in for you; change if you like')}
+      {code('Connection ID', 'ICMARKETS_MT5_LIVE')}
+      <details className="cfg-more"><summary>More options</summary>
+        {pick('purpose', 'Used for', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
+        {status}
+      </details></>;
   }
 
   if (entity === 'accounts') {
@@ -432,11 +466,11 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
 
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
   providers: [['Provider ID', r => r.code], ['Provider name', r => r.name], ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
-  connections: [['Connection ID', r => r.code], ['Provider', r => r.provider_code], ['Platform', r => r.platform], ['Env', r => <Env value={r.environment} />],
-    ['Purpose', r => r.purpose], ['Endpoint', r => r.platform === 'MT5' ? <span title={r.settings.company_name ?? ''}>{r.settings.server_name}{r.settings.company_name ? ` · ${r.settings.company_name}` : ''}
-      <small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length}/{r.settings.access_points.length} AP</small></span> : r.settings.api_base_url],
-    ['Credential', r => r.platform === 'MT5' ? 'Per account' : r.credential_kind ? 'Saved' : <span className="cfg-pill warn">Missing</span>],
-    ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
+  connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => r.provider_code],
+    ['Platform', r => r.platform === 'MT5' ? 'MT5' : 'API'], ['Env', r => <Env value={r.environment} />],
+    ['Server', r => r.platform === 'MT5' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
+    ['Accounts', r => r.account_count],
+    ['Status', r => <><Status value={r.status} />{r.platform !== 'MT5' && !r.credential_kind && <> <span className="cfg-pill warn">No API key</span></>}</>]],
   accounts: [['Account ID', r => r.code], ['Holder', r => r.holder_name || '—'], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],
     ['Broker login', r => r.external_account_id], ['Ccy', r => r.base_currency], ['Permission', r => <Status value={r.trading_permission} />],
     ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />], ['Status', r => <Status value={r.status} />]],

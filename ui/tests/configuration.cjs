@@ -123,11 +123,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('New connection').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
+ assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
  fill(byLabel('Connection name'),'ICM MT5 demo');
  fill($('.cfg-subform input[maxlength="120"]'),'ICMarketsSC-Demo');
- fill(byLabel('Access point 1 name'),'Access Point 1');fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
+ fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
  button('Add access point').click();await tick();
- fill(byLabel('Access point 2 name'),'Access Point 2');fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
+ fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
  [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
  // The editor is a floating window: keyboard move/resize, maximise/restore, all eight resize edges.
  const win=$('.fw');assert.equal(win.getAttribute('role'),'dialog');assert.equal(win.querySelectorAll('.fw-edge').length,8);
@@ -171,17 +172,17 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal($('.cfg-picker'),null);
  assert.equal(byLabel('Broker server name').value,'MetaQuotes-Demo');
  assert.match($('[aria-label="Server description"]').textContent,/CompanyMetaQuotes Ltd\./);
- assert.match($('.cfg-points-head').textContent,/2 of 50 selected/);
+ assert.match($('.cfg-points-head').textContent,/2 of 50 in use/);
  assert.deepEqual([byLabel('Access point 1 host').value,byLabel('Access point 2 host').value],['78.140.180.8','78.140.180.2']);
  button('Select all').click();await tick();
  // Search access points, select only the matching ones.
  fill(byLabel('Search access points'),'1950');await tick();
  assert.equal(w.document.querySelectorAll('.cfg-points tbody tr').length,25);
  button('Clear shown').click();await tick();
- assert.match($('.cfg-points-head').textContent,/25 of 50 selected/);
+ assert.match($('.cfg-points-head').textContent,/25 of 50 in use/);
  fill(byLabel('Search access points'),'');await tick();
  byLabel('Use access point 3').click();await tick();  // a port-443 row, still selected
- assert.match($('.cfg-points-head').textContent,/24 of 50 selected/);
+ assert.match($('.cfg-points-head').textContent,/24 of 50 in use/);
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO_2');  // ICM_MT5_DEMO is taken
  fill(byLabel('Connection ID'),'mt5001');fill(byLabel('Connection name'),'MetaQuotes demo');await tick();
