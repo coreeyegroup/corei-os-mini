@@ -150,7 +150,9 @@ def _validate(document: dict) -> dict:
             if (host, port) in seen:
                 continue
             seen.add((host, port))
-            points.append(dict(name=_clean_text(access.get('name'), 200) or 'Access point', host=host, port=port))
+            # The SDK's per-access label is not reliable (it often repeats another
+            # server's name), so access points are simply numbered in file order.
+            points.append(dict(name=f'Access point {len(points) + 1}', host=host, port=port))
         if not points:
             stats['servers_without_access_points'] += 1
         total += len(points)
@@ -271,6 +273,23 @@ def search(catalog: Catalog, broker: str, query: str, offset: int, limit: int) -
         point = server['access_points'][ai] if ai >= 0 else {'name': 'No readable address in this file', 'host': None, 'port': None}
         items.append({'server_name': server['server_name'], 'company_name': server.get('company_name'), **point})
     return {'total': len(matches), 'server_matches': len({r[0] for r in matches}), 'offset': offset, 'items': items}
+
+
+def servers(catalog: Catalog, query: str, offset: int, limit: int) -> dict:
+    """One row per server: name, company and number of access points. Every term must
+    match the server name, the company or one of the server's addresses."""
+    terms = query.lower().split()
+    found = []
+    for entry in catalog.data['servers']:
+        if terms:
+            text = ' '.join([entry['server_name'], entry.get('company_name') or ''] +
+                            [f"{p['host']}:{p['port']}" for p in entry['access_points']]).lower()
+            if not all(t in text for t in terms):
+                continue
+        found.append(entry)
+    return {'total': len(found), 'offset': offset,
+            'items': [{'server_name': e['server_name'], 'company_name': e.get('company_name'),
+                       'access_point_count': len(e['access_points'])} for e in found[offset:offset + limit]]}
 
 
 def server(catalog: Catalog, name: str) -> dict:

@@ -17,18 +17,18 @@ function fit(b: Box): Box {
   return { w, h, x: Math.min(Math.max(MARGIN, b.x), window.innerWidth - w - MARGIN), y: Math.min(Math.max(MARGIN, b.y), window.innerHeight - h - MARGIN) };
 }
 
-function initial(storageKey: string): Box {
+function initial(storageKey: string, width = 560): Box {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
     if (saved && ['x', 'y', 'w', 'h'].every(k => Number.isFinite(saved[k]))) return fit(saved);
   } catch { /* fall back to default placement */ }
-  const w = Math.min(560, window.innerWidth - 48), h = Math.min(760, window.innerHeight - 120);
+  const w = Math.min(width, window.innerWidth - 48), h = Math.min(760, window.innerHeight - 120);
   return fit({ w, h, x: window.innerWidth - w - 24, y: 90 });
 }
 
-export default function FloatingWindow({ title, subtitle, onClose, children, storageKey = 'corei-os-mini.window.v1' }:
-  { title: string; subtitle?: string; onClose: () => void; children: ReactNode; storageKey?: string }) {
-  const [box, setBox] = useState<Box>(() => initial(storageKey));
+export default function FloatingWindow({ title, subtitle, onClose, children, footer, width, storageKey = 'corei-os-mini.window.v1' }:
+  { title: string; subtitle?: string; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: number; storageKey?: string }) {
+  const [box, setBox] = useState<Box>(() => initial(storageKey, width));
   const [maximized, setMaximized] = useState(false);
   const drag = useRef<{ x: number; y: number; start: Box; edge: Edge | 'move' } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -71,11 +71,12 @@ export default function FloatingWindow({ title, subtitle, onClose, children, sto
       onPointerDown={e => start(e, 'move')} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}
       onDoubleClick={e => { if (!(e.target as HTMLElement).closest('button')) setMaximized(m => !m); }} onKeyDown={keys}>
       <div className="fw-caption"><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div>
-      <button type="button" title="Reset size and position" aria-label="Reset window" onClick={() => { setMaximized(false); localStorage.removeItem(storageKey); setBox(initial(storageKey)); }}>⟲</button>
+      <button type="button" title="Reset size and position" aria-label="Reset window" onClick={() => { setMaximized(false); localStorage.removeItem(storageKey); setBox(initial(storageKey, width)); }}>⟲</button>
       <button type="button" title={maximized ? 'Restore' : 'Maximise'} aria-label={maximized ? 'Restore window' : 'Maximise window'} onClick={() => setMaximized(m => !m)}>{maximized ? '❐' : '□'}</button>
       <button type="button" title="Close (Esc)" aria-label="Close window" onClick={onClose}>✕</button>
     </div>
     <div className="fw-body">{children}</div>
+    {footer && <div className="fw-footer">{footer}</div>}
     {!maximized && (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as Edge[]).map(handle)}
   </div>;
 }

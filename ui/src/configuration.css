@@ -112,16 +112,6 @@
 .cfg-server-desc dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 6px 0; }
 .cfg-server-desc dt { color: var(--muted); }
 .cfg-server-desc dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
-.cfg-picker { border: 1px solid var(--accent); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-.cfg-picker ul { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow: auto; border: 1px solid var(--line); }
-.cfg-picker li { border-bottom: 1px solid var(--line); }
-.cfg-picker li.open { background: var(--selection); }
-.cfg-picker-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; color: var(--text); cursor: pointer; }
-.cfg-picker-row:hover { background: var(--hover); }
-.cfg-picker-name { font-weight: 600; overflow-wrap: anywhere; }
-.cfg-picker-meta { color: var(--muted); font-size: .9em; overflow-wrap: anywhere; }
-.cfg-picker-detail { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.cfg-picker-detail .cfg-server-desc { align-self: stretch; }
 .cfg-table tr.cfg-off td { opacity: .5; }
 .cfg-table tr.cfg-off td:first-child { opacity: 1; }
 
@@ -143,21 +133,71 @@
 .cfg-analyser td { white-space: nowrap; }
 .cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
 
-/* Connection form: progressive disclosure */
-.cfg-more { border-top: 1px solid var(--line); padding-top: 6px; }
-.cfg-more > summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: .9em; padding: 2px 0; }
+/* Window footer (FloatingWindow footer prop) */
+.fw-footer { flex: none; border-top: 1px solid var(--line); padding: 10px 14px; background: var(--chrome); }
+.fw-footer .cfg-actions { align-items: center; }
+
+/* Numbered form sections */
+.cfg-section { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 14px; border-bottom: 1px solid var(--line); }
+.cfg-section:last-child { border-bottom: 0; }
+.cfg-section h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .95em; letter-spacing: .01em; }
+.cfg-section h4 span { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--selection); color: var(--accent); font-size: .8em; font-weight: 700; }
+.cfg-section-body { display: flex; flex-direction: column; gap: 10px; padding-left: 28px; }
+.cfg-form .cfg-section + .cfg-section { margin-top: 2px; }
+
+/* Collapsible extras */
+.cfg-more > summary { cursor: pointer; color: var(--muted); font-size: .9em; padding: 2px 0; user-select: none; }
 .cfg-more > summary:hover { color: var(--text); }
 .cfg-more[open] > summary { margin-bottom: 8px; color: var(--text); }
 .cfg-more[open] { display: flex; flex-direction: column; gap: 8px; }
-.cfg-more > summary.cfg-points-head { display: list-item; }
-.cfg-server-pick { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-.cfg-filebutton { display: inline-block; padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; background: var(--surface); color: var(--text); }
-.cfg-filebutton:hover { background: var(--hover); }
-.cfg-filebutton.primary { background: var(--accent); color: var(--canvas); border-color: var(--accent); font-weight: 600; }
-.cfg-filebutton input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-.cfg-points-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.cfg-points-tools input { flex: 1; min-width: 160px; }
-.cfg-table.compact td.cfg-port input { width: 80px; min-width: 70px; }
-.cfg-muted-cell { color: var(--muted); }
-.cfg-search-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; width: 100%; }
-.cfg-search-row input { flex: 1; min-width: 180px; }
+
+/* Server finder and chosen server */
+.cfg-finder { display: flex; flex-direction: column; gap: 6px; }
+.cfg-search-row { display: flex; gap: 8px; align-items: center; }
+.cfg-search-row input { flex: 1; min-width: 0; }
+.cfg-link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; font: inherit; }
+label.cfg-link input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.cfg-chosen { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--canvas); }
+.cfg-chosen > div, .cfg-picker-server > div, .cfg-picker-head > div { display: flex; flex-direction: column; min-width: 0; }
+.cfg-chosen small, .cfg-picker-server small, .cfg-picker-head small { color: var(--muted); }
+.cfg-more-link { align-self: flex-start; background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; }
+.cfg-more-link:disabled { color: var(--muted); }
+
+/* Address list */
+.cfg-addresses { display: flex; flex-direction: column; gap: 6px; }
+.cfg-addresses-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: .9em; }
+.cfg-address-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); max-height: 280px; overflow: auto; }
+.cfg-address-list li { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.cfg-address-list li:last-child { border-bottom: 0; }
+.cfg-address-list li.off .cfg-address-text, .cfg-address-list li.off .cfg-address-n { opacity: .45; }
+.cfg-address-list .cfg-row-actions { margin-left: auto; opacity: .55; }
+.cfg-address-list li:hover .cfg-row-actions { opacity: 1; }
+.cfg-address-n { width: 18px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cfg-address-text { overflow-wrap: anywhere; }
+.cfg-address-edit { display: flex; gap: 6px; flex: 1; }
+.cfg-address-edit input:first-child { flex: 1; min-width: 0; }
+.cfg-address-edit input:last-child { width: 90px; }
+.cfg-mono { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: .92em; }
+
+/* Server picker: servers on the left, addresses of the selected one on the right */
+.cfg-picker { display: flex; flex-direction: column; gap: 8px; }
+.cfg-picker-head, .cfg-picker-server, .cfg-picker-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cfg-picker-panes { display: flex; flex-wrap: wrap; border: 1px solid var(--line); min-height: 300px; }
+.cfg-picker-servers { flex: 1 1 220px; max-height: 380px; overflow: auto; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.cfg-picker-servers > button[role="option"] { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; border-left: 3px solid transparent; }
+.cfg-picker-servers > button[role="option"]:hover { background: var(--hover); }
+.cfg-picker-servers > button.on { background: var(--selection); border-left-color: var(--accent); }
+.cfg-picker-servers > .cfg-note, .cfg-picker-servers > .cfg-more-link { padding: 8px 10px; }
+.cfg-picker-name { font-weight: 600; overflow-wrap: anywhere; }
+.cfg-picker-meta { color: var(--muted); font-size: .85em; overflow-wrap: anywhere; }
+.cfg-picker-points { flex: 2 1 300px; display: flex; flex-direction: column; gap: 8px; padding: 10px; max-height: 380px; overflow: auto; }
+.cfg-picker-empty { margin: auto; text-align: center; }
+.cfg-checklist { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); }
+.cfg-checklist li { border-bottom: 1px solid var(--line); }
+.cfg-checklist li:last-child { border-bottom: 0; }
+.cfg-checklist label { display: flex; align-items: center; gap: 10px; padding: 5px 8px; cursor: pointer; }
+.cfg-checklist label:hover { background: var(--hover); }
+.cfg-desc { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; font-size: .9em; }
+.cfg-desc dt { color: var(--muted); }
+.cfg-desc dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cfg-picker-foot { position: sticky; bottom: -8px; background: var(--surface); padding: 8px 0; border-top: 1px solid var(--line); z-index: 2; }

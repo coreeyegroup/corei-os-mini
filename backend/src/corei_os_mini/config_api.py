@@ -130,6 +130,14 @@ def search_mt5_access_points(catalog_id: str, response: Response, broker: str = 
     return catalogs.search(catalogs.recall(catalog_id, user), broker, q, offset, limit)
 
 
+@router.get('/mt5/server-file/{catalog_id}/servers')
+def list_mt5_servers(catalog_id: str, response: Response, q: str = Query('', max_length=120), offset: int = Query(0, ge=0),
+                     limit: int = Query(200, ge=1, le=1000), user: str = Depends(editor)):
+    """Servers in the analysed file or directory result, filtered by name, company or address."""
+    _no_store(response)
+    return catalogs.servers(catalogs.recall(catalog_id, user), q, offset, limit)
+
+
 @router.get('/mt5/server-file/{catalog_id}/server')
 def mt5_server_detail(catalog_id: str, response: Response, name: str = Query(min_length=1, max_length=120),
                       user: str = Depends(editor)):

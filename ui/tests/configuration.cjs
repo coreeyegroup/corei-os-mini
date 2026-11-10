@@ -56,7 +56,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(parts[0]==='audit')return ok({items:[]});
    if(parts[0]==='mt5'){
      const servers=[
-       {server_name:'ICMarketsSC-Demo',company_name:'Raw Trading Ltd',details:{CompanyName:'Raw Trading Ltd',TimeZone:120},access_points:[{name:'Access Point 1',host:'203.0.113.10',port:443}]},
+       {server_name:'ICMarketsSC-Demo',company_name:'Raw Trading Ltd',details:{CompanyName:'Raw Trading Ltd',TimeZone:120},access_points:[{name:'Access Point 1',host:'203.0.113.10',port:443},{name:'Access Point 2',host:'10.30.210.41',port:443}]},
        {server_name:'MarketEquityInc-Demo',company_name:'Market Equity Inc.',details:{CompanyName:'Market Equity Inc.'},access_points:[{name:'Access Point 1',host:'192.109.15.68',port:443},{name:'Access Point 2',host:'192.109.15.68',port:1950}]},
        {server_name:'Marketmates-Live',company_name:'Marketmates Ltd',details:{CompanyName:'Marketmates Ltd'},access_points:[{name:'Access Point 1',host:'142.91.121.204',port:1950},{name:'Access Point 2',host:'142.91.121.204',port:443},{name:'Access Point 3',host:'5.181.78.117',port:1950}]},
        {server_name:'MetaQuotes-Demo',company_name:'MetaQuotes Ltd.',details:{CompanyName:'MetaQuotes Ltd.',TimeZone:120,DST:1,Description:'MetaTrader 5 demo server operated by MetaQuotes Ltd. for testing and evaluation'},
@@ -64,6 +64,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      if(parts[1]==='broker-search'){const query=JSON.parse(options.body).query;searched.push(query);
        return ok({catalog_id:'cat1',source:'broker-directory',query,server_count:servers.length,access_point_count:56,skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:0});}
      if(method==='POST')return ok({catalog_id:'cat1',server_count:servers.length,access_point_count:servers.reduce((n,s)=>n+s.access_points.length,0),skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:2});
+     if(u.pathname.endsWith('/servers')){const t=(u.searchParams.get('q')||'').toLowerCase().split(/\s+/).filter(Boolean);
+       const items=servers.filter(x=>t.every(k=>[x.server_name,x.company_name,...x.access_points.map(a=>a.host+':'+a.port)].join(' ').toLowerCase().includes(k)))
+         .map(x=>({server_name:x.server_name,company_name:x.company_name,access_point_count:x.access_points.length}));
+       return ok({total:items.length,offset:0,items});}
      if(u.pathname.endsWith('/server'))return ok(servers.find(s=>s.server_name===u.searchParams.get('name')));
      const b=(u.searchParams.get('broker')||'').toLowerCase().split(/\s+/).filter(Boolean),q=(u.searchParams.get('q')||'').toLowerCase().split(/\s+/).filter(Boolean);
      const rows=servers.flatMap(s=>s.access_points.map(a=>({server_name:s.server_name,company_name:s.company_name,...a})))
@@ -121,16 +125,18 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('✕')?.click?.();await tick();
  console.log('PASS: provider create, upper-case code, duplicate shows backend message.');
 
- // Connection: MT5 with ordered access points
+ // Connection: MT5 entered manually, with ordered addresses
  nav('Connections').click();await tick();await tick();
  button('New connection').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
  assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name']);
+ button('Enter manually').click();await tick();
  fill(byLabel('Connection name'),'ICM MT5 demo');
- fill($('.cfg-subform input[maxlength="120"]'),'ICMarketsSC-Demo');
+ fill(byLabel('Broker server name'),'ICMarketsSC-Demo');
  fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
- button('Add access point').click();await tick();
+ button('+ Add address').click();await tick();
  fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
  [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
  // The editor is a floating window: keyboard move/resize, maximise/restore, all eight resize edges.
@@ -141,74 +147,69 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  $('[aria-label="Maximise window"]').click();await tick();assert.ok($('.fw').classList.contains('fw-max'));
  $('[aria-label="Restore window"]').click();await tick();assert.ok(!$('.fw').classList.contains('fw-max'));
  assert.match($('.fw-caption').textContent,/Unsaved/);
+ assert.ok($('.fw-footer button.primary'),'actions stay in the window footer');
  w.confirm=()=>false;$('.fw').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();assert.ok($('.fw'),'Esc keeps window when discard is declined');w.confirm=()=>true;
  await submit($('.cfg-detail .cfg-form'));
  const conn=db.connections[0];
  assert.equal(conn.platform,'MT5');assert.equal(conn.environment,'DEMO');
- assert.deepEqual(conn.settings.access_points.map(p=>[p.host,p.port]),[['192.0.2.11',444],['192.0.2.10',443]]);
+ assert.deepEqual(conn.settings.access_points.map(p=>[p.name,p.host,p.port]),[['Access point 1','192.0.2.11',444],['Access point 2','192.0.2.10',443]]);
  assert.ok(byLabel('Platform').disabled,'platform fixed after creation');
- console.log('PASS: MT5 connection with ordered access points; floating window moves, resizes, maximises; platform fixed after creation.');
- // A broker server with 50 access points (MetaQuotes-Demo) can be entered.
+ console.log('PASS: MT5 connection entered manually with ordered addresses; floating window moves, resizes, maximises; platform fixed after creation.');
+
+ // servers.dat: choose a server on the left, its addresses on the right.
  button('New connection').click();await tick();
- // Analyze servers.dat: every access point of every broker in one table, with broker and address filters.
- const fileInput=$('.cfg-subform input[type="file"]');Object.defineProperty(fileInput,'files',{value:[new w.File(['x'],'servers.dat')]});
+ const fileInput=$('.cfg-finder input[type="file"]');Object.defineProperty(fileInput,'files',{value:[new w.File(['x'],'servers.dat')]});
  fileInput.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();await new Promise(r=>setTimeout(r,300));
- assert.match($('.cfg-picker').textContent,/4 servers · 56 access points/);
- assert.match($('.cfg-picker').textContent,/2 extended access records could not be read/);
- assert.equal(w.document.querySelectorAll('.cfg-analyser tbody tr').length,56);
- fill(byLabel('Broker filter'),'market');await new Promise(r=>setTimeout(r,350));await tick();
- assert.match($('.cfg-picker').textContent,/6 access points on 3 servers match/);  // ICMarketsSC-Demo contains "market" too
- assert.deepEqual([...w.document.querySelectorAll('.cfg-analyser tbody tr td:nth-child(2)')].map(t=>t.textContent),['203.0.113.10:443','192.109.15.68:443','192.109.15.68:1950','142.91.121.204:1950','142.91.121.204:443','5.181.78.117:1950']);
- byLabel('Select 192.109.15.68:1950 on MarketEquityInc-Demo').click();await tick();
- byLabel('Select 142.91.121.204:443 on Marketmates-Live').click();await tick();
- assert.match($('.cfg-picker').textContent,/Selection switched to Marketmates-Live/);
- assert.match($('.cfg-picker').textContent,/1 selected on Marketmates-Live/);
- fill(byLabel('Broker filter'),'metaquotes');fill(byLabel('Address filter'),'1950');await new Promise(r=>setTimeout(r,350));await tick();
- assert.equal(w.document.querySelectorAll('.cfg-analyser tbody tr').length,25);
- const mqRows=[...w.document.querySelectorAll('.cfg-analyser tbody tr')];
- mqRows[3].click();await tick();
- assert.match($('.cfg-picker').textContent,/Selection switched to MetaQuotes-Demo/);
- mqRows[0].click();await tick();await tick();
+ assert.match($('.cfg-picker').textContent,/servers\.dat4 servers · 57 addresses/);
+ assert.equal(w.document.querySelectorAll('.cfg-picker-servers [role="option"]').length,4);
+ fill(byLabel('Filter servers'),'market');await new Promise(r=>setTimeout(r,350));await tick();
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-picker-name')].map(x=>x.textContent),['ICMarketsSC-Demo','MarketEquityInc-Demo','Marketmates-Live']);
+ fill(byLabel('Filter servers'),'142.91');await new Promise(r=>setTimeout(r,350));await tick();await tick();
+ assert.match($('.cfg-picker-server').textContent,/Marketmates-Live/);  // a single match opens itself
+ fill(byLabel('Filter servers'),'icmarkets');await new Promise(r=>setTimeout(r,350));await tick();await tick();
+ // Private addresses are shown but not pre-selected.
+ assert.equal(byLabel('Select 203.0.113.10:443 on ICMarketsSC-Demo').checked,true);
+ assert.equal(byLabel('Select 10.30.210.41:443 on ICMarketsSC-Demo').checked,false);
+ assert.match($('.cfg-picker-points').textContent,/Private/);
+ fill(byLabel('Filter servers'),'');await new Promise(r=>setTimeout(r,350));await tick();
+ [...w.document.querySelectorAll('.cfg-picker-servers [role="option"]')].find(b=>b.textContent.includes('MetaQuotes-Demo')).click();await tick();await tick();
  assert.match($('.cfg-picker').textContent,/MetaTrader 5 demo server operated by MetaQuotes Ltd\. for testing and evaluation/);
  assert.match($('.cfg-picker').textContent,/Time zone120/);
- button('Use 2 selected access points').click();await tick();
+ button('None').click();await tick();
+ byLabel('Select 78.140.180.8:1950 on MetaQuotes-Demo').click();byLabel('Select 78.140.180.2:1950 on MetaQuotes-Demo').click();await tick();
+ assert.match($('.cfg-picker-foot').textContent,/2 of 50 addresses selected/);
+ button('Use MetaQuotes-Demo').click();await tick();
  assert.equal($('.cfg-picker'),null);
- assert.equal(byLabel('Broker server name').value,'MetaQuotes-Demo');
+ assert.match($('.cfg-chosen').textContent,/MetaQuotes-DemoMetaQuotes Ltd\./);
  assert.match($('[aria-label="Server description"]').textContent,/CompanyMetaQuotes Ltd\./);
- assert.match($('.cfg-points-head').textContent,/2 of 50 in use/);
- assert.deepEqual([byLabel('Access point 1 host').value,byLabel('Access point 2 host').value],['78.140.180.8','78.140.180.2']);
- button('Select all').click();await tick();
- // Search access points, select only the matching ones.
- fill(byLabel('Search access points'),'1950');await tick();
- assert.equal(w.document.querySelectorAll('.cfg-points tbody tr').length,25);
- button('Clear shown').click();await tick();
- assert.match($('.cfg-points-head').textContent,/25 of 50 in use/);
- fill(byLabel('Search access points'),'');await tick();
- byLabel('Use access point 3').click();await tick();  // a port-443 row, still selected
- assert.match($('.cfg-points-head').textContent,/24 of 50 in use/);
+ assert.match($('.cfg-addresses-head').textContent,/2 of 50 addresses in use/);
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-address-text')].slice(0,2).map(x=>x.textContent),['78.140.180.2:1950','78.140.180.8:1950']);
+ byLabel('Use access point 3').click();await tick();
+ assert.match($('.cfg-addresses-head').textContent,/3 of 50 addresses in use/);
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO_2');  // ICM_MT5_DEMO is taken
  fill(byLabel('Connection ID'),'mt5001');fill(byLabel('Connection name'),'MetaQuotes demo');await tick();
  await submit($('.cfg-detail .cfg-form'));
  const mq=db.connections.find(c=>c.code==='MT5001');
  assert.equal(mq.settings.access_points.length,50);
- assert.equal(mq.settings.access_points.filter(p=>p.enabled).length,24);
+ assert.equal(mq.settings.access_points.filter(p=>p.enabled).length,3);
+ assert.ok(mq.settings.access_points.every((p,i)=>p.name==='Access point '+(i+1)),'addresses are numbered, not named after another server');
  assert.equal(mq.settings.company_name,'MetaQuotes Ltd.');
  assert.match(mq.settings.server_details.Description,/demo server/);
- console.log('PASS: servers.dat picker searches and shows full server description; access points searchable and selectable; selection saved.');
+ console.log('PASS: server picker lists servers, shows addresses and full description, skips private addresses, saves the selection.');
  button('Clear all').click();await tick();
- assert.match($('.cfg-detail').textContent,/Select at least one access point/);
+ assert.match($('.cfg-detail').textContent,/Select at least one address/);
  button('Select all').click();await tick();
- assert.equal(button('Add access point').disabled,false);
+ assert.equal(button('+ Add address').disabled,false);
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();assert.equal($('.fw'),null);
- console.log('PASS: 50 access points accepted; closing the window with confirmation.');
- // Online broker directory: same analyser, live results.
+ console.log('PASS: 50 addresses accepted; closing the window with confirmation.');
+ // Online broker directory: same picker, live results.
  button('New connection').click();await tick();
  assert.equal(button('Find servers').disabled,true);
  fill(byLabel('Find broker'),'VTMarkets');await tick();
  button('Find servers').click();await tick();await tick();await new Promise(r=>setTimeout(r,300));
  assert.deepEqual(searched,['VTMarkets']);
- assert.match($('.cfg-picker').textContent,/Broker directory · “VTMarkets” · 4 servers/);
+ assert.match($('.cfg-picker-head').textContent,/Broker directory · “VTMarkets”4 servers/);
  button('Cancel').click();await tick();assert.equal($('.cfg-picker'),null);
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();
  console.log('PASS: broker directory search opens the same server picker.');
