@@ -124,3 +124,11 @@
 .cfg-picker-detail .cfg-server-desc { align-self: stretch; }
 .cfg-table tr.cfg-off td { opacity: .5; }
 .cfg-table tr.cfg-off td:first-child { opacity: 1; }
+
+/* Roles and users */
+.cfg-plain { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.cfg-check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.cfg-check span { display: flex; flex-direction: column; }
+.cfg-check small { color: var(--muted); }
+.cfg-password { max-width: 360px; }
+.cfg-user small { color: var(--muted); }

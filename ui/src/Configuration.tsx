@@ -11,8 +11,12 @@ import './configuration.css';
 import FloatingWindow from './FloatingWindow';
 
 type Row = Record<string, any>;
-type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'controls' | 'audit';
-type Entity = Exclude<Section, 'controls' | 'audit'>;
+type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'controls' | 'users' | 'audit';
+type Entity = Exclude<Section, 'controls' | 'audit' | 'users'>;
+type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
+const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
+const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRADING_OPS: 'Change configuration and credentials; turn order sending off',
+  RISK_APPROVER: 'Turn order sending on or off', OBSERVER: 'Read configuration and audit log' };
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'providers', label: 'Providers', hint: 'Brokers, exchanges and data vendors' },
@@ -21,6 +25,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
   { id: 'controls', label: 'Order sending', hint: 'Firm-wide switch per environment' },
+  { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
 ];
 
@@ -354,7 +359,7 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
 };
 
-function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<string, Row[]>; reloadRefs: () => void }) {
+function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: Record<string, Row[]>; reloadRefs: () => void; canEdit: boolean }) {
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
@@ -403,10 +408,10 @@ function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<st
         {parentFilter && <select aria-label="Filter" value={parent} onChange={e => setParent(e.target.value)}>
           <option value="">All {parentFilter[0] === 'provider_id' ? 'providers' : 'connections'}</option>
           {parentFilter[1].map(r => <option key={r.id} value={r.id}>{parentFilter[2](r)}</option>)}</select>}
-        <button className="primary" onClick={() => open(null)}>New {SINGULAR[entity]}</button>
+        {canEdit ? <button className="primary" onClick={() => open(null)}>New {SINGULAR[entity]}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
-      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No {entity === 'mappings' ? 'symbol mappings' : entity} yet. Choose New {SINGULAR[entity]} to add one.</p> :
+      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No {entity === 'mappings' ? 'symbol mappings' : entity} yet. {canEdit ? `Choose New ${SINGULAR[entity]} to add one.` : ''}</p> :
         <div className="cfg-scroll"><table className="cfg-table"><thead><tr>{columns.map(([h]) => <th key={h}>{h}</th>)}</tr></thead><tbody>
           {rows.map(r => <tr key={r.id} className={selected?.id === r.id ? 'selected' : ''} tabIndex={0} onClick={() => open(r)} onKeyDown={e => { if (e.key === 'Enter') open(r); }}>
             {columns.map(([h, cell]) => <td key={h}>{cell(r)}</td>)}</tr>)}
@@ -423,13 +428,16 @@ function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<st
           {selected[k].length ? <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKERS[b] ?? b}</li>)}</ul> : <p className="cfg-ok">Ready</p>}</div>)}
       </div>}
       <form className="cfg-form" onSubmit={save}>
-        <RecordForm entity={entity} draft={draft} setDraft={setDraft} editing={!!selected} refs={refs} />
+        <fieldset className="cfg-plain" disabled={!canEdit}>
+          <RecordForm entity={entity} draft={draft} setDraft={setDraft} editing={!!selected} refs={refs} />
+        </fieldset>
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
-        <div className="cfg-actions"><button className="primary" disabled={busy || !dirty}>{selected ? 'Save changes' : `Create ${SINGULAR[entity]}`}</button>
+        {canEdit ? <div className="cfg-actions"><button className="primary" disabled={busy || !dirty}>{selected ? 'Save changes' : `Create ${SINGULAR[entity]}`}</button>
           {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}</div>
+          : <p className="cfg-note">Read only. Changes need the Trading operations role.</p>}
       </form>
-      {selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
-      {selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
+      {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
+      {canEdit && selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       </div>
     </FloatingWindow>}
   </div>;
@@ -437,7 +445,8 @@ function Records({ entity, refs, reloadRefs }: { entity: Entity; refs: Record<st
 
 /* ---------- order sending and audit ---------- */
 
-function OrderSending({ changed }: { changed: () => void }) {
+function OrderSending({ changed, roles }: { changed: () => void; roles: string[] }) {
+  const canOn = roles.includes('RISK_APPROVER'), canOff = canOn || roles.includes('TRADING_OPS');
   const [items, setItems] = useState<Row[] | null>(null), [edit, setEdit] = useState<string | null>(null);
   const [reason, setReason] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = async () => { try { setItems((await api('config/execution-controls')).items); } catch (e) { setError((e as Error).message); } };
@@ -461,7 +470,8 @@ function OrderSending({ changed }: { changed: () => void }) {
         {!row.trading_enabled && <Field label={`Type ${row.environment} to confirm`}><input aria-label="Confirm environment" required value={confirm} onChange={e => setConfirm(e.target.value)} /></Field>}
         <div className="cfg-actions"><button className={row.trading_enabled ? 'primary' : 'danger'} disabled={busy || (!row.trading_enabled && confirm !== row.environment)}>
           {row.trading_enabled ? 'Turn order sending off' : `Turn ${row.environment} order sending on`}</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
-      </form> : <button onClick={() => { setEdit(row.environment); setReason(''); setConfirm(''); setError(''); }}>{row.trading_enabled ? 'Turn off…' : 'Turn on…'}</button>}
+      </form> : (row.trading_enabled ? canOff : canOn) ? <button onClick={() => { setEdit(row.environment); setReason(''); setConfirm(''); setError(''); }}>{row.trading_enabled ? 'Turn off…' : 'Turn on…'}</button>
+        : <small>{row.trading_enabled ? 'Turning off needs Risk approver or Trading operations.' : 'Turning on needs the Risk approver role.'}</small>}
     </article>)}</div>
   </div>;
 }
@@ -471,21 +481,105 @@ function AuditLog() {
   useEffect(() => { void (async () => { try { setItems((await api(`config/audit?limit=500${entity ? '&entity=' + encodeURIComponent(entity) : ''}`)).items); } catch (e) { setError((e as Error).message); } })(); }, [entity]);
   return <div className="cfg-list">
     <div className="cfg-toolbar"><select aria-label="Audit entity" value={entity} onChange={e => setEntity(e.target.value)}>
-      <option value="">All records</option>{['provider', 'connection', 'account', 'instrument', 'symbol mapping', 'execution control'].map(x => <option key={x}>{x}</option>)}</select></div>
+      <option value="">All records</option>{['provider', 'connection', 'account', 'instrument', 'symbol mapping', 'execution control', 'user'].map(x => <option key={x}>{x}</option>)}</select></div>
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {!items ? <p className="cfg-note">Loading…</p> : items.length === 0 ? <p className="cfg-empty">No changes recorded yet.</p> :
       <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Record</th><th>Reason</th></tr></thead><tbody>
         {items.map(a => <Fragment key={a.id}><tr tabIndex={0} onClick={() => setOpen(open === a.id ? null : a.id)}><td>{new Date(a.occurred_at).toLocaleString()}</td><td>{a.actor}</td>
-          <td>{a.action}</td><td>{a.entity} · {(a.after_state ?? a.before_state)?.code ?? (a.after_state ?? a.before_state)?.symbol ?? (a.after_state ?? a.before_state)?.broker_symbol ?? a.entity_id}</td><td>{a.reason}</td></tr>
+          <td>{a.action}</td><td>{a.entity} · {(a.after_state ?? a.before_state)?.code ?? (a.after_state ?? a.before_state)?.username ?? (a.after_state ?? a.before_state)?.symbol ?? (a.after_state ?? a.before_state)?.broker_symbol ?? a.entity_id}</td><td>{a.reason}</td></tr>
           {open === a.id && <tr className="cfg-audit-detail"><td colSpan={5}><div className="cfg-pair"><pre>Before{'\n'}{JSON.stringify(a.before_state, null, 2)}</pre><pre>After{'\n'}{JSON.stringify(a.after_state, null, 2)}</pre></div></td></tr>}</Fragment>)}
       </tbody></table></div>}
+  </div>;
+}
+
+/* ---------- users and passwords ---------- */
+
+/** A session from an older backend (no roles) is treated as signed out. */
+function asSession(data: any): Session | null {
+  return data && typeof data.username === 'string' && Array.isArray(data.roles) ? data as Session : null;
+}
+
+
+function ChangePassword({ session, done, cancel }: { session: Session; done: () => void; cancel?: () => void }) {
+  const [current, setCurrent] = useState(''), [next, setNext] = useState(''), [again, setAgain] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setError('');
+    if (next !== again) { setError('The new passwords do not match.'); return; }
+    setBusy(true);
+    try { await api('operator/password', 'POST', { current_password: current, new_password: next }); done(); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  return <form className="cfg-form cfg-password" onSubmit={submit} aria-label="Change password">
+    {session.must_change_password && <p className="cfg-note">Your password was set by an administrator. Choose your own password to continue.</p>}
+    <Field label="Current password"><input required type="password" autoComplete="current-password" value={current} onChange={e => setCurrent(e.target.value)} /></Field>
+    <Field label="New password" hint="At least 12 characters, not containing your username"><input required minLength={12} type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} /></Field>
+    <Field label="Repeat new password"><input required minLength={12} type="password" autoComplete="new-password" value={again} onChange={e => setAgain(e.target.value)} /></Field>
+    {error && <p role="alert" className="cfg-error">{error}</p>}
+    <div className="cfg-actions"><button className="primary" disabled={busy}>Change password</button>{cancel && <button type="button" onClick={cancel}>Cancel</button>}</div>
+  </form>;
+}
+
+function Users({ me }: { me: Session }) {
+  const [rows, setRows] = useState<Row[] | null>(null), [draft, setDraft] = useState<Row | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const [reset, setReset] = useState('');
+  const load = async (keep?: string) => {
+    try { const items = (await api('admin/users')).items; setRows(items); if (keep) { const r = items.find((x: Row) => x.id === keep); if (r) setDraft({ ...r }); } }
+    catch (e) { setError((e as Error).message); }
+  };
+  useEffect(() => { void load(); }, []);
+  const self = draft?.username === me.username;
+  async function save(e: FormEvent) {
+    e.preventDefault(); if (!draft) return; setBusy(true); setError(''); setNotice('');
+    try {
+      const saved = draft.id ? await api(`admin/users/${draft.id}`, 'PUT', { display_name: draft.display_name, roles: draft.roles, status: draft.status, version: draft.version })
+        : await api('admin/users', 'POST', { username: draft.username, display_name: draft.display_name, roles: draft.roles, temporary_password: draft.temporary_password });
+      setNotice(draft.id ? 'User updated. Their sessions end if roles or status changed.' : 'User created. Give them the temporary password; they must change it at first sign-in.');
+      await load(saved.id);
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  async function resetPassword() {
+    if (!draft?.id) return; setBusy(true); setError(''); setNotice('');
+    try { await api(`admin/users/${draft.id}/password`, 'POST', { temporary_password: reset }); setReset(''); setNotice('Temporary password set. The user must change it at next sign-in; their sessions have ended.'); await load(draft.id); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  const toggleRole = (role: string) => setDraft(d => d && ({ ...d, roles: d.roles.includes(role) ? d.roles.filter((r: string) => r !== role) : [...d.roles, role] }));
+  return <div className="cfg-records">
+    <div className="cfg-list">
+      <div className="cfg-toolbar"><button className="primary" onClick={() => { setError(''); setNotice(''); setDraft({ username: '', display_name: '', roles: ['OBSERVER'], status: 'ACTIVE', temporary_password: '' }); }}>New user</button></div>
+      {!rows ? <p className="cfg-note">Loading…</p> : <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Username</th><th>Name</th><th>Roles</th><th>Status</th><th>Last sign-in</th><th>Sessions</th></tr></thead><tbody>
+        {rows.map(r => <tr key={r.id} tabIndex={0} className={draft?.id === r.id ? 'selected' : ''} onClick={() => { setError(''); setNotice(''); setReset(''); setDraft({ ...r }); }}>
+          <td>{r.username}{r.username === me.username ? ' (you)' : ''}</td><td>{r.display_name}</td><td>{r.roles.map((x: string) => ROLE_LABEL[x]).join(', ')}</td>
+          <td><Status value={r.status} />{r.must_change_password ? <small className="cfg-note"> · must change password</small> : null}{r.locked_until && new Date(r.locked_until) > new Date() ? <span className="cfg-pill warn">Locked</span> : null}</td>
+          <td>{r.last_login_at ? new Date(r.last_login_at).toLocaleString() : 'Never'}</td><td>{r.active_sessions}</td></tr>)}
+      </tbody></table></div>}
+    </div>
+    {draft && <FloatingWindow storageKey="corei-os-mini.user-window.v1" title={draft.id ? `User · ${draft.username}` : 'New user'} onClose={() => setDraft(null)}>
+      <form className="cfg-form" onSubmit={save}>
+        <Field label="Username" hint={draft.id ? 'Fixed after creation' : 'Lower-case letters, digits, dot, dash, underscore'}>
+          <input aria-label="Username" required readOnly={!!draft.id} value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} /></Field>
+        <Field label="Display name"><input aria-label="Display name" required maxLength={120} value={draft.display_name} onChange={e => setDraft({ ...draft, display_name: e.target.value })} /></Field>
+        <fieldset className="cfg-subform" disabled={self}><legend>Roles</legend>
+          {Object.keys(ROLE_LABEL).map(role => <label key={role} className="cfg-check"><input type="checkbox" aria-label={ROLE_LABEL[role]} checked={draft.roles.includes(role)} onChange={() => toggleRole(role)} />
+            <span><strong>{ROLE_LABEL[role]}</strong><small>{ROLE_HINT[role]}</small></span></label>)}
+          {self && <small>You cannot change your own roles or status.</small>}
+        </fieldset>
+        {draft.id ? <Field label="Status"><Choice label="Status" value={draft.status} disabled={self} options={[['ACTIVE', 'Active'], ['DISABLED', 'Disabled (cannot sign in)']]} onChange={v => setDraft({ ...draft, status: v })} /></Field>
+          : <Field label="Temporary password" hint="At least 12 characters. The user must change it at first sign-in."><input aria-label="Temporary password" required minLength={12} type="password" autoComplete="new-password" value={draft.temporary_password} onChange={e => setDraft({ ...draft, temporary_password: e.target.value })} /></Field>}
+        {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+        <div className="cfg-actions"><button className="primary" disabled={busy || !draft.roles.length}>{draft.id ? 'Save changes' : 'Create user'}</button></div>
+      </form>
+      {draft.id && !self && <form className="cfg-credential" onSubmit={e => { e.preventDefault(); void resetPassword(); }}>
+        <h3>Reset password</h3><p className="cfg-note">Sets a temporary password, unlocks the account and ends the user's sessions.</p>
+        <Field label="New temporary password"><input aria-label="New temporary password" required minLength={12} type="password" autoComplete="new-password" value={reset} onChange={e => setReset(e.target.value)} /></Field>
+        <div className="cfg-actions"><button disabled={busy}>Reset password</button></div></form>}
+    </FloatingWindow>}
   </div>;
 }
 
 /* ---------- workspace ---------- */
 
 export default function Configuration() {
-  const [user, setUser] = useState<string | null>(null), [checking, setChecking] = useState(true);
+  const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
   const [section, setSection] = useState<Section>('providers'), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [] });
   const [summary, setSummary] = useState<Row | null>(null);
@@ -496,12 +590,12 @@ export default function Configuration() {
     } catch (e) { if ((e as any).status === 401) setUser(null); else setError((e as Error).message); }
   }
   useEffect(() => { void (async () => {
-    try { setUser((await api('operator/session')).username); } catch { setUser(null); } finally { setChecking(false); }
+    try { setUser(asSession(await api('operator/session'))); } catch { setUser(null); } finally { setChecking(false); }
   })(); }, []);
-  useEffect(() => { if (user) void loadRefs(); }, [user]);
+  useEffect(() => { if (user && !user.must_change_password) void loadRefs(); }, [user]);
   async function signIn(e: FormEvent) {
     e.preventDefault(); setError('');
-    try { setUser((await api('operator/login', 'POST', { username, password })).username); setPassword(''); } catch (err) { setError((err as Error).message); }
+    try { const s = asSession(await api('operator/login', 'POST', { username, password })); if (!s) throw new Error('The server did not return a valid session. Update the backend.'); setUser(s); setPassword(''); } catch (err) { setError((err as Error).message); }
   }
   async function signOut() { try { await api('operator/logout', 'POST'); } finally { setUser(null); } }
 
@@ -511,23 +605,31 @@ export default function Configuration() {
       <Field label="Password"><input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></Field>
       {error && <p role="alert" className="cfg-error">{error}</p>}<div className="cfg-actions"><button className="primary">Sign in</button></div></form></div>;
 
-  const current = SECTIONS.find(s => s.id === section)!;
+  if (user.must_change_password || changing) return <div className="content cfg-signin"><div className="eyebrow">CONFIGURATION</div><h1>Change password</h1>
+    <ChangePassword session={user} cancel={user.must_change_password ? undefined : () => setChanging(false)}
+      done={() => { setChanging(false); setUser({ ...user, must_change_password: false }); }} />
+    {user.must_change_password && <button className="link" onClick={() => void signOut()}>Sign out</button>}</div>;
+
+  const sections = SECTIONS.filter(s => s.id !== 'users' || user.roles.includes('ADMIN'));
+  const current = sections.find(s => s.id === section) ?? sections[0];
   const live = summary?.execution_controls?.find((c: Row) => c.environment === 'LIVE');
   return <div className="cfg">
     <div className="cfg-topbar"><span className="eyebrow">CONFIGURATION</span>
     <nav className="cfg-nav" aria-label="Configuration sections">
-      {SECTIONS.map(s => <button key={s.id} aria-current={section === s.id ? 'page' : undefined} onClick={() => {
+      {sections.map(s => <button key={s.id} aria-current={current.id === s.id ? 'page' : undefined} onClick={() => {
         if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) setSection(s.id);
       }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small>{summary.counts[s.id]}</small>}
         {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}
     </nav>
-    <div className="cfg-user">{user} · <button className="link" onClick={() => void signOut()}>Sign out</button></div></div>
+    <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
+      <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></div>
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {section === 'controls' ? <OrderSending changed={() => void loadRefs()} /> : section === 'audit' ? <AuditLog />
-        : <Records key={section} entity={section} refs={refs} reloadRefs={() => void loadRefs()} />}
+      {current.id === 'controls' ? <OrderSending changed={() => void loadRefs()} roles={user.roles} /> : current.id === 'audit' ? <AuditLog />
+        : current.id === 'users' ? <Users me={user} />
+        : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={user.roles.includes('TRADING_OPS')} />}
     </section>
   </div>;
 }

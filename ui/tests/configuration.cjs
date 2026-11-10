@@ -18,7 +18,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.confirm=()=>true;
 
  // ---- mock backend ----
- let signedIn=false;const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[]};
+ let signedIn=false;const session={roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],must:true};
+ const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[]};
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
  const requests=[];let n=0;
@@ -33,8 +34,17 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
-   if(url.endsWith('/operator/session'))return signedIn?ok({username:'risk-ops'}):fail(401,'Sign in');
-   if(url.endsWith('/operator/login')){signedIn=true;return ok({username:'risk-ops'});}
+   const me={username:'risk-ops',display_name:'risk-ops',roles:session.roles,must_change_password:session.must};
+   if(url.endsWith('/operator/session'))return signedIn?ok(me):fail(401,'Sign in');
+   if(url.endsWith('/operator/login')){signedIn=true;return ok(me);}
+   if(url.endsWith('/operator/logout')){signedIn=false;return ok({signed_out:true});}
+   if(url.endsWith('/operator/password')){session.must=false;return ok({changed:true});}
+   if(url.includes('/api/admin/users')){
+     if(method==='GET')return ok({items:users});
+     const body=JSON.parse(options.body);
+     if(method==='POST'&&url.endsWith('/users')){const u={id:'u'+(users.length+1),username:body.username.toLowerCase(),display_name:body.display_name,roles:body.roles,status:'ACTIVE',must_change_password:true,version:1,active_sessions:0};users.push(u);return ok(u,201);}
+     if(method==='PUT'){const u=users.find(x=>url.endsWith(x.id));Object.assign(u,body,{version:u.version+1});return ok(u);}
+     return ok({reset:true});}
    const u=new URL(url,'https://x');const parts=u.pathname.replace('/api/config/','').split('/');
    if(parts[0]==='summary')return ok({counts:Object.fromEntries(Object.entries(db).map(([k,v])=>[k,v.length])),execution_controls:Object.values(controls),credential_storage_ready:true,available_adapters:[]});
    if(parts[0]==='execution-controls'){
@@ -72,9 +82,17 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match(w.document.body.textContent,/Sign in/);
  const signin=$('.cfg-signin form');fill(signin.querySelector('[autocomplete="username"]'),'risk-ops');fill(signin.querySelector('[type="password"]'),'secret-pass');
  await submit(signin);
+ // A temporary password must be changed before anything else.
+ assert.match($('.content h1').textContent,/Change password/);
+ const pw=$('[aria-label="Change password"]');const pwInputs=pw.querySelectorAll('input');
+ fill(pwInputs[0],'Temp-pass-4821');fill(pwInputs[1],'My-own-pass-993');fill(pwInputs[2],'My-own-pass-99X');await tick();
+ await submit(pw);assert.match($('[aria-label="Change password"]').textContent,/do not match/);
+ fill(pwInputs[2],'My-own-pass-993');await tick();await submit(pw);
+ assert.equal(JSON.parse(requests.find(r=>r.url.endsWith('/operator/password')).body).new_password,'My-own-pass-993');
  assert.match($('.cfg-user').textContent,/risk-ops/);
  assert.match($('.cfg-nav').textContent,/Order sending/);
- console.log('PASS: operator sign-in and section navigation.');
+ assert.match($('.cfg-user').textContent,/Administrator, Observer, Risk approver, Trading operations/);
+ console.log('PASS: operator sign-in, forced password change, roles shown, section navigation.');
 
  // Provider: create, duplicate rejected with backend message
  button('New provider').click();await tick();
@@ -189,6 +207,35 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(controls.LIVE.trading_enabled,true);
  assert.match($('.cfg-nav').textContent,/LIVE ON/);
  console.log('PASS: LIVE order sending needs reason and typed confirmation; status visible in navigation.');
+
+ // Users (administrator): create a user with roles.
+ $('.cfg-nav button:nth-child(7)').click();await tick();await tick();
+ assert.match($('.cfg-head h1').textContent,/Users/);
+ assert.match($('.cfg-table').textContent,/risk-ops \(you\)/);
+ button('New user').click();await tick();
+ fill(byLabel('Username'),'Olga');fill(byLabel('Display name'),'Olga Observer');fill(byLabel('Temporary password'),'Temp-pass-4821');
+ byLabel('Trading operations').click();await tick();
+ await submit($('.fw .cfg-form'));
+ assert.deepEqual(users[1].roles.sort(),['OBSERVER','TRADING_OPS']);
+ // Own roles cannot be changed.
+ w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();
+ [...w.document.querySelectorAll('.cfg-table tbody tr')][0].click();await tick();
+ assert.ok(byLabel('Administrator').matches(':disabled'));
+ console.log('PASS: administrator manages users and roles; own roles locked.');
+
+ // An observer sees configuration read-only and no Users section.
+ session.roles=['OBSERVER'];$('[aria-label="Close window"]').click();await tick();
+ [...w.document.querySelectorAll('.cfg-user .link')].find(b=>b.textContent==='Sign out').click();await tick();
+ const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
+ assert.ok(![...w.document.querySelectorAll('.cfg-nav button')].some(b=>b.textContent.includes('Users')));
+ $('.cfg-nav button:nth-child(1)').click();await tick();await tick();
+ assert.equal(button('New provider'),undefined);
+ $('.cfg-table tbody tr').click();await tick();
+ assert.ok($('.fw fieldset.cfg-plain').disabled);assert.equal(button('Save changes'),undefined);
+ $('[aria-label="Close window"]').click();await tick();
+ $('.cfg-nav button:nth-child(6)').click();await tick();await tick();
+ assert.ok(![...w.document.querySelectorAll('.cfg-card button')].length);
+ console.log('PASS: observer is read-only: no create, save, credential or order-sending actions.');
 
  assert.deepEqual(errors,[]);
  console.log('PASS: configuration workspace has no runtime errors.');

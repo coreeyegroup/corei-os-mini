@@ -16,7 +16,14 @@ from . import config_store as store
 from .broker_catalog import MAX_FILE, parse_catalog
 from .config_models import CredentialEnvelope, ExecutionControlIn, VersionIn
 from .credentials import storage_ready
-from .operator_auth import require_operator
+from .operator_auth import Principal, current_user, require_operator, require_role
+
+_trading_ops = require_role('TRADING_OPS')
+
+
+def editor(user: Principal = Depends(_trading_ops)) -> str:
+    """Configuration changes need the Trading operations role."""
+    return user.username
 
 router = APIRouter(prefix='/api/config', tags=['configuration'])
 Entity = Literal['providers', 'connections', 'accounts', 'instruments', 'mappings']
@@ -55,10 +62,16 @@ def get_execution_controls(response: Response, _: str = Depends(require_operator
 
 @router.put('/execution-controls/{environment}')
 def put_execution_control(environment: Literal['DEMO', 'LIVE'], payload: dict, response: Response,
-                          actor: str = Depends(require_operator)):
+                          user: Principal = Depends(current_user)):
+    """Turning order sending ON needs Risk approver. Turning it OFF is a safety action
+    that Risk approver or Trading operations may take."""
     _no_store(response)
     data = parse(ExecutionControlIn, payload)
-    return store.set_execution_control(actor, environment, data.trading_enabled, data.reason, data.version,
+    if data.trading_enabled and not user.has('RISK_APPROVER'):
+        raise HTTPException(403, 'Turning order sending on needs the Risk approver role.')
+    if not data.trading_enabled and not user.has('RISK_APPROVER', 'TRADING_OPS'):
+        raise HTTPException(403, 'Turning order sending off needs the Risk approver or Trading operations role.')
+    return store.set_execution_control(user.username, environment, data.trading_enabled, data.reason, data.version,
                                        data.confirm_environment)
 
 
@@ -71,7 +84,7 @@ def get_audit(response: Response, entity: str | None = Query(None, max_length=40
 
 
 @router.post('/mt5/server-file')
-async def read_mt5_server_file(request: Request, response: Response, _: str = Depends(require_operator)):
+async def read_mt5_server_file(request: Request, response: Response, _: str = Depends(editor)):
     """Read servers and access points from an MT5 servers.dat. Nothing is stored."""
     _no_store(response)
     data = bytearray()
@@ -107,14 +120,14 @@ def get_entity(entity: Entity, record_id: UUID, response: Response, _: str = Dep
 
 
 @router.post('/{entity}', status_code=201)
-def create_entity(entity: Entity, payload: dict, response: Response, actor: str = Depends(require_operator)):
+def create_entity(entity: Entity, payload: dict, response: Response, actor: str = Depends(editor)):
     _no_store(response)
     return store.create(actor, entity, parse(store.SPECS[entity].model, payload))
 
 
 @router.put('/{entity}/{record_id}')
 def update_entity(entity: Entity, record_id: UUID, payload: dict, response: Response,
-                  actor: str = Depends(require_operator)):
+                  actor: str = Depends(editor)):
     _no_store(response)
     version = parse(VersionIn, {'version': payload.pop('version', None)}).version
     return store.update(actor, entity, record_id, parse(store.SPECS[entity].model, payload), version)
@@ -122,14 +135,14 @@ def update_entity(entity: Entity, record_id: UUID, payload: dict, response: Resp
 
 @router.delete('/{entity}/{record_id}', status_code=204)
 def delete_entity(entity: Entity, record_id: UUID, version: int = Query(ge=1),
-                  actor: str = Depends(require_operator)):
+                  actor: str = Depends(editor)):
     store.delete(actor, entity, record_id, version)
     return Response(status_code=204, headers={'Cache-Control': 'no-store'})
 
 
 @router.put('/{owner}/{owner_id}/credential')
 def put_credential(owner: Literal['connections', 'accounts'], owner_id: UUID, payload: dict, response: Response,
-                   actor: str = Depends(require_operator)):
+                   actor: str = Depends(editor)):
     _no_store(response)
     envelope = parse(CredentialEnvelope, payload, secret=True)
     return store.set_credential(actor, owner, owner_id, envelope.credential)
@@ -137,6 +150,6 @@ def put_credential(owner: Literal['connections', 'accounts'], owner_id: UUID, pa
 
 @router.delete('/{owner}/{owner_id}/credential', status_code=204)
 def delete_credential(owner: Literal['connections', 'accounts'], owner_id: UUID,
-                      actor: str = Depends(require_operator)):
+                      actor: str = Depends(editor)):
     store.clear_credential(actor, owner, owner_id)
     return Response(status_code=204, headers={'Cache-Control': 'no-store'})

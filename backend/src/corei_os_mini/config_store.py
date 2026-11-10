@@ -408,7 +408,8 @@ def schema_ready() -> bool:
     try:
         with transaction('read') as db:
             for table in ('cfg_providers', 'cfg_connections', 'cfg_accounts', 'cfg_instruments',
-                          'cfg_symbol_mappings', 'cfg_credentials', 'cfg_execution_controls', 'cfg_audit_log'):
+                          'cfg_symbol_mappings', 'cfg_credentials', 'cfg_execution_controls', 'cfg_audit_log',
+                          'cfg_users', 'cfg_sessions'):
                 db.execute(sql.SQL('SELECT 1 FROM {} LIMIT 0').format(sql.Identifier(table)))
         return True
     except HTTPException:

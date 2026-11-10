@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from .operator_auth import router as operator_router
+from .operator_auth import admin_router, router as operator_router
 from .config_api import router as config_router
 from . import config_store
 from .credentials import storage_ready as credential_storage_ready
@@ -47,6 +47,7 @@ app = FastAPI(
 
 
 app.include_router(operator_router)
+app.include_router(admin_router)
 app.include_router(config_router)
 
 @app.get("/health")
@@ -152,6 +153,8 @@ def workstation(response: Response) -> dict[str, object]:
         "capabilities": [
             {"id": "configuration", "label": "Configuration", "available": config_ready,
              "reason": "Providers, connections, accounts, instruments, symbol mappings, credentials, order-sending controls and audit. Requires migration 009."},
+            {"id": "users", "label": "Users and roles", "available": config_ready,
+             "reason": "Administrator, trading operations, risk approver and observer roles. Requires migration 010."},
             {"id": "credential_storage", "label": "Credential encryption", "available": credential_storage_ready(),
              "reason": "Requires the server key file created by scripts/setup-broker-accounts.sh."},
             {"id": "providers", "label": "Provider connectivity", "available": bool(config_store.AVAILABLE_ADAPTERS),
@@ -173,6 +176,6 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def safe_validation(request: Request, exc: RequestValidationError):
-    if request.url.path.startswith('/api/config') or request.url.path.startswith('/api/operator'):
+    if request.url.path.startswith(('/api/config', '/api/operator', '/api/admin')):
         return JSONResponse(status_code=422, content={'detail': 'Invalid request body. Send a JSON object with the required fields.'})
     return await request_validation_exception_handler(request, exc)

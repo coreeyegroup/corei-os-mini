@@ -22,7 +22,9 @@ from corei_os_mini import credentials
 from corei_os_mini.api import app
 from corei_os_mini.config_models import ConnectionIn, InstrumentIn, Mt5Settings, RestApiSettings
 from corei_os_mini.config_store import account_readiness
-from corei_os_mini.operator_auth import require_operator
+from corei_os_mini.operator_auth import Principal, current_user
+
+EVERYONE = Principal('alice', frozenset({'ADMIN', 'TRADING_OPS', 'RISK_APPROVER', 'OBSERVER'}))
 
 HEADERS = {'x-corei-request': 'workstation'}
 MT5_SETTINGS = {'server_name': 'Broker-Demo', 'access_points': [{'name': 'Access 1', 'host': '192.0.2.1', 'port': 443}]}
@@ -116,13 +118,14 @@ class ModelTests(unittest.TestCase):
 
 class ApiGuardTests(unittest.TestCase):
     def test_sign_in_required(self):
-        with patch('corei_os_mini.operator_auth.credentials', return_value=('operator', 'x')), TestClient(app) as client:
+        with TestClient(app) as client:
             for method, path in [('get', '/api/config/providers'), ('post', '/api/config/providers'),
-                                 ('put', '/api/config/execution-controls/LIVE'), ('get', '/api/config/audit')]:
+                                 ('put', '/api/config/execution-controls/LIVE'), ('get', '/api/config/audit'),
+                                 ('get', '/api/admin/users')]:
                 self.assertEqual(getattr(client, method)(path).status_code, 401, path)
 
     def test_malformed_body_never_echoed(self):
-        app.dependency_overrides[require_operator] = lambda: 'operator'
+        app.dependency_overrides[current_user] = lambda: EVERYONE
         try:
             with TestClient(app) as client:
                 result = client.put(f'/api/config/accounts/{uuid4()}/credential', headers={**HEADERS, 'content-type': 'application/json'},
@@ -166,7 +169,7 @@ class ConfigurationPostgresTests(unittest.TestCase):
                         patch('corei_os_mini.config_store._connect', self.connect)]
         for p in self.patches:
             p.start()
-        app.dependency_overrides[require_operator] = lambda: 'alice'
+        app.dependency_overrides[current_user] = lambda: EVERYONE
         self.client = TestClient(app, headers=HEADERS)
 
     def tearDown(self):
