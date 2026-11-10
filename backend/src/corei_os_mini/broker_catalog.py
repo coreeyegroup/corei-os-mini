@@ -32,6 +32,42 @@ def endpoint(value: str) -> tuple[str, int]:
     return host, port
 
 
+_KEY = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,63}')
+_CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def server_details(raw: object) -> dict:
+    """Every scalar field the SDK exposes for a server, validated. Repeats of the
+    server name are dropped; everything else is kept as the file states it."""
+    if not isinstance(raw, dict) or len(raw) > 64:
+        raise ValueError('Invalid server details')
+    details = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not _KEY.fullmatch(key):
+            raise ValueError('Invalid server detail name')
+        if key.lower() == 'servername':
+            continue
+        if isinstance(value, str):
+            value = _CONTROL.sub(' ', value).strip()[:500]
+            if not value:
+                continue
+        elif isinstance(value, bool) or (isinstance(value, int) and abs(value) < 2**63):
+            pass
+        elif isinstance(value, float) and value == value and abs(value) != float('inf'):
+            pass
+        else:
+            raise ValueError('Invalid server detail value')
+        details[key] = value
+    return details
+
+
+def company(details: dict) -> str | None:
+    for key in ('CompanyName', 'Company', 'company_name', 'company'):
+        if isinstance(details.get(key), str):
+            return details[key][:200]
+    return None
+
+
 def parse_catalog(data: bytes) -> list[dict]:
     if not 32 <= len(data) <= MAX_FILE:
         raise HTTPException(422, 'Select a servers.dat file between 32 bytes and 1 MiB.')
@@ -53,25 +89,27 @@ def parse_catalog(data: bytes) -> list[dict]:
                     raise ValueError('Unsupported file')
                 output.seek(0)
                 document = json.load(output)
-        rows = []
         servers = document['servers']
         if not isinstance(servers, list) or not 1 <= len(servers) <= 512:
             raise ValueError('Invalid server count')
+        result, total = [], 0
         for server in servers:
             name = server['server_name']
             if not isinstance(name, str) or not 1 <= len(name) <= 120:
                 raise ValueError('Invalid server name')
+            points = []
             for access in server['access_points']:
                 label = access['name']
                 if not isinstance(label, str) or not 1 <= len(label) <= 200:
                     raise ValueError('Invalid access point label')
                 host, port = endpoint(access['address'])
-                rows.append(dict(server_name=name, name=label, host=host, port=port))
-                if len(rows) > 8192:
-                    raise ValueError('Too many access points')
-        if not rows:
-            raise ValueError('No access points')
-        return rows
+                points.append(dict(name=label, host=host, port=port))
+            total += len(points)
+            if not points or total > 8192:
+                raise ValueError('Invalid access point count')
+            details = server_details(server.get('details', {}))
+            result.append(dict(server_name=name, company_name=company(details), details=details, access_points=points))
+        return result
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
         raise HTTPException(422, 'Cannot read this servers.dat format. No account was saved. Use a supported server file.') from None
     finally:

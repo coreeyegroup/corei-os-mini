@@ -79,11 +79,8 @@ async def read_mt5_server_file(request: Request, response: Response, _: str = De
         data.extend(chunk)
         if len(data) > MAX_FILE:
             raise HTTPException(413, 'Server file exceeds 1 MiB.')
-    rows = await run_in_threadpool(parse_catalog, bytes(data))
-    servers: dict[str, list[dict]] = {}
-    for row in rows:
-        servers.setdefault(row['server_name'], []).append({'name': row['name'], 'host': row['host'], 'port': row['port']})
-    return {'servers': [{'server_name': name, 'access_points': points} for name, points in sorted(servers.items())]}
+    servers = await run_in_threadpool(parse_catalog, bytes(data))
+    return {'servers': sorted(servers, key=lambda server: server['server_name'].lower())}
 
 
 # ---------- records ----------

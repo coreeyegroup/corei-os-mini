@@ -119,7 +119,8 @@ function toPayload(entity: Entity, draft: Row): Row {
   }
   if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision); }
   if (entity === 'connections' && draft.platform === 'MT5')
-    out.settings = { server_name: draft.settings.server_name, access_points: draft.settings.access_points.map((p: Row) => ({ ...p, port: Number(p.port) })) };
+    out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
+      access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false })) };
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
@@ -128,41 +129,106 @@ function toPayload(entity: Entity, draft: Row): Row {
   return out;
 }
 
+/** "TimeZone" -> "Time zone", "DST" stays "DST". */
+function detailLabel(key: string) {
+  const words = key.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1).replace(/\b(?!DST|ID|IP|URL|UTC|GMT)([A-Z])([a-z]+)/g, (_, a, b) => a.toLowerCase() + b);
+}
+
+function ServerDescription({ settings }: { settings: Row }) {
+  const details: Row = settings.server_details ?? {};
+  const keys = Object.keys(details);
+  if (!settings.company_name && !keys.length) return null;
+  return <div className="cfg-server-desc" aria-label="Server description">
+    <strong>Server description</strong>
+    <dl>
+      <dt>Server</dt><dd>{settings.server_name}</dd>
+      {settings.company_name && <><dt>Company</dt><dd>{settings.company_name}</dd></>}
+      {keys.filter(k => !/^company(name)?$/i.test(k)).map(k => <Fragment key={k}><dt>{detailLabel(k)}</dt><dd>{String(details[k])}</dd></Fragment>)}
+    </dl>
+    <small>As stated in the broker's servers.dat. Edit the server name only if the broker tells you to.</small>
+  </div>;
+}
+
+function ServerPicker({ servers, choose, cancel }: { servers: Row[]; choose: (s: Row) => void; cancel: () => void }) {
+  const [q, setQ] = useState(''), [open, setOpen] = useState<string | null>(servers.length === 1 ? servers[0].server_name : null);
+  const needle = q.trim().toLowerCase();
+  const shown = servers.filter(s => !needle || [s.server_name, s.company_name, ...Object.values(s.details ?? {}), ...s.access_points.map((p: Row) => `${p.host}:${p.port}`)]
+    .some(v => String(v ?? '').toLowerCase().includes(needle)));
+  return <div className="cfg-picker" aria-label="Servers in file">
+    <div className="cfg-points-head"><strong>Servers in file ({shown.length === servers.length ? servers.length : `${shown.length} of ${servers.length}`})</strong>
+      <button type="button" onClick={cancel}>Cancel</button></div>
+    <input aria-label="Search servers" placeholder="Search server, company, host…" value={q} onChange={e => setQ(e.target.value)} autoFocus />
+    <ul>{shown.map(s => <li key={s.server_name} className={open === s.server_name ? 'open' : ''}>
+      <button type="button" className="cfg-picker-row" aria-expanded={open === s.server_name} onClick={() => setOpen(open === s.server_name ? null : s.server_name)}>
+        <span className="cfg-picker-name">{s.server_name}</span>
+        <span className="cfg-picker-meta">{s.company_name ?? 'Company not stated'} · {s.access_points.length} access point{s.access_points.length === 1 ? '' : 's'}</span>
+      </button>
+      {open === s.server_name && <div className="cfg-picker-detail">
+        <ServerDescription settings={{ server_name: s.server_name, company_name: s.company_name, server_details: s.details }} />
+        <button type="button" className="primary" onClick={() => choose(s)}>Use this server</button>
+      </div>}
+    </li>)}
+      {!shown.length && <li className="cfg-note">No server matches “{q}”.</li>}</ul>
+  </div>;
+}
+
 function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (s: Row) => void; disabled: boolean }) {
-  const [servers, setServers] = useState<Row[] | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [servers, setServers] = useState<Row[] | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('');
   const points: Row[] = settings.access_points ?? [];
-  const setPoint = (i: number, patch: Row) => change({ ...settings, access_points: points.map((p, j) => j === i ? { ...p, ...patch } : p) });
-  const move = (i: number, d: number) => { const next = [...points]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); change({ ...settings, access_points: next }); };
+  const setPoints = (next: Row[]) => change({ ...settings, access_points: next });
+  const setPoint = (i: number, patch: Row) => setPoints(points.map((p, j) => j === i ? { ...p, ...patch } : p));
+  const move = (i: number, d: number) => { const next = [...points]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); setPoints(next); };
+  const needle = q.trim().toLowerCase();
+  const visible = points.map((p, i) => ({ p, i })).filter(({ p }) => !needle || `${p.name} ${p.host} ${p.port} ${p.host}:${p.port}`.toLowerCase().includes(needle));
+  const enabled = points.filter(p => p.enabled !== false).length;
+  const visibleOn = visible.filter(({ p }) => p.enabled !== false).length;
+  const setVisible = (on: boolean) => { const ids = new Set(visible.map(v => v.i)); setPoints(points.map((p, i) => ids.has(i) ? { ...p, enabled: on } : p)); };
   async function read(file: File) {
     setBusy(true); setError('');
     try { setServers((await api('config/mt5/server-file', 'POST', undefined, file)).servers); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
+  function choose(s: Row) {
+    change({ server_name: s.server_name, company_name: s.company_name ?? null, server_details: s.details ?? {},
+      access_points: s.access_points.map((p: Row) => ({ ...p, enabled: true })) });
+    setServers(null); setQ('');
+  }
   return <fieldset className="cfg-subform" disabled={disabled}>
     <legend>MT5 server</legend>
-    <Field label="Broker server name" hint="Exactly as the broker supplies it, e.g. ICMarketsSC-Demo">
-      <input required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>
-    <Field label="Read access points from servers.dat" hint="Optional. Fills the list below from the broker's MT5 server file; nothing is stored until you save.">
+    <Field label="Read servers from servers.dat" hint="Optional. Lists every server in the broker's MT5 server file with its full description; nothing is stored until you save.">
       <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></Field>
+    {busy && <p className="cfg-note">Reading server file…</p>}
     {error && <p role="alert" className="cfg-error">{error}</p>}
-    {servers && <Field label={`Servers in file (${servers.length})`}>
-      <select aria-label="Server from file" defaultValue="" onChange={e => { const s = servers.find(x => x.server_name === e.target.value); if (s) { change({ server_name: s.server_name, access_points: s.access_points }); setServers(null); } }}>
-        <option value="" disabled>Choose the server for this connection…</option>
-        {servers.map(s => <option key={s.server_name} value={s.server_name}>{s.server_name} · {s.access_points.length} access points</option>)}
-      </select></Field>}
-    <div className="cfg-points-head"><strong>Access points ({points.length})</strong>
-      {points.length > 1 && <button type="button" onClick={() => { if (window.confirm('Remove all access points except the first?')) change({ ...settings, access_points: points.slice(0, 1) }); }}>Keep first only</button>}</div>
-    <div className="cfg-points"><table className="cfg-table compact"><thead><tr><th>#</th><th>Access point</th><th>Host</th><th>Port</th><th /></tr></thead><tbody>
-      {points.map((p, i) => <tr key={i}><td>{i + 1}</td>
-        <td><input aria-label={`Access point ${i + 1} name`} required value={p.name} onChange={e => setPoint(i, { name: e.target.value })} /></td>
+    {servers && <ServerPicker servers={servers} choose={choose} cancel={() => setServers(null)} />}
+    <Field label="Broker server name" hint="Exactly as the broker supplies it, e.g. ICMarketsSC-Demo">
+      <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>
+    <ServerDescription settings={settings} />
+    <div className="cfg-points-head"><strong>Access points · {enabled} of {points.length} selected</strong>
+      <span className="cfg-row-actions">
+        <button type="button" disabled={visibleOn === visible.length} onClick={() => setVisible(true)}>Select {needle ? 'shown' : 'all'}</button>
+        <button type="button" disabled={visibleOn === 0} onClick={() => setVisible(false)}>Clear {needle ? 'shown' : 'all'}</button>
+        <button type="button" disabled={enabled === points.length || enabled === 0} onClick={() => { if (window.confirm(`Remove the ${points.length - enabled} unselected access points from this connection?`)) setPoints(points.filter(p => p.enabled !== false)); }}>Remove unselected</button>
+      </span></div>
+    <input aria-label="Search access points" placeholder="Search name, host or port…" value={q} onChange={e => setQ(e.target.value)} />
+    {enabled === 0 && <p role="alert" className="cfg-error">Select at least one access point.</p>}
+    <div className="cfg-points"><table className="cfg-table compact"><thead><tr>
+      <th><input type="checkbox" aria-label="Select all shown access points" checked={visible.length > 0 && visibleOn === visible.length}
+        ref={el => { if (el) el.indeterminate = visibleOn > 0 && visibleOn < visible.length; }} onChange={e => setVisible(e.target.checked)} /></th>
+      <th>#</th><th>Access point</th><th>Host</th><th>Port</th><th /></tr></thead><tbody>
+      {visible.map(({ p, i }) => <tr key={i} className={p.enabled === false ? 'cfg-off' : ''}>
+        <td><input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} /></td>
+        <td>{i + 1}</td>
+        <td><input aria-label={`Access point ${i + 1} name`} required maxLength={200} value={p.name} onChange={e => setPoint(i, { name: e.target.value })} /></td>
         <td><input aria-label={`Access point ${i + 1} host`} required value={p.host} onChange={e => setPoint(i, { host: e.target.value })} /></td>
         <td><input aria-label={`Access point ${i + 1} port`} required type="number" min={1} max={65535} value={p.port} onChange={e => setPoint(i, { port: e.target.value })} /></td>
-        <td className="cfg-row-actions"><button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
-          <button type="button" disabled={i === points.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
-          <button type="button" disabled={points.length === 1} onClick={() => change({ ...settings, access_points: points.filter((_, j) => j !== i) })} aria-label="Remove">✕</button></td></tr>)}
+        <td className="cfg-row-actions"><button type="button" disabled={!!needle || i === 0} title={needle ? 'Clear the search to reorder' : undefined} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
+          <button type="button" disabled={!!needle || i === points.length - 1} title={needle ? 'Clear the search to reorder' : undefined} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
+          <button type="button" disabled={points.length === 1} onClick={() => setPoints(points.filter((_, j) => j !== i))} aria-label="Remove">✕</button></td></tr>)}
+      {!visible.length && <tr><td colSpan={6} className="cfg-note">No access point matches “{q}”.</td></tr>}
     </tbody></table></div>
-    <button type="button" disabled={points.length >= 256} onClick={() => change({ ...settings, access_points: [...points, { name: '', host: '', port: 443 }] })}>Add access point</button>
-    <small>The adapter tries access points in this order.</small>
+    <button type="button" disabled={points.length >= 256} onClick={() => { setQ(''); setPoints([...points, { name: `Access Point ${points.length + 1}`, host: '', port: 443, enabled: true }]); }}>Add access point</button>
+    <small>The adapter tries the selected access points in this order. Unselected ones stay on record but are not used.</small>
   </fieldset>;
 }
 
@@ -275,7 +341,8 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
   providers: [['Code', r => r.code], ['Name', r => r.name], ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
   connections: [['Code', r => r.code], ['Provider', r => r.provider_code], ['Platform', r => r.platform], ['Env', r => <Env value={r.environment} />],
-    ['Purpose', r => r.purpose], ['Endpoint', r => r.platform === 'MT5' ? r.settings.server_name : r.settings.api_base_url],
+    ['Purpose', r => r.purpose], ['Endpoint', r => r.platform === 'MT5' ? <span title={r.settings.company_name ?? ''}>{r.settings.server_name}{r.settings.company_name ? ` · ${r.settings.company_name}` : ''}
+      <small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length}/{r.settings.access_points.length} AP</small></span> : r.settings.api_base_url],
     ['Credential', r => r.platform === 'MT5' ? 'Per account' : r.credential_kind ? 'Saved' : <span className="cfg-pill warn">Missing</span>],
     ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
   accounts: [['Code', r => r.code], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],

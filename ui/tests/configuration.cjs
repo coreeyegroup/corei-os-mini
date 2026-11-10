@@ -43,6 +43,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      if(body.trading_enabled&&body.confirm_environment!==parts[1])return fail(422,'confirm');
      Object.assign(c,{trading_enabled:body.trading_enabled,reason:body.reason,version:c.version+1,updated_by:'risk-ops'});return ok(c);}
    if(parts[0]==='audit')return ok({items:[]});
+   if(parts[0]==='mt5')return ok({servers:[
+     {server_name:'ICMarketsSC-Demo',company_name:'Raw Trading Ltd',details:{CompanyName:'Raw Trading Ltd',TimeZone:120},access_points:[{name:'Access Point 1',host:'203.0.113.10',port:443}]},
+     {server_name:'MetaQuotes-Demo',company_name:'MetaQuotes Ltd.',details:{CompanyName:'MetaQuotes Ltd.',TimeZone:120,DST:1,Description:'MetaTrader 5 demo server operated by MetaQuotes Ltd. for testing and evaluation'},
+      access_points:Array.from({length:50},(_,i)=>({name:'Access Point '+(i+1),host:i<25?'78.140.180.'+(i+1):'2a00:1178:1:60::'+(i+1).toString(16),port:i%2?1950:443}))}]});
    const entity=parts[0];
    if(parts[2]==='credential'){const body=JSON.parse(options.body);const row=db[entity].find(x=>x.id===parts[1]);
      row.credential_kind=body.credential.kind;row.credential_access_level=body.credential.access_level;row.credential_updated_at=new Date().toISOString();
@@ -110,8 +114,39 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: MT5 connection with ordered access points; floating window moves, resizes, maximises; platform fixed after creation.');
  // A broker server with 50 access points (MetaQuotes-Demo) can be entered.
  button('New connection').click();await tick();
- for(let i=2;i<=50;i++){button('Add access point').click();await new Promise(r=>setTimeout(r,0));}await tick();
- assert.match($('.cfg-points-head').textContent,/Access points \(50\)/);
+ // Read servers.dat: searchable server list with full description; pick one.
+ const fileInput=$('.cfg-subform input[type="file"]');Object.defineProperty(fileInput,'files',{value:[new w.File(['x'],'servers.dat')]});
+ fileInput.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();
+ assert.match($('.cfg-picker').textContent,/Servers in file \(2\)/);
+ fill($('[aria-label="Search servers"]'),'metaquotes');await tick();
+ assert.match($('.cfg-picker').textContent,/1 of 2/);
+ $('.cfg-picker-row').click();await tick();
+ assert.match($('.cfg-picker').textContent,/MetaTrader 5 demo server operated by MetaQuotes Ltd\. for testing and evaluation/);
+ assert.match($('.cfg-picker').textContent,/Time zone120/);
+ button('Use this server').click();await tick();
+ assert.equal($('.cfg-picker'),null);
+ assert.equal(byLabel('Broker server name').value,'MetaQuotes-Demo');
+ assert.match($('[aria-label="Server description"]').textContent,/CompanyMetaQuotes Ltd\./);
+ assert.match($('.cfg-points-head').textContent,/50 of 50 selected/);
+ // Search access points, select only the matching ones.
+ fill(byLabel('Search access points'),'1950');await tick();
+ assert.equal(w.document.querySelectorAll('.cfg-points tbody tr').length,25);
+ button('Clear shown').click();await tick();
+ assert.match($('.cfg-points-head').textContent,/25 of 50 selected/);
+ fill(byLabel('Search access points'),'');await tick();
+ byLabel('Use access point 1').click();await tick();
+ assert.match($('.cfg-points-head').textContent,/24 of 50 selected/);
+ fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Connection code'),'mt5001');fill(byLabel('Name'),'MetaQuotes demo');await tick();
+ await submit($('.cfg-detail .cfg-form'));
+ const mq=db.connections.find(c=>c.code==='MT5001');
+ assert.equal(mq.settings.access_points.length,50);
+ assert.equal(mq.settings.access_points.filter(p=>p.enabled).length,24);
+ assert.equal(mq.settings.company_name,'MetaQuotes Ltd.');
+ assert.match(mq.settings.server_details.Description,/demo server/);
+ console.log('PASS: servers.dat picker searches and shows full server description; access points searchable and selectable; selection saved.');
+ button('Clear all').click();await tick();
+ assert.match($('.cfg-detail').textContent,/Select at least one access point/);
+ button('Select all').click();await tick();
  assert.equal(button('Add access point').disabled,false);
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();assert.equal($('.fw'),null);
  console.log('PASS: 50 access points accepted; closing the window with confirmation.');

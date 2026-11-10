@@ -47,9 +47,11 @@ _HOST = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9]([A-Za-z0-9-]
 
 
 class Mt5AccessPoint(_Strict):
-    name: Name
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
     host: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=253)]
     port: Annotated[int, Field(ge=1, le=65535)]
+    # Disabled access points stay on record but the adapter does not try them.
+    enabled: bool = True
 
     @field_validator('host')
     @classmethod
@@ -67,15 +69,30 @@ MAX_ACCESS_POINTS = 256
 
 class Mt5Settings(_Strict):
     server_name: Name
-    # Ordered by preference; the adapter tries them in this order. Large broker
+    # Company and every other field the broker's servers.dat states for this server,
+    # kept as read so operators can confirm they picked the right server.
+    company_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
+    server_details: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    # Ordered by preference; the adapter tries enabled ones in this order. Large broker
     # servers publish dozens (MetaQuotes-Demo lists 50), so allow up to 256.
     access_points: Annotated[list[Mt5AccessPoint], Field(min_length=1, max_length=MAX_ACCESS_POINTS)]
+
+    @field_validator('server_details', mode='before')
+    @classmethod
+    def valid_details(cls, value: object) -> dict:
+        from .broker_catalog import server_details
+        try:
+            return server_details(value if value is not None else {})
+        except ValueError as exc:
+            raise ValueError(f'server_details: {exc}') from None
 
     @model_validator(mode='after')
     def unique_endpoints(self) -> 'Mt5Settings':
         endpoints = [(p.host, p.port) for p in self.access_points]
         if len(endpoints) != len(set(endpoints)):
             raise ValueError('access points must be unique by host and port')
+        if not any(p.enabled for p in self.access_points):
+            raise ValueError('at least one access point must be selected')
         return self
 
 

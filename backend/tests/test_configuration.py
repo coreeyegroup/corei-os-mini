@@ -4,6 +4,7 @@ Unit tests need nothing external. The PostgreSQL test needs COREI_TEST_DATABASE_
 runs every migration in a throwaway schema, then drives the API end to end.
 """
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -47,6 +48,35 @@ class ModelTests(unittest.TestCase):
         too_many = [{'name': f'P{i}', 'host': f'10.0.{i // 250}.{i % 250 + 1}', 'port': 443} for i in range(257)]
         with self.assertRaises(ValidationError):
             Mt5Settings.model_validate({'server_name': 'S', 'access_points': too_many})
+
+    def test_mt5_access_point_selection_and_server_description(self):
+        point = lambda i, on=True: {'name': f'AP {i}', 'host': f'192.0.2.{i}', 'port': 443, 'enabled': on}
+        settings = Mt5Settings.model_validate({'server_name': 'MetaQuotes-Demo', 'company_name': 'MetaQuotes Ltd.',
+                                               'server_details': {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'ServerName': 'x', 'Note': ' a\x00b '},
+                                               'access_points': [point(1), point(2, False)]})
+        self.assertEqual([p.enabled for p in settings.access_points], [True, False])
+        self.assertEqual(settings.server_details, {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'Note': 'a b'})
+        with self.assertRaises(ValidationError):
+            Mt5Settings.model_validate({'server_name': 'S', 'access_points': [point(1, False)]})
+        for bad in ({'bad key': 1}, {'Nested': {'a': 1}}, {f'K{i}': i for i in range(65)}):
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                Mt5Settings.model_validate({'server_name': 'S', 'server_details': bad, 'access_points': [point(1)]})
+
+    def test_server_file_returns_full_description_per_server(self):
+        from corei_os_mini.broker_catalog import parse_catalog
+        output = {'servers': [{'server_name': 'MetaQuotes-Demo', 'details': {'ServerName': 'MetaQuotes-Demo', 'CompanyName': 'MetaQuotes Ltd.',
+                                                                            'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
+                               'access_points': [{'name': 'Access Point 1', 'address': '78.140.180.201:443'},
+                                                 {'name': 'Access Point 2', 'address': '[2a00:1178:1:60::c9]:1950'}]}]}
+        with tempfile.TemporaryDirectory() as folder:
+            parser = Path(folder) / 'reader'
+            parser.write_text('#!/bin/sh\ncat <<\'JSON\'\n' + json.dumps(output) + '\nJSON\n'); parser.chmod(0o755)
+            with patch.dict(os.environ, {'COREI_MT5_CATALOG_PARSER': str(parser)}):
+                servers = parse_catalog(b'x' * 64)
+        self.assertEqual(servers, [{'server_name': 'MetaQuotes-Demo', 'company_name': 'MetaQuotes Ltd.',
+                                    'details': {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
+                                    'access_points': [{'name': 'Access Point 1', 'host': '78.140.180.201', 'port': 443},
+                                                      {'name': 'Access Point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950}]}])
 
     def test_rest_settings_require_secure_urls_and_oauth_redirect(self):
         RestApiSettings.model_validate({'api_base_url': 'https://api.example.com/v2/', 'auth_method': 'API_KEY'})
@@ -176,6 +206,11 @@ class ConfigurationPostgresTests(unittest.TestCase):
         mt5 = self.post('connections', dict(provider_id=provider['id'], code='ICM_MT5_DEMO', name='ICM MT5 demo',
                                             platform='MT5', environment='DEMO', purpose='BOTH', settings=MT5_SETTINGS))
         self.assertEqual(mt5['settings']['access_points'][0]['port'], 443)
+        described = self.put('connections', mt5, {'settings': {**MT5_SETTINGS, 'company_name': 'Broker Ltd', 'server_details': {'TimeZone': 120},
+                             'access_points': [*MT5_SETTINGS['access_points'], {'name': 'Access 2', 'host': '192.0.2.2', 'port': 443, 'enabled': False}]}})
+        self.assertEqual((described['settings']['company_name'], described['settings']['server_details'], described['settings']['access_points'][1]['enabled']),
+                         ('Broker Ltd', {'TimeZone': 120}, False))
+        mt5 = described
         data_only = self.post('connections', dict(provider_id=provider['id'], code='ICM_FEED', name='Feed', platform='MT5',
                                                   environment='LIVE', purpose='MARKET_DATA', settings=MT5_SETTINGS))
 

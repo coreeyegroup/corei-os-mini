@@ -106,3 +106,21 @@
 .fw-ne { top: -3px; right: -3px; cursor: nesw-resize; } .fw-sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
 .fw-nw { top: -3px; left: -3px; cursor: nwse-resize; } .fw-se { bottom: -3px; right: -3px; cursor: nwse-resize; }
 .fw-se::after { content: ''; position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); opacity: .6; }
+
+/* Server description and server picker */
+.cfg-server-desc { border: 1px solid var(--line); padding: 8px 10px; background: var(--canvas); }
+.cfg-server-desc dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 6px 0; }
+.cfg-server-desc dt { color: var(--muted); }
+.cfg-server-desc dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cfg-picker { border: 1px solid var(--accent); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.cfg-picker ul { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow: auto; border: 1px solid var(--line); }
+.cfg-picker li { border-bottom: 1px solid var(--line); }
+.cfg-picker li.open { background: var(--selection); }
+.cfg-picker-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; color: var(--text); cursor: pointer; }
+.cfg-picker-row:hover { background: var(--hover); }
+.cfg-picker-name { font-weight: 600; overflow-wrap: anywhere; }
+.cfg-picker-meta { color: var(--muted); font-size: .9em; overflow-wrap: anywhere; }
+.cfg-picker-detail { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.cfg-picker-detail .cfg-server-desc { align-self: stretch; }
+.cfg-table tr.cfg-off td { opacity: .5; }
+.cfg-table tr.cfg-off td:first-child { opacity: 1; }
