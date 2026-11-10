@@ -132,7 +132,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
  assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
  assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name']);
- button('Enter manually').click();await tick();
+ button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Connection name'),'ICM MT5 demo');
  fill(byLabel('Broker server name'),'ICMarketsSC-Demo');
  fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
@@ -152,7 +152,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  await submit($('.cfg-detail .cfg-form'));
  const conn=db.connections[0];
  assert.equal(conn.platform,'MT5');assert.equal(conn.environment,'DEMO');
- assert.deepEqual(conn.settings.access_points.map(p=>[p.name,p.host,p.port]),[['Access point 1','192.0.2.11',444],['Access point 2','192.0.2.10',443]]);
+ assert.deepEqual(conn.settings.access_points.map(p=>[p.name,p.host,p.port]),[['ICMarketsSC-Demo','192.0.2.11',444],['Added manually','192.0.2.10',443]]);
  assert.ok(byLabel('Platform').disabled,'platform fixed after creation');
  console.log('PASS: MT5 connection entered manually with ordered addresses; floating window moves, resizes, maximises; platform fixed after creation.');
 
@@ -177,15 +177,15 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-picker').textContent,/Time zone120/);
  button('None').click();await tick();
  byLabel('Select 78.140.180.8:1950 on MetaQuotes-Demo').click();byLabel('Select 78.140.180.2:1950 on MetaQuotes-Demo').click();await tick();
- assert.match($('.cfg-picker-foot').textContent,/2 of 50 addresses selected/);
+ assert.match($('.cfg-picker-foot').textContent,/2 of 50 addresses of MetaQuotes-Demo selected/);
  button('Use MetaQuotes-Demo').click();await tick();
  assert.equal($('.cfg-picker'),null);
- assert.match($('.cfg-chosen').textContent,/MetaQuotes-DemoMetaQuotes Ltd\./);
+ assert.match($('.cfg-chosen').textContent,/ServerMetaQuotes-DemoMetaQuotes Ltd\./);
  assert.match($('[aria-label="Server description"]').textContent,/CompanyMetaQuotes Ltd\./);
- assert.match($('.cfg-addresses-head').textContent,/2 of 50 addresses in use/);
- assert.deepEqual([...w.document.querySelectorAll('.cfg-address-text')].slice(0,2).map(x=>x.textContent),['78.140.180.2:1950','78.140.180.8:1950']);
+ assert.match($('.cfg-addresses-head').textContent,/2 of 50 in use/);
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-address-table tbody td:nth-child(3)')].slice(0,2).map(x=>x.textContent),['78.140.180.2:1950','78.140.180.8:1950']);
  byLabel('Use access point 3').click();await tick();
- assert.match($('.cfg-addresses-head').textContent,/3 of 50 addresses in use/);
+ assert.match($('.cfg-addresses-head').textContent,/3 of 50 in use/);
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO_2');  // ICM_MT5_DEMO is taken
  fill(byLabel('Connection ID'),'mt5001');fill(byLabel('Connection name'),'MetaQuotes demo');await tick();
@@ -193,10 +193,30 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const mq=db.connections.find(c=>c.code==='MT5001');
  assert.equal(mq.settings.access_points.length,50);
  assert.equal(mq.settings.access_points.filter(p=>p.enabled).length,3);
- assert.ok(mq.settings.access_points.every((p,i)=>p.name==='Access point '+(i+1)),'addresses are numbered, not named after another server');
+ assert.deepEqual(mq.settings.access_points.slice(0,2).map(p=>p.name),['Access Point 2','Access Point 8']);  // the name the file gives each address is kept
  assert.equal(mq.settings.company_name,'MetaQuotes Ltd.');
  assert.match(mq.settings.server_details.Description,/demo server/);
  console.log('PASS: server picker lists servers, shows addresses and full description, skips private addresses, saves the selection.');
+ // Change server, then go back without losing the current one.
+ button('Change server…').click();await tick();
+ assert.ok(byLabel('Find broker'));
+ button('← Keep MetaQuotes-Demo').click();await tick();
+ assert.match($('.cfg-chosen').textContent,/MetaQuotes-Demo/);
+ // All addresses view (Westernpips style) with a clearable filter.
+ button('Change server…').click();await tick();
+ const file2=$('.cfg-finder input[type="file"]');Object.defineProperty(file2,'files',{value:[new w.File(['x'],'servers.dat')]});
+ file2.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();await new Promise(r=>setTimeout(r,300));
+ [...w.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent==='All addresses').click();await new Promise(r=>setTimeout(r,350));await tick();
+ assert.equal(w.document.querySelectorAll('.cfg-picker-flat tbody tr').length,57);
+ fill(byLabel('Filter servers'),'marketmates');await new Promise(r=>setTimeout(r,350));await tick();
+ assert.equal(w.document.querySelectorAll('.cfg-picker-flat tbody tr').length,3);
+ byLabel('Select 142.91.121.204:443 on Marketmates-Live').click();await tick();await tick();
+ assert.match($('.cfg-picker-foot').textContent,/1 of 3 addresses of Marketmates-Live selected/);
+ byLabel('Clear filter').click();await new Promise(r=>setTimeout(r,350));await tick();
+ assert.equal(byLabel('Filter servers').value,'');assert.equal(w.document.querySelectorAll('.cfg-picker-flat tbody tr').length,57);
+ button('← Back').click();await tick();button('← Keep MetaQuotes-Demo').click();await tick();
+ assert.match($('.cfg-chosen').textContent,/MetaQuotes-Demo/);
+ console.log('PASS: change server can go back; all-addresses view with clearable filter.');
  button('Clear all').click();await tick();
  assert.match($('.cfg-detail').textContent,/Select at least one address/);
  button('Select all').click();await tick();
@@ -210,7 +230,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('Find servers').click();await tick();await tick();await new Promise(r=>setTimeout(r,300));
  assert.deepEqual(searched,['VTMarkets']);
  assert.match($('.cfg-picker-head').textContent,/Broker directory · “VTMarkets”4 servers/);
- button('Cancel').click();await tick();assert.equal($('.cfg-picker'),null);
+ button('← Back').click();await tick();assert.equal($('.cfg-picker'),null);
+ assert.equal(byLabel('Find broker').value,'VTMarkets');  // back keeps what was typed
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();
  console.log('PASS: broker directory search opens the same server picker.');
 

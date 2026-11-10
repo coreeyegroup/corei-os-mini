@@ -45,13 +45,13 @@ try
         if (server is null || string.IsNullOrWhiteSpace(name)) { skipped++; continue; }
         var addresses = new List<(string Name, string Address)>();
         foreach (var access in server.Accesses ?? [])
-            foreach (var address in access?.Addresses ?? []) if (address is not null) addresses.Add((access!.AccessRec?.ServerName ?? "Access point", address.Address));
+            foreach (var address in access?.Addresses ?? []) if (address is not null) addresses.Add((string.IsNullOrWhiteSpace(access!.AccessRec?.ServerName) ? name : access!.AccessRec!.ServerName!, address.Address));
         // Newer files carry extended access records whose shape the SDK does not
         // document. Read any host:port they contain instead of rejecting the file.
         foreach (var accessEx in server.AccessesEx ?? [])
         {
             var found = new List<(string Name, string Address)>();
-            FindEndpoints(accessEx, "Access point", found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
+            FindEndpoints(accessEx, name, found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
             if (found.Count == 0) extendedUnreadable++;
             addresses.AddRange(found);
         }
@@ -420,7 +420,7 @@ static void Collect(object? value, string? company, Dictionary<string, (string? 
     {
         serverName = serverName.Trim();
         var found = new List<(string Name, string Address)>();
-        foreach (var (_, v) in access) FindEndpoints(v, "Access point", found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
+        foreach (var (_, v) in access) FindEndpoints(v, serverName, found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
         if (found.Count == 0)
             foreach (var src in new[] { infoEx, info })
                 if (src is not null && Members(src).FirstOrDefault(m => m.Name == "Address").Value is string addr && Endpoint().IsMatch(addr.Trim())) found.Add(("Primary", addr.Trim()));

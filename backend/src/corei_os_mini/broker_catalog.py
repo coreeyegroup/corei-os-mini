@@ -150,9 +150,12 @@ def _validate(document: dict) -> dict:
             if (host, port) in seen:
                 continue
             seen.add((host, port))
-            # The SDK's per-access label is not reliable (it often repeats another
-            # server's name), so access points are simply numbered in file order.
-            points.append(dict(name=f'Access point {len(points) + 1}', host=host, port=port))
+            # The name is the label the source gives this address (in servers.dat the
+            # access record's server name); generic labels fall back to the server name.
+            label = _clean_text(access.get('name'), 200)
+            if not label or label.lower() in ('access point', 'primary'):
+                label = name
+            points.append(dict(name=label, host=host, port=port))
         if not points:
             stats['servers_without_access_points'] += 1
         total += len(points)

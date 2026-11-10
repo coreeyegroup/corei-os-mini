@@ -108,7 +108,7 @@ function Section({ n, title, children }: { n: number; title: string; children: R
 const blank: Record<Entity, Row> = {
   providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE' },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
-    settings: { server_name: '', access_points: [{ name: 'Access point 1', host: '', port: 443 }] } },
+    settings: { server_name: '', access_points: [{ name: 'Added manually', host: '', port: 443 }] } },
   accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
     tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
@@ -173,49 +173,71 @@ function isPrivate(host: string): boolean {
 }
 const address = (p: Row) => `${String(p.host).includes(':') ? `[${p.host}]` : p.host}:${p.port}`;
 
-/** Choose one broker server, then the addresses to use. Works on a servers.dat analysis
- *  or a broker-directory search (both are catalogs on the backend). */
+/** Choose one broker server and the addresses to use, from a servers.dat analysis or a
+ *  broker-directory search. Two views: by server, or every address in one table
+ *  (Westernpips style). Either way one connection uses one server. */
 function ServerPicker({ catalog, use, close }: { catalog: Row; use: (server: Row, chosen: Row[]) => void; close: () => void }) {
-  const [q, setQ] = useState(''), [list, setList] = useState<Row[]>([]), [total, setTotal] = useState(0), [loading, setLoading] = useState(false);
-  const [server, setServer] = useState<Row | null>(null), [picked, setPicked] = useState<Set<string>>(new Set()), [error, setError] = useState('');
+  const [view, setView] = useState<'servers' | 'addresses'>('servers');
+  const [q, setQ] = useState(''), [rows, setRows] = useState<Row[]>([]), [total, setTotal] = useState(0), [matches, setMatches] = useState(0), [loading, setLoading] = useState(false);
+  const [server, setServer] = useState<Row | null>(null), [picked, setPicked] = useState<Set<string>>(new Set()), [error, setError] = useState(''), [note, setNote] = useState('');
   const base = `config/mt5/server-file/${catalog.catalog_id}`;
   const id = (p: Row) => `${p.host}|${p.port}`;
-  async function fetchList(offset: number) {
+  async function fetchRows(offset: number) {
     setLoading(true); setError('');
-    try { const data = await api(`${base}/servers?${new URLSearchParams({ q, offset: String(offset), limit: '200' })}`);
-      setList(l => offset ? [...l, ...data.items] : data.items); setTotal(data.total);
-      if (!offset && data.items.length === 1 && server?.server_name !== data.items[0].server_name) void open(data.items[0].server_name);
+    try {
+      const data = view === 'servers' ? await api(`${base}/servers?${new URLSearchParams({ q, offset: String(offset), limit: '200' })}`)
+        : await api(`${base}/access-points?${new URLSearchParams({ broker: q, offset: String(offset), limit: '200' })}`);
+      setRows(r => offset ? [...r, ...data.items] : data.items); setTotal(data.total); setMatches(data.server_matches ?? data.total);
+      if (view === 'servers' && !offset && data.items.length === 1 && server?.server_name !== data.items[0].server_name) void open(data.items[0].server_name);
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }
-  useEffect(() => { const t = setTimeout(() => void fetchList(0), 250); return () => clearTimeout(t); }, [q]);
-  async function open(name: string) {
+  useEffect(() => { const t = setTimeout(() => void fetchRows(0), 250); return () => clearTimeout(t); }, [q, view]);
+  async function open(name: string, only?: Row) {
     try { const detail = await api(`${base}/server?${new URLSearchParams({ name })}`); setServer(detail);
-      setPicked(new Set(detail.access_points.filter((p: Row) => !isPrivate(p.host)).map(id))); }
+      setPicked(new Set(only ? [id(only)] : detail.access_points.filter((p: Row) => !isPrivate(p.host)).map(id))); }
     catch (e) { setError((e as Error).message); }
   }
   const toggle = (p: Row) => setPicked(old => { const next = new Set(old); next.has(id(p)) ? next.delete(id(p)) : next.add(id(p)); return next; });
+  function toggleRow(r: Row) {
+    if (r.host == null) return;
+    if (server?.server_name === r.server_name) { toggle(r); return; }
+    if (server && picked.size) setNote(`One connection uses one server. Selection moved to ${r.server_name}.`); else setNote('');
+    void open(r.server_name, r);
+  }
   const points: Row[] = server?.access_points ?? [];
   const chosen = points.filter(p => picked.has(id(p)));
   const source = catalog.source === 'broker-directory' ? `Broker directory · “${catalog.query}”` : 'servers.dat';
+  const warnings = [catalog.skipped_servers && `${catalog.skipped_servers} unnamed servers skipped`,
+    catalog.invalid_addresses && `${catalog.invalid_addresses} unreadable addresses skipped`,
+    catalog.unreadable_extended_records && `${catalog.unreadable_extended_records} extended records unreadable`].filter(Boolean);
   return <div className="cfg-picker" aria-label="Choose broker server">
     <div className="cfg-picker-head">
-      <div><strong>{source}</strong><small>{catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} addresses</small></div>
-      <button type="button" onClick={close}>Cancel</button>
+      <div><strong>{source}</strong><small>{catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} addresses{warnings.length ? ` · ${warnings.join(' · ')}` : ''}</small></div>
+      <button type="button" onClick={close}>← Back</button>
     </div>
-    <input aria-label="Filter servers" autoFocus placeholder="Filter by server, company or address…" value={q} onChange={e => setQ(e.target.value)} />
-    {error && <p role="alert" className="cfg-error">{error}</p>}
-    <div className="cfg-picker-panes">
+    <div className="cfg-picker-bar">
+      <div className="cfg-tabs" role="tablist" aria-label="View">
+        <button type="button" role="tab" aria-selected={view === 'servers'} onClick={() => setView('servers')}>By server</button>
+        <button type="button" role="tab" aria-selected={view === 'addresses'} onClick={() => setView('addresses')}>All addresses</button>
+      </div>
+      <span className="cfg-filter">
+        <input aria-label="Filter servers" autoFocus placeholder={view === 'servers' ? 'Filter by server, company or address…' : 'Filter by server or company, e.g. live 3'} value={q} onChange={e => setQ(e.target.value)} />
+        {q && <button type="button" aria-label="Clear filter" title="Clear filter" onClick={() => setQ('')}>✕</button>}
+      </span>
+    </div>
+    {error && <p role="alert" className="cfg-error">{error}</p>}{note && <p role="status" className="cfg-note">{note}</p>}
+    {view === 'servers' ? <div className="cfg-picker-panes">
       <div className="cfg-picker-servers" role="listbox" aria-label="Servers">
-        {list.map(r => <button type="button" role="option" aria-selected={server?.server_name === r.server_name} key={r.server_name}
-          className={server?.server_name === r.server_name ? 'on' : ''} onClick={() => void open(r.server_name)}>
+        {rows.map(r => <button type="button" role="option" aria-selected={server?.server_name === r.server_name} key={r.server_name}
+          className={server?.server_name === r.server_name ? 'on' : ''} onClick={() => { setNote(''); void open(r.server_name); }}>
           <span className="cfg-picker-name">{r.server_name}</span>
           <span className="cfg-picker-meta">{r.company_name ?? 'Company not stated'} · {r.access_point_count} address{r.access_point_count === 1 ? '' : 'es'}</span>
         </button>)}
-        {!list.length && !loading && <p className="cfg-note">No server matches “{q}”.</p>}
-        {list.length < total && <button type="button" className="cfg-more-link" disabled={loading} onClick={() => void fetchList(list.length)}>Show {Math.min(200, total - list.length)} more servers</button>}
+        {!rows.length && !loading && <p className="cfg-note">No server matches “{q}”.</p>}
+        {rows.length < total && <button type="button" className="cfg-more-link" disabled={loading} onClick={() => void fetchRows(rows.length)}>Show {Math.min(200, total - rows.length)} more servers</button>}
       </div>
       <div className="cfg-picker-points">
-        {!server ? <p className="cfg-note cfg-picker-empty">Select a server on the left to see its addresses.</p> : <>
+        {!server ? <p className="cfg-note cfg-picker-empty">Select a server to see its addresses.</p> : <>
           <div className="cfg-picker-server">
             <div><strong>{server.server_name}</strong><small>{server.company_name ?? 'Company not stated'}</small></div>
             <span className="cfg-row-actions">
@@ -224,18 +246,28 @@ function ServerPicker({ catalog, use, close }: { catalog: Row; use: (server: Row
               <button type="button" onClick={() => setPicked(new Set())}>None</button>
             </span>
           </div>
-          <ul className="cfg-checklist">
-            {points.map(p => <li key={id(p)}><label>
-              <input type="checkbox" aria-label={`Select ${address(p)} on ${server.server_name}`} checked={picked.has(id(p))} onChange={() => toggle(p)} />
-              <span className="cfg-mono">{address(p)}</span>{isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}
-            </label></li>)}
-          </ul>
+          <table className="cfg-table compact cfg-pick-table"><thead><tr><th /><th>Address</th><th>Name in file</th></tr></thead><tbody>
+            {points.map(p => <tr key={id(p)} className={picked.has(id(p)) ? 'selected' : ''} onClick={() => toggle(p)}>
+              <td><input type="checkbox" aria-label={`Select ${address(p)} on ${server.server_name}`} checked={picked.has(id(p))} onChange={() => toggle(p)} onClick={e => e.stopPropagation()} /></td>
+              <td className="cfg-mono">{address(p)}{isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}</td>
+              <td>{p.name}</td></tr>)}
+          </tbody></table>
           <details className="cfg-more"><summary>Server details</summary><ServerDescription settings={{ server_name: server.server_name, company_name: server.company_name, server_details: server.details }} /></details>
         </>}
       </div>
-    </div>
+    </div> : <div className="cfg-picker-flat">
+      <table className="cfg-table compact cfg-pick-table"><thead><tr><th /><th>Address</th><th>Server</th><th>Name in file</th><th>Company</th></tr></thead><tbody>
+        {rows.map(r => { const on = server?.server_name === r.server_name && picked.has(id(r));
+          return r.host == null ? <tr key={r.server_name + '|none'} className="cfg-off"><td /><td className="cfg-note">no readable address</td><td>{r.server_name}</td><td /><td>{r.company_name ?? '—'}</td></tr>
+          : <tr key={`${r.server_name}|${id(r)}`} className={on ? 'selected' : ''} onClick={() => toggleRow(r)}>
+            <td><input type="checkbox" aria-label={`Select ${address(r)} on ${r.server_name}`} checked={on} onChange={() => toggleRow(r)} onClick={e => e.stopPropagation()} /></td>
+            <td className="cfg-mono">{address(r)}{isPrivate(r.host) && <span className="cfg-pill off">Private</span>}</td><td>{r.server_name}</td><td>{r.name}</td><td>{r.company_name ?? '—'}</td></tr>; })}
+        {!rows.length && !loading && <tr><td colSpan={5} className="cfg-note">No address matches “{q}”.</td></tr>}
+      </tbody></table>
+      {rows.length < total && <button type="button" className="cfg-more-link" disabled={loading} onClick={() => void fetchRows(rows.length)}>Show {Math.min(200, total - rows.length)} more addresses</button>}
+    </div>}
     <div className="cfg-picker-foot">
-      <small className="cfg-note">{server ? `${chosen.length} of ${points.length} addresses selected` : `${total.toLocaleString()} servers`}</small>
+      <small className="cfg-note">{view === 'addresses' ? `${total.toLocaleString()} addresses on ${matches.toLocaleString()} servers · ` : ''}{server ? `${chosen.length} of ${points.length} addresses of ${server.server_name} selected` : 'No server selected'}</small>
       <button type="button" className="primary" disabled={!server || !chosen.length} onClick={() => use(server!, chosen)}>
         {server ? `Use ${server.server_name}` : 'Use server'}</button>
     </div>
@@ -245,83 +277,98 @@ function ServerPicker({ catalog, use, close }: { catalog: Row; use: (server: Row
 /** Addresses of the chosen server: which are used, in which order. */
 function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) => void }) {
   const points: Row[] = settings.access_points ?? [];
-  const [editable] = useState(() => new Set(points.map((p, i) => p.host ? -1 : i)));
-  const [added, setAdded] = useState<Set<number>>(new Set());
-  const setPoints = (next: Row[]) => change({ ...settings, access_points: next.map((p, i) => ({ ...p, name: `Access point ${i + 1}` })) });
+  const [editable, setEditable] = useState(() => new Set(points.map((p, i) => p.host ? -1 : i)));
+  const setPoints = (next: Row[]) => change({ ...settings, access_points: next });
   const setPoint = (i: number, patch: Row) => setPoints(points.map((p, j) => j === i ? { ...p, ...patch } : p));
-  const move = (i: number, d: number) => { const next = [...points]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); setPoints(next); };
+  const move = (i: number, d: number) => { const next = [...points]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); setPoints(next);
+    setEditable(old => new Set([...old].map(k => k === i ? i + d : k === i + d ? i : k))); };
+  const remove = (i: number) => { setPoints(points.filter((_, j) => j !== i)); setEditable(old => new Set([...old].filter(k => k !== i).map(k => k > i ? k - 1 : k))); };
   const on = points.filter(p => p.enabled !== false).length;
   return <div className="cfg-addresses">
     <div className="cfg-addresses-head">
-      <span>{on} of {points.length} address{points.length === 1 ? '' : 'es'} in use · tried top to bottom</span>
+      <strong>Addresses</strong>
+      <span className="cfg-note">{on} of {points.length} in use · tried top to bottom</span>
       <span className="cfg-row-actions">
         <button type="button" disabled={on === points.length} onClick={() => setPoints(points.map(p => ({ ...p, enabled: true })))}>Select all</button>
         <button type="button" disabled={on === 0} onClick={() => setPoints(points.map(p => ({ ...p, enabled: false })))}>Clear all</button>
       </span>
     </div>
-    <ol className="cfg-address-list">
-      {points.map((p, i) => { const edit = editable.has(i) || added.has(i);
-        return <li key={i} className={p.enabled === false ? 'off' : ''}>
-          <input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} />
-          <span className="cfg-address-n">{i + 1}</span>
-          {edit ? <span className="cfg-address-edit">
+    <div className="cfg-address-box"><table className="cfg-table compact cfg-address-table"><thead><tr><th>Use</th><th>#</th><th>Address</th><th>Name in file</th><th /></tr></thead><tbody>
+      {points.map((p, i) => { const edit = editable.has(i);
+        return <tr key={i} className={p.enabled === false ? 'cfg-off' : ''}>
+          <td><input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} /></td>
+          <td className="cfg-address-n">{i + 1}</td>
+          <td>{edit ? <span className="cfg-address-edit">
               <input aria-label={`Access point ${i + 1} host`} placeholder="Host or IP" required value={p.host} onChange={e => setPoint(i, { host: e.target.value })} />
               <input aria-label={`Access point ${i + 1} port`} placeholder="Port" required type="number" min={1} max={65535} value={p.port} onChange={e => setPoint(i, { port: e.target.value })} />
-            </span>
-            : <span className="cfg-mono cfg-address-text">{address(p)}</span>}
-          {!edit && isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}
-          <span className="cfg-row-actions">
+            </span> : <span className="cfg-mono">{address(p)}</span>}
+            {!edit && isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}</td>
+          <td className="cfg-muted-cell">{edit ? 'Added manually' : p.name}</td>
+          <td className="cfg-row-actions">
             <button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up" title="Try earlier">↑</button>
             <button type="button" disabled={i === points.length - 1} onClick={() => move(i, 1)} aria-label="Move down" title="Try later">↓</button>
-            <button type="button" disabled={points.length === 1} onClick={() => setPoints(points.filter((_, j) => j !== i))} aria-label="Remove" title="Remove">✕</button>
-          </span>
-        </li>; })}
-    </ol>
+            <button type="button" disabled={points.length === 1} onClick={() => remove(i)} aria-label="Remove" title="Remove">✕</button></td>
+        </tr>; })}
+    </tbody></table></div>
     <button type="button" className="cfg-more-link" disabled={points.length >= 256}
-      onClick={() => { setAdded(new Set([...added, points.length])); setPoints([...points, { host: '', port: 443, enabled: true }]); }}>+ Add address</button>
+      onClick={() => { setEditable(new Set([...editable, points.length])); setPoints([...points, { name: settings.server_name || 'Added manually', host: '', port: 443, enabled: true }]); }}>+ Add address</button>
   </div>;
 }
 
 /** MT5: find the broker's server (directory search or servers.dat), then its addresses. */
 function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => void }) {
   const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const [term, setTerm] = useState(''), [manual, setManual] = useState(false), [version, setVersion] = useState(0);
+  const [term, setTerm] = useState(''), [manual, setManual] = useState(false), [changing, setChanging] = useState(false), [version, setVersion] = useState(0);
   const points: Row[] = settings.access_points ?? [];
-  const chosen = !!settings.server_name && !manual;
+  const hasServer = !!settings.server_name && points.some(p => p.host);
   async function run(task: Promise<Row>) {
     setBusy(true); setError('');
     try { setCatalog(await task); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
+  const search = () => { if (term.trim().length >= 2) void run(api('config/mt5/broker-search', 'POST', { query: term.trim() })); };
   function use(server: Row, picked: Row[]) {
     const id = (p: Row) => `${p.host}|${p.port}`, wanted = new Set(picked.map(id));
     const rest = server.access_points.filter((p: Row) => !wanted.has(id(p)));
-    const ordered = [...picked.map(p => ({ ...p, enabled: true })), ...rest.map((p: Row) => ({ ...p, enabled: false }))];
     change({ server_name: server.server_name, company_name: server.company_name ?? null, server_details: server.details ?? {},
-      access_points: ordered.map((p, i) => ({ host: p.host, port: p.port, enabled: p.enabled, name: `Access point ${i + 1}` })) });
-    setCatalog(null); setManual(false); setVersion(v => v + 1);
+      access_points: [...picked.map(p => ({ name: p.name, host: p.host, port: p.port, enabled: true })),
+        ...rest.map((p: Row) => ({ name: p.name, host: p.host, port: p.port, enabled: false }))] });
+    setCatalog(null); setManual(false); setChanging(false); setTerm(''); setVersion(v => v + 1);
   }
   if (catalog) return <ServerPicker catalog={catalog} use={use} close={() => setCatalog(null)} />;
-  const finder = <div className="cfg-finder">
-    <div className="cfg-search-row">
-      <input aria-label="Find broker" placeholder="Broker name, e.g. VTMarkets" value={term} maxLength={64}
-        onChange={e => setTerm(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (term.trim().length >= 2) void run(api('config/mt5/broker-search', 'POST', { query: term.trim() })); } }} />
-      <button type="button" className="primary" disabled={busy || term.trim().length < 2} onClick={() => void run(api('config/mt5/broker-search', 'POST', { query: term.trim() }))}>{busy ? 'Searching…' : 'Find servers'}</button>
-    </div>
-    <small className="cfg-note">Searches the MT5 broker directory for the broker's current servers and addresses.{' '}
-      <label className="cfg-link">Open servers.dat<input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void run(api('config/mt5/server-file', 'POST', undefined, f)); e.target.value = ''; }} /></label>
-      {' · '}<button type="button" className="cfg-link" onClick={() => { setManual(true); if (!points.length) change({ ...settings, access_points: [{ name: 'Access point 1', host: '', port: 443, enabled: true }] }); }}>Enter manually</button></small>
-    {error && <p role="alert" className="cfg-error">{error}</p>}
-  </div>;
+  const showFinder = (!hasServer && !manual) || changing;
   return <>
-    {chosen ? <div className="cfg-chosen">
-        <div><strong>{settings.server_name}</strong><small>{settings.company_name ?? 'Company not stated'}</small></div>
-        <button type="button" onClick={() => change({ ...settings, server_name: '' })}>Change server</button>
-      </div> : finder}
-    {manual && <Field label="Broker server name" hint="Exactly as in MT5, e.g. VTMarkets-Live 3">
+    {showFinder && <div className="cfg-finder">
+      <div className="cfg-finder-option">
+        <strong>Find the broker's servers</strong>
+        <div className="cfg-search-row">
+          <input aria-label="Find broker" placeholder="Broker name, e.g. VTMarkets" value={term} maxLength={64}
+            onChange={e => setTerm(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); search(); } }} />
+          <button type="button" className="primary" disabled={busy || term.trim().length < 2} onClick={search}>{busy ? 'Searching…' : 'Find servers'}</button>
+        </div>
+        <small className="cfg-note">Live from the MT5 broker directory: current servers and addresses.</small>
+      </div>
+      <div className="cfg-finder-or">or</div>
+      <div className="cfg-finder-option">
+        <strong>Read a servers.dat file</strong>
+        <label className="cfg-filebutton">Open servers.dat…
+          <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void run(api('config/mt5/server-file', 'POST', undefined, f)); e.target.value = ''; }} /></label>
+        <small className="cfg-note">From an MT5 terminal: File › Open Data Folder › Config.</small>
+      </div>
+      {error && <p role="alert" className="cfg-error">{error}</p>}
+      <div className="cfg-finder-foot">
+        {changing ? <button type="button" onClick={() => { setChanging(false); setError(''); }}>← Keep {settings.server_name}</button>
+          : <button type="button" className="cfg-link" onClick={() => { setManual(true); if (!points.length) change({ ...settings, access_points: [{ name: 'Added manually', host: '', port: 443, enabled: true }] }); }}>Enter server and addresses manually</button>}
+      </div>
+    </div>}
+    {!showFinder && hasServer && !manual && <div className="cfg-chosen">
+      <div><span className="cfg-chosen-label">Server</span><strong>{settings.server_name}</strong><small>{settings.company_name ?? 'Company not stated'}</small></div>
+      <button type="button" onClick={() => setChanging(true)}>Change server…</button>
+    </div>}
+    {!showFinder && manual && <Field label="Broker server name" hint="Exactly as in MT5, e.g. VTMarkets-Live 3">
       <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>}
-    {(chosen || manual) && points.length > 0 && <AccessPoints key={version} settings={settings} change={change} />}
-    {(chosen || manual) && points.length > 0 && !points.some(p => p.enabled !== false) && <p role="alert" className="cfg-error">Select at least one address.</p>}
-    {chosen && (settings.company_name || Object.keys(settings.server_details ?? {}).length > 0) &&
+    {!showFinder && points.length > 0 && <AccessPoints key={version} settings={settings} change={change} />}
+    {!showFinder && points.length > 0 && !points.some(p => p.enabled !== false) && <p role="alert" className="cfg-error">Select at least one address.</p>}
+    {!showFinder && !manual && (settings.company_name || Object.keys(settings.server_details ?? {}).length > 0) &&
       <details className="cfg-more"><summary>Server details</summary><ServerDescription settings={settings} /></details>}
   </>;
 }
@@ -587,7 +634,7 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
       </div>}
       <form className="cfg-form" id="cfg-record-form" onSubmit={save}>
         <fieldset className="cfg-plain" disabled={!canEdit}>
-          <RecordForm entity={entity} draft={draft} setDraft={setDraft} editing={!!selected} refs={refs} />
+          <RecordForm key={selected?.id ?? 'new'} entity={entity} draft={draft} setDraft={setDraft} editing={!!selected} refs={refs} />
         </fieldset>
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
       </form>

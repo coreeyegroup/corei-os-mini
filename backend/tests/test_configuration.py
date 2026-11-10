@@ -88,9 +88,9 @@ class ModelTests(unittest.TestCase):
                          'skipped_servers': 2, 'invalid_addresses': 1, 'servers_without_access_points': 1})
         self.assertEqual(catalog['servers'][1], {'server_name': 'MetaQuotes-Demo', 'company_name': 'MetaQuotes Ltd.',
                          'details': {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
-                         'access_points': [{'name': 'Access point 1', 'host': '78.140.180.201', 'port': 443},
-                                           {'name': 'Access point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950},
-                                           {'name': 'Access point 3', 'host': '2001:db8::50', 'port': 443}]})
+                         'access_points': [{'name': 'Access Point 1', 'host': '78.140.180.201', 'port': 443},
+                                           {'name': 'Access Point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950},
+                                           {'name': 'Unbracketed', 'host': '2001:db8::50', 'port': 443}]})
 
     def test_online_broker_directory_search(self):
         from corei_os_mini import broker_catalog

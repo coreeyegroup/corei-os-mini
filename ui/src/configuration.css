@@ -201,3 +201,38 @@ label.cfg-link input { position: absolute; width: 1px; height: 1px; opacity: 0; 
 .cfg-desc dt { color: var(--muted); }
 .cfg-desc dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .cfg-picker-foot { position: sticky; bottom: -8px; background: var(--surface); padding: 8px 0; border-top: 1px solid var(--line); z-index: 2; }
+
+/* v2: finder options, picker tabs, address table */
+.cfg-finder { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: stretch; }
+.cfg-finder-option { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); background: var(--canvas); align-items: flex-start; }
+.cfg-finder-option .cfg-search-row { width: 100%; }
+.cfg-finder-or { align-self: center; color: var(--muted); font-size: .85em; text-transform: uppercase; letter-spacing: .08em; }
+.cfg-finder > .cfg-error, .cfg-finder-foot { grid-column: 1 / -1; }
+@media (max-width: 1000px) { .cfg-finder { grid-template-columns: 1fr; } .cfg-finder-or { justify-self: center; } }
+.cfg-chosen-label { font-size: .75em; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.cfg-picker-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cfg-tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; flex: none; }
+.cfg-tabs button { border: 0; border-radius: 0; background: none; color: var(--muted); padding: 5px 12px; cursor: pointer; }
+.cfg-tabs button + button { border-left: 1px solid var(--line); }
+.cfg-tabs button[aria-selected="true"] { background: var(--selection); color: var(--text); font-weight: 600; }
+.cfg-filter { position: relative; flex: 1; min-width: 200px; display: flex; }
+.cfg-filter input { flex: 1; padding-right: 30px; }
+.cfg-filter button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; }
+.cfg-filter button:hover { color: var(--text); }
+.cfg-picker-flat { border: 1px solid var(--line); max-height: 420px; overflow: auto; }
+.cfg-pick-table tbody tr { cursor: pointer; }
+.cfg-pick-table td { white-space: nowrap; }
+.cfg-pick-table .cfg-pill, .cfg-address-table .cfg-pill { margin-left: 8px; }
+.cfg-picker-points .cfg-pick-table { border: 1px solid var(--line); }
+.cfg-addresses-head { display: flex; align-items: baseline; gap: 10px; }
+.cfg-addresses-head .cfg-row-actions { margin-left: auto; }
+.cfg-address-box { border: 1px solid var(--line); max-height: 300px; overflow: auto; }
+.cfg-address-table td { vertical-align: middle; }
+.cfg-address-table .cfg-row-actions { justify-content: flex-end; }
+.cfg-address-table tr.cfg-off td { opacity: .5; }
+.cfg-address-table tr.cfg-off td:first-child, .cfg-address-table tr.cfg-off td:last-child { opacity: 1; }
+.cfg-filebutton { position: relative; display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; background: var(--surface); color: var(--text); }
+.cfg-filebutton:hover { background: var(--hover); }
+.cfg-filebutton input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.cfg-address-table th:first-child, .cfg-address-table td:first-child { width: 40px; text-align: center; }
+.cfg-address-table th:nth-child(2), .cfg-address-table td:nth-child(2) { width: 28px; }
