@@ -1,95 +1,101 @@
 # COREI-OS-MINI — Gap Register
 
-**Baseline compared:** Blueprint v1.2, Process Flow and Build Phases v1.4, Technology Inventory v1.3
-**Code reviewed:** commit `e70b14e` (10 Nov 2026); fixes below applied in the following commit
-**Status values:** OPEN, FIXED, RECLASSIFIED, BLOCKED (needs an owner decision)
+**Baseline compared:** Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3, as amended by `DECISIONS.md` (DEC-18 … DEC-22)
+**Last updated:** 10 Nov 2026 — release 0.8.0 (configuration rebuild)
+**Status values:** OPEN, DONE, PARTIAL, SUPERSEDED, BLOCKED (needs an owner decision)
 
-## Position by build phase
+## Position
 
-| Phase (v1.4) | Present | Approx. |
+| Area | Present | Status |
 |---|---|---|
-| 1. Connections and market data | Provider/connection/account/instrument/mapping registries; feed-quality assessment and deterministic feed selection on supplied observations; encrypted broker credential storage | ~25% |
-| 2. Strategies and signals | One demo moving-average rule, no persisted config | ~10% |
+| Configuration | Providers, connections (MT5, REST API), accounts, instruments with contract specs, symbol mappings, encrypted credentials, order-sending switch per environment, append-only audit log, readiness per account | DONE |
+| 1. Connections and market data | Feed-quality assessment and deterministic feed selection on supplied observations | No adapter, no live feed |
+| 2. Strategies and signals | Demo moving-average rule, no stored config | ~10% |
 | 3. Risk and allocation | Four dispatch modes; per-child risk using request-supplied state | ~15% |
-| 4. Paper execution and reconciliation | Instant simulated fill; JSON run record | ~5% |
+| 4. Execution and reconciliation | Nothing operational | ~0% |
 
-No broker connection, live data feed, real strategy, order book or reconciliation exists yet.
+No order can be sent: no provider adapter or order lifecycle exists yet.
 
-## A. Defects in existing code
+## A. Defects in earlier code
 
-| ID | Defect | Status | Resolution |
-|---|---|---|---|
-| D-01 | REPLICATE copied the full parent quantity to every account | FIXED | Each account must declare `replicate_scale_bps`; child = target × scale / 10000 (floor). Missing scale is rejected. |
-| D-02 | Broker account form offered only SANDBOX/LIVE; registries accepted LIVE | FIXED | API and UI accept PAPER/SANDBOX only. Migration `008_paper_only_boundary.sql` disables existing LIVE rows and adds database triggers that block creating or enabling LIVE accounts or connector profiles. |
-| D-03 | SELECT_ONE had no routing rule (behaved like INDIVIDUAL) | FIXED | Versioned policy `SELECT_ONE_PRIORITY_V1`: fresh risk state first, highest `route_priority`, then `account_id`. Policy name is recorded in each run result. |
-| D-04 | Every broker account created its own connection | FIXED | Accounts on the same broker server share one connection (`MT5 <server>`) and one connector profile. Records created before this fix are unchanged. |
-| D-05 | Risk uses request-supplied limits/positions; no aggregate exposure or reservation | RECLASSIFIED | Cannot be fixed without stored limits, positions and reservations. Tracked as G-P3-01 … G-P3-03. |
-| D-06 | No tests for strategy, allocation, risk, workflow, market data | FIXED | `backend/tests/test_trading_core.py` (25 tests). |
-| D-07 | README described the first slice only | FIXED | README updated. |
+| ID | Defect | Status |
+|---|---|---|
+| D-01 | REPLICATE copied the full parent quantity | DONE (0.7.0) |
+| D-02 | Live accounts selectable while documents said paper-only | SUPERSEDED — owner decided production platform (DEC-18); governed by order-sending switch (DEC-19) |
+| D-03 | SELECT_ONE had no routing rule | DONE (0.7.0) |
+| D-04 | Every broker account created its own connection | SUPERSEDED — configuration rebuilt (DEC-20); accounts are created under an explicit connection |
+| D-05 | Risk uses request-supplied state | Moved to G-P3-01 … G-P3-03 |
+| D-06 | No trading-core tests | DONE (0.7.0) |
+| D-07 | README out of date | DONE |
 
 ## B. Missing capabilities
+
+### Configuration and cross-cutting
+| ID | Gap | Status |
+|---|---|---|
+| G-C-01 | Clean provider / connection / account / instrument / mapping model | DONE (0.8.0) |
+| G-X-01 | Audit trail | PARTIAL — configuration and order-sending changes audited; order and execution events will be added with Phase 4 |
+| G-X-02 | Single operator login; no roles. Blueprint §15 needs separation of who configures from who approves (e.g. who may turn LIVE order sending on) | OPEN — required before the LIVE switch is used |
+| G-X-03 | Trading screens (market data, signals, risk, orders, positions, reconciliation) | OPEN |
+| G-X-04 | Documented backup/restore and operator runbook | OPEN |
+| G-X-05 | Live site stuck on 8 Nov build; duplicate `n8n.coreeye.in` in server Caddyfile | OPEN — server-side |
+| G-X-06 | Demo paper-run route and synthetic strategy still in code (disabled by default) | OPEN — replace with the real Phase 2–4 pipeline |
 
 ### Phase 1 — Connect and collect
 | ID | Gap | Status |
 |---|---|---|
-| G-P1-01 | No working broker connector; connection approach not chosen | BLOCKED — decision 1 |
-| G-P1-02 | No common adapter contract (capabilities, session, subscribe, account state, orders) | OPEN |
-| G-P1-03 | No connection status lifecycle or reconnect handling | OPEN (needs G-P1-01) |
-| G-P1-04 | No storage for raw/normalised ticks or quotes | OPEN |
-| G-P1-05 | Feed assessment only runs on demo input, not a live stream | OPEN (needs G-P1-01) |
-| G-P1-06 | Instruments lack tick/lot size, scales, currency, trading session | OPEN |
+| G-P1-01 | No working provider adapter; MT5 connection method not chosen (licensed mtapi direct connection vs terminal bridge) | BLOCKED — decision 1 |
+| G-P1-02 | Common adapter contract (capabilities, session, subscribe, account state, orders) | OPEN |
+| G-P1-03 | Connection status lifecycle and reconnect handling | OPEN (needs G-P1-01) |
+| G-P1-04 | Tick/quote storage | OPEN |
+| G-P1-05 | Feed assessment on a live stream | OPEN (needs G-P1-01) |
+| G-P1-06 | Instrument contract details | DONE (0.8.0) |
 
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |
 |---|---|---|
-| G-P2-01 | No strategy registry, versions or lifecycle | OPEN |
-| G-P2-02 | No strategy ↔ instrument ↔ account eligibility assignments (Blueprint §8.5) | OPEN |
-| G-P2-03 | Signals, decisions and TradeIntents not stored; no frozen input snapshot | OPEN |
-| G-P2-04 | No conflict rule between strategies on one instrument | OPEN |
-| G-P2-05 | No real strategy | BLOCKED — decision 3 |
+| G-P2-01 | Strategy registry, versions, lifecycle | OPEN |
+| G-P2-02 | Strategy ↔ instrument ↔ account eligibility assignments (Blueprint §8.5) | OPEN — builds on the 0.8.0 configuration model |
+| G-P2-03 | Stored signals, decisions, TradeIntents with frozen inputs | OPEN |
+| G-P2-04 | Conflict rule between strategies | OPEN |
+| G-P2-05 | First real strategy | BLOCKED — decision 3 |
 
 ### Phase 3 — Risk and allocation
 | ID | Gap | Status |
 |---|---|---|
-| G-P3-01 | No stored risk limits with units, scope, version and firm→instrument hierarchy | OPEN (values: decision 5) |
-| G-P3-02 | No stored position/exposure state for risk to read | OPEN |
-| G-P3-03 | No atomic per-account capacity reservation or release | OPEN |
-| G-P3-04 | No kill controls | OPEN |
-| G-P3-05 | No declared group policy when one child fails | OPEN |
+| G-P3-01 | Stored risk limits (units, scope, version, firm → instrument) | OPEN (values: decision 5) |
+| G-P3-02 | Stored position/exposure state | OPEN |
+| G-P3-03 | Atomic per-account capacity reservation | OPEN |
+| G-P3-04 | Kill controls | PARTIAL — firm-wide order-sending switch per environment (0.8.0); account/strategy/instrument scopes open |
+| G-P3-05 | Group policy when one child fails | OPEN |
 
 ### Phase 4 — Execution and reconciliation
 | ID | Gap | Status |
 |---|---|---|
-| G-P4-01 | No orders table or order state machine | OPEN |
-| G-P4-02 | No idempotent submission or dispatch worker | OPEN |
-| G-P4-03 | No UNKNOWN-outcome handling (query and reconcile before retry) | OPEN |
-| G-P4-04 | No fill/fee ledger, position or P&L projection | OPEN |
-| G-P4-05 | No reconciliation against provider state or break workflow | OPEN |
-| G-P4-06 | No realistic paper simulator (partial fills, rejects, timeouts) | OPEN (method: decision 4) |
-
-### Cross-cutting
-| ID | Gap | Status |
-|---|---|---|
-| G-X-01 | No audit trail of configuration and execution actions | OPEN |
-| G-X-02 | Single operator login; no roles (admin, trading ops, risk approver, observer) | OPEN |
-| G-X-03 | No trading screens (market data, signals, risk, orders, positions, reconciliation) | OPEN |
-| G-X-04 | No documented backup/restore or operator runbook | OPEN |
-| G-X-05 | Live site stuck at 8 Nov build; deploy rolls back on duplicate `n8n.coreeye.in` in the server Caddyfile | OPEN — server-side, unverified from repo |
+| G-P4-01 | Orders table and state machine | OPEN |
+| G-P4-02 | Idempotent submission and dispatch worker | OPEN |
+| G-P4-03 | UNKNOWN-outcome handling | OPEN |
+| G-P4-04 | Fill/fee ledger, positions, P&L | OPEN |
+| G-P4-05 | Reconciliation and break workflow | OPEN |
 
 ## C. Owner decisions
 
-| # | Decision | Unblocks |
+| # | Decision | Status |
 |---|---|---|
-| 1 | Connector: licensed mtapi direct connection, terminal bridge, or an official-API broker first (e.g. Upstox / crypto testnet) | G-P1-01, G-P1-03, G-P1-05 |
-| 2 | First instrument and market session | G-P1-06, Phase 2 |
-| 3 | First real strategy rules | G-P2-05 |
-| 4 | Paper method: provider sandbox, own simulator, or both | G-P4-06 |
-| 5 | Initial risk limit values and units | G-P3-01 |
+| 1 | MT5 connection method: licensed mtapi direct connection or terminal bridge; plus which REST broker first | OPEN |
+| 2 | First instrument and session | OPEN (XAUUSD used as example) |
+| 3 | First real strategy rules | OPEN |
+| 4 | Pre-live test method: broker demo accounts, own simulator, or both | OPEN |
+| 5 | Initial risk limit values and units | OPEN |
+| 6 | Production vs paper | DECIDED — production (DEC-18) |
+| 7 | Live order control | DECIDED — firm-wide switch per environment, off by default (DEC-19) |
+| 8 | Launch platforms | DECIDED — MT5 and broker REST/WebSocket API (DEC-21) |
 
 ## D. Completion order
 
-1. Fix defects D-01 … D-07 — **done**.
-2. Phase 2–4 foundation that does not depend on the broker: strategy registry and assignments, stored signals/intents, risk limits and reservations, order state machine, fill ledger, audit trail, paper simulator — all with tests.
-3. Connector once decision 1 is made, behind the adapter contract (G-P1-02).
-4. One real feed → reconciled paper order: one instrument, one strategy, two accounts.
-5. Trading screens on real data.
+1. Configuration foundation — **done (0.8.0)**.
+2. User roles (G-X-02) and strategy/instrument/account assignments (G-P2-02).
+3. Order lifecycle, risk limits and reservations, fill ledger (G-P3-01 … 03, G-P4-01 … 04), all tested.
+4. First adapter once decision 1 is made, behind the adapter contract (G-P1-02).
+5. One real feed through to a reconciled order on DEMO accounts; then the LIVE switch can be considered.
+6. Trading screens on real data.

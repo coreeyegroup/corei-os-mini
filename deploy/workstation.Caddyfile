@@ -9,18 +9,18 @@ corei-os-mini.coreeye.in {
     handle @identity {
         reverse_proxy 127.0.0.1:18786
     }
-    # Only these operational routes are exposed; backend session checks protect registries.
-    @server_catalog path /api/registry/broker-accounts/server-catalog
-    handle @server_catalog {
+    # Only these operational routes are exposed; backend operator sessions protect them.
+    @server_file path /api/config/mt5/server-file
+    handle @server_file {
         request_body {
             max_size 1048576
         }
         reverse_proxy 127.0.0.1:18786
     }
-    @registry path /api/operator/* /api/registry/*
-    handle @registry {
+    @operational path /api/operator/* /api/config/*
+    handle @operational {
         request_body {
-            max_size 32KB
+            max_size 64KB
         }
         reverse_proxy 127.0.0.1:18786
     }

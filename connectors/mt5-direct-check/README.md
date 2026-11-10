@@ -1,12 +1,9 @@
 # MT5 server-file reader
 
-Used by the authenticated **Accounts → Add broker account** form. Parses
-`servers.dat` locally and returns server names and named access points. It never
-connects to an account, accepts a password or calls a trading method.
-
-The broker-provided server name is saved separately from the selected access
-point. The backend validates membership against its imported catalogue; the
-browser cannot supply an arbitrary host/port in an account save request.
+Used by **Configuration › Connections** (MT5 platform) to fill the access-point list
+from a broker's `servers.dat`. It parses the file locally and returns server names and
+named access points. Nothing is stored until the operator saves the connection, and it
+never connects to an account, accepts a password or calls a trading method.
 
 The reader uses the vendor-linked `mtapi.be.mt5net` 5.4850.0 package. Its checksum
 and the .NET SDK checksum are pinned in `scripts/setup-broker-accounts.sh`.

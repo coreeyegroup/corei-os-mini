@@ -47,3 +47,7 @@ Confirm the first real provider and connection method, initial instrument and st
 ## Safety boundary
 
 These documents define the production-quality design target and initial paper prototype. The code has not been deployed or validated as a production trading system. Live trading requires a separate future decision and operational evidence.
+
+## Owner decisions after v1.1 (10 November 2026)
+
+`DECISIONS.md` records DEC-18 … DEC-22, which govern where they conflict with the documents above. In short: COREI-OS-MINI is a production platform (not paper-only); live order sending is controlled by an audited, firm-wide switch per environment that is off by default; the configuration domain was rebuilt (migration 009); launch platforms are MT5 and broker REST/WebSocket APIs. Current implementation status is in `GAP_REGISTER.md`.

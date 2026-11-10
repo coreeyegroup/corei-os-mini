@@ -1,68 +1,69 @@
 # COREI-OS-MINI
 
-COREI-OS-MINI is a **paper-only** prototype of the trading lifecycle defined in the final project documents:
+COREI-OS-MINI is a production trading platform built to the lifecycle in the project documents:
 
-**Connect → collect → validate/select data → analyse → evaluate strategy → signal/intent → resolve candidate account children → final child risk → paper execution → reconcile → monitor.**
+**Connect → collect → validate/select data → analyse → evaluate strategy → signal/intent → resolve account children → final child risk → execute → reconcile → monitor.**
 
-**Where the project stands:** see [`docs/GAP_REGISTER.md`](docs/GAP_REGISTER.md). In short: registries, operator login, encrypted broker-credential storage, feed-quality assessment and a demo strategy → allocation → risk → simulated-fill workflow exist. No broker connection, live market data, real strategy, order book or reconciliation exists yet. The broker connection approach is the blocking decision.
+**Where the project stands:** see [`docs/GAP_REGISTER.md`](docs/GAP_REGISTER.md) and owner decisions in [`docs/DECISIONS.md`](docs/DECISIONS.md). In short: the Configuration domain (providers, connections, accounts, instruments, symbol mappings, encrypted credentials, order-sending controls, audit log) is in place. Provider adapters (MT5, REST API), the order lifecycle, risk limits and reconciliation are not built yet, so no order can be sent.
 
-## Safety and scope
+## Controls
 
-- **Paper-only.** The API refuses to start in a non-paper execution mode. Accounts and connector profiles accept only `PAPER` or `SANDBOX`; database triggers (migration 008) block creating or enabling `LIVE` rows even if the API is bypassed.
-- No broker or exchange connection exists. Saved broker accounts show **Not connected**.
-- Demo endpoints are disabled unless `COREI_ENABLE_DEMO=true`.
-- Registry and broker-account routes require operator sign-in. Broker passwords are encrypted with a server key file and are never returned by the API.
-- Simulated fills are deterministic demo outcomes, not evidence of executable prices or broker behaviour.
+- **Order sending** is a firm-wide switch per environment (DEMO, LIVE), **off by default**. Turning it on needs a reason and typed confirmation; every change is audited (DEC-19).
+- An account can send orders only when its provider and connection are active, its permission is `TRADING`, its credential allows trading, a provider adapter exists and order sending is on for its environment. Each account shows exactly which of these still blocks it.
+- **Credentials** (MT5 passwords, API keys, OAuth clients) are encrypted with AES-256-GCM using a server key file, bound to their record, and never returned by the API.
+- **Audit log**: every configuration and control change is recorded with actor, before/after state and reason. The log is append-only in the database. Secrets are never written to it.
+- **Optimistic versioning**: a save made against a stale copy is rejected instead of overwriting someone else's change.
+- All configuration routes require operator sign-in.
 
 ## Project layout
 
 ```text
 backend/
-  sql/                    numbered migrations 001–008, applied in order by the installer
+  sql/                    numbered migrations, applied in order by scripts/configure-workstation-database.sh
+                          (009 = configuration foundation; 003–007 are historical and dropped by 009)
   src/corei_os_mini/
     api.py                FastAPI app, health and workstation identity
-    contracts.py          paper-run request/result contracts (fixed-point integer units)
-    strategy.py           demo moving-average decision
-    allocation.py         dispatch modes → proposed account children (never approval)
-    risk.py               final per-child risk check
-    workflow.py           strategy → allocation → risk → simulated fill
-    market_data.py        feed validation and deterministic feed selection
-    registry.py           provider / connection / account / instrument / mapping registries
-    broker_accounts.py    one-form MT5 account onboarding (storage only)
-    broker_secrets.py     AES-GCM credential encryption
+    config_models.py      configuration input rules (exact decimals, per-platform connection settings)
+    config_store.py       configuration persistence: cross-record rules, versioning, audit, readiness
+    config_api.py         /api/config routes
+    credentials.py        credential vault (AES-256-GCM)
+    broker_catalog.py     MT5 servers.dat reader (access points)
     operator_auth.py      operator sign-in
-  tests/                  unittest suites (PostgreSQL suite needs COREI_TEST_DATABASE_URL)
-connectors/               MT5 server-file reader and terminal check kit
-docs/                     final design documents and the gap register
+    market_data.py        feed validation and deterministic feed selection
+    strategy.py, allocation.py, risk.py, workflow.py
+                          trading-core logic, currently exercised by tests and a disabled demo route
+  tests/                  unittest suites (PostgreSQL suites need COREI_TEST_DATABASE_URL)
+connectors/mt5-direct-check/   MT5 servers.dat reader used by Configuration › Connections
+docs/                     design documents, owner decisions, gap register
 scripts/                  install, database, deploy and repair scripts
-ui/                       React + TypeScript workstation
+ui/                       React + TypeScript workstation (Configuration workspace in src/Configuration.tsx)
 ```
+
+## Configuration model
+
+| Record | Key fields | Fixed after creation |
+|---|---|---|
+| Provider | code, name, type (broker / exchange / data vendor), status | code |
+| Connection | provider, platform (MT5 / REST API), environment (DEMO / LIVE), purpose (market data / trading / both), platform settings (MT5 server + ordered access points, or REST base/stream URL + auth method), status | provider, code, platform, environment |
+| Account | connection, code, broker account number, base currency, trading permission (disabled / read-only / trading), status | connection, code, account number |
+| Instrument | symbol, asset class, currencies, price/quantity decimals, tick size, min quantity, quantity step, contract size and unit, session, status | symbol |
+| Symbol mapping | connection, instrument, broker symbol, usage, optional broker contract size / price digits | connection, instrument |
+
+MT5 logins are saved on each account (master or investor password); REST API keys or OAuth clients are saved on the connection.
 
 ## Tests
 
 ```bash
-python -m unittest discover -s backend/tests -v      # add COREI_TEST_DATABASE_URL for the PostgreSQL suite
+python -m unittest discover -s backend/tests -v      # add COREI_TEST_DATABASE_URL for the PostgreSQL suites
 python -m unittest discover -s scripts/tests -v
 npm ci --prefix ui && npm test --prefix ui
 ```
 
-## Dispatch modes (paper workflow)
-
-| Mode | Child sizing | Account fields used |
-|---|---|---|
-| INDIVIDUAL | Full target to the one account | exactly one account, `selected=true` |
-| SELECT_ONE | Full target to one account chosen by `SELECT_ONE_PRIORITY_V1`: fresh risk state first, highest `route_priority`, then `account_id` | `route_priority` |
-| ALLOCATE | Target split by `weight_bps` (must total 10000); remainder assigned deterministically | `weight_bps` |
-| REPLICATE | Each account gets target × `replicate_scale_bps` / 10000 (floor); the parent size is never copied by default | `replicate_scale_bps` (required per account) |
-
-A field belonging to another mode is rejected. Every child passes final risk separately; a blocked child's quantity is never redistributed. Risk currently reads limits and positions supplied in the request; stored limits, positions and reservations are gaps G-P3-01 … G-P3-03.
-
 ## Final design references
 
-Final Document Index v1.1, Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3 and Master Work Prompt v1.1 in `docs/`. Older versions are historical.
+Final Document Index v1.1, Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3 and Master Work Prompt v1.1 in `docs/`, as amended by `docs/DECISIONS.md`. Older versions are historical.
 
 The sections below are the release history of the workstation and setup scripts.
-
 
 ## New workstation shell — 0.2.0
 
@@ -550,7 +551,7 @@ Validation: production build and DOM interactions, plus Chromium pointer draggin
 resizing, reset, dirty-form protection and table/reference order with mocked data
 in all five themes. No live provider connection is claimed.
 
-## Gap fixes — release 0.7.0
+## Gap fixes — release 0.7.0 (paper-only and shared-connection items superseded by 0.8.0)
 
 Closes defects D-01 … D-07 in `docs/GAP_REGISTER.md`:
 
@@ -561,3 +562,9 @@ Closes defects D-01 … D-07 in `docs/GAP_REGISTER.md`:
 - **Tests**: 25 new trading-core tests (strategy, allocation, risk, workflow, market data).
 
 Update on the server with the normal pull, `scripts/configure-workstation-database.sh` (applies migration 008) and `scripts/deploy-workstation.sh`.
+
+## Configuration rebuild — release 0.8.0
+
+Replaces the earlier registries, broker-account form, connector profiles and terminal-installation kit with one Configuration workspace (DEC-20). Migration `009_configuration_foundation.sql` **deletes the old configuration tables and their records**, including saved broker passwords, and creates the new model. Paper-run and market-data-assessment history is kept. The paper-only account restriction from 0.7.0 is withdrawn (DEC-18); order sending is instead governed by the firm-wide switch (DEC-19).
+
+After updating, re-enter providers, connections and accounts in **Configuration**.

@@ -91,35 +91,12 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 :root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb {background:rgba(148,163,184,.25);border-radius:2px;}
 :root[data-theme="COREI Orbit"] .app ::-webkit-scrollbar-thumb:hover {background:rgba(148,163,184,.5);}
 
-.registry-form {max-width:620px;display:grid;gap:10px;margin:14px 0;padding:14px;border:1px solid var(--line);background:var(--surface);}
-.registry-form label {display:grid;gap:5px;font-size:var(--ui-size);}
-.registry-form input,.registry-form select {width:100%;}
-.registry-tabs {display:flex;gap:5px;flex-wrap:wrap;margin-top:14px;}
-.registry-tabs [aria-pressed=true] {outline:1px solid var(--accent);color:var(--accent);}
-.registry-table {overflow:auto;max-height:430px;}
-.registry-table table {border-collapse:collapse;font-size:11px;width:100%;}
-.registry-table th,.registry-table td {border:1px solid var(--line);padding:8px;text-align:left;white-space:nowrap;}
-.registry-table th {background:var(--surface);position:sticky;top:0;}
-.registry-table code {font-size:10px;user-select:all;}
-.registry-pagination {display:flex;align-items:center;gap:12px;margin-top:10px;}
 
 /* Connection workspaces: aligned fields, compact record list, expandable context. */
-.registry-workspace {container-type:inline-size;}
-.registry-description {max-width:900px;}
-.registry-form {max-width:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px;border-radius:4px;padding:18px;align-items:start;}
-.registry-form h2,.registry-form .form-caption {grid-column:1/-1;margin:0;}
-.registry-form h2 {padding-bottom:10px;border-bottom:1px solid var(--line);}
-.registry-field {min-width:0;display:grid;gap:6px;}
-.registry-form .field-heading {display:flex;align-items:center;gap:7px;min-height:22px;}
-.registry-form input,.registry-form select {height:34px;border-radius:3px;padding:6px 9px;min-width:0;}
-.registry-form button {min-height:30px;justify-self:start;}
 .field-info {display:inline-block;vertical-align:middle;position:relative;}
 .field-info .info-button {border:1px solid var(--muted);border-radius:50%;width:17px;height:17px;min-height:17px;padding:0;line-height:15px;font-size:11px;font-style:normal;color:var(--muted);background:transparent;cursor:pointer;}
 .info-button[aria-expanded=true] {border-color:var(--accent);color:var(--accent);}
 .info-note {display:block;position:absolute;top:23px;left:0;width:min(270px,65vw);white-space:normal;background:var(--surface);color:var(--text);border:1px solid var(--accent);padding:10px;z-index:20;font-size:12px;line-height:1.5;box-shadow:0 8px 24px #0005;}
-.registry-tabs {gap:0;border-bottom:1px solid var(--line);padding:0;margin:16px 0;}
-.registry-tabs button {border:0;border-bottom:2px solid transparent;padding:9px 12px;background:transparent;}
-.registry-tabs button[aria-pressed=true] {outline:0;border-bottom-color:var(--accent);background:var(--selection);}
 .connection-guide {border:1px solid var(--line);border-radius:4px;margin:12px 0;background:var(--surface);}
 .connection-guide>summary {padding:11px 13px;cursor:pointer;font-size:12px;color:var(--text);}
 .concept-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line);}
@@ -133,12 +110,6 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 .advanced-id {font-size:11px;color:var(--muted);}
 .advanced-id summary {cursor:pointer;}
 .advanced-id input {margin:6px 0;}
-.registry-table {border:1px solid var(--line);border-radius:4px;max-height:520px;}
-.registry-table th,.registry-table td {border:0;border-bottom:1px solid var(--line);padding:10px 12px;vertical-align:top;white-space:normal;min-width:100px;}
-.registry-table th {font-size:10px;text-transform:uppercase;letter-spacing:.35px;z-index:2;}
-.registry-table td {font-size:12px;line-height:1.5;overflow-wrap:anywhere;}
-.registry-table tbody tr:hover {background:var(--hover);}
-.registry-table td:last-child button {display:block;margin:0 0 5px;white-space:nowrap;}
 .record-details summary {cursor:pointer;color:var(--accent);}
 .record-details dl {min-width:190px;max-width:260px;margin:10px 0;}
 .record-details dt {color:var(--muted);font-size:10px;margin-top:8px;}
@@ -146,23 +117,4 @@ button:focus-visible,input:focus-visible,select:focus-visible {outline-color:var
 .record-details code {white-space:normal;}
 .group-actions {height:auto;min-height:29px;flex-wrap:wrap;justify-content:flex-end;padding:3px 8px;}
 .group-actions button {min-height:23px;white-space:nowrap;}
-@container(max-width:600px) {.registry-form,.concept-grid {grid-template-columns:1fr;}.registry-form {padding:12px;gap:12px;}}
-.registry-table .info-note {position:static;margin-top:7px;text-transform:none;letter-spacing:normal;font-weight:400;}
-.installation-launch {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px;border:1px solid var(--line);border-radius:4px;background:var(--surface);margin:14px 0;}
-.installation-launch p {margin:5px 0 0;}
-.installation-launch button {white-space:nowrap;}
-.terminal-installation {padding:16px;border:1px solid var(--accent);background:var(--surface);border-radius:4px;margin:14px 0;}
-.terminal-installation>.section-title {margin-top:0;}
-.install-status {display:flex;flex-wrap:wrap;gap:8px 16px;padding:9px 0;color:var(--amber);font-size:12px;}
-.install-selectors {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0;}
-.install-selectors label {display:grid;gap:6px;font-size:12px;}
-.install-selectors select {width:100%;padding:7px;}
-.install-downloads {display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;}
-.install-downloads a {padding:8px 10px;border:1px solid var(--line);color:var(--text);text-decoration:none;border-radius:3px;font-size:12px;}
-.install-downloads .download-primary {border-color:var(--accent);color:var(--accent);}
-.terminal-installation summary {cursor:pointer;font-size:12px;padding:7px 0;}
-.package-checksum {overflow-wrap:anywhere;font-size:11px;}
-.install-steps {padding-left:22px;font-size:12px;line-height:1.6;}
-.install-steps li {margin:12px 0;}
-.install-steps pre {padding:10px;background:var(--canvas);border:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;font-size:11px;}
-@container(max-width:600px) {.install-selectors {grid-template-columns:1fr;}.installation-launch {align-items:flex-start;flex-direction:column;}}
+@container(max-width:600px) {.concept-grid {grid-template-columns:1fr;}}

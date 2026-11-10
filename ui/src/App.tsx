@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import RegistryWorkspace from "./RegistryWorkspace";
-import BrokerAccounts from "./BrokerAccounts";
+import Configuration from "./Configuration";
 import WorkbenchIcon from "./WorkbenchIcon";
-import { initialLayout, launchContext, workspaceUrl, registryTitles, type RegistryResource } from "./workspaceLinks";
+import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -18,7 +17,6 @@ type Runtime = {
   project_id: string;
   contract_version: number;
   release: string;
-  execution_mode: string;
   database_connected: boolean;
   schema_ready?: boolean;
   demo_enabled: boolean;
@@ -32,21 +30,15 @@ type Runtime = {
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
   "Market data": "Feed selection, source quality and assessment history",
-  Providers: "Provider organisations, access connections and connector settings",
-  Accounts: "Broker-issued trading account identifiers and account environments",
-  Instruments: "Canonical instruments and provider symbol mappings",
+  Configuration: "Providers, connections, accounts, instruments, symbol mappings and order-sending controls",
   Strategies: "Strategy versions, instrument universes and assignments",
   Execution: "Account allocation, order lifecycle and reconciliation",
   Portfolio: "Positions, balances, fees and shared exposure",
   Operations: "Connection health, service status and operational records",
   Settings: "Workspace layout and navigation preferences",
 };
-const activityLabels=['Home','Market','Providers','Accounts','Symbols','Strategies','Orders','Portfolio','Monitor','Settings'];
-const registryNavigation:Record<string,{label:string;resource:RegistryResource}[]>={
- Providers:[{label:registryTitles['providers'],resource:'providers'},{label:registryTitles['connections'],resource:'connections'},{label:registryTitles['connector-profiles'],resource:'connector-profiles'}],
- Accounts:[{label:registryTitles['accounts'],resource:'accounts'}],
- Instruments:[{label:registryTitles['instruments'],resource:'instruments'},{label:registryTitles['mappings'],resource:'mappings'}],
-};
+const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Config',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Settings:'Settings'};
+const iconIndex:Record<View,number>={Overview:0,'Market data':1,Configuration:2,Strategies:5,Execution:6,Portfolio:7,Operations:8,Settings:9};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
@@ -56,14 +48,10 @@ function stored() {
 }
 export default function App() {
   const launch = launchContext(window.location.search);
-  const [registryTarget,setRegistryTarget]=useState<Partial<Record<View,RegistryResource>>>({});
-  const registryViews = useRef<Record<number, RegistryResource>>({});
-  function openWorkspace(view: View, group: number, newWindow: boolean) {
-    const resource = ['Providers','Accounts','Instruments'].includes(view) ? registryViews.current[group] : undefined;
-    window.open(workspaceUrl(view, resource), '_blank', newWindow ? 'popup=yes,width=1440,height=960,noopener,noreferrer' : 'noopener,noreferrer');
+  function openWorkspace(view: View, newWindow: boolean) {
+    window.open(workspaceUrl(view), '_blank', newWindow ? 'popup=yes,width=1440,height=960,noopener,noreferrer' : 'noopener,noreferrer');
   }
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
-  const [registryLabels,setRegistryLabels]=useState<Record<number,string>>({});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
   const [context,setContext]=useState<{view:View;group:number;x:number;y:number}|null>(null);
@@ -135,8 +123,7 @@ export default function App() {
       const data = await response.json();
       if (
         data.project_id !== "corei-os-mini" ||
-        data.contract_version !== 1 ||
-        data.execution_mode !== "PAPER" ||
+        data.contract_version !== 2 ||
         typeof data.database_connected !== "boolean" ||
         typeof data.demo_enabled !== "boolean" ||
         typeof data.release !== "string" ||
@@ -155,7 +142,7 @@ export default function App() {
       if (alive.current && pending.current === controller) {
         setRuntime(data);
         setCheckedAt(Date.now());
-        log("Backend identity verified · paper mode");
+        log("Backend identity verified");
       }
     } catch (e) {
       if (alive.current && pending.current === controller) {
@@ -325,12 +312,10 @@ export default function App() {
     }
   }
   const active = layout.active[layout.focus];
-  const registryLabel=(view:View,group:number)=>{const resource=registryViews.current[group];return ['Providers','Accounts','Instruments'].includes(view)&&resource?registryTitles[resource]:view;};
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
 
-  function body(view: View, group: number) {
-    if(view === "Accounts") return <BrokerAccounts/>;
-    if(view === "Providers" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : "instruments")} onResourceChange={r=>{if(layout.active[group]!==view)return;registryViews.current[group]=r;setRegistryLabels(x=>x[group]===r?x:{...x,[group]:r});}}/>;
+  function body(view: View) {
+    if (view === "Configuration") return <Configuration/>;
     if (view === "Settings")
       return (
         <div className="content">
@@ -421,9 +406,9 @@ export default function App() {
               </span>
             </article>
             <article>
-              <small>OPERATING MODE</small>
-              <strong>{runtime ? "Paper" : "Unverified"}</strong>
-              <span>Live execution unavailable</span>
+              <small>ORDER SENDING</small>
+              <strong>Controlled</strong>
+              <span>Firm-wide switch per environment · Configuration › Order sending</span>
             </article>
             <article>
               <small>DATABASE CONNECTION</small>
@@ -473,7 +458,7 @@ export default function App() {
           </div>
           <div className="launchers">
             {(
-              ["Providers", "Accounts", "Instruments", "Strategies"] as View[]
+              ["Configuration", "Market data", "Strategies", "Execution"] as View[]
             ).map((v) => (
               <button key={v} onClick={() => open(v)}>
                 <strong>{v} ↗</strong>
@@ -546,7 +531,7 @@ export default function App() {
           <p>
             {view === "Execution"
               ? "No order submission controls are enabled. Final account risk and execution lifecycle integration are required."
-              : "Registries and provider-backed state will appear here as their backend capability is implemented."}
+              : "Provider-backed state will appear here as its backend capability is implemented."}
           </p>
           <button disabled title="Requires backend implementation">
             {view === "Execution"
@@ -554,7 +539,7 @@ export default function App() {
               : `Configure ${view.toLowerCase()} unavailable`}
           </button>
         </div>
-        <div className="readiness-grid"><h2>Required inputs and next actions</h2><table><thead><tr><th>Dependency</th><th>Current state</th><th>Workspace</th></tr></thead><tbody>{([['Provider / connection','Registration available','Providers'],['Trading accounts','Registration available; verification pending','Accounts'],['Instrument mappings','Registration available; contract verification pending','Instruments'],['Live data and execution','Adapters and execution lifecycle pending','Operations']] as const).map(([name,state,target])=><tr key={name}><td>{name}</td><td>{state}</td><td><button onClick={()=>open(target)}>{target} →</button></td></tr>)}</tbody></table></div>
+        <div className="readiness-grid"><h2>Required inputs and next actions</h2><table><thead><tr><th>Dependency</th><th>Current state</th><th>Workspace</th></tr></thead><tbody>{([['Providers, connections, accounts','Configured in Configuration','Configuration'],['Instruments and symbol mappings','Configured in Configuration','Configuration'],['Provider adapters (MT5, REST API)','Not implemented yet','Operations'],['Order lifecycle and reconciliation','Not implemented yet','Operations']] as const).map(([name,state,target])=><tr key={name}><td>{name}</td><td>{state}</td><td><button onClick={()=>open(target)}>{target} →</button></td></tr>)}</tbody></table></div>
         <div className="principle">
           Provider · connection · account · instrument · strategy
           <br />
@@ -626,7 +611,6 @@ export default function App() {
         <button className="command" onClick={() => setPalette(true)}>
           Search views and commands <kbd>Ctrl ⇧ P</kbd>
         </button>
-        <span className="tag paper"><span className="status-dot"/> PAPER</span>
         <button
           title="Toggle explorer"
           aria-pressed={layout.left}
@@ -652,7 +636,7 @@ export default function App() {
       <MenuBar commands={commands}/>
       <div className="shell">
         {appearance.activity && <nav className="activity" aria-label="Activities">
-          {views.map((v, i) => (
+          {views.map((v) => (
             <button
               key={v}
               title={v}
@@ -663,7 +647,7 @@ export default function App() {
                 open(v);
               }}
             >
-              <WorkbenchIcon index={i}/><small>{activityLabels[i]}</small>
+              <WorkbenchIcon index={iconIndex[v]}/><small>{activityLabels[v]}</small>
             </button>
           ))}
         </nav>}
@@ -697,13 +681,13 @@ export default function App() {
                 )
                 .map((v) => (
                   <div key={v}>
-                    {({Overview:"WORKSPACE",Providers:"CONFIGURATION",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]&&<div className="nav-section-label">{({Overview:"WORKSPACE",Providers:"CONFIGURATION",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]}</div>}
+                    {({Overview:"WORKSPACE",Configuration:"SETUP",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]&&<div className="nav-section-label">{({Overview:"WORKSPACE",Configuration:"SETUP",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]}</div>}
                     <button
                       className={active === v ? "selected" : ""}
                       onClick={() => open(v)}
                     >
                       <span>
-                        {registryNavigation[v] ? "⌄" : "·"} {v}
+                        · {v}
                       </span>
                       <span className="muted">
                         {v === "Overview"
@@ -713,13 +697,12 @@ export default function App() {
                             : "—"}
                       </span>
                     </button>
-                    {registryNavigation[v] && active === v && registryNavigation[v].map(item=><button className="tree-child registry-link" key={item.resource} onClick={()=>{if(!allowLayoutChange())return;setRegistryTarget(x=>({...x,[v]:item.resource}));open(v);}}>{item.label}</button>)}
                   </div>
                 ))}
             </div>
             <div className="explorer-note">
               COREI OS MINI
-              <p>Paper workspace<br/>Configuration and terminal setup</p>
+              <p>Trading workstation<br/>Provider adapters pending</p>
             </div>
           </aside>
         )}
@@ -798,7 +781,7 @@ export default function App() {
                             onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const tabs=[...e.currentTarget.closest('.tabs')!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];const at=tabs.indexOf(e.currentTarget);const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(at+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus();}}}
                             onClick={() => open(v, i)}
                           >
-                            {pinned.includes(v)?"◆ ":""}{['Providers','Accounts','Instruments'].includes(v)&&layout.active[i]===v&&registryLabels[i]?registryLabel(v,i):v}
+                            {pinned.includes(v)?"◆ ":""}{v}
                           </button>
                           <button
                             disabled={pinned.includes(v)}
@@ -811,13 +794,13 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                    <div className="group-actions"><span>Workspace {i+1} <span className="muted">/ {layout.active[i]}</span></span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],i,false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],i,true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
+                    <div className="group-actions"><span>Workspace {i+1} <span className="muted">/ {layout.active[i]}</span></span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
                     <div
                       className="view"
                       role="tabpanel"
                       aria-label={layout.active[i]}
                     >
-                      {group.map(v=><div key={v} hidden={layout.active[i]!==v}>{body(v,i)}</div>)}
+                      {group.map(v=><div key={v} hidden={layout.active[i]!==v}>{body(v)}</div>)}
                     </div>
                   </section>
                 ),
@@ -887,9 +870,9 @@ export default function App() {
                 <dd>{layout.workspace}</dd>
                 <dt>Backend</dt><dd>{runtime?'Verified':'Unavailable'}</dd>
                 <dt>Database</dt><dd>{runtime?.database_connected?'Connected':'Not verified'}</dd>
-                <dt>Operating mode</dt><dd>Paper · execution unavailable</dd>
+                <dt>Order sending</dt><dd>Firm-wide switch · see Configuration</dd>
               </dl>
-              <div className="context-guidance"><h3>Working here</h3><p>{['Providers','Accounts','Instruments'].includes(active)?'Use the registry tabs to select a directory. Choose New to add configuration or Inspect to review a record. Field information is available beside each label.':active==='Settings'?'Choose a theme, adjust text size and density, or arrange your panels. Preferences are saved in this browser.':'Use the explorer to switch views. Open related views in separate groups to compare information side by side.'}</p></div>
+              <div className="context-guidance"><h3>Working here</h3><p>{active==='Configuration'?'Pick a section on the left, select a row to edit it, or choose New. Accounts show exactly what still blocks data and order sending.':active==='Settings'?'Choose a theme, adjust text size and density, or arrange your panels. Preferences are saved in this browser.':'Use the explorer to switch views. Open related views in separate groups to compare information side by side.'}</p></div>
               <h3>Workspace controls</h3>
               <button
                 className="wide"
@@ -932,7 +915,7 @@ export default function App() {
           {appearanceError || storageError || "Local layout · no trading state stored in browser"}
         </span>
         <span className="push">
-          Trading unavailable · {layout.groups.length} workspace group
+          No provider adapter connected · {layout.groups.length} workspace group
           {layout.groups.length > 1 ? "s" : ""}
         </span>
       </footer>}
@@ -944,7 +927,7 @@ export default function App() {
         <button onClick={()=>setContext(null)}>Dismiss · Esc</button>
       </div></div>}
       {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
-      {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Workbench controls</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button><p>Drag the explorer, inspector and bottom-panel edges to resize. Drag tabs between groups. Workspace selection saves each layout separately.</p>{commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}<p>Ctrl+1–4 focuses a group. Separator handles also support arrow keys. Layout presets replace the open groups. Browser-reserved shortcuts may vary.</p><div className="notice">Shell controls work locally. Broker connections, orders, positions and strategies still require their backend implementation.</div></div></div>}
+      {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Workbench controls</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button><p>Drag the explorer, inspector and bottom-panel edges to resize. Drag tabs between groups. Workspace selection saves each layout separately.</p>{commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}<p>Ctrl+1–4 focuses a group. Separator handles also support arrow keys. Layout presets replace the open groups. Browser-reserved shortcuts may vary.</p><div className="notice">Broker connections, orders, positions and strategies still require their backend implementation.</div></div></div>}
     </div>
   );
 }

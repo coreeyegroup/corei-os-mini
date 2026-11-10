@@ -1,0 +1,86 @@
+/* Configuration workspace. Uses theme tokens from themes.css so every theme applies. */
+:root { --cfg-warn: var(--amber, #e3a529); }
+:root[data-theme="White"] { --cfg-warn: #9a6700; }
+.view:has(.cfg:not([hidden] .cfg)) { display: flex; flex-direction: column; }
+.view > div:has(> .cfg) { flex: 1; min-height: 0; }
+.cfg { display: flex; height: 100%; min-height: 0; }
+.cfg-nav { width: 170px; flex: none; border-right: 1px solid var(--line); padding: 10px 0; display: flex; flex-direction: column; background: var(--chrome); }
+.cfg-nav > button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 7px 14px; border: 0; border-left: 2px solid transparent; background: none; color: var(--text); cursor: pointer; }
+.cfg-nav > button span { flex: 1; }
+.cfg-nav > button small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cfg-nav > button:hover { background: var(--hover); }
+.cfg-nav > button[aria-current="page"] { border-left-color: var(--accent); background: var(--selection); font-weight: 600; }
+.cfg-nav .cfg-live-on { color: var(--danger); font-weight: 700; }
+.cfg-nav-foot { margin-top: auto; padding: 10px 14px; color: var(--muted); font-size: .9em; }
+.cfg-nav-foot .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.cfg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 18px; overflow: hidden; }
+.cfg-head h1 { margin: 2px 0; font-size: 1.35em; }
+.cfg-head p { margin: 0 0 10px; color: var(--muted); }
+.cfg-records { display: flex; gap: 14px; flex: 1; min-height: 0; }
+.cfg-list { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.cfg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.cfg-toolbar input { flex: 1; min-width: 160px; }
+.cfg-toolbar .primary { margin-left: auto; }
+.cfg-scroll { overflow: auto; flex: 1; border: 1px solid var(--line); }
+.cfg-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.cfg-table th { position: sticky; top: 0; background: var(--surface); text-align: left; font-weight: 600; color: var(--muted); font-size: .85em; text-transform: uppercase; letter-spacing: .03em; }
+.cfg-table th, .cfg-table td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.cfg-table tbody tr { cursor: pointer; }
+.cfg-table tbody tr:hover { background: var(--hover); }
+.cfg-table tbody tr.selected { background: var(--selection); }
+.cfg-table.compact th, .cfg-table.compact td { padding: 3px 4px; }
+.cfg-table.compact input { width: 100%; min-width: 60px; }
+.cfg-table.compact tbody tr { cursor: default; }
+.cfg-row-actions { display: flex; gap: 2px; }
+.cfg-row-actions button { padding: 0 6px; }
+.cfg-detail { width: 360px; flex: none; overflow: auto; border: 1px solid var(--line); background: var(--surface); padding: 12px 14px; }
+.cfg-detail > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cfg-detail > header h2 { margin: 0; font-size: 1.1em; }
+.cfg-detail > header button { border: 0; background: none; color: var(--muted); cursor: pointer; }
+.cfg-form, .cfg-credential { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.cfg-credential { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
+.cfg-credential h3, .cfg-blockers h3 { margin: 0; font-size: 1em; }
+.cfg-field { display: flex; flex-direction: column; gap: 3px; }
+.cfg-field > span { font-weight: 600; font-size: .9em; }
+.cfg-field small, .cfg-subform > small { color: var(--muted); }
+.cfg-field input, .cfg-field select { width: 100%; }
+.cfg-field input[readonly], .cfg-field select:disabled { opacity: .7; }
+.cfg-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cfg-subform { border: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.cfg-subform legend { font-weight: 600; padding: 0 4px; }
+.cfg-actions { display: flex; gap: 8px; }
+.cfg-actions .danger, .cfg-card .danger { margin-left: auto; color: var(--danger); border-color: var(--danger); }
+.cfg button.primary { background: var(--accent); color: var(--canvas); border-color: var(--accent); font-weight: 600; }
+.cfg button:disabled { opacity: .5; cursor: not-allowed; }
+.cfg-pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: .8em; font-weight: 600; border: 1px solid var(--line); color: var(--muted); }
+.cfg-pill.ok { color: var(--ready); border-color: var(--ready); }
+.cfg-pill.off { color: var(--muted); }
+.cfg-pill.warn { color: var(--cfg-warn); border-color: var(--cfg-warn); }
+.cfg-pill.live { color: var(--danger); border-color: var(--danger); }
+.cfg-pill.demo { color: var(--accent); border-color: var(--accent); }
+.cfg-note { color: var(--muted); margin: 4px 0; }
+.cfg-empty { color: var(--muted); padding: 24px; border: 1px dashed var(--line); text-align: center; }
+.cfg-error { color: var(--danger); margin: 4px 0; }
+.cfg-ok { color: var(--ready); margin: 4px 0; }
+.cfg-blockers { margin-top: 10px; padding: 10px; border: 1px solid var(--line); }
+.cfg-blockers ul { margin: 4px 0 8px; padding-left: 18px; color: var(--cfg-warn); }
+.cfg-controls > p { max-width: 70ch; }
+.cfg-cards { display: flex; gap: 14px; flex-wrap: wrap; }
+.cfg-card { width: 340px; border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.cfg-card header { display: flex; gap: 8px; align-items: center; }
+.cfg-card small { color: var(--muted); }
+.cfg-card.on { border-color: var(--ready); }
+.cfg-card.live.on { border-color: var(--danger); box-shadow: inset 3px 0 0 var(--danger); }
+.cfg-card form { display: flex; flex-direction: column; gap: 8px; }
+.cfg-audit-detail pre { margin: 0; white-space: pre-wrap; font-size: .85em; max-height: 260px; overflow: auto; }
+.cfg-audit-detail td { white-space: normal; cursor: default; }
+.cfg-signin .cfg-form { max-width: 320px; }
+@media (max-width: 900px) {
+  .cfg { flex-direction: column; }
+  .cfg-nav { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
+  .cfg-nav > button { width: auto; border-left: 0; border-bottom: 2px solid transparent; }
+  .cfg-nav > button[aria-current="page"] { border-bottom-color: var(--accent); }
+  .cfg-nav-foot { display: none; }
+  .cfg-records { flex-direction: column; }
+  .cfg-detail { width: auto; }
+}

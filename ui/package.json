@@ -1,13 +1,12 @@
 {
   "name": "corei-os-mini-workstation",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "npm run build && node tests/workbench.cjs && node tests/broker-accounts.cjs",
-    "prebuild": "python3 ../scripts/build-terminal-kit.py"
+    "test": "npm run build && node tests/workbench.cjs && node tests/configuration.cjs"
   },
   "dependencies": {
     "react": "19.3.1",

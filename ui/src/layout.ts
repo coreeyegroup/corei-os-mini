@@ -1,9 +1,7 @@
 export const views = [
   "Overview",
   "Market data",
-  "Providers",
-  "Accounts",
-  "Instruments",
+  "Configuration",
   "Strategies",
   "Execution",
   "Portfolio",
