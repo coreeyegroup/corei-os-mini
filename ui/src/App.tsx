@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import RegistryWorkspace from "./RegistryWorkspace";
+import BrokerAccounts from "./BrokerAccounts";
 import WorkbenchIcon from "./WorkbenchIcon";
 import { initialLayout, launchContext, workspaceUrl, registryTitles, type RegistryResource } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
@@ -328,7 +329,8 @@ export default function App() {
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
 
   function body(view: View, group: number) {
-    if(view === "Providers" || view === "Accounts" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : view === "Accounts" ? "accounts" : "instruments")} onResourceChange={r=>{if(layout.active[group]!==view)return;registryViews.current[group]=r;setRegistryLabels(x=>x[group]===r?x:{...x,[group]:r});}}/>;
+    if(view === "Accounts") return <BrokerAccounts/>;
+    if(view === "Providers" || view === "Instruments") return <RegistryWorkspace key={view+(registryTarget[view]??'')} initial={registryTarget[view] ?? (launch.view===view?launch.resource:undefined) ?? (view === "Providers" ? "providers" : "instruments")} onResourceChange={r=>{if(layout.active[group]!==view)return;registryViews.current[group]=r;setRegistryLabels(x=>x[group]===r?x:{...x,[group]:r});}}/>;
     if (view === "Settings")
       return (
         <div className="content">

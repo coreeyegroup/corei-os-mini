@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 
 from .operator_auth import router as operator_router
 from .registry import router as registry_router
+from .broker_accounts import router as broker_accounts_router, onboarding_ready
 from .config import get_settings
 from .contracts import PaperRunRequest, PaperRunResult
 from .persistence import (
@@ -47,6 +48,7 @@ app = FastAPI(
 
 
 app.include_router(operator_router)
+app.include_router(broker_accounts_router)
 app.include_router(registry_router)
 
 @app.get("/health")
@@ -145,7 +147,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 1,
-        "release": "0.6.5-table-first",
+        "release": "0.7.0-broker-accounts",
         "execution_mode": settings.execution_mode,
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
@@ -153,6 +155,8 @@ def workstation(response: Response) -> dict[str, object]:
         "connector_schema_ready": connector_ready,
         "demo_enabled": settings.enable_demo,
         "capabilities": [
+            {"id": "broker_accounts", "label": "Saved broker accounts", "available": onboarding_ready(settings.database_url),
+             "reason": "One-form MT5 account storage, encrypted passwords and server-file access-point selection. Requires setup-broker-accounts.sh and migration 007. No broker sessions or trading."},
             {"id": "connector_profiles", "label": "Connector configuration", "available": connector_ready,
              "reason": "Editable connector family, runtime and environment profiles. Requires migration 005. No adapters or runtime sessions yet."},
             {"id": "registries", "label": "Configuration registries", "available": registry_ready,
@@ -169,3 +173,15 @@ def workstation(response: Response) -> dict[str, object]:
              "reason": "No authoritative portfolio ledger or provider reconciliation exists yet."},
         ],
     }
+
+
+# Never reflect broker credentials in validation errors (including malformed JSON).
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def safe_account_validation(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/api/registry/broker-accounts'):
+        return JSONResponse(status_code=422, content={'detail': 'Invalid broker account request.'})
+    return await request_validation_exception_handler(request, exc)

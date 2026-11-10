@@ -34,6 +34,18 @@ class ConnectorProfileTests(unittest.TestCase):
                 ConnectorProfile(**{**self.payload, 'connector_type':family})
             ConnectorProfile(**{**self.payload, 'connector_type':family, 'runtime':'SERVER_API', 'server_name':''})
 
+    def test_direct_mt5_uses_server_runtime_and_rejects_terminal_labels(self):
+        payload = {**self.payload, 'connector_type': 'MT5_DIRECT',
+                   'adapter_key': 'mt5_direct', 'runtime': 'SERVER_API'}
+        profile = ConnectorProfile(**payload)
+        self.assertEqual(profile.server_name, 'Example-Demo')
+        self.assertFalse(profile.enabled)
+        for change in ({'runtime': 'WINDOWS_TERMINAL'}, {'server_name': ''},
+                       {'terminal_host': 'vps'}, {'terminal_instance': 'mt5-01'},
+                       {'password': 'secret'}):
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                ConnectorProfile(**{**payload, **change})
+
     def test_terminal_inventory_labels_are_optional_and_bounded(self):
         profile = ConnectorProfile(**self.payload)
         self.assertEqual(profile.terminal_host, '')

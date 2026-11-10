@@ -3,7 +3,7 @@ export const registryResources = ['providers','connections','connector-profiles'
 export type RegistryResource = typeof registryResources[number];
 export const registryTitles:Record<RegistryResource,string> = {
   providers:'Broker & provider directory', connections:'Access connections',
-  'connector-profiles':'Connector settings', accounts:'Trading accounts',
+  'connector-profiles':'Connector settings', accounts:'Broker accounts',
   instruments:'Instrument directory', mappings:'Symbol mappings',
 };
 export function launchContext(search: string) {
