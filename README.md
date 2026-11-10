@@ -4,7 +4,7 @@ COREI-OS-MINI is a production trading platform built to the lifecycle in the pro
 
 **Connect → collect → validate/select data → analyse → evaluate strategy → signal/intent → resolve account children → final child risk → execute → reconcile → monitor.**
 
-**Where the project stands:** see [`docs/GAP_REGISTER.md`](docs/GAP_REGISTER.md) and owner decisions in [`docs/DECISIONS.md`](docs/DECISIONS.md). In short: the Configuration domain (providers, connections, accounts, instruments, symbol mappings, encrypted credentials, order-sending controls, audit log) is in place. Provider adapters (MT5, REST API), the order lifecycle, risk limits and reconciliation are not built yet, so no order can be sent.
+**Where the project stands:** see [`docs/GAP_REGISTER.md`](docs/GAP_REGISTER.md) and owner decisions in [`docs/DECISIONS.md`](docs/DECISIONS.md). In short: the Configuration domain (providers, connections, accounts, instruments, symbol mappings, encrypted credentials, order-sending controls, audit log), users and roles, and the strategy registry with its deployment matrix are in place. Provider adapters (MT5, REST API), the order lifecycle, risk limits and reconciliation are not built yet, so no order can be sent.
 
 ## Controls
 
@@ -13,7 +13,8 @@ COREI-OS-MINI is a production trading platform built to the lifecycle in the pro
 - **Credentials** (MT5 passwords, API keys, OAuth clients) are encrypted with AES-256-GCM using a server key file, bound to their record, and never returned by the API.
 - **Audit log**: every configuration and control change is recorded with actor, before/after state and reason. The log is append-only in the database. Secrets are never written to it.
 - **Optimistic versioning**: a save made against a stale copy is rejected instead of overwriting someone else's change.
-- All configuration routes require operator sign-in.
+- **Users and roles** (DEC-23): Administrator, Trading operations, Risk approver, Observer. Sessions are server-side and end when a user is disabled or their roles change. Temporary passwords must be changed at first sign-in; 5 failed sign-ins lock an account for 15 minutes.
+- **Strategies and deployments** (DEC-25): approved strategy versions cannot change; a strategy trades only through an ACTIVE deployment row. On LIVE accounts a different person must activate a deployment than the one who proposed it (DEC-24).
 
 ## Project layout
 
@@ -27,8 +28,9 @@ backend/
     config_store.py       configuration persistence: cross-record rules, versioning, audit, readiness
     config_api.py         /api/config routes
     credentials.py        credential vault (AES-256-GCM)
+    strategy_registry.py  strategies, versions, algorithm catalogue, deployment matrix and readiness
     broker_catalog.py     MT5 servers.dat reader (access points)
-    operator_auth.py      operator sign-in
+    operator_auth.py      users, roles, sessions, password rules, user administration
     market_data.py        feed validation and deterministic feed selection
     strategy.py, allocation.py, risk.py, workflow.py
                           trading-core logic, currently exercised by tests and a disabled demo route
@@ -568,3 +570,9 @@ Update on the server with the normal pull, `scripts/configure-workstation-databa
 Replaces the earlier registries, broker-account form, connector profiles and terminal-installation kit with one Configuration workspace (DEC-20). Migration `009_configuration_foundation.sql` **deletes the old configuration tables and their records**, including saved broker passwords, and creates the new model. Paper-run and market-data-assessment history is kept. The paper-only account restriction from 0.7.0 is withdrawn (DEC-18); order sending is instead governed by the firm-wide switch (DEC-19).
 
 After updating, re-enter providers, connections and accounts in **Configuration**.
+
+## Users, roles, strategies and deployments — release 0.9.0
+
+- MT5 connections: full server description from `servers.dat`, searchable server picker, selectable and searchable access points (re-run `scripts/setup-broker-accounts.sh` once to rebuild the server-file reader).
+- Migration 010: users and sessions. Sign in once with the existing server login; it becomes the first administrator. Create the other users under **Configuration › Users**.
+- Migration 011: strategies, immutable approved versions and the deployment matrix.

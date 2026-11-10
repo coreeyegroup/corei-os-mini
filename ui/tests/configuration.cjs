@@ -75,6 +75,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const $=s=>w.document.querySelector(s);
  const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const byLabel=l=>$(`.cfg-detail [aria-label="${l}"]`)||$(`[aria-label="${l}"]`);
+ const nav=label=>[...w.document.querySelectorAll('.cfg-nav button')].find(b=>b.querySelector('span').textContent===label);
  const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();};
 
@@ -107,7 +108,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: provider create, upper-case code, duplicate shows backend message.');
 
  // Connection: MT5 with ordered access points
- $('.cfg-nav button:nth-child(2)').click();await tick();await tick();
+ nav('Connections').click();await tick();await tick();
  button('New connection').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Connection code'),'icm_mt5_demo');fill(byLabel('Name'),'ICM MT5 demo');
  fill($('.cfg-subform input[maxlength="120"]'),'ICMarketsSC-Demo');
@@ -170,7 +171,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: 50 access points accepted; closing the window with confirmation.');
 
  // Account: readiness shown; password saved write-only
- $('.cfg-nav button:nth-child(3)').click();await tick();await tick();
+ nav('Accounts').click();await tick();await tick();
  button('New account').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
  assert.match($('.cfg-detail').textContent,/DEMO from the connection/);
@@ -191,12 +192,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  db.accounts[0].version=5;fill(byLabel('Name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/Changed by someone else/);
  // Unsaved changes guard section switches
- w.confirm=()=>false;$('.cfg-nav button:nth-child(1)').click();await tick();
+ w.confirm=()=>false;nav('Providers').click();await tick();
  assert.match($('.cfg-head h1').textContent,/Accounts/);w.confirm=()=>true;
  console.log('PASS: version conflict surfaced; unsaved changes block navigation until discarded.');
 
  // Order sending: confirmation required
- $('.cfg-nav button:nth-child(6)').click();await tick();await tick();
+ nav('Order sending').click();await tick();await tick();
  const live=[...w.document.querySelectorAll('.cfg-card')].find(c=>c.textContent.includes('LIVE'));
  [...live.querySelectorAll('button')].find(b=>b.textContent.startsWith('Turn on')).click();await tick();
  fill(live.querySelector('[aria-label="Reason"]'),'Go-live approved by risk');await tick();
@@ -209,7 +210,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: LIVE order sending needs reason and typed confirmation; status visible in navigation.');
 
  // Users (administrator): create a user with roles.
- $('.cfg-nav button:nth-child(7)').click();await tick();await tick();
+ nav('Users').click();await tick();await tick();
  assert.match($('.cfg-head h1').textContent,/Users/);
  assert.match($('.cfg-table').textContent,/risk-ops \(you\)/);
  button('New user').click();await tick();
@@ -228,12 +229,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...w.document.querySelectorAll('.cfg-user .link')].find(b=>b.textContent==='Sign out').click();await tick();
  const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
  assert.ok(![...w.document.querySelectorAll('.cfg-nav button')].some(b=>b.textContent.includes('Users')));
- $('.cfg-nav button:nth-child(1)').click();await tick();await tick();
+ nav('Providers').click();await tick();await tick();
  assert.equal(button('New provider'),undefined);
  $('.cfg-table tbody tr').click();await tick();
  assert.ok($('.fw fieldset.cfg-plain').disabled);assert.equal(button('Save changes'),undefined);
  $('[aria-label="Close window"]').click();await tick();
- $('.cfg-nav button:nth-child(6)').click();await tick();await tick();
+ nav('Order sending').click();await tick();await tick();
  assert.ok(![...w.document.querySelectorAll('.cfg-card button')].length);
  console.log('PASS: observer is read-only: no create, save, credential or order-sending actions.');
 

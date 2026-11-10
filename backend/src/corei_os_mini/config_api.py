@@ -50,6 +50,9 @@ def parse(model: type[BaseModel], payload: object, secret: bool = False) -> Base
 def summary(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
     counts = {entity: len(store.list_records(entity, {})) for entity in store.SPECS}
+    with store.transaction('read') as db:
+        counts['strategies'] = db.execute('SELECT count(*) AS n FROM cfg_strategies').fetchone()['n']
+        counts['deployments'] = db.execute("SELECT count(*) AS n FROM cfg_deployments WHERE status<>'ENDED'").fetchone()['n']
     return {'counts': counts, 'execution_controls': store.list_execution_controls(),
             'credential_storage_ready': storage_ready(), 'available_adapters': sorted(store.AVAILABLE_ADAPTERS)}
 

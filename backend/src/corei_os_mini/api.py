@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 
 from .operator_auth import admin_router, router as operator_router
 from .config_api import router as config_router
+from .strategy_registry import router as strategy_router
 from . import config_store
 from .credentials import storage_ready as credential_storage_ready
 from .config import get_settings
@@ -40,7 +41,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="COREI-OS-MINI API",
-    version="0.8.0",
+    version="0.9.0",
     description="Configuration, market-data assessment and trading-core services. No provider adapter is connected yet; order sending is governed by firm-wide execution controls.",
     lifespan=lifespan,
 )
@@ -48,6 +49,8 @@ app = FastAPI(
 
 app.include_router(operator_router)
 app.include_router(admin_router)
+# Strategy routes first: config_router's /api/config/{entity} would otherwise claim them.
+app.include_router(strategy_router)
 app.include_router(config_router)
 
 @app.get("/health")
@@ -145,7 +148,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.8.0-configuration",
+        "release": "0.9.0-roles-strategies",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,
@@ -155,6 +158,8 @@ def workstation(response: Response) -> dict[str, object]:
              "reason": "Providers, connections, accounts, instruments, symbol mappings, credentials, order-sending controls and audit. Requires migration 009."},
             {"id": "users", "label": "Users and roles", "available": config_ready,
              "reason": "Administrator, trading operations, risk approver and observer roles. Requires migration 010."},
+            {"id": "strategies", "label": "Strategies and deployments", "available": config_ready,
+             "reason": "Strategy versions with approval and the deployment matrix. Requires migration 011."},
             {"id": "credential_storage", "label": "Credential encryption", "available": credential_storage_ready(),
              "reason": "Requires the server key file created by scripts/setup-broker-accounts.sh."},
             {"id": "providers", "label": "Provider connectivity", "available": bool(config_store.AVAILABLE_ADAPTERS),

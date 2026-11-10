@@ -304,7 +304,8 @@ class ConfigurationPostgresTests(unittest.TestCase):
             db.execute('UPDATE cfg_audit_log SET actor=%s', ('mallory',))
 
         summary = self.client.get('/api/config/summary').json()
-        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1})
+        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1,
+                                             'strategies': 0, 'deployments': 0})
 
 
 if __name__ == '__main__':

@@ -1,16 +1,18 @@
 # COREI-OS-MINI — Gap Register
 
 **Baseline compared:** Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3, as amended by `DECISIONS.md` (DEC-18 … DEC-22)
-**Last updated:** 10 Nov 2026 — release 0.8.0 (configuration rebuild)
+**Last updated:** 10 Nov 2026 — release 0.9.0 (users and roles, strategies and deployments)
 **Status values:** OPEN, DONE, PARTIAL, SUPERSEDED, BLOCKED (needs an owner decision)
 
 ## Position
 
 | Area | Present | Status |
 |---|---|---|
-| Configuration | Providers, connections (MT5, REST API), accounts, instruments with contract specs, symbol mappings, encrypted credentials, order-sending switch per environment, append-only audit log, readiness per account | DONE |
+| Configuration | Providers, connections (MT5 with full server description and selectable access points, REST API), accounts, instruments, symbol mappings, encrypted credentials, order-sending switch, audit log, readiness | DONE |
+| Users and roles | Database users, four roles, server-side sessions, lockout, forced password change | DONE |
+| Strategies and deployments | Versioned strategies with approval; deployment matrix with data source and readiness; four-eyes on LIVE | DONE |
 | 1. Connections and market data | Feed-quality assessment and deterministic feed selection on supplied observations | No adapter, no live feed |
-| 2. Strategies and signals | Demo moving-average rule, no stored config | ~10% |
+| 2. Strategies and signals | Strategy registry and deployments done; signal generation from live data not yet | ~35% |
 | 3. Risk and allocation | Four dispatch modes; per-child risk using request-supplied state | ~15% |
 | 4. Execution and reconciliation | Nothing operational | ~0% |
 
@@ -34,8 +36,8 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | ID | Gap | Status |
 |---|---|---|
 | G-C-01 | Clean provider / connection / account / instrument / mapping model | DONE (0.8.0) |
-| G-X-01 | Audit trail | PARTIAL — configuration and order-sending changes audited; order and execution events will be added with Phase 4 |
-| G-X-02 | Single operator login; no roles. Blueprint §15 needs separation of who configures from who approves (e.g. who may turn LIVE order sending on) | OPEN — required before the LIVE switch is used |
+| G-X-01 | Audit trail | PARTIAL — configuration, order-sending, user, sign-in, strategy and deployment changes audited; order and execution events come with Phase 4 |
+| G-X-02 | Users and roles with separation of duties | DONE (0.9.0) — DEC-23, DEC-24 |
 | G-X-03 | Trading screens (market data, signals, risk, orders, positions, reconciliation) | OPEN |
 | G-X-04 | Documented backup/restore and operator runbook | OPEN |
 | G-X-05 | Live site stuck on 8 Nov build; duplicate `n8n.coreeye.in` in server Caddyfile | OPEN — server-side |
@@ -54,9 +56,9 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |
 |---|---|---|
-| G-P2-01 | Strategy registry, versions, lifecycle | OPEN |
-| G-P2-02 | Strategy ↔ instrument ↔ account eligibility assignments (Blueprint §8.5) | OPEN — builds on the 0.8.0 configuration model |
-| G-P2-03 | Stored signals, decisions, TradeIntents with frozen inputs | OPEN |
+| G-P2-01 | Strategy registry, versions, lifecycle | DONE (0.9.0) |
+| G-P2-02 | Deployment matrix (Blueprint §8.5), viewable from provider, account, instrument or strategy | DONE (0.9.0) |
+| G-P2-03 | Stored signals, decisions, TradeIntents with frozen inputs | OPEN — next |
 | G-P2-04 | Conflict rule between strategies | OPEN |
 | G-P2-05 | First real strategy | BLOCKED — decision 3 |
 
@@ -94,8 +96,8 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 ## D. Completion order
 
 1. Configuration foundation — **done (0.8.0)**.
-2. User roles (G-X-02) and strategy/instrument/account assignments (G-P2-02).
-3. Order lifecycle, risk limits and reservations, fill ledger (G-P3-01 … 03, G-P4-01 … 04), all tested.
+2. User roles (G-X-02) and strategy deployments (G-P2-01, G-P2-02) — **done (0.9.0)**.
+3. Signals and intents (G-P2-03), risk limits (G-P3-01 … 03), order lifecycle, risk limits and reservations, fill ledger (G-P3-01 … 03, G-P4-01 … 04), all tested.
 4. First adapter once decision 1 is made, behind the adapter contract (G-P1-02).
 5. One real feed through to a reconciled order on DEMO accounts; then the LIVE switch can be considered.
 6. Trading screens on real data.

@@ -132,3 +132,9 @@
 .cfg-check small { color: var(--muted); }
 .cfg-password { max-width: 360px; }
 .cfg-user small { color: var(--muted); }
+
+/* Strategies and deployments */
+.cfg-versions { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cfg-versions .cfg-table td { white-space: normal; vertical-align: top; }
+.cfg-form textarea { width: 100%; resize: vertical; font: inherit; }
+.cfg-toolbar select { max-width: 200px; }

@@ -11,8 +11,8 @@ import './configuration.css';
 import FloatingWindow from './FloatingWindow';
 
 type Row = Record<string, any>;
-type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'controls' | 'users' | 'audit';
-type Entity = Exclude<Section, 'controls' | 'audit' | 'users'>;
+type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'controls' | 'users' | 'audit';
+type Entity = Exclude<Section, 'controls' | 'audit' | 'users' | 'strategies' | 'deployments'>;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
 const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRADING_OPS: 'Change configuration and credentials; turn order sending off',
@@ -24,6 +24,8 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'accounts', label: 'Accounts', hint: 'Broker accounts, login and trading permission' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
+  { id: 'strategies', label: 'Strategies', hint: 'Strategy rules and their approved versions' },
+  { id: 'deployments', label: 'Deployments', hint: 'Which strategy version trades which instrument on which account, and from which data source' },
   { id: 'controls', label: 'Order sending', hint: 'Firm-wide switch per environment' },
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
@@ -42,6 +44,13 @@ const BLOCKERS: Record<string, string> = {
   READ_ONLY_CREDENTIAL: 'Saved password is an investor (read-only) password',
   ORDER_SENDING_OFF_DEMO: 'Order sending is off for DEMO',
   ORDER_SENDING_OFF_LIVE: 'Order sending is off for LIVE',
+  DEPLOYMENT_NOT_ACTIVE: 'Deployment is not active',
+  STRATEGY_RETIRED: 'Strategy is retired',
+  VERSION_NOT_APPROVED: 'Strategy version is not approved',
+  INSTRUMENT_INACTIVE: 'Instrument is inactive',
+  DATA_SOURCE_INACTIVE: 'Market-data source (symbol mapping or its connection) is inactive',
+  NO_TRADING_SYMBOL_ON_ACCOUNT_CONNECTION: "No trading symbol mapping for this instrument on the account's connection",
+  TRADING_SYMBOL_INACTIVE: "Trading symbol mapping on the account's connection is inactive",
 };
 
 class ApiError extends Error {}
@@ -492,6 +501,196 @@ function AuditLog() {
   </div>;
 }
 
+/* ---------- strategies ---------- */
+
+function ParameterFields({ schema, value, change, disabled }: { schema: Row; value: Row; change: (v: Row) => void; disabled?: boolean }) {
+  return <>{Object.entries<Row>(schema?.properties ?? {}).map(([key, prop]) => {
+    const label = detailLabel(key);
+    return <Field key={key} label={label} hint={prop.description}>{prop.enum
+      ? <Choice label={label} value={value[key] ?? ''} disabled={disabled} options={['', ...prop.enum].map(v => [v, v || 'Select…'] as [string, string])} onChange={v => change({ ...value, [key]: v })} />
+      : <input aria-label={label} required disabled={disabled} type={prop.type === 'integer' || prop.type === 'number' ? 'number' : 'text'} min={prop.minimum} max={prop.maximum}
+          value={value[key] ?? ''} onChange={e => change({ ...value, [key]: prop.type === 'integer' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value })} />}</Field>;
+  })}</>;
+}
+
+function paramSummary(p: Row) { return Object.entries(p ?? {}).map(([k, v]) => `${detailLabel(k)} ${v}`).join(' · '); }
+
+function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => void }) {
+  const canEdit = roles.includes('TRADING_OPS'), canApprove = roles.includes('RISK_APPROVER');
+  const [rows, setRows] = useState<Row[] | null>(null), [algos, setAlgos] = useState<Row[]>([]), [q, setQ] = useState('');
+  const [draft, setDraft] = useState<Row | null>(null), [versions, setVersions] = useState<Row[]>([]), [form, setForm] = useState<Row | null>(null);
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const load = async (keep?: string) => {
+    try {
+      const items = (await api(`config/strategies${q ? '?q=' + encodeURIComponent(q) : ''}`)).items; setRows(items);
+      if (keep) { const r = items.find((x: Row) => x.id === keep); if (r) { setDraft({ ...r }); setVersions((await api(`config/strategies/${keep}/versions`)).items); } }
+    } catch (e) { setError((e as Error).message); }
+  };
+  useEffect(() => { void load(); }, [q]);
+  useEffect(() => { void (async () => { try { setAlgos((await api('config/algorithms')).items); } catch { /* shown on use */ } })(); }, []);
+  async function run(task: () => Promise<any>, message: string, keep?: string) {
+    setBusy(true); setError(''); setNotice('');
+    try { const result = await task(); setNotice(message); await load(keep ?? result?.id ?? result?.strategy_id); reloadRefs(); return result; }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  function open(row: Row | null) {
+    setError(''); setNotice(''); setForm(null);
+    setDraft(row ? { ...row } : { code: '', name: '', description: '', status: 'ACTIVE' });
+    setVersions([]); if (row) void (async () => setVersions((await api(`config/strategies/${row.id}/versions`)).items))();
+  }
+  const algo = algos.find(a => a.id === form?.algorithm);
+  async function saveVersion(e: FormEvent) {
+    e.preventDefault(); if (!form || !draft) return;
+    const body = { algorithm: form.algorithm, parameters: form.parameters, notes: form.notes ?? '' };
+    await run(() => form.id ? api(`config/strategy-versions/${form.id}`, 'PUT', { ...body, version: form.version })
+      : api(`config/strategies/${draft.id}/versions`, 'POST', body), form.id ? 'Draft version saved.' : 'Draft version created. A risk approver must approve it before it can trade.', draft.id);
+    setForm(null);
+  }
+  return <div className="cfg-records">
+    <div className="cfg-list">
+      <div className="cfg-toolbar"><input aria-label="Search" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />
+        {canEdit ? <button className="primary" onClick={() => open(null)}>New strategy</button> : <span className="cfg-note">Read only</span>}</div>
+      {error && !draft && <p role="alert" className="cfg-error">{error}</p>}
+      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No strategies yet.</p> :
+        <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Code</th><th>Name</th><th>Versions</th><th>Approved version</th><th>Active deployments</th><th>Status</th></tr></thead><tbody>
+          {rows.map(r => <tr key={r.id} tabIndex={0} className={draft?.id === r.id ? 'selected' : ''} onClick={() => open(r)} onKeyDown={e => { if (e.key === 'Enter') open(r); }}>
+            <td>{r.code}</td><td>{r.name}</td><td>{r.version_count}</td><td>{r.latest_approved ? `v${r.latest_approved}` : '—'}</td><td>{r.active_deployments}</td><td><Status value={r.status} /></td></tr>)}
+        </tbody></table></div>}
+    </div>
+    {draft && <FloatingWindow storageKey="corei-os-mini.config-window.v1" title={draft.id ? `Strategy · ${draft.code}` : 'New strategy'}
+      subtitle={draft.id ? `Version ${draft.version} · updated ${new Date(draft.updated_at).toLocaleString()}` : undefined} onClose={() => setDraft(null)}>
+      <div className="cfg-detail">
+      <form className="cfg-form" onSubmit={e => { e.preventDefault(); void run(() => draft.id ? api(`config/strategies/${draft.id}`, 'PUT', { code: draft.code, name: draft.name, description: draft.description, status: draft.status, version: draft.version })
+        : api('config/strategies', 'POST', { code: draft.code, name: draft.name, description: draft.description }), draft.id ? 'Strategy saved.' : 'Strategy created. Add a version with its rules next.'); }}>
+        <fieldset className="cfg-plain" disabled={!canEdit}>
+          <Field label="Strategy code" hint={draft.id ? 'Fixed after creation' : 'Letters, digits, underscore'}><input aria-label="Strategy code" required readOnly={!!draft.id} maxLength={32} value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value })} /></Field>
+          <Field label="Name"><input aria-label="Name" required maxLength={120} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field>
+          <Field label="Description"><textarea aria-label="Description" maxLength={2000} rows={3} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
+          {draft.id && <Field label="Status"><Choice label="Status" value={draft.status} options={[['ACTIVE', 'Active'], ['RETIRED', 'Retired']]} onChange={v => setDraft({ ...draft, status: v })} /></Field>}
+        </fieldset>
+        {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+        {canEdit && <div className="cfg-actions"><button className="primary" disabled={busy}>{draft.id ? 'Save strategy' : 'Create strategy'}</button></div>}
+      </form>
+      {draft.id && <section className="cfg-versions" aria-label="Versions">
+        <div className="cfg-points-head"><strong>Versions</strong>{canEdit && draft.status === 'ACTIVE' && !form && <button type="button" onClick={() => setForm({ algorithm: algos[0]?.id ?? '', parameters: {}, notes: '' })}>New version</button>}</div>
+        {form && <form className="cfg-subform" onSubmit={saveVersion} aria-label="Version form">
+          <strong>{form.id ? `Edit draft v${form.number}` : 'New draft version'}</strong>
+          <Field label="Algorithm" hint={algo?.description}><Choice label="Algorithm" value={form.algorithm} options={algos.map(a => [a.id, a.label] as [string, string])} onChange={v => setForm({ ...form, algorithm: v, parameters: {} })} /></Field>
+          {algo && <ParameterFields schema={algo.schema} value={form.parameters} change={v => setForm({ ...form, parameters: v })} />}
+          <Field label="Notes"><input aria-label="Notes" maxLength={2000} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></Field>
+          <div className="cfg-actions"><button className="primary" disabled={busy}>{form.id ? 'Save draft' : 'Create draft'}</button><button type="button" onClick={() => setForm(null)}>Cancel</button></div>
+        </form>}
+        {versions.length === 0 ? <p className="cfg-note">No versions yet.</p> : <table className="cfg-table compact"><thead><tr><th>Version</th><th>Rules</th><th>State</th><th>By</th><th /></tr></thead><tbody>
+          {versions.map(v => <tr key={v.id}><td>v{v.number}</td><td><strong>{algos.find(a => a.id === v.algorithm)?.label ?? v.algorithm}</strong><br /><small>{paramSummary(v.parameters)}</small>{v.notes && <><br /><small className="cfg-note">{v.notes}</small></>}</td>
+            <td><span className={`cfg-pill ${v.state === 'APPROVED' ? 'ok' : v.state === 'RETIRED' ? 'off' : 'warn'}`}>{v.state}</span></td>
+            <td><small>created {v.created_by}{v.approved_by ? <><br />approved {v.approved_by}</> : null}</small></td>
+            <td className="cfg-row-actions">
+              {v.state === 'DRAFT' && canEdit && <button type="button" onClick={() => setForm({ ...v })}>Edit</button>}
+              {v.state === 'DRAFT' && canApprove && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Approve v${v.number}? Its rules and parameters can no longer be changed.`)) void run(() => api(`config/strategy-versions/${v.id}/approve`, 'POST', { version: v.version }), `v${v.number} approved.`, draft.id); }}>Approve</button>}
+              {v.state !== 'RETIRED' && (canEdit || canApprove) && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Retire v${v.number}? It cannot be used again.`)) void run(() => api(`config/strategy-versions/${v.id}/retire`, 'POST', { version: v.version }), `v${v.number} retired.`, draft.id); }}>Retire</button>}
+            </td></tr>)}
+        </tbody></table>}
+        <small>Approved versions cannot be changed; create a new version to change rules or parameters.</small>
+      </section>}
+      </div>
+    </FloatingWindow>}
+  </div>;
+}
+
+/* ---------- deployments ---------- */
+
+function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Row[]> }) {
+  const canEdit = roles.includes('TRADING_OPS'), canApprove = roles.includes('RISK_APPROVER'), canStop = canEdit || canApprove;
+  const [rows, setRows] = useState<Row[] | null>(null), [filters, setFilters] = useState<Row>({});
+  const [accounts, setAccounts] = useState<Row[]>([]), [mappings, setMappings] = useState<Row[]>([]), [strategies, setStrategies] = useState<Row[]>([]), [versions, setVersions] = useState<Row[]>([]);
+  const [draft, setDraft] = useState<Row | null>(null), [reason, setReason] = useState('');
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const load = async (keep?: string) => {
+    try {
+      const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v) as [string, string][]);
+      const items = (await api(`config/deployments?${params}`)).items; setRows(items);
+      if (keep) { const r = items.find((x: Row) => x.id === keep); if (r) setDraft({ ...r }); }
+    } catch (e) { setError((e as Error).message); }
+  };
+  useEffect(() => { void load(); }, [JSON.stringify(filters)]);
+  useEffect(() => { void (async () => {
+    try { const [a, m, s] = await Promise.all(['config/accounts', 'config/mappings', 'config/strategies'].map(x => api(x))); setAccounts(a.items); setMappings(m.items); setStrategies(s.items); }
+    catch (e) { setError((e as Error).message); }
+  })(); }, []);
+  useEffect(() => { if (draft?.strategy_id) void (async () => setVersions((await api(`config/strategies/${draft.strategy_id}/versions`)).items))(); else setVersions([]); }, [draft?.strategy_id]);
+  const body = (d: Row) => ({ strategy_id: d.strategy_id, strategy_version_id: d.strategy_version_id, instrument_id: d.instrument_id, account_id: d.account_id,
+    data_mapping_id: d.data_mapping_id, allocation_weight_bps: Number(d.allocation_weight_bps), note: d.note ?? '' });
+  async function run(task: () => Promise<any>, message: string) {
+    setBusy(true); setError(''); setNotice('');
+    try { const r = await task(); setNotice(message); setReason(''); await load(r?.id ?? draft?.id); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  const dataSources = mappings.filter(m => m.instrument_id === draft?.instrument_id && m.usage !== 'TRADING');
+  const filter = (key: string, label: string, options: [string, string][]) => <select aria-label={label} value={filters[key] ?? ''} onChange={e => setFilters({ ...filters, [key]: e.target.value })}>
+    <option value="">All {label.toLowerCase()}</option>{options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
+  const transition = (action: string, label: string, cls = '') => <button type="button" className={cls} disabled={busy || reason.trim().length < 5}
+    onClick={() => void run(() => api(`config/deployments/${draft!.id}/${action}`, 'POST', { version: draft!.version, reason }), `Deployment ${label.toLowerCase()}d.`.replace('dd.', 'd.'))}>{label}</button>;
+  return <div className="cfg-records">
+    <div className="cfg-list">
+      <div className="cfg-toolbar">
+        {filter('provider_id', 'Providers', refs.providers.map(r => [r.id, r.code]))}
+        {filter('account_id', 'Accounts', accounts.map(r => [r.id, `${r.provider_code} · ${r.code}`]))}
+        {filter('instrument_id', 'Instruments', refs.instruments.map(r => [r.id, r.symbol]))}
+        {filter('strategy_id', 'Strategies', strategies.map(r => [r.id, r.code]))}
+        {filter('status', 'Statuses', [['PROPOSED', 'Proposed'], ['ACTIVE', 'Active'], ['PAUSED', 'Paused'], ['ENDED', 'Ended']])}
+        {canEdit ? <button className="primary" onClick={() => { setError(''); setNotice(''); setDraft({ strategy_id: filters.strategy_id ?? '', strategy_version_id: '', instrument_id: filters.instrument_id ?? '', account_id: filters.account_id ?? '', data_mapping_id: '', allocation_weight_bps: 10000, note: '' }); }}>New deployment</button>
+          : <span className="cfg-note">Read only</span>}
+      </div>
+      {error && !draft && <p role="alert" className="cfg-error">{error}</p>}
+      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No deployments match. A strategy trades only where a deployment row exists and is active.</p> :
+        <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Account</th><th>Env</th><th>Market data from</th><th>Weight</th><th>Status</th><th>Ready</th></tr></thead><tbody>
+          {rows.map(r => <tr key={r.id} tabIndex={0} className={draft?.id === r.id ? 'selected' : ''} onClick={() => { setError(''); setNotice(''); setReason(''); setDraft({ ...r }); }}>
+            <td>{r.strategy_code} v{r.version_number}</td><td>{r.instrument_symbol}</td><td>{r.provider_code} · {r.account_code}</td><td><Env value={r.environment} /></td>
+            <td>{r.data_provider_code} · {r.data_connection_code} · {r.data_symbol}</td><td>{(r.allocation_weight_bps / 100).toFixed(2)}%</td>
+            <td><span className={`cfg-pill ${r.status === 'ACTIVE' ? 'ok' : r.status === 'ENDED' ? 'off' : 'warn'}`}>{r.status}</span></td><td><Ready blockers={r.blockers} /></td></tr>)}
+        </tbody></table></div>}
+    </div>
+    {draft && <FloatingWindow storageKey="corei-os-mini.config-window.v1" title={draft.id ? `Deployment · ${draft.strategy_code} · ${draft.instrument_symbol} · ${draft.account_code}` : 'New deployment'}
+      subtitle={draft.id ? `${draft.status} · proposed by ${draft.proposed_by}${draft.activated_by ? ` · activated by ${draft.activated_by}` : ''}` : undefined} onClose={() => setDraft(null)}>
+      <div className="cfg-detail">
+      {draft.id && <div className="cfg-blockers"><h3>Readiness</h3>{draft.blockers.length ? <ul>{draft.blockers.map((b: string) => <li key={b}>{BLOCKERS[b] ?? b}</li>)}</ul> : <p className="cfg-ok">Ready to trade</p>}</div>}
+      <form className="cfg-form" onSubmit={e => { e.preventDefault(); void run(() => draft.id ? api(`config/deployments/${draft.id}`, 'PUT', { ...body(draft), version: draft.version }) : api('config/deployments', 'POST', body(draft)),
+        draft.id ? 'Saved. The deployment returns to Proposed and needs activating again.' : 'Deployment proposed. A risk approver must activate it.'); }}>
+        <fieldset className="cfg-plain" disabled={!canEdit || draft.status === 'ENDED'}>
+          <Field label="Strategy" hint={draft.id ? 'Fixed after creation' : undefined}><select aria-label="Strategy" required disabled={!!draft.id} value={draft.strategy_id} onChange={e => setDraft({ ...draft, strategy_id: e.target.value, strategy_version_id: '' })}>
+            <option value="" disabled>Select…</option>{strategies.filter(s => s.status === 'ACTIVE' || s.id === draft.strategy_id).map(s => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}</select></Field>
+          <Field label="Strategy version" hint="Only approved versions can be activated"><select aria-label="Strategy version" required value={draft.strategy_version_id} onChange={e => setDraft({ ...draft, strategy_version_id: e.target.value })}>
+            <option value="" disabled>Select…</option>{versions.filter(v => v.state !== 'RETIRED' || v.id === draft.strategy_version_id).map(v => <option key={v.id} value={v.id}>v{v.number} · {v.state} · {paramSummary(v.parameters)}</option>)}</select></Field>
+          <Field label="Instrument" hint={draft.id ? 'Fixed after creation' : undefined}><select aria-label="Instrument" required disabled={!!draft.id} value={draft.instrument_id} onChange={e => setDraft({ ...draft, instrument_id: e.target.value, data_mapping_id: '' })}>
+            <option value="" disabled>Select…</option>{refs.instruments.map(i => <option key={i.id} value={i.id}>{i.symbol} · {i.name}</option>)}</select></Field>
+          <Field label="Account (orders go here)" hint={draft.id ? 'Fixed after creation' : undefined}><select aria-label="Account" required disabled={!!draft.id} value={draft.account_id} onChange={e => setDraft({ ...draft, account_id: e.target.value })}>
+            <option value="" disabled>Select…</option>{accounts.filter(a => a.purpose !== 'MARKET_DATA').map(a => <option key={a.id} value={a.id}>{a.provider_code} · {a.connection_code} · {a.code} · {a.environment}</option>)}</select></Field>
+          <Field label="Market data from" hint="Any connection that maps this instrument for market data; it need not be the account's connection"><select aria-label="Market data from" required value={draft.data_mapping_id} onChange={e => setDraft({ ...draft, data_mapping_id: e.target.value })}>
+            <option value="" disabled>{draft.instrument_id ? (dataSources.length ? 'Select…' : 'No market-data mapping for this instrument') : 'Choose the instrument first'}</option>
+            {dataSources.map(m => <option key={m.id} value={m.id}>{m.provider_code} · {m.connection_code} · {m.broker_symbol} · {m.environment}</option>)}</select></Field>
+          <Field label="Allocation weight (%)" hint="Share of the strategy's target for this account when it is allocated across accounts"><input aria-label="Allocation weight" required type="number" min={0.01} max={100} step={0.01}
+            value={Number(draft.allocation_weight_bps) / 100} onChange={e => setDraft({ ...draft, allocation_weight_bps: Math.round(Number(e.target.value) * 100) })} /></Field>
+          <Field label="Note"><input aria-label="Note" maxLength={1000} value={draft.note ?? ''} onChange={e => setDraft({ ...draft, note: e.target.value })} /></Field>
+        </fieldset>
+        {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+        {canEdit && draft.status !== 'ENDED' && <div className="cfg-actions"><button className="primary" disabled={busy}>{draft.id ? 'Save changes' : 'Propose deployment'}</button>
+          {draft.id && draft.status === 'PROPOSED' && <button type="button" className="danger" disabled={busy} onClick={() => { if (window.confirm('Delete this proposed deployment?')) void run(async () => { await api(`config/deployments/${draft.id}?version=${draft.version}`, 'DELETE'); setDraft(null); }, 'Deleted.'); }}>Delete</button>}</div>}
+      </form>
+      {draft.id && draft.status !== 'ENDED' && canStop && <div className="cfg-credential" aria-label="Deployment status">
+        <h3>Change status</h3>
+        <Field label="Reason (recorded in audit log)"><input aria-label="Status reason" minLength={5} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></Field>
+        <div className="cfg-actions">
+          {canApprove && ['PROPOSED', 'PAUSED'].includes(draft.status) && transition('activate', 'Activate', 'primary')}
+          {draft.status === 'ACTIVE' && transition('pause', 'Pause')}
+          {transition('end', 'End', 'danger')}
+        </div>
+        {!canApprove && ['PROPOSED', 'PAUSED'].includes(draft.status) && <small>Activation needs the Risk approver role{draft.environment === 'LIVE' ? ', and on LIVE a different person from the proposer' : ''}.</small>}
+      </div>}
+      </div>
+    </FloatingWindow>}
+  </div>;
+}
+
 /* ---------- users and passwords ---------- */
 
 /** A session from an older backend (no roles) is treated as signed out. */
@@ -629,6 +828,8 @@ export default function Configuration() {
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {current.id === 'controls' ? <OrderSending changed={() => void loadRefs()} roles={user.roles} /> : current.id === 'audit' ? <AuditLog />
         : current.id === 'users' ? <Users me={user} />
+        : current.id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
+        : current.id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />
         : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={user.roles.includes('TRADING_OPS')} />}
     </section>
   </div>;
