@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <Target Name="RequireVendorSdk" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(Mt5SdkPath)')" Text="Set Mt5SdkPath to the vendor-supplied mt5api.dll. No SDK is bundled." />
+  </Target>
+  <ItemGroup>
+    <Reference Include="mt5api"><HintPath>$(Mt5SdkPath)</HintPath></Reference>
+  </ItemGroup>
+</Project>

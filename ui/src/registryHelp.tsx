@@ -4,7 +4,7 @@ export const explanations:Record<string,string> = {
  providers:'Who supplies access: a broker, exchange or data company. Register an organisation once, then add its connections.',
  connections:'A named access configuration belonging to one provider. Data, execution or both describes intended use, not a live session.',
  'connector-profiles':'How a connection will work: platform/API family, runtime, environment and server. One profile belongs to one connection.',
- accounts:'The trading account identifier issued by the provider. Multiple accounts may belong to a connection. Each simultaneous MetaTrader account will need its own bound terminal session.',
+ accounts:'The trading account identifier issued by the provider. Multiple accounts may belong to a connection. Use Broker accounts for the simplified MT5 account form. Direct connections do not require a user-managed terminal per account.',
  instruments:'The internal instrument catalogue. Provider-specific symbols are recorded separately in Symbol mappings.',
  mappings:'Links a provider symbol on one connection to an internal instrument. Similar symbol names do not prove identical contract specifications.',
 };
@@ -22,7 +22,7 @@ const help:Record<string,string> = {
  runtime:'Where the connector runs. Windows terminal and Ubuntu/Wine terminal may be on another computer/IP. SERVER_API means a backend API adapter.',
  server_name:'Exact broker server name shown in MetaTrader, e.g. Broker-Demo. This is NOT the COREI VPS address or the address of your terminal computer.',
  terminal_host:'Inventory label for the computer running MetaTrader, e.g. trading-pc-01 or a hostname/IP. Not a routing endpoint or proof of ownership; no inbound port is opened.',
- terminal_instance:'Unique label you assign to this terminal installation, e.g. mt5-demo-01. Separate simultaneous accounts require separate bound instances. No runtime is created here.',
+ terminal_instance:'Unique label you assign to this terminal installation, e.g. mt5-demo-01. This field applies only to the optional terminal EA bridge. No runtime is created here.',
  symbol:'Internal instrument name. Example: XAUUSD. Contract type, units and venue still need verification before trading.',
  asset_class:'Product classification. Identical tickers across different product types must not be treated as the same contract.',
  description:'Optional human-readable description of the instrument. Do not include secrets.',

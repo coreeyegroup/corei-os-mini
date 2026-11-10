@@ -68,6 +68,21 @@ def unavailable(exc):
     return HTTPException(503, 'Registry database or schema unavailable. Check the server setup.')
 
 
+def guard_managed_account(db, resource, record_id):
+    filters = {
+        'accounts': 'a.id=%s',
+        'connections': 'a.connection_id=%s',
+        'connector-profiles': 'a.connection_id=(SELECT connection_id FROM corei_connector_profiles WHERE id=%s)',
+    }
+    if resource not in filters:
+        return
+    row = db.execute('SELECT EXISTS (SELECT 1 FROM corei_broker_account_settings s '
+                     'JOIN corei_accounts a ON a.id=s.account_id WHERE ' + filters[resource] + ') AS managed',
+                     (record_id,)).fetchone()
+    if row and row.get('managed') is True:
+        raise HTTPException(409, 'Manage this record from Broker accounts to preserve its saved account settings.')
+
+
 @router.get('/{resource}')
 def list_records(resource: str, response: Response, limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0), q: str = Query("", max_length=120), sort: str = "created_at", direction: Literal["asc", "desc"] = "asc"):
     table, model = resource_for(resource)
@@ -110,6 +125,7 @@ def toggle_record(resource: str, record_id: UUID, payload: Toggle):
     table, _ = resource_for(resource)
     try:
         with _connect(get_settings().database_url) as db:
+            guard_managed_account(db, resource, record_id)
             row = db.execute(sql.SQL('UPDATE {} SET enabled=%s WHERE id=%s RETURNING *').format(sql.Identifier(table)),(payload.enabled,record_id)).fetchone()
             if row is None:
                 raise HTTPException(404,'Record not found')
@@ -126,6 +142,7 @@ def replace_connector_profile(record_id: UUID, payload: ConnectorProfile):
         sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in data))
     try:
         with _connect(get_settings().database_url) as db:
+            guard_managed_account(db, 'connector-profiles', record_id)
             row = db.execute(query, (*data.values(), record_id, payload.connection_id)).fetchone()
             if row is None:
                 raise HTTPException(404, 'Profile not found for this connection; connection ownership cannot be changed.')
@@ -155,6 +172,7 @@ def update_record(resource: str, record_id: UUID, payload: dict):
         sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in data), where)
     try:
         with _connect(get_settings().database_url) as db:
+            guard_managed_account(db, resource, record_id)
             row = db.execute(query, (*data.values(), record_id, *identity.values())).fetchone()
             if row is None:
                 raise HTTPException(409, 'Record missing or identity changed. Refresh the list. Create a new record to use a different identity or parent.')
