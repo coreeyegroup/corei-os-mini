@@ -101,69 +101,114 @@ def _clean_text(value: object, limit: int) -> str | None:
     return value or None
 
 
-def parse_catalog(data: bytes) -> dict:
-    """Run the reader and validate its output. Individual bad entries are skipped and
-    counted rather than failing the whole file."""
-    if not 32 <= len(data) <= MAX_FILE:
-        raise HTTPException(422, 'Select a servers.dat file between 32 bytes and 32 MiB.')
+def _parser() -> Path:
     parser = Path(os.getenv('COREI_MT5_CATALOG_PARSER', '/opt/corei-os-mini/server-catalog/ServerCatalog'))
     if not parser.is_file():
-        raise HTTPException(503, 'Server-file reader is not installed. Run scripts/setup-broker-accounts.sh.')
+        raise HTTPException(503, 'Server reader is not installed. Run scripts/setup-broker-accounts.sh.')
+    return parser
+
+
+def _run(arguments: list[str], timeout: int) -> tuple[int, dict | None, str]:
+    """Run the reader; returns (exit code, parsed JSON or None, stderr text)."""
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        result = subprocess.run([str(_parser()), *arguments], stdout=output, stderr=errors,
+            timeout=timeout, check=False,
+            env={**os.environ, 'DOTNET_GCHeapHardLimit': '0x40000000', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1'})
+        errors.seek(0)
+        stderr = errors.read(4096).decode('utf-8', 'replace')
+        if result.returncode or output.tell() > 512 * 1024 * 1024:
+            return result.returncode, None, stderr
+        output.seek(0)
+        return 0, json.load(output), stderr
+
+
+def _validate(document: dict) -> dict:
+    """Validate reader output. Individual bad entries are skipped and counted."""
+    servers = document['servers']
+    if not isinstance(servers, list) or not 1 <= len(servers) <= MAX_SERVERS:
+        raise ValueError('Invalid server count')
+    parsed, total = [], 0
+    stats = {'skipped_servers': int(document.get('skipped_servers', 0) or 0), 'invalid_addresses': 0,
+             'servers_without_access_points': 0,
+             'unreadable_extended_records': int(document.get('unreadable_extended_records', 0) or 0)}
+    for server in servers:
+        name = _clean_text(server.get('server_name') if isinstance(server, dict) else None, 120)
+        if not name:
+            stats['skipped_servers'] += 1
+            continue
+        try:
+            details = server_details(server.get('details', {}))
+        except ValueError:
+            details = {}
+        points, seen = [], set()
+        for access in server.get('access_points') or []:
+            try:
+                host, port = endpoint(access['address'])
+            except (ValueError, KeyError, TypeError, AttributeError):
+                stats['invalid_addresses'] += 1
+                continue
+            if (host, port) in seen:
+                continue
+            seen.add((host, port))
+            points.append(dict(name=_clean_text(access.get('name'), 200) or 'Access point', host=host, port=port))
+        if not points:
+            stats['servers_without_access_points'] += 1
+        total += len(points)
+        if total > MAX_ACCESS_POINTS:
+            raise ValueError('Too many access points')
+        parsed.append(dict(server_name=name, company_name=company(details), details=details, access_points=points))
+    if not parsed:
+        raise ValueError('No servers')
+    parsed.sort(key=lambda s: s['server_name'].lower())
+    return {'servers': parsed, 'server_count': len(parsed), 'access_point_count': total,
+            'source_sha256': str(document.get('source_sha256', ''))[:64], **stats}
+
+
+def parse_catalog(data: bytes) -> dict:
+    """Every server and access point in an uploaded servers.dat."""
+    if not 32 <= len(data) <= MAX_FILE:
+        raise HTTPException(422, 'Select a servers.dat file between 32 bytes and 32 MiB.')
+    _parser()
     if not parse_slot.acquire(blocking=False):
-        raise HTTPException(429, 'Another server file is being analysed. Try again shortly.')
+        raise HTTPException(429, 'Another server lookup is running. Try again shortly.')
     try:
         with tempfile.TemporaryDirectory(prefix='corei-catalog-') as folder:
             path = Path(folder) / 'servers.dat'
             path.write_bytes(data)
-            with tempfile.TemporaryFile() as output:
-                result = subprocess.run([str(parser), str(path)], stdout=output,
-                    stderr=subprocess.DEVNULL, timeout=120, check=False,
-                    env={**os.environ, 'DOTNET_GCHeapHardLimit': '0x40000000',
-                         'DOTNET_CLI_TELEMETRY_OPTOUT': '1'})
-                if result.returncode or output.tell() > 512 * 1024 * 1024:
-                    raise ValueError('Unsupported file')
-                output.seek(0)
-                document = json.load(output)
-        servers = document['servers']
-        if not isinstance(servers, list) or not 1 <= len(servers) <= MAX_SERVERS:
-            raise ValueError('Invalid server count')
-        parsed, total = [], 0
-        stats = {'skipped_servers': int(document.get('skipped_servers', 0) or 0), 'invalid_addresses': 0,
-                 'servers_without_access_points': 0,
-                 'unreadable_extended_records': int(document.get('unreadable_extended_records', 0) or 0)}
-        for server in servers:
-            name = _clean_text(server.get('server_name') if isinstance(server, dict) else None, 120)
-            if not name:
-                stats['skipped_servers'] += 1
-                continue
-            try:
-                details = server_details(server.get('details', {}))
-            except ValueError:
-                details = {}
-            points, seen = [], set()
-            for access in server.get('access_points') or []:
-                try:
-                    host, port = endpoint(access['address'])
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    stats['invalid_addresses'] += 1
-                    continue
-                if (host, port) in seen:
-                    continue
-                seen.add((host, port))
-                points.append(dict(name=_clean_text(access.get('name'), 200) or 'Access point', host=host, port=port))
-            if not points:
-                stats['servers_without_access_points'] += 1
-            total += len(points)
-            if total > MAX_ACCESS_POINTS:
-                raise ValueError('Too many access points')
-            parsed.append(dict(server_name=name, company_name=company(details), details=details, access_points=points))
-        if not parsed:
-            raise ValueError('No servers')
-        parsed.sort(key=lambda s: s['server_name'].lower())
-        return {'servers': parsed, 'server_count': len(parsed), 'access_point_count': total,
-                'source_sha256': str(document.get('source_sha256', ''))[:64], **stats}
+            code, document, _ = _run([str(path)], 120)
+        if code or document is None:
+            raise ValueError('Unsupported file')
+        return {**_validate(document), 'source': 'servers.dat'}
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
         raise HTTPException(422, 'Cannot read this servers.dat. Use the file from the MT5 terminal: File › Open Data Folder › Config › servers.dat.') from None
+    finally:
+        parse_slot.release()
+
+
+SEARCH_TERM = re.compile(r'[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}')
+
+
+def search_directory(term: str) -> dict:
+    """Ask the MT5 broker directory (same lookup as MT5 'Open an Account') for a
+    broker's current servers and access points. Read-only; no login."""
+    term = term.strip()
+    if not SEARCH_TERM.fullmatch(term):
+        raise HTTPException(422, 'Type at least 2 letters of the broker name (letters, digits, space, dot, dash).')
+    _parser()
+    if not parse_slot.acquire(blocking=False):
+        raise HTTPException(429, 'Another server lookup is running. Try again shortly.')
+    try:
+        code, document, stderr = _run(['--search', term], 100)
+        if code == 3:
+            raise HTTPException(404, f'The broker directory has no servers for “{term}”. Try a shorter or different name.')
+        if code or document is None:
+            raise HTTPException(502, 'The broker directory could not be reached from this server. '
+                                     'Check outbound internet access, or use a servers.dat file instead.')
+        return {**_validate(document), 'source': 'broker-directory', 'query': term}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, 'The broker directory did not answer in time. Try again.') from None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise HTTPException(502, 'The broker directory returned an answer COREI cannot read.') from None
     finally:
         parse_slot.release()
 

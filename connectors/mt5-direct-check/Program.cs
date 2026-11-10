@@ -13,10 +13,15 @@ using mtapi.mt5;
 // --inspect prints counts and the field structure of the access records (with sample
 // values) so an unknown newer servers.dat layout can be decoded exactly. servers.dat
 // holds public broker server lists only; no credentials are read or printed.
+// --search <broker> asks the broker directory (the SDK's Broker.Search / SearchMQ, the
+// same lookup as MT5 "Open an Account") and prints the result in the same shape.
+// --describe-search prints the SDK's search method signatures and result shapes.
 var inspect = args.Length == 2 && args[0] == "--inspect";
+if (args.Length == 2 && args[0] == "--search") return Search(args[1]);
+if (args.Length == 1 && args[0] == "--describe-search") return DescribeSearch();
 if (args.Length != 1 && !inspect)
 {
-    Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat>");
+    Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat> | --search <broker> | --describe-search");
     return 2;
 }
 if (inspect) return Inspect(args[1]);
@@ -264,6 +269,170 @@ static object? Dump(object? value, int depth)
     return result;
 }
 
+
+// ---------- --search: online broker directory ----------
+
+static Type? BrokerType() => typeof(MT5API).Assembly.GetType("mtapi.mt5.Broker");
+
+static int DescribeSearch()
+{
+    var broker = BrokerType();
+    if (broker is null) { Console.WriteLine("{\"broker_type\":null}"); return 1; }
+    var methods = broker.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+        .Select(m => new
+        {
+            name = m.Name,
+            is_static = m.IsStatic,
+            parameters = m.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}{(p.HasDefaultValue ? " = " + p.DefaultValue : "")}").ToArray(),
+            returns = Shape(Unwrap(m.ReturnType), 0),
+        }).ToArray();
+    var constructors = broker.GetConstructors().Select(c => string.Join(", ", c.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))).ToArray();
+    Console.WriteLine(JsonSerializer.Serialize(new { sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(), broker_type = broker.FullName, constructors, methods },
+        new JsonSerializerOptions { WriteIndented = true }));
+    return 0;
+}
+
+static Type Unwrap(Type t) => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Task<>) ? t.GetGenericArguments()[0] : t;
+
+static int Search(string term)
+{
+    term = term.Trim();
+    if (!SearchTerm().IsMatch(term)) { Console.Error.WriteLine("SEARCH_TERM_INVALID"); return 2; }
+    var broker = BrokerType();
+    if (broker is null) { Console.Error.WriteLine("SEARCH_NOT_SUPPORTED_BY_SDK"); return 4; }
+    var servers = new Dictionary<string, (string? Company, Dictionary<string, object> Details, List<(string Name, string Address)> Points)>(StringComparer.OrdinalIgnoreCase);
+    var errors = new List<string>();
+    int calls = 0;
+    // Both directories are asked and merged: SearchMQ (MetaQuotes) and Search.
+    foreach (var name in new[] { "SearchMQ", "Search", "SearchMQAsync", "SearchAsync" })
+    {
+        if (name.EndsWith("Async") && calls > 0) break;  // the sync versions already answered
+        foreach (var method in broker.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance).Where(m => m.Name == name))
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+            var arguments = Arguments(method.GetParameters(), term, cancel.Token);
+            if (arguments is null) continue;
+            try
+            {
+                object? target = null;
+                if (!method.IsStatic && (target = TryCreate(broker)) is null) continue;
+                var result = method.Invoke(target, arguments);
+                if (result is Task task)
+                {
+                    if (!task.Wait(TimeSpan.FromSeconds(45))) throw new TimeoutException();
+                    result = task.GetType().GetProperty("Result")?.GetValue(task);
+                }
+                calls++;
+                Collect(result, null, servers, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
+                break;  // one working overload per method name
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException { InnerException: { } i } ? i : ex;
+                if (inner is AggregateException { InnerException: { } a }) inner = a;
+                errors.Add($"{name}: {inner.GetType().Name}: {Truncate(inner.Message, 200)}");
+            }
+        }
+    }
+    foreach (var e in errors) Console.Error.WriteLine("SEARCH_CALL_FAILED " + e);
+    if (calls == 0) { Console.Error.WriteLine("SEARCH_UNAVAILABLE"); return 5; }
+    var rows = servers.Where(s => s.Value.Points.Count > 0 || s.Value.Company is not null).Select(s =>
+    {
+        var points = s.Value.Points.Where(a => Endpoint().IsMatch(a.Address.Trim())).DistinctBy(a => a.Address.Trim().ToLowerInvariant())
+            .Select(a => new { name = a.Name, address = a.Address.Trim() }).ToArray();
+        var details = s.Value.Details.Where(d => !(d.Value is string v && string.Equals(v, s.Key, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(d => d.Key, d => d.Value);
+        if (s.Value.Company is not null && !details.ContainsKey("CompanyName")) details["CompanyName"] = s.Value.Company;
+        return new { server_name = s.Key, details, access_points = points };
+    }).Take(100_000).ToArray();
+    if (rows.Length == 0) { Console.Error.WriteLine("SEARCH_NO_RESULTS"); return 3; }
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        status = "SEARCHED_NOT_CONNECTED",
+        source = "broker-directory",
+        query = term,
+        sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(),
+        server_count = rows.Length,
+        access_point_count = rows.Sum(r => r.access_points.Length),
+        skipped_servers = 0,
+        unreadable_extended_records = 0,
+        execution_available = false,
+        servers = rows
+    }));
+    return 0;
+}
+
+static string Truncate(string s, int n) => s.Length <= n ? s : s[..n];
+
+static object? TryCreate(Type type)
+{
+    try { return type.GetConstructor(Type.EmptyTypes) is null ? null : Activator.CreateInstance(type); } catch (Exception) { return null; }
+}
+
+// Fill a search method's parameters: the first string is the broker name; anything
+// else must have a default or be an obvious limit, flag or cancellation token.
+static object?[]? Arguments(ParameterInfo[] parameters, string term, CancellationToken token)
+{
+    var values = new object?[parameters.Length];
+    var termUsed = false;
+    for (var i = 0; i < parameters.Length; i++)
+    {
+        var p = parameters[i]; var t = p.ParameterType; var n = (p.Name ?? "").ToLowerInvariant();
+        if (t == typeof(string) && !termUsed) { values[i] = term; termUsed = true; }
+        else if (t == typeof(CancellationToken)) values[i] = token;
+        else if (p.HasDefaultValue) values[i] = p.DefaultValue;
+        else if (t == typeof(bool)) values[i] = false;
+        else if (t == typeof(TimeSpan)) values[i] = TimeSpan.FromSeconds(30);
+        else if ((t == typeof(int) || t == typeof(long)) && n.Contains("timeout")) values[i] = Convert.ChangeType(n.Contains("sec") ? 30 : 30_000, t);
+        else if ((t == typeof(int) || t == typeof(long)) && (n.Contains("limit") || n.Contains("count") || n.Contains("max"))) values[i] = Convert.ChangeType(1000, t);
+        else return null;
+    }
+    return termUsed ? values : null;
+}
+
+static List<(string Name, object? Value)> Members(object value)
+{
+    var type = value.GetType();
+    var list = new List<(string, object?)>();
+    foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)) { try { list.Add((f.Name, f.GetValue(value))); } catch (Exception) { } }
+    foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.CanRead && p.GetIndexParameters().Length == 0)) { try { list.Add((p.Name, p.GetValue(value))); } catch (Exception) { } }
+    return list;
+}
+
+// Walk the search result: a record with a name and access members is a server; a
+// company/companyName string on an enclosing record names its company.
+static void Collect(object? value, string? company, Dictionary<string, (string? Company, Dictionary<string, object> Details, List<(string Name, string Address)> Points)> servers, int depth, HashSet<object> seen)
+{
+    if (value is null || depth > 8 || servers.Count > 100_000 || value is string) return;
+    var type = value.GetType();
+    if (type.IsPrimitive || type.IsEnum || value is decimal || value is byte[] || !seen.Add(value)) return;
+    if (value is IEnumerable items) { foreach (var item in items) Collect(item, company, servers, depth + 1, seen); return; }
+    var members = Members(value);
+    foreach (var (n, v) in members)
+        if (v is string s && !string.IsNullOrWhiteSpace(s) && n.ToLowerInvariant() is "company" or "companyname" or "company_name") company = s.Trim();
+    var infoEx = members.FirstOrDefault(m => m.Name == "ServerInfoEx").Value;
+    var info = members.FirstOrDefault(m => m.Name == "ServerInfo").Value;
+    string? serverName = (infoEx is not null ? Members(infoEx).FirstOrDefault(m => m.Name == "ServerName").Value as string : null)
+        ?? (info is not null ? Members(info).FirstOrDefault(m => m.Name == "ServerName").Value as string : null);
+    var access = members.Where(m => m.Name.ToLowerInvariant().Contains("access")).ToList();
+    serverName ??= access.Count > 0 ? members.FirstOrDefault(m => m.Name.ToLowerInvariant() is "name" or "servername" or "server" && m.Value is string s2 && !Endpoint().IsMatch(s2.Trim())).Value as string : null;
+    if (!string.IsNullOrWhiteSpace(serverName) && access.Count > 0)
+    {
+        serverName = serverName.Trim();
+        var found = new List<(string Name, string Address)>();
+        foreach (var (_, v) in access) FindEndpoints(v, "Access point", found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
+        if (found.Count == 0)
+            foreach (var src in new[] { infoEx, info })
+                if (src is not null && Members(src).FirstOrDefault(m => m.Name == "Address").Value is string addr && Endpoint().IsMatch(addr.Trim())) found.Add(("Primary", addr.Trim()));
+        if (!servers.TryGetValue(serverName, out var entry))
+            servers[serverName] = entry = (company, Describe(infoEx, info, value), new List<(string, string)>());
+        entry.Points.AddRange(found);
+        if (entry.Company is null && company is not null) servers[serverName] = (company, entry.Details, entry.Points);
+        return;
+    }
+    foreach (var (_, v) in members) Collect(v, company, servers, depth + 1, seen);
+}
+
 partial class Program
 {
     [GeneratedRegex(@"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252}|[0-9A-Fa-f:]+:[0-9A-Fa-f:]+):\d{1,5}$")]
@@ -272,4 +441,8 @@ partial class Program
     // A bare host: IPv4, IPv6 or a dotted hostname (no port).
     [GeneratedRegex(@"^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]*:[0-9A-Fa-f:.]+|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+)$")]
     private static partial Regex Host();
+
+    // Broker name as typed in MT5's search: letters, digits, space, dot, dash, underscore.
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$")]
+    private static partial Regex SearchTerm();
 }

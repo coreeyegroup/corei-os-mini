@@ -22,6 +22,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[]};
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
+ const searched=[];
  const requests=[];let n=0;
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
@@ -60,6 +61,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
        {server_name:'Marketmates-Live',company_name:'Marketmates Ltd',details:{CompanyName:'Marketmates Ltd'},access_points:[{name:'Access Point 1',host:'142.91.121.204',port:1950},{name:'Access Point 2',host:'142.91.121.204',port:443},{name:'Access Point 3',host:'5.181.78.117',port:1950}]},
        {server_name:'MetaQuotes-Demo',company_name:'MetaQuotes Ltd.',details:{CompanyName:'MetaQuotes Ltd.',TimeZone:120,DST:1,Description:'MetaTrader 5 demo server operated by MetaQuotes Ltd. for testing and evaluation'},
         access_points:Array.from({length:50},(_,i)=>({name:'Access Point '+(i+1),host:i<25?'78.140.180.'+(i+1):'2a00:1178:1:60::'+(i+1).toString(16),port:i%2?1950:443}))}];
+     if(parts[1]==='broker-search'){const query=JSON.parse(options.body).query;searched.push(query);
+       return ok({catalog_id:'cat1',source:'broker-directory',query,server_count:servers.length,access_point_count:56,skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:0});}
      if(method==='POST')return ok({catalog_id:'cat1',server_count:servers.length,access_point_count:servers.reduce((n,s)=>n+s.access_points.length,0),skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:2});
      if(u.pathname.endsWith('/server'))return ok(servers.find(s=>s.server_name===u.searchParams.get('name')));
      const b=(u.searchParams.get('broker')||'').toLowerCase().split(/\s+/).filter(Boolean),q=(u.searchParams.get('q')||'').toLowerCase().split(/\s+/).filter(Boolean);
@@ -199,6 +202,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(button('Add access point').disabled,false);
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();assert.equal($('.fw'),null);
  console.log('PASS: 50 access points accepted; closing the window with confirmation.');
+ // Online broker directory: same analyser, live results.
+ button('New connection').click();await tick();
+ assert.equal(button('Find servers').disabled,true);
+ fill(byLabel('Find broker'),'VTMarkets');await tick();
+ button('Find servers').click();await tick();await tick();await new Promise(r=>setTimeout(r,300));
+ assert.deepEqual(searched,['VTMarkets']);
+ assert.match($('.cfg-picker').textContent,/Broker directory · “VTMarkets” · 4 servers/);
+ button('Cancel').click();await tick();assert.equal($('.cfg-picker'),null);
+ w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();
+ console.log('PASS: broker directory search opens the same server picker.');
 
  // Account: readiness shown; password saved write-only
  nav('Accounts').click();await tick();await tick();

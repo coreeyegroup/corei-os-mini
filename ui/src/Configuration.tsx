@@ -196,7 +196,7 @@ function ServerFileAnalyser({ catalog, use, close }: { catalog: Row; use: (serve
     catalog.servers_without_access_points && `${catalog.servers_without_access_points} servers have no readable access point`,
     catalog.unreadable_extended_records && `${catalog.unreadable_extended_records} extended access records could not be read`].filter(Boolean);
   return <div className="cfg-picker" aria-label="Analyse servers.dat">
-    <div className="cfg-points-head"><strong>servers.dat · {catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} access points</strong>
+    <div className="cfg-points-head"><strong>{catalog.source === 'broker-directory' ? `Broker directory · “${catalog.query}”` : 'servers.dat'} · {catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} access points</strong>
       <button type="button" onClick={close}>Cancel</button></div>
     {warnings.length > 0 && <small className="cfg-note">{warnings.join(' · ')}.</small>}
     <div className="cfg-pair">
@@ -269,9 +269,16 @@ function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => vo
   const enabled = points.filter(p => p.enabled !== false).length;
   const [showPoints, setShowPoints] = useState(() => points.some(p => !p.host));
   const hasDetails = !!settings.company_name || Object.keys(settings.server_details ?? {}).length > 0;
+  const [term, setTerm] = useState('');
   async function read(file: File) {
     setBusy(true); setError('');
     try { setCatalog(await api('config/mt5/server-file', 'POST', undefined, file)); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  async function lookUp() {
+    if (term.trim().length < 2) return;
+    setBusy(true); setError('');
+    try { setCatalog(await api('config/mt5/broker-search', 'POST', { query: term.trim() })); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   function use(server: Row, chosen: Row[]) {
@@ -286,9 +293,14 @@ function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => vo
     <legend>MT5 server</legend>
     {catalog ? <ServerFileAnalyser catalog={catalog} use={use} close={() => setCatalog(null)} /> : <>
       <div className="cfg-server-pick">
-        <label className={`cfg-filebutton${settings.server_name ? '' : ' primary'}`}>{busy ? 'Reading…' : settings.server_name ? 'Change server…' : 'Choose server from servers.dat…'}
-          <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></label>
-        <small className="cfg-note">From the MT5 terminal: File › Open Data Folder › Config › servers.dat</small>
+        <div className="cfg-search-row">
+          <input aria-label="Find broker" placeholder="Broker name, e.g. VTMarkets" value={term} maxLength={64}
+            onChange={e => setTerm(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void lookUp(); } }} />
+          <button type="button" className={settings.server_name ? '' : 'primary'} disabled={busy || term.trim().length < 2} onClick={() => void lookUp()}>{busy ? 'Searching…' : 'Find servers'}</button>
+          <label className="cfg-filebutton">Open servers.dat…
+            <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></label>
+        </div>
+        <small className="cfg-note">Find servers asks the MT5 broker directory for the broker's current servers and access points. Or open servers.dat from an MT5 terminal (File › Open Data Folder › Config).</small>
       </div>
       {error && <p role="alert" className="cfg-error">{error}</p>}
       <Field label="Broker server name" hint="Exactly as in MT5, e.g. ICMarketsSC-Demo">

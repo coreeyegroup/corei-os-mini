@@ -10,12 +10,12 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from . import config_store as store
 from . import broker_catalog as catalogs
-from .broker_catalog import MAX_FILE, parse_catalog
+from .broker_catalog import MAX_FILE, parse_catalog, search_directory
 from .config_models import CredentialEnvelope, ExecutionControlIn, VersionIn
 from .credentials import storage_ready
 from .operator_auth import Principal, current_user, require_operator, require_role
@@ -102,6 +102,22 @@ async def analyse_mt5_server_file(request: Request, response: Response, user: st
     catalog_id, expires = catalogs.remember(user, parsed)
     return {'catalog_id': catalog_id, 'expires_in_seconds': int(expires - time.time()),
             **{k: v for k, v in parsed.items() if k != 'servers'}}
+
+
+class BrokerSearchIn(BaseModel):
+    query: str = Field(min_length=2, max_length=64)
+
+
+@router.post('/mt5/broker-search')
+async def search_mt5_broker_directory(body: BrokerSearchIn, response: Response, user: str = Depends(editor)):
+    """Current servers and access points of a broker from the MT5 broker directory
+    (live, like MT5 'Open an Account' and Westernpips Browse). Searched with the same
+    filters as an analysed servers.dat; nothing is stored until a connection is saved."""
+    _no_store(response)
+    found = await run_in_threadpool(search_directory, body.query)
+    catalog_id, expires = catalogs.remember(user, found)
+    return {'catalog_id': catalog_id, 'expires_in_seconds': int(expires - time.time()),
+            **{k: v for k, v in found.items() if k != 'servers'}}
 
 
 @router.get('/mt5/server-file/{catalog_id}/access-points')

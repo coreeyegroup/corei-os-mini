@@ -159,3 +159,5 @@
 .cfg-points-tools input { flex: 1; min-width: 160px; }
 .cfg-table.compact td.cfg-port input { width: 80px; min-width: 70px; }
 .cfg-muted-cell { color: var(--muted); }
+.cfg-search-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; width: 100%; }
+.cfg-search-row input { flex: 1; min-width: 180px; }

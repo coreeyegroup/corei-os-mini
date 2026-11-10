@@ -92,6 +92,33 @@ class ModelTests(unittest.TestCase):
                                            {'name': 'Access Point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950},
                                            {'name': 'Unbracketed', 'host': '2001:db8::50', 'port': 443}]})
 
+    def test_online_broker_directory_search(self):
+        from corei_os_mini import broker_catalog
+        found = {'servers': [{'server_name': 'VTMarkets-Live 3', 'details': {'CompanyName': 'Vantage Global Prime Pty Ltd'},
+                              'access_points': [{'name': 'Access point', 'address': 'ad2b63bfc27a58ec7.awsglobalaccelerator.com:700'},
+                                                {'name': 'Access point', 'address': '16.163.13.43:443'}]}]}
+        with tempfile.TemporaryDirectory() as folder:
+            parser = Path(folder) / 'reader'
+            parser.write_text('#!/bin/sh\n[ "$1" = "--search" ] || exit 9\ncase "$2" in\n'
+                              f"  VTMarkets) cat <<'JSON'\n{json.dumps(found)}\nJSON\n;;\n"
+                              '  Nobody) echo SEARCH_NO_RESULTS >&2; exit 3;;\n  *) exit 5;;\nesac\n')
+            parser.chmod(0o755)
+            app.dependency_overrides[current_user] = lambda: EVERYONE
+            try:
+                with patch.dict(os.environ, {'COREI_MT5_CATALOG_PARSER': str(parser)}), TestClient(app, headers=HEADERS) as client:
+                    result = client.post('/api/config/mt5/broker-search', json={'query': ' VTMarkets '})
+                    self.assertEqual(result.status_code, 200, result.text)
+                    body = result.json()
+                    self.assertEqual((body['source'], body['query'], body['server_count'], body['access_point_count']), ('broker-directory', 'VTMarkets', 1, 2))
+                    rows = client.get(f"/api/config/mt5/server-file/{body['catalog_id']}/access-points", params={'broker': 'vantage'}).json()
+                    self.assertEqual([(r['host'], r['port']) for r in rows['items']], [('ad2b63bfc27a58ec7.awsglobalaccelerator.com', 700), ('16.163.13.43', 443)])
+                    self.assertEqual(client.post('/api/config/mt5/broker-search', json={'query': 'Nobody'}).status_code, 404)
+                    self.assertEqual(client.post('/api/config/mt5/broker-search', json={'query': 'Offline'}).status_code, 502)
+                    self.assertEqual(client.post('/api/config/mt5/broker-search', json={'query': ';rm -rf'}).status_code, 422)
+            finally:
+                app.dependency_overrides.clear()
+                broker_catalog._catalogs.clear()
+
     def test_server_file_search_across_all_brokers(self):
         from corei_os_mini import broker_catalog
         servers = [{'server_name': name, 'details': {'CompanyName': company}, 'access_points': [{'name': f'AP {i}', 'address': a} for i, a in enumerate(addrs, 1)]}
