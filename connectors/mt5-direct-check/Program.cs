@@ -10,11 +10,16 @@ using mtapi.mt5;
 // server records (company, time zone, and whatever else the file holds), and the
 // named access points. Fields are read by reflection so nothing the file carries is
 // dropped because of an assumed field name.
-if (args.Length != 1)
+// --inspect prints counts and the field structure of the access records (with sample
+// values) so an unknown newer servers.dat layout can be decoded exactly. servers.dat
+// holds public broker server lists only; no credentials are read or printed.
+var inspect = args.Length == 2 && args[0] == "--inspect";
+if (args.Length != 1 && !inspect)
 {
-    Console.Error.WriteLine("Usage: ServerCatalog <servers.dat>");
+    Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat>");
     return 2;
 }
+if (inspect) return Inspect(args[1]);
 
 try
 {
@@ -143,6 +148,26 @@ static void FindEndpoints(object? value, string label, List<(string Name, string
         if (memberName is not ("ServerName" or "Name")) continue;
         try { if (read() is string s && !string.IsNullOrWhiteSpace(s) && !Endpoint().IsMatch(s.Trim())) own = s.Trim(); } catch (Exception) { }
     }
+    // Records that keep host and port in separate members (e.g. Address + Port).
+    string? host = null; long? port = null; int hosts = 0, ports = 0;
+    foreach (var (memberName, read) in members)
+    {
+        object? v; try { v = read(); } catch (Exception) { continue; }
+        var lower = memberName.ToLowerInvariant();
+        if (lower.Contains("port") && v is not null && !(v is string) && long.TryParse(Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture), out var p) && p is >= 1 and <= 65535)
+        { port = p; ports++; continue; }
+        if (!(lower.Contains("addr") || lower.Contains("host") || lower.Contains("ip") || lower.Contains("server"))) continue;
+        var candidate = v switch
+        {
+            string hostText when Host().IsMatch(hostText.Trim()) => hostText.Trim(),
+            byte[] { Length: 4 or 16 } raw => new System.Net.IPAddress(raw).ToString(),
+            System.Net.IPAddress ip => ip.ToString(),
+            _ => null,
+        };
+        if (candidate is not null) { host = candidate; hosts++; }
+    }
+    if (hosts == 1 && ports == 1 && host is not null)
+        found.Add((own, host.Contains(':') ? $"[{host}]:{port}" : $"{host}:{port}"));
     foreach (var (_, read) in members)
     {
         object? child;
@@ -151,8 +176,100 @@ static void FindEndpoints(object? value, string label, List<(string Name, string
     }
 }
 
+
+// ---------- --inspect ----------
+
+static int Inspect(string path)
+{
+    try
+    {
+        var bytes = File.ReadAllBytes(path);
+        var servers = MT5API.LoadServersDat(bytes) ?? [];
+        int withAccesses = 0, withEx = 0, fromAccesses = 0, fromEx = 0, exRecords = 0, exUnread = 0, none = 0;
+        var noEndpoint = new List<string>();
+        object? firstEx = null;
+        var exSamples = new List<object>();
+        foreach (var server in servers)
+        {
+            var name = server?.ServerInfoEx?.ServerName ?? server?.ServerInfo?.ServerName ?? "(no name)";
+            int a = 0, e = 0;
+            foreach (var access in server?.Accesses ?? []) foreach (var address in access?.Addresses ?? []) if (!string.IsNullOrWhiteSpace(address?.Address)) a++;
+            foreach (var accessEx in server?.AccessesEx ?? [])
+            {
+                exRecords++;
+                firstEx ??= accessEx;
+                var found = new List<(string Name, string Address)>();
+                FindEndpoints(accessEx, "Access point", found, 0, new HashSet<object>(ReferenceEqualityComparer.Instance));
+                if (found.Count == 0) { exUnread++; if (exSamples.Count < 3) exSamples.Add(new { server = name, record = Dump(accessEx, 0) }); }
+                e += found.Count;
+            }
+            if (a > 0) withAccesses++;
+            if (server?.AccessesEx is { Length: > 0 }) withEx++;
+            fromAccesses += a; fromEx += e;
+            if (a + e == 0) { none++; if (noEndpoint.Count < 25) noEndpoint.Add(name); }
+        }
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(),
+            file_bytes = bytes.Length,
+            server_count = servers.Length,
+            servers_with_accesses = withAccesses,
+            servers_with_accesses_ex = withEx,
+            endpoints_from_accesses = fromAccesses,
+            endpoints_from_accesses_ex = fromEx,
+            accesses_ex_records = exRecords,
+            accesses_ex_records_unread = exUnread,
+            servers_without_any_endpoint = none,
+            examples_without_endpoint = noEndpoint,
+            server_record_shape = Shape(servers.FirstOrDefault()?.GetType(), 0),
+            accesses_ex_shape = Shape(firstEx?.GetType(), 0),
+            unread_accesses_ex_samples = exSamples,
+        }, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine("INSPECT_FAILED: " + ex.GetType().Name);
+        return 1;
+    }
+}
+
+static object? Shape(Type? type, int depth)
+{
+    if (type is null) return null;
+    if (depth > 4 || type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal)) return type.Name;
+    var element = type.IsArray ? type.GetElementType() : null;
+    if (element is not null) return new Dictionary<string, object?> { ["array_of"] = Shape(element, depth + 1) };
+    var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance).Select(f => (f.Name, Type: f.FieldType));
+    var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.GetIndexParameters().Length == 0).Select(p => (p.Name, Type: p.PropertyType));
+    return new Dictionary<string, object?> { ["type"] = type.FullName, ["members"] = fields.Concat(props).ToDictionary(m => m.Name, m => Shape(m.Type, depth + 1)) };
+}
+
+static object? Dump(object? value, int depth)
+{
+    switch (value)
+    {
+        case null: return null;
+        case string s: return s.Length > 200 ? s[..200] : s;
+        case byte[] b: return "bytes[" + b.Length + "] " + Convert.ToHexString(b.AsSpan(0, Math.Min(b.Length, 48)));
+        case Enum e: return e.ToString();
+    }
+    var type = value.GetType();
+    if (type.IsPrimitive || value is decimal) return value;
+    if (depth > 4) return type.Name;
+    if (value is IEnumerable items) return items.Cast<object?>().Take(5).Select(i => Dump(i, depth + 1)).ToArray();
+    var result = new Dictionary<string, object?>();
+    foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Instance)) { try { result[f.Name] = Dump(f.GetValue(value), depth + 1); } catch (Exception) { } }
+    foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.GetIndexParameters().Length == 0)) { try { result[p.Name] = Dump(p.GetValue(value), depth + 1); } catch (Exception) { } }
+    return result;
+}
+
 partial class Program
 {
     [GeneratedRegex(@"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252}|[0-9A-Fa-f:]+:[0-9A-Fa-f:]+):\d{1,5}$")]
     private static partial Regex Endpoint();
+
+    // A bare host: IPv4, IPv6 or a dotted hostname (no port).
+    [GeneratedRegex(@"^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]*:[0-9A-Fa-f:.]+|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+)$")]
+    private static partial Regex Host();
 }

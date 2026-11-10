@@ -206,7 +206,9 @@ function ServerFileAnalyser({ catalog, use, close }: { catalog: Row; use: (serve
     <small className="cfg-note">{loading ? 'Searching…' : `${total.toLocaleString()} access points on ${servers.toLocaleString()} servers match`}{picked.length ? ` · ${picked.length} selected on ${picked[0].server_name}` : ''}</small>
     {error && <p role="alert" className="cfg-error">{error}</p>}{note && <p role="status" className="cfg-note">{note}</p>}
     <div className="cfg-points cfg-analyser"><table className="cfg-table compact"><thead><tr><th /><th>Server (address)</th><th>Name</th><th>Company</th><th>Access point</th></tr></thead><tbody>
-      {rows.map(r => { const on = picked.some(p => key(p) === key(r)); return <tr key={key(r)} className={on ? 'selected' : ''} onClick={() => toggle(r)}>
+      {rows.map(r => { const on = picked.some(p => key(p) === key(r)); if (r.host == null) return <tr key={key(r)} className="cfg-off">
+        <td /><td className="cfg-note">no readable address</td><td>{r.server_name}</td><td>{r.company_name ?? '—'}</td><td>{r.name}</td></tr>;
+        return <tr key={key(r)} className={on ? 'selected' : ''} onClick={() => toggle(r)}>
         <td><input type="checkbox" aria-label={`Select ${r.host}:${r.port} on ${r.server_name}`} checked={on} onChange={() => toggle(r)} onClick={e => e.stopPropagation()} /></td>
         <td className="cfg-mono">{r.host.includes(':') ? `[${r.host}]` : r.host}:{r.port}</td><td>{r.server_name}</td><td>{r.company_name ?? '—'}</td><td>{r.name}</td></tr>; })}
       {!rows.length && !loading && <tr><td colSpan={5} className="cfg-note">No access point matches these filters.</td></tr>}

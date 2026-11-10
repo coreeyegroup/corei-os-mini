@@ -98,13 +98,14 @@ class ModelTests(unittest.TestCase):
                    for name, company, addrs in [('MarketEquityInc-Demo', 'Market Equity Inc.', ['192.109.15.68:443', '192.109.15.68:1950']),
                                                 ('Marketmates-Live', 'Marketmates Ltd', ['142.91.121.204:1950', '5.181.78.117:1950']),
                                                 ('MetaQuotes-Demo', 'MetaQuotes Ltd.', ['78.140.180.201:443']),
-                                                ('Other-Live', 'Market Makers LLC', ['203.0.113.9:443'])]]
+                                                ('Other-Live', 'Market Makers LLC', ['203.0.113.9:443']),
+                                                ('Empty-Broker', 'Nothing Readable Ltd', [])]]
         with tempfile.TemporaryDirectory() as folder, self.fake_reader(folder, {'servers': servers}):
             app.dependency_overrides[current_user] = lambda: EVERYONE
             try:
                 with TestClient(app, headers=HEADERS) as client:
                     analysed = client.post('/api/config/mt5/server-file', content=b'x' * 64).json()
-                    self.assertEqual((analysed['server_count'], analysed['access_point_count']), (4, 6))
+                    self.assertEqual((analysed['server_count'], analysed['access_point_count'], analysed['servers_without_access_points']), (5, 6, 1))
                     base = f"/api/config/mt5/server-file/{analysed['catalog_id']}"
                     market = client.get(base + '/access-points', params={'broker': 'market'}).json()
                     # Broker filter matches server name or company (Other-Live's company is Market Makers).
@@ -112,8 +113,10 @@ class ModelTests(unittest.TestCase):
                     self.assertEqual([i['server_name'] for i in market['items']], ['MarketEquityInc-Demo'] * 2 + ['Marketmates-Live'] * 2 + ['Other-Live'])
                     self.assertEqual(client.get(base + '/access-points', params={'broker': 'market', 'q': '1950'}).json()['total'], 3)
                     self.assertEqual(client.get(base + '/access-points', params={'broker': 'market live', 'q': '142.91'}).json()['items'][0]['port'], 1950)
+                    blank = client.get(base + '/access-points', params={'broker': 'empty'}).json()
+                    self.assertEqual((blank['total'], blank['items'][0]['host'], blank['items'][0]['server_name']), (1, None, 'Empty-Broker'))
                     page = client.get(base + '/access-points', params={'offset': 4, 'limit': 2}).json()
-                    self.assertEqual((page['total'], len(page['items'])), (6, 2))
+                    self.assertEqual((page['total'], len(page['items'])), (7, 2))
                     detail = client.get(base + '/server', params={'name': 'MetaQuotes-Demo'}).json()
                     self.assertEqual((detail['company_name'], detail['access_points'][0]['host']), ('MetaQuotes Ltd.', '78.140.180.201'))
                     # Another user cannot read this analysis; unknown ids expire cleanly.

@@ -189,6 +189,9 @@ def remember(owner: str, data: dict) -> tuple[str, float]:
         broker = f"{server['server_name']} {server.get('company_name') or ''}".lower()
         for ai, point in enumerate(server['access_points']):
             rows.append((si, ai, broker, f"{point['host']}:{point['port']} [{point['host']}]:{point['port']} {point['name']}".lower()))
+        if not server['access_points']:
+            # Listed so a gap is visible instead of the broker silently missing.
+            rows.append((si, -1, broker, 'no readable address'))
     catalog_id = secrets.token_urlsafe(16)
     expires = time.time() + CATALOG_TTL
     with _catalog_lock:
@@ -219,7 +222,8 @@ def search(catalog: Catalog, broker: str, query: str, offset: int, limit: int) -
     servers = catalog.data['servers']
     items = []
     for si, ai, _, _ in matches[offset:offset + limit]:
-        server, point = servers[si], servers[si]['access_points'][ai]
+        server = servers[si]
+        point = server['access_points'][ai] if ai >= 0 else {'name': 'No readable address in this file', 'host': None, 'port': None}
         items.append({'server_name': server['server_name'], 'company_name': server.get('company_name'), **point})
     return {'total': len(matches), 'server_matches': len({r[0] for r in matches}), 'offset': offset, 'items': items}
 
