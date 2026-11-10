@@ -12,7 +12,7 @@ class ConnectorProfile(BaseModel):
     name: Label
     connector_type: Literal['MT4_EA','MT5_EA','MT5_DIRECT','CTRADER_OPEN_API','BROKER_API','EXCHANGE_API','FIX','DATA_FEED','CUSTOM']
     adapter_key: Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')]
-    environment: Literal['PAPER','SANDBOX','LIVE']
+    environment: Literal['PAPER','SANDBOX']  # paper-only project; see sql/008
     runtime: Literal['WINDOWS_TERMINAL','UBUNTU_WINE_TERMINAL','SERVER_API']
     server_name: OptionalLabel = ''
     terminal_host: OptionalLabel = ''

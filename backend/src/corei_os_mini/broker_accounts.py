@@ -18,6 +18,7 @@ from .operator_auth import require_operator
 from .persistence import _connect, PersistenceNotConfigured
 
 router = APIRouter(prefix='/api/registry/broker-accounts', dependencies=[Depends(require_operator)])
+PAPER_ONLY = 'COREI-OS-MINI is paper-only. Live accounts cannot be added or enabled.'
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 
 
@@ -26,7 +27,8 @@ class NewAccount(BaseModel):
     name: Label
     broker: Label
     platform: Literal['MT5'] = 'MT5'
-    mode: Literal['SANDBOX', 'LIVE']
+    # Paper-only project: only broker demo/sandbox accounts may be registered.
+    mode: Literal['SANDBOX'] = 'SANDBOX'
     login: Annotated[str, StringConstraints(pattern=r'^[1-9][0-9]{0,19}$')]
     password: SecretStr = Field(min_length=1, max_length=256)
     server_name: Label
@@ -58,6 +60,8 @@ def database():
     try:
         with _connect(get_settings().database_url) as db:
             yield db
+    except psycopg.errors.CheckViolation:
+        raise HTTPException(422, PAPER_ONLY) from None
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, 'This broker-server/login account is already saved. Refresh the list instead of adding it again.') from None
     except (psycopg.Error, PersistenceNotConfigured):
@@ -144,7 +148,7 @@ def save_catalog(data, rows):
 def create_account(payload: dict, response: Response):
     response.headers['Cache-Control'] = 'no-store'
     data = validate(NewAccount, payload)
-    account_id, connection_id, secret_id = uuid4(), uuid4(), uuid4()
+    account_id, secret_id = uuid4(), uuid4()
     ciphertext = encrypted(secret_id, data.password)
     with database() as db:
         selected_endpoint(db, data.access_point_id, data.server_name)
@@ -156,11 +160,16 @@ def create_account(payload: dict, response: Response):
         provider_id = provider['id'] if provider else uuid4()
         if not provider:
             db.execute('INSERT INTO corei_providers(id,name,kind) VALUES(%s,%s,\'BROKER\')', (provider_id, data.broker))
-        db.execute('INSERT INTO corei_connections(id,provider_id,name,purpose) VALUES(%s,%s,%s,\'BOTH\')',
-                   (connection_id,provider_id,'MT5 ' + str(account_id)))
+        # One connection per broker server (blueprint 8.4): accounts on the same
+        # server share it. Login sessions stay per account inside the adapter.
+        connection_name = 'MT5 ' + data.server_name
+        db.execute('INSERT INTO corei_connections(id,provider_id,name,purpose) VALUES(%s,%s,%s,\'BOTH\') '
+                   'ON CONFLICT (provider_id,name) DO NOTHING', (uuid4(),provider_id,connection_name))
+        connection_id = db.execute('SELECT id FROM corei_connections WHERE provider_id=%s AND name=%s',
+                                   (provider_id,connection_name)).fetchone()['id']
         db.execute('INSERT INTO corei_connector_profiles(id,connection_id,name,connector_type,adapter_key,environment,runtime,server_name) '
-                   "VALUES(%s,%s,%s,'MT5_DIRECT','mt5_direct',%s,'SERVER_API',%s)",
-                   (uuid4(),connection_id,data.name,data.mode,data.server_name))
+                   "VALUES(%s,%s,%s,'MT5_DIRECT','mt5_direct',%s,'SERVER_API',%s) ON CONFLICT (connection_id) DO NOTHING",
+                   (uuid4(),connection_id,connection_name,data.mode,data.server_name))
         db.execute('INSERT INTO corei_accounts(id,connection_id,name,external_reference,mode) VALUES(%s,%s,%s,%s,%s)',
                    (account_id,connection_id,data.name,data.login,data.mode))
         db.execute('INSERT INTO corei_broker_secrets(id,ciphertext) VALUES(%s,%s)', (secret_id,ciphertext))
@@ -179,6 +188,9 @@ def edit_account(account_id: UUID, payload: dict, response: Response):
             raise HTTPException(404, 'Saved broker account not found')
         if current['version'] != data.version:
             raise HTTPException(409, 'Account was changed in another window. Refresh before editing.')
+        mode = db.execute('SELECT mode FROM corei_accounts WHERE id=%s', (account_id,)).fetchone()['mode']
+        if mode == 'LIVE' and data.enabled:
+            raise HTTPException(422, PAPER_ONLY)
         selected_endpoint(db,data.access_point_id,current['server_name'])
         if data.password is not None:
             db.execute('UPDATE corei_broker_secrets SET ciphertext=%s,updated_at=now() WHERE id=%s',

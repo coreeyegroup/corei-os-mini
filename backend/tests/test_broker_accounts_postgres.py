@@ -40,8 +40,14 @@ class BrokerPostgresTests(unittest.TestCase):
                         self.assertEqual(client.post('/api/registry/broker-accounts',json=payload).status_code,409)
                         second=client.post('/api/registry/broker-accounts',json={**payload,'name':'Account B','login':'456'})
                         self.assertEqual(second.status_code,201,second.text)
+                        other=save_catalog(b'y'*32,[dict(server_name='Broker-Demo2',name='Access 2',host='192.0.2.2',port=443)])['items']
+                        third=client.post('/api/registry/broker-accounts',json={**payload,'name':'Account C','login':'789','server_name':'Broker-Demo2','access_point_id':str(other[0]['id'])})
+                        self.assertEqual(third.status_code,201,third.text)
+                        live=client.post('/api/registry/broker-accounts',json={**payload,'login':'999','mode':'LIVE'})
+                        self.assertEqual(live.status_code,422)
                         with connect() as db:
-                            for table,count in [('corei_providers',1),('corei_connections',2),('corei_accounts',2),('corei_broker_secrets',2)]:
+                            # Same server shares one connection and profile; a second server gets its own.
+                            for table,count in [('corei_providers',1),('corei_connections',2),('corei_connector_profiles',2),('corei_accounts',3),('corei_broker_secrets',3)]:
                                 self.assertEqual(db.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'],count)
                             secret=db.execute('SELECT b.id,b.ciphertext FROM corei_broker_secrets b JOIN corei_broker_account_settings s ON s.secret_id=b.id WHERE s.account_id=%s',(a['id'],)).fetchone()
                         self.assertEqual(decrypt_password(secret['id'],bytes(secret['ciphertext'])),'secret-one')
@@ -51,11 +57,23 @@ class BrokerPostgresTests(unittest.TestCase):
                         self.assertEqual(client.put('/api/registry/broker-accounts/'+a['id'],json=update).status_code,409)
                         self.assertEqual(client.patch('/api/registry/accounts/'+a['id'],json={'enabled':True}).status_code,409)
                         listing=client.get('/api/registry/broker-accounts').json()
-                        self.assertEqual(listing['total'],2)
+                        self.assertEqual(listing['total'],3)
                         self.assertNotIn('secret-',str(listing))
                         with connect() as db:
                             new=db.execute('SELECT ciphertext FROM corei_broker_secrets WHERE id=%s',(secret['id'],)).fetchone()
                         self.assertEqual(decrypt_password(secret['id'],bytes(new['ciphertext'])),'secret-two')
+                        # Paper-only boundary holds in the database even if the API is bypassed.
+                        with connect() as db:
+                            with self.assertRaises(psycopg.errors.CheckViolation):
+                                db.execute("INSERT INTO corei_accounts(id,connection_id,name,external_reference,mode) "
+                                           "VALUES(%s,(SELECT id FROM corei_connections LIMIT 1),'x','live-1','LIVE')",(uuid4(),))
+                        with connect() as db:
+                            db.execute('ALTER TABLE corei_accounts DISABLE TRIGGER corei_accounts_paper_only')
+                            legacy=uuid4();db.execute("INSERT INTO corei_accounts(id,connection_id,name,external_reference,mode) "
+                                       "VALUES(%s,(SELECT id FROM corei_connections LIMIT 1),'legacy','live-2','LIVE')",(legacy,))
+                            db.execute('ALTER TABLE corei_accounts ENABLE TRIGGER corei_accounts_paper_only')
+                        self.assertEqual(client.patch('/api/registry/accounts/'+str(legacy),json={'enabled':True}).status_code,422)
+                        self.assertEqual(client.patch('/api/registry/accounts/'+str(legacy),json={'enabled':False}).status_code,200)
         finally:
             app.dependency_overrides.clear()
             with psycopg.connect(url,autocommit=True) as admin:

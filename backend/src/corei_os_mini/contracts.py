@@ -39,6 +39,11 @@ class AccountCandidate(BaseModel):
     account_id: Identifier
     selected: bool = False
     weight_bps: Annotated[int, Field(ge=0, le=10_000)] = 0
+    # REPLICATE only: this account's child is target * scale / 10000 (floor).
+    # Required per account so the full parent size is never copied by default.
+    replicate_scale_bps: Annotated[int, Field(ge=0, le=10_000)] = 0
+    # SELECT_ONE only: higher priority is preferred; ties break on account_id.
+    route_priority: Annotated[int, Field(ge=0, le=10_000)] = 0
     current_position_units: int
     allow_short: bool = False
     max_order_quantity_units: PositiveInt
@@ -64,20 +69,27 @@ class PaperRunRequest(BaseModel):
         if len(set(ids)) != len(ids):
             raise ValueError("account_id values must be unique")
 
-        if self.dispatch_mode in {DispatchMode.INDIVIDUAL, DispatchMode.SELECT_ONE}:
-            selected = [account for account in self.accounts if account.selected]
-            if len(selected) != 1:
-                raise ValueError("INDIVIDUAL and SELECT_ONE require exactly one selected account")
-        else:
-            if any(account.selected for account in self.accounts):
-                raise ValueError("Group dispatch modes do not use the selected-account flag")
-            if self.dispatch_mode == DispatchMode.ALLOCATE:
-                if any(account.weight_bps == 0 for account in self.accounts):
-                    raise ValueError("ALLOCATE requires a positive weight for every account")
-                if sum(account.weight_bps for account in self.accounts) != 10_000:
-                    raise ValueError("ALLOCATE account weights must sum to 10000 basis points")
-            elif any(account.weight_bps != 0 for account in self.accounts):
-                raise ValueError("Weights are only valid for ALLOCATE mode")
+        mode = self.dispatch_mode
+        if mode != DispatchMode.INDIVIDUAL and any(a.selected for a in self.accounts):
+            raise ValueError("Only INDIVIDUAL uses the selected-account flag")
+        if mode != DispatchMode.ALLOCATE and any(a.weight_bps != 0 for a in self.accounts):
+            raise ValueError("weight_bps is only valid for ALLOCATE mode")
+        if mode != DispatchMode.REPLICATE and any(a.replicate_scale_bps != 0 for a in self.accounts):
+            raise ValueError("replicate_scale_bps is only valid for REPLICATE mode")
+        if mode != DispatchMode.SELECT_ONE and any(a.route_priority != 0 for a in self.accounts):
+            raise ValueError("route_priority is only valid for SELECT_ONE mode")
+
+        if mode == DispatchMode.INDIVIDUAL:
+            if len(self.accounts) != 1 or not self.accounts[0].selected:
+                raise ValueError("INDIVIDUAL requires exactly one account, marked selected")
+        elif mode == DispatchMode.ALLOCATE:
+            if any(a.weight_bps == 0 for a in self.accounts):
+                raise ValueError("ALLOCATE requires a positive weight for every account")
+            if sum(a.weight_bps for a in self.accounts) != 10_000:
+                raise ValueError("ALLOCATE account weights must sum to 10000 basis points")
+        elif mode == DispatchMode.REPLICATE:
+            if any(a.replicate_scale_bps == 0 for a in self.accounts):
+                raise ValueError("REPLICATE requires an explicit replicate_scale_bps for every account")
         return self
 
 
@@ -103,5 +115,6 @@ class PaperRunResult(BaseModel):
     decision_reason: str
     decision_price_units: int
     allocation_mode: DispatchMode
+    route_policy: str | None = None
     children: list[ChildResult]
     note: str = "Synthetic input and paper fill; not a broker execution or approved trading signal."

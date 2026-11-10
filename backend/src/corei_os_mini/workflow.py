@@ -10,10 +10,10 @@ from .strategy import evaluate_demo_strategy
 
 def run_paper_workflow(request: PaperRunRequest) -> PaperRunResult:
     decision = evaluate_demo_strategy(request.synthetic_prices_units, request.strategy)
-    proposed_children = allocate_children(request.dispatch_mode, request.accounts, request.strategy)
+    allocation = allocate_children(request.dispatch_mode, request.accounts, request.strategy)
     child_results: list[ChildResult] = []
 
-    for child in proposed_children:
+    for child in allocation.children:
         risk = check_child(child, decision.action, decision.decision_price_units)
         if not risk.approved:
             child_results.append(
@@ -62,5 +62,6 @@ def run_paper_workflow(request: PaperRunRequest) -> PaperRunResult:
         decision_reason=decision.reason,
         decision_price_units=decision.decision_price_units,
         allocation_mode=request.dispatch_mode,
+        route_policy=allocation.route_policy,
         children=child_results,
     )

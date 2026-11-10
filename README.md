@@ -1,76 +1,68 @@
 # COREI-OS-MINI
 
-COREI-OS-MINI is a paper-only prototype for the trading lifecycle defined in the final project documents. The initial code slice implements a synthetic market-data input, deterministic sample strategy, explicit account allocation, fail-closed child risk checks, simulated paper fills, and durable run records in PostgreSQL.
+COREI-OS-MINI is a **paper-only** prototype of the trading lifecycle defined in the final project documents:
+
+**Connect → collect → validate/select data → analyse → evaluate strategy → signal/intent → resolve candidate account children → final child risk → paper execution → reconcile → monitor.**
+
+**Where the project stands:** see [`docs/GAP_REGISTER.md`](docs/GAP_REGISTER.md). In short: registries, operator login, encrypted broker-credential storage, feed-quality assessment and a demo strategy → allocation → risk → simulated-fill workflow exist. No broker connection, live market data, real strategy, order book or reconciliation exists yet. The broker connection approach is the blocking decision.
 
 ## Safety and scope
 
-- This slice accepts synthetic prices only. It does not connect to a broker or exchange.
-- It has no live-order path. The API refuses startup if a non-paper execution mode is configured.
-- Demo endpoints are disabled unless explicitly enabled with `COREI_ENABLE_DEMO=true`.
-- The API is unauthenticated and intended for local development only. Bind it to `127.0.0.1`; do not expose it to a network.
-- A risk profile is required for every candidate account. Missing or stale risk/account state blocks the affected child.
-- Simulated fills are deterministic demo outcomes, not evidence of executable market prices or broker behavior.
+- **Paper-only.** The API refuses to start in a non-paper execution mode. Accounts and connector profiles accept only `PAPER` or `SANDBOX`; database triggers (migration 008) block creating or enabling `LIVE` rows even if the API is bypassed.
+- No broker or exchange connection exists. Saved broker accounts show **Not connected**.
+- Demo endpoints are disabled unless `COREI_ENABLE_DEMO=true`.
+- Registry and broker-account routes require operator sign-in. Broker passwords are encrypted with a server key file and are never returned by the API.
+- Simulated fills are deterministic demo outcomes, not evidence of executable prices or broker behaviour.
 
 ## Project layout
 
 ```text
 backend/
-  pyproject.toml
-  sql/001_create_paper_runs.sql
+  sql/                    numbered migrations 001–008, applied in order by the installer
   src/corei_os_mini/
-    api.py
-    allocation.py
-    config.py
-    contracts.py
-    persistence.py
-    risk.py
-    strategy.py
-    workflow.py
+    api.py                FastAPI app, health and workstation identity
+    contracts.py          paper-run request/result contracts (fixed-point integer units)
+    strategy.py           demo moving-average decision
+    allocation.py         dispatch modes → proposed account children (never approval)
+    risk.py               final per-child risk check
+    workflow.py           strategy → allocation → risk → simulated fill
+    market_data.py        feed validation and deterministic feed selection
+    registry.py           provider / connection / account / instrument / mapping registries
+    broker_accounts.py    one-form MT5 account onboarding (storage only)
+    broker_secrets.py     AES-GCM credential encryption
+    operator_auth.py      operator sign-in
+  tests/                  unittest suites (PostgreSQL suite needs COREI_TEST_DATABASE_URL)
+connectors/               MT5 server-file reader and terminal check kit
+docs/                     final design documents and the gap register
+scripts/                  install, database, deploy and repair scripts
+ui/                       React + TypeScript workstation
 ```
 
-## Start locally
-
-Use a supported Python release and PostgreSQL 18. Configure a local database, apply the SQL file in `backend/sql`, then run the FastAPI application from `backend`:
+## Tests
 
 ```bash
-cd backend
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e .
-export COREI_DATABASE_URL='postgresql://corei:change-me@127.0.0.1:5432/corei_os_mini'
-export COREI_ENABLE_DEMO=true
-export COREI_EXECUTION_MODE=paper
-psql "$COREI_DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/001_create_paper_runs.sql
-psql "$COREI_DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/002_create_market_data_assessments.sql
-python -m uvicorn corei_os_mini.api:app --host 127.0.0.1 --port 8781
+python -m unittest discover -s backend/tests -v      # add COREI_TEST_DATABASE_URL for the PostgreSQL suite
+python -m unittest discover -s scripts/tests -v
+npm ci --prefix ui && npm test --prefix ui
 ```
 
-The demo route is `POST /api/demo/paper-runs`. The API schema is available at `/docs` while the local server is running. Do not place credentials in source control or command history in a shared environment.
+## Dispatch modes (paper workflow)
 
-`POST /api/demo/market-data/assess` accepts explicitly mapped demo observations from multiple provider connections. It reports mapping, freshness, clock-confidence, timestamp-order, and sequence checks, summarizes each feed as `READY`, `DEGRADED`, `BLOCKED`, `NO_OBSERVATIONS`, or `DISABLED`, then selects deterministically by configured feed priority and source time. Each submitted batch and result is saved together in PostgreSQL and can be retrieved at `GET /api/market-data/assessments/{assessment_id}`. This demo assessment does not open provider connections or store a live tick stream. A real adapter and feed store require selection of the first provider and its supported market-data contract.
+| Mode | Child sizing | Account fields used |
+|---|---|---|
+| INDIVIDUAL | Full target to the one account | exactly one account, `selected=true` |
+| SELECT_ONE | Full target to one account chosen by `SELECT_ONE_PRIORITY_V1`: fresh risk state first, highest `route_priority`, then `account_id` | `route_priority` |
+| ALLOCATE | Target split by `weight_bps` (must total 10000); remainder assigned deterministically | `weight_bps` |
+| REPLICATE | Each account gets target × `replicate_scale_bps` / 10000 (floor); the parent size is never copied by default | `replicate_scale_bps` (required per account) |
 
-## Initial API behavior
-
-The request supplies a synthetic price series, strategy window lengths, a target quantity, an explicit group-dispatch mode, and the risk state for each eligible account. The workflow:
-
-1. Validates the synthetic market input and strategy parameters.
-2. Produces a deterministic BUY, SELL, or HOLD decision using integer price units.
-3. Creates proposed account children according to INDIVIDUAL, SELECT_ONE, ALLOCATE, or REPLICATE semantics.
-4. Applies per-account quantity, position, notional, and short-position checks using the supplied account state.
-5. Simulates a paper fill only for approved children.
-6. Persists the input and complete result in an append-only API-level paper-run record.
-
-Prices and quantities are integer fixed-point units interpreted using the supplied scales. `max_order_notional_units` uses the exact product of price units and quantity units. Set account risk limits and short-selling permission explicitly for every candidate account; the demo does not load real provider or portfolio state.
-
-The sample moving-average strategy and immediate-fill model are demonstration components. They are not approved trading strategies or realistic execution models.
-
-## Current implementation boundary
-
-This is the first code slice, not a complete platform or production deployment. Real provider adapters, credential management, authenticated operator UI, configurable strategy registry, position/portfolio ledger, provider reconciliation, migrations, backup/restore procedures, and operational alerting remain future work. The current database table is an append-only run record for this slice; it is not the final trading ledger.
+A field belonging to another mode is rejected. Every child passes final risk separately; a blocked child's quantity is never redistributed. Risk currently reads limits and positions supplied in the request; stored limits, positions and reservations are gaps G-P3-01 … G-P3-03.
 
 ## Final design references
 
-Use the final COREI-OS-MINI document index, blueprint v1.2, process flow v1.4, technology inventory v1.3, and master work prompt v1.1 as the design baseline. Older versions are historical.
+Final Document Index v1.1, Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3 and Master Work Prompt v1.1 in `docs/`. Older versions are historical.
+
+The sections below are the release history of the workstation and setup scripts.
+
 
 ## New workstation shell — 0.2.0
 
@@ -557,3 +549,15 @@ a separate browser window. No schema or trading behaviour changes.
 Validation: production build and DOM interactions, plus Chromium pointer dragging,
 resizing, reset, dirty-form protection and table/reference order with mocked data
 in all five themes. No live provider connection is claimed.
+
+## Gap fixes — release 0.7.0
+
+Closes defects D-01 … D-07 in `docs/GAP_REGISTER.md`:
+
+- **REPLICATE** no longer copies the full parent quantity; each account declares `replicate_scale_bps`.
+- **SELECT_ONE** uses a deterministic, versioned routing rule; the rule name is recorded in each run.
+- **Paper-only boundary**: LIVE removed from the account form and registries; migration `008_paper_only_boundary.sql` disables existing LIVE accounts/profiles and blocks creating or enabling them.
+- **Shared connections**: broker accounts on the same server now share one connection and connector profile. Existing records are left as they are.
+- **Tests**: 25 new trading-core tests (strategy, allocation, risk, workflow, market data).
+
+Update on the server with the normal pull, `scripts/configure-workstation-database.sh` (applies migration 008) and `scripts/deploy-workstation.sh`.

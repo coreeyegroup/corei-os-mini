@@ -31,7 +31,7 @@ class Account(Record):
     connection_id: UUID
     name: Text
     external_reference: Text
-    mode: Literal['PAPER','SANDBOX','LIVE']
+    mode: Literal['PAPER','SANDBOX']  # paper-only project; see sql/008
 
 class Instrument(Record):
     symbol: Text
@@ -61,6 +61,8 @@ def resource_for(resource):
 
 
 def unavailable(exc):
+    if isinstance(exc, psycopg.errors.CheckViolation):
+        return HTTPException(422, 'COREI-OS-MINI is paper-only. Live accounts and live connector profiles cannot be created or enabled.')
     if isinstance(exc, psycopg.errors.UniqueViolation):
         return HTTPException(409, 'A record with this unique name or reference already exists in this scope.')
     if isinstance(exc, psycopg.errors.ForeignKeyViolation):

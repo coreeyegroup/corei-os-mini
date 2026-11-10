@@ -15,8 +15,8 @@ const help:Record<string,string> = {
  connection_id:'Select the saved access configuration. Its provider and purpose remain separate from runtime connectivity.',
  purpose:'DATA: market data only. EXECUTION: intended order/account route. BOTH: both roles. These are configuration labels; they do not permit trading.',
  external_reference:'Account/login ID issued by the broker, e.g. an MT5 numeric account number. Not your dashboard username. Never enter a password.',
- mode:'PAPER means locally simulated trading. SANDBOX means provider demo/test. LIVE means a real account classification; execution remains unavailable.',
- environment:'PAPER means local simulation, SANDBOX means provider demo/test, LIVE means a real environment. The current application remains PAPER-only.',
+ mode:'PAPER means locally simulated trading. SANDBOX means provider demo/test. LIVE is not available: COREI-OS-MINI is paper-only.',
+ environment:'PAPER means local simulation, SANDBOX means provider demo/test. LIVE is not available: COREI-OS-MINI is paper-only.',
  connector_type:'MT4/MT5 EA means a bridge in the terminal. Other choices identify API/protocol families. Listing a family does not mean its adapter exists.',
  adapter_key:'Identifier of the intended adapter implementation, e.g. mt5_ea or upstox. Lowercase letters, numbers, dots, underscores and hyphens. It does not load code.',
  runtime:'Where the connector runs. Windows terminal and Ubuntu/Wine terminal may be on another computer/IP. SERVER_API means a backend API adapter.',
@@ -39,8 +39,8 @@ const scopedHelp:Record<string,string> = {
  'connector-profiles.name':'A label you choose for these connector settings, e.g. Windows MT5 connector. It is not the broker name, terminal installation label or adapter code.',
  'accounts.external_reference':'The broker-issued MT5 login number or Upstox UCC/user_id. Upstox OAuth client_id means API key and must not be entered here. Never enter a password or token.',
  'connector-profiles.adapter_key':'Technical adapter code: mt5_ea for the MT5 bridge or upstox for the Upstox API. This is not an API key, account ID or display label. It does not load an adapter.',
- 'connector-profiles.environment':'Environment intended for this connector: PAPER for local simulation, SANDBOX for a provider test service, LIVE for real broker services. Account environment is recorded separately; saving either does not enable trading.',
- 'accounts.mode':'Environment of this account: PAPER for local simulation, SANDBOX for a broker demo/test account, LIVE for a real account. Match the intended connector environment; no automatic consistency check or trading activation is implied.',
+ 'connector-profiles.environment':'Environment intended for this connector: PAPER for local simulation or SANDBOX for a provider test service. LIVE cannot be created or enabled in this paper-only project.',
+ 'accounts.mode':'Environment of this account: PAPER for local simulation or SANDBOX for a broker demo/test account. LIVE cannot be created or enabled in this paper-only project.',
 };
 export function fieldExplanation(resource:string,field:string) {return scopedHelp[`${resource}.${field}`]??help[field]??'';}
 export function Info({field,resource}:{field:string;resource?:string}) {
