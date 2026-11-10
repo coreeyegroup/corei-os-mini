@@ -261,7 +261,7 @@ def retire_version(version_id: UUID, payload: dict, response: Response, user: Pr
 DEPLOYMENT_SELECT = '''SELECT d.*, s.code AS strategy_code, s.name AS strategy_name, s.status AS strategy_status,
     v.number AS version_number, v.state AS version_state, v.algorithm,
     i.symbol AS instrument_symbol, i.status AS instrument_status,
-    a.code AS account_code, a.external_account_id, a.connection_id AS account_connection_id,
+    a.code AS account_code, a.external_account_id, a.holder_name, a.connection_id AS account_connection_id,
     c.code AS connection_code, c.environment, c.provider_id, p.code AS provider_code,
     dm.broker_symbol AS data_symbol, dm.status AS data_mapping_status, dm.usage AS data_usage, dm.instrument_id AS data_instrument_id,
     dc.code AS data_connection_code, dc.status AS data_connection_status, dc.purpose AS data_connection_purpose,

@@ -105,7 +105,7 @@ const blank: Record<Entity, Row> = {
   providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE' },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
     settings: { server_name: '', access_points: [{ name: '', host: '', port: 443 }] } },
-  accounts: { connection_id: '', code: '', name: '', external_account_id: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE' },
+  accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
     tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
   mappings: { connection_id: '', instrument_id: '', broker_symbol: '', usage: 'BOTH', broker_contract_size: '', broker_price_digits: '', status: 'ACTIVE' },
@@ -113,7 +113,7 @@ const blank: Record<Entity, Row> = {
 const FIELDS: Record<Entity, string[]> = {
   providers: ['code', 'name', 'kind', 'status'],
   connections: ['provider_id', 'code', 'name', 'platform', 'environment', 'purpose', 'settings', 'status'],
-  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'base_currency', 'trading_permission', 'status'],
+  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status'],
   instruments: ['symbol', 'name', 'asset_class', 'base_currency', 'quote_currency', 'price_precision', 'quantity_precision',
     'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status'],
   mappings: ['connection_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
@@ -138,7 +138,7 @@ function toPayload(entity: Entity, draft: Row): Row {
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
-      oauth_redirect_url: s.auth_method === 'OAUTH2' ? s.oauth_redirect_url || null : null };
+      oauth_redirect_url: s.auth_method === 'OAUTH2' ? s.oauth_redirect_url || null : null, notifier_webhook_url: s.notifier_webhook_url || null };
   }
   return out;
 }
@@ -286,18 +286,47 @@ function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (
 
 function RestSettings({ settings, change, disabled }: { settings: Row; change: (s: Row) => void; disabled: boolean }) {
   return <fieldset className="cfg-subform" disabled={disabled}>
-    <legend>API endpoints</legend>
-    <Field label="REST base URL" hint="https:// only"><input required type="url" value={settings.api_base_url ?? ''} onChange={e => change({ ...settings, api_base_url: e.target.value })} /></Field>
-    <Field label="Streaming URL" hint="Optional, wss:// only"><input type="url" value={settings.stream_url ?? ''} onChange={e => change({ ...settings, stream_url: e.target.value })} /></Field>
-    <Field label="Authentication"><Choice label="Authentication" value={settings.auth_method ?? 'API_KEY'} options={[['API_KEY', 'API key and secret'], ['OAUTH2', 'OAuth 2 client']]}
+    <legend>Broker API app</legend>
+    <small>One connection per broker API app. For Upstox: create the app at the Upstox developer portal, then enter its URLs here and its API key and secret under Credential after saving.</small>
+    <Field label="REST base URL" hint="https:// only, e.g. https://api.upstox.com"><input aria-label="REST base URL" required type="url" value={settings.api_base_url ?? ''} onChange={e => change({ ...settings, api_base_url: e.target.value })} /></Field>
+    <Field label="Streaming URL" hint="Optional, wss:// only. Leave empty when the broker issues the feed URL after login (Upstox does)."><input aria-label="Streaming URL" type="url" value={settings.stream_url ?? ''} onChange={e => change({ ...settings, stream_url: e.target.value })} /></Field>
+    <Field label="Authentication"><Choice label="Authentication" value={settings.auth_method ?? 'API_KEY'} options={[['OAUTH2', 'OAuth 2 login (Upstox, Zerodha-style apps)'], ['API_KEY', 'API key and secret only']]}
       onChange={v => change({ ...settings, auth_method: v })} /></Field>
-    {settings.auth_method === 'OAUTH2' && <Field label="OAuth redirect URL" hint="Registered with the provider; https:// only">
-      <input required type="url" value={settings.oauth_redirect_url ?? ''} onChange={e => change({ ...settings, oauth_redirect_url: e.target.value })} /></Field>}
+    {settings.auth_method === 'OAUTH2' && <Field label="OAuth redirect URL" hint="Exactly as registered on the broker app. Production: https://corei-os-mini.coreeye.in/api/oauth/upstox/callback. http://localhost only for local testing.">
+      <input aria-label="OAuth redirect URL" required type="url" value={settings.oauth_redirect_url ?? ''} onChange={e => change({ ...settings, oauth_redirect_url: e.target.value })} /></Field>}
+    <Field label="Notifier webhook URL" hint="Optional, https:// only. Where the broker posts tokens or order updates (Upstox notifier webhook), if registered on the app.">
+      <input aria-label="Notifier webhook URL" type="url" value={settings.notifier_webhook_url ?? ''} onChange={e => change({ ...settings, notifier_webhook_url: e.target.value })} /></Field>
   </fieldset>;
 }
 
+/** Suggested permanent IDs, filled in until the operator types their own. */
+const idPart = (v: string) => (v || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+function suggestId(entity: Entity, d: Row, refs: Record<string, Row[]>): string {
+  let id = '';
+  if (entity === 'providers') id = idPart(d.name).split('_').slice(0, 2).join('_');
+  if (entity === 'connections') {
+    const provider = refs.providers.find(p => p.id === d.provider_id);
+    if (!provider) return '';
+    const base = `${provider.code}_${d.platform === 'MT5' ? 'MT5' : 'API'}_${d.environment}`;
+    const taken = new Set(refs.connections.map(c => c.code));
+    id = base; for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+  }
+  if (entity === 'accounts') {
+    const connection = refs.connections.find(c => c.id === d.connection_id);
+    if (!connection || !d.external_account_id) return '';
+    id = `${connection.provider_code}_${connection.environment}_${idPart(d.external_account_id)}`;
+  }
+  id = id.slice(0, 32).replace(/_+$/, '');
+  return /^[A-Z]/.test(id) ? id : '';
+}
+
 function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity; draft: Row; setDraft: (r: Row) => void; editing: boolean; refs: Record<string, Row[]> }) {
-  const set = (k: string, v: unknown) => setDraft({ ...draft, [k]: v });
+  const set = (k: string, v: unknown) => {
+    const next: Row = { ...draft, [k]: v };
+    if (k === 'code') next._codeEdited = v !== '';
+    else if (!editing && !next._codeEdited && 'code' in next) next.code = suggestId(entity, next, refs);
+    setDraft(next);
+  };
   const locked = (k: string) => editing && IMMUTABLE[entity].includes(k);
   const text = (k: string, label: string, props: Row = {}, hint?: string) =>
     <Field label={label} hint={locked(k) ? 'Fixed after creation' : hint}><input aria-label={label} value={draft[k] ?? ''} readOnly={locked(k)} onChange={e => set(k, e.target.value)} {...props} /></Field>;
@@ -307,17 +336,23 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     <Field label={label} hint={locked(k) ? 'Fixed after creation' : undefined}><select aria-label={label} required value={draft[k] ?? ''} disabled={locked(k)} onChange={e => set(k, e.target.value)}>
       <option value="" disabled>Select…</option>{rows.map(r => <option key={r.id} value={r.id}>{show(r)}</option>)}</select></Field>;
   const status = pick('status', 'Status', ['ACTIVE', 'INACTIVE']);
-  const code = (label: string) => text('code', label, { required: true, maxLength: 32, pattern: '[A-Za-z][A-Za-z0-9_]{1,31}' }, 'Letters, digits, underscore; stored upper-case');
+  const code = (label: string, example: string) => text('code', label, { required: true, maxLength: 32, pattern: '[A-Za-z][A-Za-z0-9_]{1,31}' },
+    `Permanent short ID used in logs, audit and deployments. Suggested automatically; e.g. ${example}. Letters, digits, underscore.`);
 
-  if (entity === 'providers') return <>{code('Provider code')}{text('name', 'Name', { required: true, maxLength: 120 })}
-    {pick('kind', 'Type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['DATA_VENDOR', 'Data vendor']])}{status}</>;
+  if (entity === 'providers') return <>
+    {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand and legal entity, e.g. IC Markets (Raw Trading Ltd), Upstox (RKSV Securities)')}
+    {code('Provider ID', 'ICMARKETS, EXNESS, UPSTOX')}
+    {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['DATA_VENDOR', 'Data vendor']])}{status}</>;
 
   if (entity === 'connections') {
     const platform = (v: string) => setDraft({ ...draft, platform: v, settings: v === 'MT5' ? blank.connections.settings : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
-    return <>{ref('provider_id', 'Provider', refs.providers, r => `${r.code} · ${r.name}`)}{code('Connection code')}{text('name', 'Name', { required: true, maxLength: 120 })}
+    return <>{ref('provider_id', 'Provider', refs.providers, r => `${r.code} · ${r.name}`)}
       <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['REST_API', 'Broker REST / WebSocket API']]} onChange={platform} /></Field>
       {pick('environment', 'Environment', [['DEMO', 'Demo'], ['LIVE', 'Live']], 'Inherited by every account on this connection')}
-      {pick('purpose', 'Purpose', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}{status}
+      {pick('purpose', 'Purpose', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
+      {code('Connection ID', 'ICMARKETS_MT5_LIVE, UPSTOX_API_LIVE')}
+      {text('name', 'Connection name', { required: true, maxLength: 120 }, draft.platform === 'MT5' ? 'Plain description, e.g. IC Markets MT5 live · ICMarketsSC-MT5-2' : 'Plain description, e.g. Upstox API app · COREI live')}
+      {status}
       {draft.platform === 'MT5' ? <Mt5Endpoints settings={draft.settings} disabled={false} change={s => set('settings', s)} />
         : <RestSettings settings={draft.settings} disabled={false} change={s => set('settings', s)} />}</>;
   }
@@ -326,9 +361,12 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     const connection = refs.connections.find(c => c.id === draft.connection_id);
     return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform} · ${r.environment}`)}
       {connection && <p className="cfg-note">Environment <Env value={connection.environment} /> from the connection.</p>}
-      {code('Account code')}{text('name', 'Name', { required: true, maxLength: 120 })}
-      {text('external_account_id', connection?.platform === 'MT5' ? 'MT5 login (account number)' : 'Broker account ID', { required: true, maxLength: 64 })}
-      {text('base_currency', 'Account currency', { required: true, maxLength: 10 })}
+      {text('external_account_id', connection?.platform === 'MT5' ? 'Broker login (MT5 account number)' : 'Broker client ID',
+        { required: true, maxLength: 64 }, connection?.platform === 'MT5' ? 'The number you log in to MT5 with, e.g. 51234567' : 'The broker\'s client code for this account, e.g. Upstox UCC')}
+      {text('holder_name', 'Account holder', { maxLength: 120 }, 'Person or company that owns the account at the broker, e.g. Yatheesh N S or Coreeye Group Pvt Ltd')}
+      {code('Account ID', 'ICMARKETS_LIVE_51234567')}
+      {text('name', 'Account name', { required: true, maxLength: 120 }, 'What the account is for, e.g. Gold main, Hedge, Scalping test')}
+      {text('base_currency', 'Account currency', { required: true, maxLength: 10 }, 'Deposit currency at the broker, e.g. USD, INR')}
       {pick('trading_permission', 'Trading permission', [['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading']],
         'Orders also need order sending switched on for the environment')}{status}</>;
   }
@@ -391,14 +429,14 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
 /* ---------- record list + detail ---------- */
 
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
-  providers: [['Code', r => r.code], ['Name', r => r.name], ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
-  connections: [['Code', r => r.code], ['Provider', r => r.provider_code], ['Platform', r => r.platform], ['Env', r => <Env value={r.environment} />],
+  providers: [['Provider ID', r => r.code], ['Provider name', r => r.name], ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
+  connections: [['Connection ID', r => r.code], ['Provider', r => r.provider_code], ['Platform', r => r.platform], ['Env', r => <Env value={r.environment} />],
     ['Purpose', r => r.purpose], ['Endpoint', r => r.platform === 'MT5' ? <span title={r.settings.company_name ?? ''}>{r.settings.server_name}{r.settings.company_name ? ` · ${r.settings.company_name}` : ''}
       <small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length}/{r.settings.access_points.length} AP</small></span> : r.settings.api_base_url],
     ['Credential', r => r.platform === 'MT5' ? 'Per account' : r.credential_kind ? 'Saved' : <span className="cfg-pill warn">Missing</span>],
     ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
-  accounts: [['Code', r => r.code], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],
-    ['Account no.', r => r.external_account_id], ['Ccy', r => r.base_currency], ['Permission', r => <Status value={r.trading_permission} />],
+  accounts: [['Account ID', r => r.code], ['Holder', r => r.holder_name || '—'], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],
+    ['Broker login', r => r.external_account_id], ['Ccy', r => r.base_currency], ['Permission', r => <Status value={r.trading_permission} />],
     ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />], ['Status', r => <Status value={r.status} />]],
   instruments: [['Symbol', r => r.symbol], ['Name', r => r.name], ['Class', r => r.asset_class], ['Tick', r => r.tick_size],
     ['Min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],

@@ -96,10 +96,12 @@ class Mt5Settings(_Strict):
         return self
 
 
-def _url(value: str, schemes: tuple[str, ...]) -> str:
+def _url(value: str, schemes: tuple[str, ...], local_http: bool = False) -> str:
     parsed = urlparse(value)
-    if parsed.scheme not in schemes or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError(f'must be a {" or ".join(schemes)} URL without embedded credentials')
+    local = local_http and parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1')
+    if (parsed.scheme not in schemes and not local) or not parsed.hostname or parsed.username or parsed.password:
+        allowed = ' or '.join(schemes) + (' (or http://localhost for local testing)' if local_http else '')
+        raise ValueError(f'must be a {allowed} URL without embedded credentials')
     return value.rstrip('/')
 
 
@@ -107,12 +109,20 @@ class RestApiSettings(_Strict):
     api_base_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
     stream_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
     auth_method: Literal['API_KEY', 'OAUTH2']
+    # OAuth: the exact redirect URL registered on the broker app (Upstox requires one).
     oauth_redirect_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
+    # Optional endpoint the broker posts tokens or order updates to (Upstox notifier webhook).
+    notifier_webhook_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
 
-    @field_validator('api_base_url', 'oauth_redirect_url')
+    @field_validator('api_base_url', 'notifier_webhook_url')
     @classmethod
     def https_only(cls, value: str | None) -> str | None:
-        return None if value is None else _url(value, ('https',))
+        return None if not value else _url(value, ('https',))
+
+    @field_validator('oauth_redirect_url')
+    @classmethod
+    def redirect_url(cls, value: str | None) -> str | None:
+        return None if not value else _url(value, ('https',), local_http=True)
 
     @field_validator('stream_url')
     @classmethod
@@ -153,6 +163,8 @@ class AccountIn(_Strict):
     code: Code
     name: Name
     external_account_id: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[A-Za-z0-9_.:-]{1,64}$')]
+    # Person or legal entity that owns the account at the broker.
+    holder_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] = ''
     base_currency: Currency
     trading_permission: Literal['DISABLED', 'READ_ONLY', 'TRADING'] = 'DISABLED'
     status: Status = 'ACTIVE'

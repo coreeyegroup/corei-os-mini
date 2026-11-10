@@ -51,7 +51,7 @@ ui/                       React + TypeScript workstation (Configuration workspac
 | Instrument | symbol, asset class, currencies, price/quantity decimals, tick size, min quantity, quantity step, contract size and unit, session, status | symbol |
 | Symbol mapping | connection, instrument, broker symbol, usage, optional broker contract size / price digits | connection, instrument |
 
-MT5 logins are saved on each account (master or investor password); REST API keys or OAuth clients are saved on the connection.
+MT5 logins are saved on each account (master or investor password); REST API keys or OAuth clients are saved on the connection. Naming conventions and worked examples (MT5 multi-broker/holder/account, Upstox OAuth): [`docs/CONFIGURATION_GUIDE.md`](docs/CONFIGURATION_GUIDE.md).
 
 ## Tests
 

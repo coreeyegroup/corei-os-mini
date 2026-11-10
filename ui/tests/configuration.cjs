@@ -106,11 +106,13 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Provider: create, duplicate rejected with backend message
  button('New provider').click();await tick();
- fill(byLabel('Provider code'),'icm');fill(byLabel('Name'),'IC Markets');await tick();
+ fill(byLabel('Provider name'),'IC Markets (Raw Trading Ltd)');await tick();
+ assert.equal(byLabel('Provider ID').value,'IC_MARKETS');  // suggested from the name
+ fill(byLabel('Provider ID'),'icm');await tick();
  await submit($('.cfg-form:not(.cfg-signin .cfg-form)'));
  assert.equal(db.providers.length,1);assert.equal(db.providers[0].code,'ICM');
  assert.match($('.cfg-table').textContent,/IC Markets/);
- button('New provider').click();await tick();fill(byLabel('Provider code'),'ICM');fill(byLabel('Name'),'Again');await tick();
+ button('New provider').click();await tick();fill(byLabel('Provider name'),'Again');fill(byLabel('Provider ID'),'ICM');await tick();
  await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/already exists/);
  button('✕')?.click?.();await tick();
@@ -119,7 +121,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  // Connection: MT5 with ordered access points
  nav('Connections').click();await tick();await tick();
  button('New connection').click();await tick();
- fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Connection code'),'icm_mt5_demo');fill(byLabel('Name'),'ICM MT5 demo');
+ fill(byLabel('Provider'),db.providers[0].id);await tick();
+ assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
+ fill(byLabel('Connection name'),'ICM MT5 demo');
  fill($('.cfg-subform input[maxlength="120"]'),'ICMarketsSC-Demo');
  fill(byLabel('Access point 1 name'),'Access Point 1');fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
  button('Add access point').click();await tick();
@@ -178,7 +182,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(byLabel('Search access points'),'');await tick();
  byLabel('Use access point 3').click();await tick();  // a port-443 row, still selected
  assert.match($('.cfg-points-head').textContent,/24 of 50 selected/);
- fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Connection code'),'mt5001');fill(byLabel('Name'),'MetaQuotes demo');await tick();
+ fill(byLabel('Provider'),db.providers[0].id);await tick();
+ assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO_2');  // ICM_MT5_DEMO is taken
+ fill(byLabel('Connection ID'),'mt5001');fill(byLabel('Connection name'),'MetaQuotes demo');await tick();
  await submit($('.cfg-detail .cfg-form'));
  const mq=db.connections.find(c=>c.code==='MT5001');
  assert.equal(mq.settings.access_points.length,50);
@@ -198,7 +204,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('New account').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
  assert.match($('.cfg-detail').textContent,/DEMO from the connection/);
- fill(byLabel('Account code'),'icm_demo_1');fill(byLabel('Name'),'Demo 1');fill(byLabel('MT5 login (account number)'),'51234567');
+ fill(byLabel('Broker login (MT5 account number)'),'51234567');await tick();
+ assert.equal(byLabel('Account ID').value,'ICM_DEMO_51234567');
+ fill(byLabel('Account holder'),'Yatheesh N S');fill(byLabel('Account name'),'Demo 1');await tick();
  fill(byLabel('Trading permission'),'TRADING');await tick();
  await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-blockers').textContent,/MT5 login password not saved/);
@@ -212,7 +220,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: account readiness explains blockers; credential is write-only and cleared after save.');
 
  // Stale edit shows conflict
- db.accounts[0].version=5;fill(byLabel('Name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
+ db.accounts[0].version=5;fill(byLabel('Account name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/Changed by someone else/);
  // Unsaved changes guard section switches
  w.confirm=()=>false;nav('Providers').click();await tick();

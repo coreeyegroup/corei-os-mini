@@ -197,7 +197,7 @@ def list_records(entity: str, filters: dict[str, str], q: str = '') -> list[dict
             params.append(filters[key])
     if q:
         text_columns = {'providers': ['p.code', 'p.name'], 'connections': ['c.code', 'c.name', 'p.code'],
-                        'accounts': ['a.code', 'a.name', 'a.external_account_id', 'c.code', 'p.code'],
+                        'accounts': ['a.code', 'a.name', 'a.external_account_id', 'a.holder_name', 'c.code', 'p.code'],
                         'instruments': ['i.symbol', 'i.name'], 'mappings': ['m.broker_symbol', 'i.symbol', 'c.code']}[entity]
         pattern = '%' + q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         clauses.append('(' + ' OR '.join(f'{c} ILIKE %s' for c in text_columns) + ')')

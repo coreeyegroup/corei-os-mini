@@ -125,6 +125,14 @@ class ModelTests(unittest.TestCase):
                 broker_catalog._catalogs.clear()
 
     def test_rest_settings_require_secure_urls_and_oauth_redirect(self):
+        upstox = RestApiSettings.model_validate({'api_base_url': 'https://api.upstox.com', 'auth_method': 'OAUTH2',
+                                                 'oauth_redirect_url': 'https://corei-os-mini.coreeye.in/api/oauth/upstox/callback',
+                                                 'notifier_webhook_url': 'https://corei-os-mini.coreeye.in/api/oauth/upstox/notify'})
+        self.assertTrue(upstox.oauth_redirect_url.endswith('/callback'))
+        RestApiSettings.model_validate({'api_base_url': 'https://api.upstox.com', 'auth_method': 'OAUTH2', 'oauth_redirect_url': 'http://localhost:8000/callback'})
+        for bad in ({'oauth_redirect_url': 'http://example.com/callback'}, {'oauth_redirect_url': 'https://example.com', 'notifier_webhook_url': 'http://localhost/n'}):
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                RestApiSettings.model_validate({'api_base_url': 'https://api.upstox.com', 'auth_method': 'OAUTH2', **bad})
         RestApiSettings.model_validate({'api_base_url': 'https://api.example.com/v2/', 'auth_method': 'API_KEY'})
         for bad in ({'api_base_url': 'http://api.example.com', 'auth_method': 'API_KEY'},
                     {'api_base_url': 'https://user:pw@api.example.com', 'auth_method': 'API_KEY'},
@@ -265,8 +273,10 @@ class ConfigurationPostgresTests(unittest.TestCase):
         self.post('accounts', dict(connection_id=mt5['id'], code='A1', name='A', external_account_id='abc', base_currency='USD'), 422)
         self.post('accounts', dict(connection_id=data_only['id'], code='A0', name='A', external_account_id='1',
                                    base_currency='USD', trading_permission='TRADING'), 422)
-        account = self.post('accounts', dict(connection_id=mt5['id'], code='ICM_DEMO_1', name='Demo 1',
+        account = self.post('accounts', dict(connection_id=mt5['id'], code='ICM_DEMO_1', name='Demo 1', holder_name=' Yatheesh N S ',
                                              external_account_id='51234567', base_currency='usd', trading_permission='TRADING'))
+        self.assertEqual(account['holder_name'], 'Yatheesh N S')
+        self.assertEqual([a['code'] for a in self.client.get('/api/config/accounts', params={'q': 'yatheesh'}).json()['items']], ['ICM_DEMO_1'])
         self.assertEqual(account['environment'], 'DEMO')
         self.assertIn('ACCOUNT_CREDENTIAL_MISSING', account['data_blockers'])
         self.assertIn('ORDER_SENDING_OFF_DEMO', account['trading_blockers'])
