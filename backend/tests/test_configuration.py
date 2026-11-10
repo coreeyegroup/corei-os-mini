@@ -64,21 +64,65 @@ class ModelTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 Mt5Settings.model_validate({'server_name': 'S', 'server_details': bad, 'access_points': [point(1)]})
 
+    def fake_reader(self, folder, output):
+        parser = Path(folder) / 'reader'
+        parser.write_text('#!/bin/sh\ncat <<\'JSON\'\n' + json.dumps(output) + '\nJSON\n'); parser.chmod(0o755)
+        return patch.dict(os.environ, {'COREI_MT5_CATALOG_PARSER': str(parser)})
+
     def test_server_file_returns_full_description_per_server(self):
         from corei_os_mini.broker_catalog import parse_catalog
-        output = {'servers': [{'server_name': 'MetaQuotes-Demo', 'details': {'ServerName': 'MetaQuotes-Demo', 'CompanyName': 'MetaQuotes Ltd.',
-                                                                            'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
-                               'access_points': [{'name': 'Access Point 1', 'address': '78.140.180.201:443'},
-                                                 {'name': 'Access Point 2', 'address': '[2a00:1178:1:60::c9]:1950'}]}]}
-        with tempfile.TemporaryDirectory() as folder:
-            parser = Path(folder) / 'reader'
-            parser.write_text('#!/bin/sh\ncat <<\'JSON\'\n' + json.dumps(output) + '\nJSON\n'); parser.chmod(0o755)
-            with patch.dict(os.environ, {'COREI_MT5_CATALOG_PARSER': str(parser)}):
-                servers = parse_catalog(b'x' * 64)
-        self.assertEqual(servers, [{'server_name': 'MetaQuotes-Demo', 'company_name': 'MetaQuotes Ltd.',
-                                    'details': {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
-                                    'access_points': [{'name': 'Access Point 1', 'host': '78.140.180.201', 'port': 443},
-                                                      {'name': 'Access Point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950}]}])
+        output = {'skipped_servers': 1, 'servers': [
+            {'server_name': 'MetaQuotes-Demo', 'details': {'ServerName': 'MetaQuotes-Demo', 'CompanyName': 'MetaQuotes Ltd.',
+                                                           'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
+             'access_points': [{'name': 'Access Point 1', 'address': '78.140.180.201:443'},
+                               {'name': 'Access Point 2', 'address': '[2a00:1178:1:60::c9]:1950'},
+                               {'name': 'Unbracketed', 'address': '2001:db8::50:443'},
+                               {'name': 'Duplicate', 'address': '78.140.180.201:443'},
+                               {'name': 'Broken', 'address': 'not an address'}]},
+            {'server_name': 'Empty-Server', 'details': {}, 'access_points': []},
+            {'server_name': '', 'access_points': []}]}
+        with tempfile.TemporaryDirectory() as folder, self.fake_reader(folder, output):
+            catalog = parse_catalog(b'x' * 64)
+        self.assertEqual({k: catalog[k] for k in ('server_count', 'access_point_count', 'skipped_servers', 'invalid_addresses',
+                                                   'servers_without_access_points')}, {'server_count': 2, 'access_point_count': 3,
+                         'skipped_servers': 2, 'invalid_addresses': 1, 'servers_without_access_points': 1})
+        self.assertEqual(catalog['servers'][1], {'server_name': 'MetaQuotes-Demo', 'company_name': 'MetaQuotes Ltd.',
+                         'details': {'CompanyName': 'MetaQuotes Ltd.', 'TimeZone': 120, 'Type': 'Demo', 'Description': 'Demo server for testing'},
+                         'access_points': [{'name': 'Access Point 1', 'host': '78.140.180.201', 'port': 443},
+                                           {'name': 'Access Point 2', 'host': '2a00:1178:1:60::c9', 'port': 1950},
+                                           {'name': 'Unbracketed', 'host': '2001:db8::50', 'port': 443}]})
+
+    def test_server_file_search_across_all_brokers(self):
+        from corei_os_mini import broker_catalog
+        servers = [{'server_name': name, 'details': {'CompanyName': company}, 'access_points': [{'name': f'AP {i}', 'address': a} for i, a in enumerate(addrs, 1)]}
+                   for name, company, addrs in [('MarketEquityInc-Demo', 'Market Equity Inc.', ['192.109.15.68:443', '192.109.15.68:1950']),
+                                                ('Marketmates-Live', 'Marketmates Ltd', ['142.91.121.204:1950', '5.181.78.117:1950']),
+                                                ('MetaQuotes-Demo', 'MetaQuotes Ltd.', ['78.140.180.201:443']),
+                                                ('Other-Live', 'Market Makers LLC', ['203.0.113.9:443'])]]
+        with tempfile.TemporaryDirectory() as folder, self.fake_reader(folder, {'servers': servers}):
+            app.dependency_overrides[current_user] = lambda: EVERYONE
+            try:
+                with TestClient(app, headers=HEADERS) as client:
+                    analysed = client.post('/api/config/mt5/server-file', content=b'x' * 64).json()
+                    self.assertEqual((analysed['server_count'], analysed['access_point_count']), (4, 6))
+                    base = f"/api/config/mt5/server-file/{analysed['catalog_id']}"
+                    market = client.get(base + '/access-points', params={'broker': 'market'}).json()
+                    # Broker filter matches server name or company (Other-Live's company is Market Makers).
+                    self.assertEqual((market['total'], market['server_matches']), (5, 3))
+                    self.assertEqual([i['server_name'] for i in market['items']], ['MarketEquityInc-Demo'] * 2 + ['Marketmates-Live'] * 2 + ['Other-Live'])
+                    self.assertEqual(client.get(base + '/access-points', params={'broker': 'market', 'q': '1950'}).json()['total'], 3)
+                    self.assertEqual(client.get(base + '/access-points', params={'broker': 'market live', 'q': '142.91'}).json()['items'][0]['port'], 1950)
+                    page = client.get(base + '/access-points', params={'offset': 4, 'limit': 2}).json()
+                    self.assertEqual((page['total'], len(page['items'])), (6, 2))
+                    detail = client.get(base + '/server', params={'name': 'MetaQuotes-Demo'}).json()
+                    self.assertEqual((detail['company_name'], detail['access_points'][0]['host']), ('MetaQuotes Ltd.', '78.140.180.201'))
+                    # Another user cannot read this analysis; unknown ids expire cleanly.
+                    app.dependency_overrides[current_user] = lambda: Principal('bob', frozenset({'TRADING_OPS'}))
+                    self.assertEqual(client.get(base + '/access-points').status_code, 404)
+                    self.assertIn('expired', client.get('/api/config/mt5/server-file/unknown/access-points').text)
+            finally:
+                app.dependency_overrides.clear()
+                broker_catalog._catalogs.clear()
 
     def test_rest_settings_require_secure_urls_and_oauth_redirect(self):
         RestApiSettings.model_validate({'api_base_url': 'https://api.example.com/v2/', 'auth_method': 'API_KEY'})

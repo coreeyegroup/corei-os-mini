@@ -576,3 +576,7 @@ After updating, re-enter providers, connections and accounts in **Configuration*
 - MT5 connections: full server description from `servers.dat`, searchable server picker, selectable and searchable access points (re-run `scripts/setup-broker-accounts.sh` once to rebuild the server-file reader).
 - Migration 010: users and sessions. Sign in once with the existing server login; it becomes the first administrator. Create the other users under **Configuration › Users**.
 - Migration 011: strategies, immutable approved versions and the deployment matrix.
+
+### servers.dat analyser (Westernpips-style)
+
+**Configuration › Connections › New connection (MT5) › Analyze servers.dat** reads every broker server and access point in a terminal's `servers.dat` (up to 32 MiB, 100,000 servers) into one table of *address · server name · company · access point*, with a **broker filter** (server name or company) and an **address or name** filter. Tick rows of one server and choose *Use selected access points*; they are used in the order ticked and the server's other access points are kept unselected. Extended (newer-format) access records are read where they contain an address; anything unreadable is counted and shown, never silently dropped. Parsed files stay in memory for 30 minutes for the user who uploaded them and are not stored.

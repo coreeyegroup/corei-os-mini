@@ -5,6 +5,7 @@ are never echoed) and route layout. All rules and persistence live in config_sto
 """
 from __future__ import annotations
 
+import time
 from typing import Literal
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from . import config_store as store
+from . import broker_catalog as catalogs
 from .broker_catalog import MAX_FILE, parse_catalog
 from .config_models import CredentialEnvelope, ExecutionControlIn, VersionIn
 from .credentials import storage_ready
@@ -87,16 +89,37 @@ def get_audit(response: Response, entity: str | None = Query(None, max_length=40
 
 
 @router.post('/mt5/server-file')
-async def read_mt5_server_file(request: Request, response: Response, _: str = Depends(editor)):
-    """Read servers and access points from an MT5 servers.dat. Nothing is stored."""
+async def analyse_mt5_server_file(request: Request, response: Response, user: str = Depends(editor)):
+    """Analyse an MT5 servers.dat (all brokers in it). Returns a short-lived catalog id
+    to search with; nothing is stored in the database."""
     _no_store(response)
     data = bytearray()
     async for chunk in request.stream():
         data.extend(chunk)
         if len(data) > MAX_FILE:
-            raise HTTPException(413, 'Server file exceeds 1 MiB.')
-    servers = await run_in_threadpool(parse_catalog, bytes(data))
-    return {'servers': sorted(servers, key=lambda server: server['server_name'].lower())}
+            raise HTTPException(413, 'Server file exceeds 32 MiB.')
+    parsed = await run_in_threadpool(parse_catalog, bytes(data))
+    catalog_id, expires = catalogs.remember(user, parsed)
+    return {'catalog_id': catalog_id, 'expires_in_seconds': int(expires - time.time()),
+            **{k: v for k, v in parsed.items() if k != 'servers'}}
+
+
+@router.get('/mt5/server-file/{catalog_id}/access-points')
+def search_mt5_access_points(catalog_id: str, response: Response, broker: str = Query('', max_length=120),
+                             q: str = Query('', max_length=120), offset: int = Query(0, ge=0),
+                             limit: int = Query(200, ge=1, le=1000), user: str = Depends(editor)):
+    """Every access point of every broker in the file, filtered by broker (server name or
+    company) and by address or access-point name."""
+    _no_store(response)
+    return catalogs.search(catalogs.recall(catalog_id, user), broker, q, offset, limit)
+
+
+@router.get('/mt5/server-file/{catalog_id}/server')
+def mt5_server_detail(catalog_id: str, response: Response, name: str = Query(min_length=1, max_length=120),
+                      user: str = Depends(editor)):
+    """Full description and all access points of one server in the analysed file."""
+    _no_store(response)
+    return catalogs.server(catalogs.recall(catalog_id, user), name)
 
 
 # ---------- records ----------

@@ -138,3 +138,7 @@
 .cfg-versions .cfg-table td { white-space: normal; vertical-align: top; }
 .cfg-form textarea { width: 100%; resize: vertical; font: inherit; }
 .cfg-toolbar select { max-width: 200px; }
+.cfg-analyser { max-height: 420px; }
+.cfg-analyser tbody tr { cursor: pointer; }
+.cfg-analyser td { white-space: nowrap; }
+.cfg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }

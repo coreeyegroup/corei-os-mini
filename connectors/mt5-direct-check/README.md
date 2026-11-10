@@ -1,7 +1,7 @@
 # MT5 server-file reader
 
-Used by **Configuration › Connections** (MT5 platform) to fill the access-point list
-from a broker's `servers.dat`. It parses the file locally and returns server names and
+Used by **Configuration › Connections** (MT5 platform) to analyse a terminal's `servers.dat`
+(every broker in it, up to 32 MiB) and fill the access-point list. It parses the file locally and returns server names and
 named access points. Nothing is stored until the operator saves the connection, and it
 never connects to an account, accepts a password or calls a trading method.
 

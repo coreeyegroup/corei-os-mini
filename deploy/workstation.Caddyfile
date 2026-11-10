@@ -13,7 +13,7 @@ corei-os-mini.coreeye.in {
     @server_file path /api/config/mt5/server-file
     handle @server_file {
         request_body {
-            max_size 1048576
+            max_size 33554432
         }
         reverse_proxy 127.0.0.1:18786
     }

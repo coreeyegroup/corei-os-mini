@@ -164,31 +164,66 @@ function ServerDescription({ settings }: { settings: Row }) {
   </div>;
 }
 
-function ServerPicker({ servers, choose, cancel }: { servers: Row[]; choose: (s: Row) => void; cancel: () => void }) {
-  const [q, setQ] = useState(''), [open, setOpen] = useState<string | null>(servers.length === 1 ? servers[0].server_name : null);
-  const needle = q.trim().toLowerCase();
-  const shown = servers.filter(s => !needle || [s.server_name, s.company_name, ...Object.values(s.details ?? {}), ...s.access_points.map((p: Row) => `${p.host}:${p.port}`)]
-    .some(v => String(v ?? '').toLowerCase().includes(needle)));
-  return <div className="cfg-picker" aria-label="Servers in file">
-    <div className="cfg-points-head"><strong>Servers in file ({shown.length === servers.length ? servers.length : `${shown.length} of ${servers.length}`})</strong>
-      <button type="button" onClick={cancel}>Cancel</button></div>
-    <input aria-label="Search servers" placeholder="Search server, company, host…" value={q} onChange={e => setQ(e.target.value)} autoFocus />
-    <ul>{shown.map(s => <li key={s.server_name} className={open === s.server_name ? 'open' : ''}>
-      <button type="button" className="cfg-picker-row" aria-expanded={open === s.server_name} onClick={() => setOpen(open === s.server_name ? null : s.server_name)}>
-        <span className="cfg-picker-name">{s.server_name}</span>
-        <span className="cfg-picker-meta">{s.company_name ?? 'Company not stated'} · {s.access_points.length} access point{s.access_points.length === 1 ? '' : 's'}</span>
-      </button>
-      {open === s.server_name && <div className="cfg-picker-detail">
-        <ServerDescription settings={{ server_name: s.server_name, company_name: s.company_name, server_details: s.details }} />
-        <button type="button" className="primary" onClick={() => choose(s)}>Use this server</button>
-      </div>}
-    </li>)}
-      {!shown.length && <li className="cfg-note">No server matches “{q}”.</li>}</ul>
+/** Westernpips-style "Analyze servers.dat": every access point of every broker in the
+ *  file as one table, with a broker filter and an address/name filter. */
+function ServerFileAnalyser({ catalog, use, close }: { catalog: Row; use: (server: Row, chosen: Row[]) => void; close: () => void }) {
+  const [broker, setBroker] = useState(''), [q, setQ] = useState(''), [rows, setRows] = useState<Row[]>([]), [total, setTotal] = useState(0), [servers, setServers] = useState(0);
+  const [picked, setPicked] = useState<Row[]>([]), [detail, setDetail] = useState<Row | null>(null), [error, setError] = useState(''), [note, setNote] = useState(''), [loading, setLoading] = useState(false);
+  const key = (r: Row) => `${r.server_name}|${r.host}|${r.port}`;
+  const base = `config/mt5/server-file/${catalog.catalog_id}`;
+  async function fetchRows(offset: number) {
+    setLoading(true); setError('');
+    try {
+      const data = await api(`${base}/access-points?${new URLSearchParams({ broker, q, offset: String(offset), limit: '200' })}`);
+      setRows(offset ? r => [...r, ...data.items] : data.items); setTotal(data.total); setServers(data.server_matches);
+    } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
+  }
+  useEffect(() => { const t = setTimeout(() => void fetchRows(0), 250); return () => clearTimeout(t); }, [broker, q]);
+  async function show(serverName: string) {
+    if (detail?.server_name === serverName) return;
+    try { setDetail(await api(`${base}/server?${new URLSearchParams({ name: serverName })}`)); } catch (e) { setError((e as Error).message); }
+  }
+  function toggle(r: Row) {
+    setNote('');
+    if (picked.some(p => key(p) === key(r))) { setPicked(picked.filter(p => key(p) !== key(r))); return; }
+    if (picked.length && picked[0].server_name !== r.server_name) {
+      setNote(`A connection uses one broker server. Selection switched to ${r.server_name}.`); setPicked([r]);
+    } else setPicked([...picked, r]);
+    void show(r.server_name);
+  }
+  const warnings = [catalog.skipped_servers && `${catalog.skipped_servers} servers without a name were skipped`,
+    catalog.invalid_addresses && `${catalog.invalid_addresses} unreadable addresses were skipped`,
+    catalog.servers_without_access_points && `${catalog.servers_without_access_points} servers have no readable access point`,
+    catalog.unreadable_extended_records && `${catalog.unreadable_extended_records} extended access records could not be read`].filter(Boolean);
+  return <div className="cfg-picker" aria-label="Analyse servers.dat">
+    <div className="cfg-points-head"><strong>servers.dat · {catalog.server_count.toLocaleString()} servers · {catalog.access_point_count.toLocaleString()} access points</strong>
+      <button type="button" onClick={close}>Close</button></div>
+    {warnings.length > 0 && <small className="cfg-note">{warnings.join(' · ')}.</small>}
+    <div className="cfg-pair">
+      <Field label="Broker filter" hint="Server name or company, e.g. market"><input aria-label="Broker filter" autoFocus value={broker} onChange={e => setBroker(e.target.value)} /></Field>
+      <Field label="Address or name" hint="IP, host, port or access-point name"><input aria-label="Address filter" value={q} onChange={e => setQ(e.target.value)} /></Field>
+    </div>
+    <small className="cfg-note">{loading ? 'Searching…' : `${total.toLocaleString()} access points on ${servers.toLocaleString()} servers match`}{picked.length ? ` · ${picked.length} selected on ${picked[0].server_name}` : ''}</small>
+    {error && <p role="alert" className="cfg-error">{error}</p>}{note && <p role="status" className="cfg-note">{note}</p>}
+    <div className="cfg-points cfg-analyser"><table className="cfg-table compact"><thead><tr><th /><th>Server (address)</th><th>Name</th><th>Company</th><th>Access point</th></tr></thead><tbody>
+      {rows.map(r => { const on = picked.some(p => key(p) === key(r)); return <tr key={key(r)} className={on ? 'selected' : ''} onClick={() => toggle(r)}>
+        <td><input type="checkbox" aria-label={`Select ${r.host}:${r.port} on ${r.server_name}`} checked={on} onChange={() => toggle(r)} onClick={e => e.stopPropagation()} /></td>
+        <td className="cfg-mono">{r.host.includes(':') ? `[${r.host}]` : r.host}:{r.port}</td><td>{r.server_name}</td><td>{r.company_name ?? '—'}</td><td>{r.name}</td></tr>; })}
+      {!rows.length && !loading && <tr><td colSpan={5} className="cfg-note">No access point matches these filters.</td></tr>}
+    </tbody></table></div>
+    {rows.length < total && <button type="button" disabled={loading} onClick={() => void fetchRows(rows.length)}>Show more ({(total - rows.length).toLocaleString()} more)</button>}
+    {detail && <ServerDescription settings={{ server_name: detail.server_name, company_name: detail.company_name, server_details: detail.details }} />}
+    <div className="cfg-actions">
+      <button type="button" className="primary" disabled={!picked.length || detail?.server_name !== picked[0]?.server_name} onClick={() => use(detail!, picked)}>
+        Use {picked.length || ''} selected access point{picked.length === 1 ? '' : 's'}</button>
+      <button type="button" disabled={!detail} onClick={() => use(detail!, detail!.access_points)}>Use all {detail ? detail.access_points.length : ''} access points of {detail?.server_name ?? 'server'}</button>
+    </div>
+    <small className="cfg-note">Selected access points are used in the order you ticked them; the server's other access points are kept unselected so you can switch later.</small>
   </div>;
 }
 
 function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (s: Row) => void; disabled: boolean }) {
-  const [servers, setServers] = useState<Row[] | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('');
+  const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('');
   const points: Row[] = settings.access_points ?? [];
   const setPoints = (next: Row[]) => change({ ...settings, access_points: next });
   const setPoint = (i: number, patch: Row) => setPoints(points.map((p, j) => j === i ? { ...p, ...patch } : p));
@@ -200,21 +235,24 @@ function Mt5Endpoints({ settings, change, disabled }: { settings: Row; change: (
   const setVisible = (on: boolean) => { const ids = new Set(visible.map(v => v.i)); setPoints(points.map((p, i) => ids.has(i) ? { ...p, enabled: on } : p)); };
   async function read(file: File) {
     setBusy(true); setError('');
-    try { setServers((await api('config/mt5/server-file', 'POST', undefined, file)).servers); }
+    try { setCatalog(await api('config/mt5/server-file', 'POST', undefined, file)); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
-  function choose(s: Row) {
-    change({ server_name: s.server_name, company_name: s.company_name ?? null, server_details: s.details ?? {},
-      access_points: s.access_points.map((p: Row) => ({ ...p, enabled: true })) });
-    setServers(null); setQ('');
+  function use(server: Row, chosen: Row[]) {
+    const id = (p: Row) => `${p.host}|${p.port}`, wanted = new Set(chosen.map(id));
+    const first = chosen.map(c => server.access_points.find((p: Row) => id(p) === id(c))).filter(Boolean) as Row[];
+    const rest = server.access_points.filter((p: Row) => !wanted.has(id(p)));
+    change({ server_name: server.server_name, company_name: server.company_name ?? null, server_details: server.details ?? {},
+      access_points: [...first.map(p => ({ ...p, enabled: true })), ...rest.map((p: Row) => ({ ...p, enabled: false }))] });
+    setCatalog(null); setQ('');
   }
   return <fieldset className="cfg-subform" disabled={disabled}>
     <legend>MT5 server</legend>
-    <Field label="Read servers from servers.dat" hint="Optional. Lists every server in the broker's MT5 server file with its full description; nothing is stored until you save.">
+    <Field label="Analyze servers.dat" hint="Optional. Reads every broker server and access point in an MT5 servers.dat (terminal: File › Open Data Folder › Config). Nothing is stored until you save.">
       <input type="file" accept=".dat" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); e.target.value = ''; }} /></Field>
-    {busy && <p className="cfg-note">Reading server file…</p>}
+    {busy && <p className="cfg-note">Analysing server file…</p>}
     {error && <p role="alert" className="cfg-error">{error}</p>}
-    {servers && <ServerPicker servers={servers} choose={choose} cancel={() => setServers(null)} />}
+    {catalog && <ServerFileAnalyser catalog={catalog} use={use} close={() => setCatalog(null)} />}
     <Field label="Broker server name" hint="Exactly as the broker supplies it, e.g. ICMarketsSC-Demo">
       <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>
     <ServerDescription settings={settings} />
