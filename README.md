@@ -647,3 +647,7 @@ DEC-46. No migration.
 - **Setup:** every section with its count and the order-sending state. **System:** every database table with row counts; click one to open it.
 - **Overview** (Home): problems, order sending, feeds and Market Watch on one screen.
 - 12px type, 22px rows, no cards. Ctrl K still goes anywhere.
+
+### MT5 "OLD_VERSION" (broker refuses the connector's MT5 version)
+
+The reader retries a refused login automatically with current MT5 client builds (5430, 5370, 5200, 4755) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.

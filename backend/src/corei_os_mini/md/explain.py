@@ -6,9 +6,13 @@ from __future__ import annotations
 import re
 
 RULES = [
+    (r'OLD_VERSION.*no client-build setting', True, 'Broker refused the connector version',
+     "The broker requires a newer MT5 version than this MT5 SDK can present, and the SDK has no setting to change it. "
+     'The SDK must be updated to a newer release from its vendor, then run scripts/setup-broker-accounts.sh.'),
     (r'OLD_VERSION', True, 'Broker refused the connector version',
-     "The broker's server requires a newer MT5 version than the connector presents. The account and password are not the problem. "
-     'The MT5 SDK on the server must be updated or set to a newer client build — send the SDK description file (scripts/describe-mt5-api.sh).'),
+     "The broker requires a newer MT5 version than the connector presented. COREI retries automatically with current MT5 client builds "
+     '(5430, 5370, 5200, 4755) when the SDK allows it. If it is still refused, set COREI_MT5_CLIENT_BUILD to the build the broker\'s own '
+     'MT5 terminal shows (Help › About) in /etc/corei-os-mini/workstation.env and redeploy, or update the MT5 SDK.'),
     (r'INVALID_ACCOUNT|Invalid account|INVALID_PASSWORD|Authorization|AUTH', True, 'Login or password rejected',
      'The broker rejected the login. Check the MT5 login number and save the investor (read-only) password again on the account.'),
     (r'ACCOUNT_DISABLED|disabled|blocked', True, 'Account disabled at the broker',

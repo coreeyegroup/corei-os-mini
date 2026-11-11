@@ -197,7 +197,7 @@ def _read(actor: str, account: dict, addresses: list[dict], symbols: list[str] |
                                 "VALUES (%s,%s,%s,'BROKER',%s,%s)",
                                 [(account['id'], name[:64], Jsonb(spec), Jsonb(raw), read_id) for name, spec, raw in stored_specs])
     return {'id': read_id, 'connected': True, 'host': result['host'], 'port': result['port'], 'connect_ms': result.get('connect_ms'),
-            'attempts': result.get('attempts') or [], 'credential_level': level, 'facts': facts,
+            'attempts': result.get('attempts') or [], 'credential_level': level, 'facts': facts, 'client_build': result.get('client_build'),
             'server_time_offset_minutes': offset, 'symbols_available': result.get('symbols_available', 0),
             'symbols_stored': len(stored_specs), 'symbols_unmapped': unmapped[:50], 'symbol_error': result.get('symbol_error')}
 

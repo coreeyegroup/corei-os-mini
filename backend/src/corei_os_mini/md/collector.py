@@ -343,7 +343,7 @@ class SourceWorker(threading.Thread):
         self.offset = server_offset(m.get('server_time'), m.get('utc_now'))
         now = self.clock()
         outage = self.outage_since
-        self._event('CONNECTED', 'INFO', host=self.host, port=self.port, server_offset_minutes=int(self.offset.total_seconds() // 60),
+        self._event('CONNECTED', 'INFO', host=self.host, port=self.port, client_build=m.get('client_build'), server_offset_minutes=int(self.offset.total_seconds() // 60),
                     outage_seconds=round((now - outage).total_seconds(), 1) if outage else None)
         from .. import controls
         controls.set_connection_status(self.connection_id, 'CONNECTED', host=self.host, port=self.port, logged_in=True, heartbeat=True,

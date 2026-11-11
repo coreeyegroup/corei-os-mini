@@ -73,7 +73,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Plans: matrix, then a new plan with a live size estimate; starting a LIVE trading feed goes for approval.
  nav('Collection plans').click();await settle();
- assert.ok($('.md-matrix').textContent.includes('XAUUSD'));
+ assert.ok($$('.cfg-table tbody tr').some(r=>r.textContent.includes('GOLD_A')),'plans list by default');
+ button('Matrix').click();await settle(2);assert.ok($('.md-matrix').textContent.includes('XAUUSD'));assert.ok($('.md-cell-line').textContent.includes('active'));
  button('New collection plan').click();await settle(2);
  fill($('[aria-label="Plan code"]'),'gold_b');fill($('[aria-label="Plan account"]'),'a2');fill($('[aria-label="Broker symbol"]'),'XAUUSD');
  fill($('[aria-label="Plan instrument"]'),'i1');fill($('[aria-label="Plan role"]'),'BACKUP');await settle(2);
@@ -95,7 +96,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual(switches[0].body,{paused:true,version:1,reason:'Broker maintenance'});
  assert.ok($('.md-switch').textContent.includes('PAUSED'));
  nav('Quality').click();await settle();
- const q=$$('.cfg-panel table tbody tr');assert.equal(q.length,2);assert.ok(q[1].textContent.includes('3.1 bp'));
+ const q=$$('.md-quality tbody tr');assert.equal(q.length,2);assert.ok(q[0].textContent.includes('XAUUSD'));assert.equal(q[1].querySelector('td').textContent,'');assert.ok(q[1].textContent.includes('3.1 bp'));
  q[0].click();await settle();assert.ok($('.md-spark .md-bar'));
  nav('Events').click();await settle();assert.ok($('.md-sev-CRITICAL').textContent.includes('feed switch'));
  nav('Archive').click();await settle();assert.ok($$('code').some(c=>c.textContent.startsWith('aaaaaaaaaaaa')));

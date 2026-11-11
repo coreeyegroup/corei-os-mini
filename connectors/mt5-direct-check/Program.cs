@@ -479,6 +479,7 @@ static int DescribeApi()
     Console.WriteLine(JsonSerializer.Serialize(new
     {
         sdk_version = asm.GetName().Version?.ToString(),
+        client_build_settings = BuildMembers().Select(m => (m.isStatic ? "static " : "") + m.name).Concat(BuildInConstructor() ? new[] { "constructor parameter" } : Array.Empty<string>()).ToArray(),
         api = TypeSurface(typeof(MT5API), 2, new HashSet<Type>()),
         exported_types = asm.GetExportedTypes().Select(t => t.FullName).OrderBy(n => n).ToArray(),
         enums,
@@ -501,9 +502,77 @@ static object? ArgFor(ParameterInfo p, SessionRequest r, SessionHost h)
     if ((t == typeof(int) || t == typeof(ushort) || t == typeof(uint)) && n.Contains("port")) return Convert.ChangeType(h.port, t);
     if ((t == typeof(ulong) || t == typeof(long) || t == typeof(uint) || t == typeof(int)) && (n.Contains("user") || n.Contains("login") || n.Contains("account")))
         return Convert.ChangeType(r.login, t);
+    if (n.Contains("build") && BuildOverride is int b && (t == typeof(int) || t == typeof(ushort) || t == typeof(uint) || t == typeof(short) || t == typeof(long)))
+        return Convert.ChangeType(b, t);
     if (p.HasDefaultValue) return p.DefaultValue;
     throw new InvalidOperationException("unmapped " + p.ParameterType.Name + " " + p.Name);
 }
+
+// ---------- client build (brokers refuse old MT5 builds with OLD_VERSION) ----------
+
+
+// Every writable numeric member named like a build (property or field, static or instance).
+static List<(string name, bool isStatic, Action<object?, int> set)> BuildMembers()
+{
+    var list = new List<(string, bool, Action<object?, int>)>();
+    const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
+    foreach (var p in typeof(MT5API).GetProperties(flags))
+    {
+        var t = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+        if (p.CanWrite && p.SetMethod?.IsPublic == true && NumericTypes.Contains(t) && p.Name.Contains("Build", StringComparison.OrdinalIgnoreCase))
+            list.Add((p.Name, p.SetMethod!.IsStatic, (o, v) => p.SetValue(p.SetMethod!.IsStatic ? null : o, Convert.ChangeType(v, t))));
+    }
+    foreach (var f in typeof(MT5API).GetFields(flags))
+    {
+        var t = Nullable.GetUnderlyingType(f.FieldType) ?? f.FieldType;
+        if (!f.IsInitOnly && !f.IsLiteral && NumericTypes.Contains(t) && f.Name.Contains("Build", StringComparison.OrdinalIgnoreCase))
+            list.Add((f.Name, f.IsStatic, (o, v) => f.SetValue(f.IsStatic ? null : o, Convert.ChangeType(v, t))));
+    }
+    return list;
+}
+
+static bool BuildInConstructor() => typeof(MT5API).GetConstructors().Any(c => c.GetParameters().Any(p => (p.Name ?? "").Contains("build", StringComparison.OrdinalIgnoreCase)));
+
+// Recent MT5 terminal builds, newest first (MT5 was at build 5430 in late 2025).
+
+static int? ConfiguredBuild() => int.TryParse(Environment.GetEnvironmentVariable("COREI_MT5_CLIENT_BUILD"), out var b) && b is > 1000 and < 100000 ? b : null;
+
+// Connect as the SDK is. If the broker answers OLD_VERSION and the SDK lets us state the
+// client build, try recent builds (or exactly COREI_MT5_CLIENT_BUILD when set).
+static object ConnectWithBuild(SessionRequest r, SessionHost h, int timeout, bool quotes)
+{
+    var members = BuildMembers();
+    var settable = members.Count > 0 || BuildInConstructor();
+    var configured = ConfiguredBuild();
+    var plan = configured is int c ? new int?[] { c } : new int?[] { null }.Concat(settable ? RecentBuilds.Select(b => (int?)b) : Array.Empty<int?>()).ToArray();
+    Exception? first = null;
+    var tried = new List<int>();
+    foreach (var build in plan)
+    {
+        BuildOverride = build;
+        try
+        {
+            if (build is int sb) foreach (var m in members.Where(m => m.isStatic)) m.set(null, sb);
+            var api = Construct(r, h);
+            if (build is int ib) foreach (var m in members.Where(m => !m.isStatic)) m.set(api, ib);
+            if (quotes) AttachQuotes(api);
+            Call(api, "Connect", timeout);
+            BuildUsed = build;
+            return api;
+        }
+        catch (Exception e)
+        {
+            first ??= e;
+            if (build is int tb) tried.Add(tb);
+            if (!Reason(e).Contains("OLD_VERSION", StringComparison.OrdinalIgnoreCase)) throw;
+        }
+    }
+    var note = configured is not null ? $" (COREI_MT5_CLIENT_BUILD={configured} was also refused)"
+        : settable ? $" (also refused with client builds {string.Join(", ", tried)})"
+        : " (this SDK has no client-build setting; it must be updated to a newer release)";
+    throw new InvalidOperationException(Reason(first!) + note);
+}
+
 
 static object Construct(SessionRequest r, SessionHost h)
 {
@@ -606,8 +675,7 @@ static int Session()
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            api = Construct(r, h);
-            Call(api, "Connect", timeout);
+            api = ConnectWithBuild(r, h, timeout, quotes: false);
         }
         catch (Exception e)
         {
@@ -644,7 +712,7 @@ static int Session()
             connected = true, h.host, h.port, connect_ms = connectMs, attempts,
             utc_now = utcNow.ToString("yyyy-MM-ddTHH:mm:ss"), server_time = serverTime,
             account, symbols_available = available, symbols, symbol_error = symbolError,
-            sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(),
+            sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(), client_build = BuildUsed,
         }));
         return 0;
     }
@@ -822,7 +890,7 @@ static int Stream()
     {
         if (!Host().IsMatch(h.host) || h.port is < 1 or > 65535) { attempts.Add(new { h.host, h.port, ok = false, error = "invalid address" }); continue; }
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        try { api = Construct(r, h); AttachQuotes(api); Call(api, "Connect", timeout); used = h; attempts.Add(new { h.host, h.port, ok = true, ms = watch.ElapsedMilliseconds }); break; }
+        try { api = ConnectWithBuild(r, h, timeout, quotes: true); used = h; attempts.Add(new { h.host, h.port, ok = true, ms = watch.ElapsedMilliseconds }); break; }
         catch (Exception e) { attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***") }); api = null; }
     }
     if (api is null || used is null) { Emit(new { t = "failed", attempts }); return 3; }
@@ -831,7 +899,7 @@ static int Stream()
     string? serverTime = null;
     try { serverTime = (api.GetType().GetProperty("ServerTime")?.GetValue(api) as DateTime?)?.ToString("yyyy-MM-ddTHH:mm:ss"); } catch (Exception) { }
     Emit(new { t = "connected", used.host, used.port, attempts, server_time = serverTime, utc_now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss"),
-               sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString() });
+               sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(), client_build = BuildUsed });
     var subscribed = new HashSet<string>(StringComparer.Ordinal);
     try { SubscribeSymbols(api, r.symbols ?? Array.Empty<string>(), true); foreach (var s in r.symbols ?? Array.Empty<string>()) subscribed.Add(s); Emit(new { t = "subscribed", symbols = subscribed.ToArray() }); }
     catch (Exception e) { Emit(new { t = "error", msg = "subscribe: " + Reason(e) }); }
@@ -886,6 +954,11 @@ static int Stream()
 partial class Program
 {
     static readonly object StreamOut = new();
+    static readonly Type[] NumericTypes = { typeof(int), typeof(uint), typeof(short), typeof(ushort), typeof(long) };
+    // Recent MT5 terminal builds, newest first (MT5 was at build 5430 in late 2025).
+    static readonly int[] RecentBuilds = { 5430, 5370, 5200, 4755 };
+    static int? BuildOverride;
+    static int? BuildUsed;
     static long StreamSeq;
     static readonly string[] Frames = { "M1", "M5", "M15", "M30", "H1", "H4", "D1" };
     static readonly int[] FrameMinutes = { 1, 5, 15, 30, 60, 240, 1440 };

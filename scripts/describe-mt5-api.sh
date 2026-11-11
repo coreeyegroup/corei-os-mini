@@ -8,3 +8,4 @@ READER="${COREI_MT5_CATALOG_PARSER:-/opt/corei-os-mini/server-catalog/ServerCata
 OUT="$HOME/mt5-api-$(date +%Y%m%d%H%M%S).json"
 "$READER" --describe-api > "$OUT"
 echo "SDK description written to $OUT ($(wc -c < "$OUT") bytes)"
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('SDK version:', d.get('sdk_version')); print('Client build settings:', ', '.join(d.get('client_build_settings') or []) or 'none (the SDK must be updated to fix OLD_VERSION)')" "$OUT"

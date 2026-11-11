@@ -121,13 +121,13 @@ function Plans({ canEdit }: { canEdit: boolean }) {
   const [plans, error, reload] = useLoad<Row>('md/plans', 10000);
   const [accounts] = useLoad<Row>('config/accounts');
   const [instruments] = useLoad<Row>('config/instruments');
-  const [open, setOpen] = useState<Row | null>(null), [view, setView] = useState<'matrix' | 'list'>('matrix');
+  const [open, setOpen] = useState<Row | null>(null), [view, setView] = useState<'matrix' | 'list'>('list');
   const items: Row[] = plans?.items ?? [];
   const usedAccounts = [...new Map(items.map(p => [p.account_id, p.account_name || p.account_code])).entries()];
   const usedInstruments = [...new Map(items.map(p => [p.instrument_id ?? `sym:${p.broker_symbol}`, p.instrument_symbol ?? p.broker_symbol])).entries()];
   return <>
     <div className="infra-toolbar">
-      <div className="md-seg" role="group" aria-label="View"><button aria-pressed={view === 'matrix'} onClick={() => setView('matrix')}>Matrix</button><button aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button></div>
+      <div className="md-seg" role="group" aria-label="View"><button aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button><button aria-pressed={view === 'matrix'} onClick={() => setView('matrix')}>Matrix</button></div>
       <span className="infra-spacer" />
       {canEdit && <button className="primary" onClick={() => setOpen({ ...BLANK })}>New collection plan</button>}
     </div>
@@ -135,11 +135,9 @@ function Plans({ canEdit }: { canEdit: boolean }) {
     {view === 'matrix' ? <div className="infra-grid md-matrix"><table><thead><tr><th>Instrument / symbol</th>{usedAccounts.map(([id, code]) => <th key={id}>{code}</th>)}</tr></thead>
       <tbody>{usedInstruments.map(([key, label]) => <tr key={key}><td><strong>{label}</strong></td>{usedAccounts.map(([aid]) => {
         const p = items.find(x => x.account_id === aid && (x.instrument_id ?? `sym:${x.broker_symbol}`) === key);
-        return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)}>{p ? <>
-          <span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span> <span className="cfg-pill">{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span>
-          <small>{p.data_types.join(' · ').toLowerCase()}{p.data_types.includes('BARS') ? ` (${p.bar_timeframes.join(',')})` : ''}</small>
-          {p.bid == null ? <span className="md-nodata" title={p.collector_error || ''}>{p.status === 'ACTIVE' ? (p.collector_error ? 'no data · see Live' : 'waiting for data') : 'not collecting'}</span>
-            : p.score != null && <span className={`md-score ${scoreClass(p.score)}`} title="Quality score of the last full minute">{p.score}</span>}</> : '—'}</td>; })}</tr>)}
+        return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)} title={p ? `${p.code} · ${p.data_types.join(', ').toLowerCase()} · ${p.bar_timeframes.join(',')}${p.collector_error ? ' · ' + p.collector_error : ''}` : ''}>{p ? <span className="md-cell-line">
+          <span className={`sb-dot ${p.status === 'ACTIVE' ? (p.bid == null ? 'bad' : 'ok') : ''}`} />{p.status.toLowerCase()} · {p.feed_role.toLowerCase()}{p.active_feed ? '*' : ''}
+          {p.bid == null ? <span className="md-nodata">{p.status === 'ACTIVE' ? 'no data' : ''}</span> : p.score != null && <span className={`md-score ${scoreClass(p.score)}`}>{p.score}</span>}</span> : '—'}</td>; })}</tr>)}
         {!items.length && <tr><td className="infra-placeholder">No plans yet.</td></tr>}</tbody></table></div>
       : <table className="cfg-table"><thead><tr><th>Plan</th><th>Account</th><th>Symbol</th><th>Instrument</th><th>Purpose</th><th>Role</th><th>Data</th><th>When</th><th>Keep</th><th>Status</th></tr></thead>
         <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td>{p.code}</td><td title={p.account_code}>{p.account_name || p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
@@ -263,14 +261,14 @@ function Quality() {
     <div className="infra-toolbar"><label>Period <select aria-label="Quality period" value={hours} onChange={e => setHours(Number(e.target.value))}>
       {[[1, 'Last hour'], [24, 'Last 24 hours'], [168, 'Last 7 days'], [720, 'Last 30 days']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label></div>
     {error && <p role="alert" className="cfg-error">{error}</p>}
-    {Object.entries(groups).map(([name, rows]) => <section key={name} className="cfg-panel"><header><strong>{name}</strong><small>{rows.length > 1 ? 'best source first' : ''}</small></header>
-      <table className="cfg-table compact"><thead><tr><th>Account</th><th>Connection</th><th className="num">Score</th><th className="num">Prices</th><th className="num">Latency p50 / p95</th>
-        <th className="num">Spread avg / max</th><th className="num">Longest gap</th><th className="num">Spikes</th><th className="num">Deviation</th><th className="num">Empty min</th></tr></thead>
-        <tbody>{rows.map(r => <tr key={r.account_id + r.broker_symbol} onClick={() => setDetail(r)} className={detail?.account_id === r.account_id && detail?.broker_symbol === r.broker_symbol ? 'selected' : ''}>
-          <td>{r.account_code}</td><td>{r.connection_code}</td><td className="num"><span className={`md-score ${scoreClass(Number(r.score))}`}>{r.score}</span></td>
-          <td className="num">{Number(r.ticks).toLocaleString()}</td><td className="num">{r.latency_p50_ms ?? '—'} / {r.latency_p95_ms ?? '—'} ms</td>
-          <td className="num">{r.spread_avg ?? '—'} / {r.spread_max ?? '—'}</td><td className="num">{r.max_gap_seconds ?? '—'} s</td><td className="num">{r.spikes}</td>
-          <td className="num">{r.deviation_bp != null ? `${r.deviation_bp} bp` : '—'}</td><td className="num">{r.empty_minutes}</td></tr>)}</tbody></table></section>)}
+    <table className="cfg-table compact md-quality"><thead><tr><th>Instrument</th><th>Account</th><th>Connection</th><th className="num">Score</th><th className="num">Prices</th><th className="num">Latency p50 / p95</th>
+      <th className="num">Spread avg / max</th><th className="num">Longest gap</th><th className="num">Spikes</th><th className="num">Deviation</th><th className="num">Empty min</th></tr></thead>
+      <tbody>{Object.entries(groups).flatMap(([name, rows]) => rows.map((r, i) => <tr key={name + r.account_id + r.broker_symbol} onClick={() => setDetail(r)}
+        className={`${i === 0 ? 'md-group-start' : ''} ${detail?.account_id === r.account_id && detail?.broker_symbol === r.broker_symbol ? 'selected' : ''}`}>
+        <td>{i === 0 ? <b>{name}</b> : ''}</td><td>{r.account_code}</td><td>{r.connection_code}</td><td className="num"><span className={`md-score ${scoreClass(Number(r.score))}`}>{r.score}</span></td>
+        <td className="num">{Number(r.ticks).toLocaleString()}</td><td className="num">{r.latency_p50_ms ?? '—'} / {r.latency_p95_ms ?? '—'} ms</td>
+        <td className="num">{r.spread_avg ?? '—'} / {r.spread_max ?? '—'}</td><td className="num">{r.max_gap_seconds ?? '—'} s</td><td className="num">{r.spikes}</td>
+        <td className="num">{r.deviation_bp != null ? `${r.deviation_bp} bp` : '—'}</td><td className="num">{r.empty_minutes}</td></tr>))}</tbody></table>
     {data && !data.items.length && <p className="cfg-note">No quality measured yet in this period.</p>}
     {detail && minutes && <section className="cfg-panel"><header><strong>{detail.account_code} · {detail.broker_symbol} · last 2 hours by minute</strong><button onClick={() => setDetail(null)}>Close</button></header>
       <div className="md-spark" aria-label="Score by minute">{[...minutes].reverse().map(m => <span key={m.minute} title={`${new Date(m.minute).toLocaleTimeString()} · score ${m.score} · ${m.ticks} prices`}

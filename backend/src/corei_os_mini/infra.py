@@ -506,7 +506,7 @@ def cancel_session(actor: str, pid: int, reason: str) -> dict:
 # ---------- market data health ----------
 
 def _age(t) -> float | None:
-    return (datetime.now(timezone.utc) - t).total_seconds() if t else None
+    return max(0.0, (datetime.now(timezone.utc) - t).total_seconds()) if t else None
 
 
 def _market_data_health(add) -> None:
