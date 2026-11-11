@@ -192,10 +192,18 @@ class ModelTests(unittest.TestCase):
     def test_readiness_explains_every_blocker(self):
         row = dict(provider_status='ACTIVE', connection_status='ACTIVE', status='ACTIVE', trading_permission='TRADING',
                    platform='MT5', purpose='BOTH', environment='LIVE', credential_kind='MT5_LOGIN',
-                   credential_access_level='FULL', connection_credential_kind=None)
+                   credential_access_level='FULL', connection_credential_kind=None, master_credential_kind='MT5_LOGIN',
+                   margin_mode='HEDGING', server_utc_offset_minutes=120, max_orders_per_second=5)
         result = account_readiness(row, {'LIVE': {'trading_enabled': False}})
         self.assertEqual(result['data_blockers'], ['ADAPTER_NOT_AVAILABLE'])
         self.assertEqual(result['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'ORDER_SENDING_OFF_LIVE'])
+        self.assertEqual(result['warnings'], [])
+        # The facts the broker decides must be known before trading.
+        unknown = account_readiness({**row, 'margin_mode': 'UNKNOWN', 'server_utc_offset_minutes': None, 'master_credential_kind': None,
+                                     'relationship': 'CLIENT', 'max_orders_per_second': None}, {'LIVE': {'trading_enabled': True}})
+        self.assertEqual(unknown['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN',
+                                                       'MANDATE_MISSING', 'MASTER_PASSWORD_MISSING'])
+        self.assertEqual(unknown['warnings'], ['RATE_LIMIT_NOT_SET'])
         missing = account_readiness({**row, 'credential_kind': None, 'status': 'INACTIVE'}, {'LIVE': {'trading_enabled': True}})
         self.assertIn('ACCOUNT_CREDENTIAL_MISSING', missing['data_blockers'])
         self.assertIn('ACCOUNT_INACTIVE', missing['data_blockers'])
@@ -248,6 +256,8 @@ class ConfigurationPostgresTests(unittest.TestCase):
         with self.connect() as db:
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
+            # Four-eyes on LIVE changes is covered in test_controls; these tests exercise other rules.
+            db.execute("UPDATE cfg_policies SET value='false' WHERE key='four_eyes_live_changes'")
         self.folder = tempfile.TemporaryDirectory()
         key = Path(self.folder.name) / 'key'; key.write_bytes(os.urandom(32)); key.chmod(0o600)
         self.patches = [patch.dict(os.environ, {'COREI_BROKER_KEY_FILE': str(key)}),
@@ -360,7 +370,8 @@ class ConfigurationPostgresTests(unittest.TestCase):
         self.assertEqual(enabled.status_code, 200, enabled.text)
         self.assertEqual(self.client.put('/api/config/execution-controls/DEMO', json={**on, 'confirm_environment': 'DEMO'}).status_code, 409)
         current = self.client.get(f"/api/config/accounts/{account['id']}").json()
-        self.assertEqual(current['trading_blockers'], ['ADAPTER_NOT_AVAILABLE'])
+        # Margin mode and server clock are not known until read from the broker or entered.
+        self.assertEqual(current['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN'])
 
         # REST connections hold API credentials; MT5 logins never go on a REST account.
         rest = self.post('connections', dict(provider_id=provider['id'], code='ICM_API', name='ICM API', platform='REST_API',
@@ -391,7 +402,7 @@ class ConfigurationPostgresTests(unittest.TestCase):
             db.execute('UPDATE cfg_audit_log SET actor=%s', ('mallory',))
 
         summary = self.client.get('/api/config/summary').json()
-        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1,
+        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1, 'groups': 0,
                                              'strategies': 0, 'deployments': 0})
 
 

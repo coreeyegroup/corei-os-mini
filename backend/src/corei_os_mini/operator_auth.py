@@ -134,6 +134,26 @@ def require_role(*roles: str):
     return dependency
 
 
+def require_reauth(request: Request, user: Principal = Depends(current_user)) -> Principal:
+    """Sensitive actions need the password re-entered within the last few minutes
+    (policy reauth_minutes). Answers 428 so the screen can ask and retry."""
+    token = request.cookies.get(COOKIE, '')
+    with store.transaction('read') as db:
+        row = db.execute('SELECT 1 FROM cfg_sessions WHERE token_hash=%s AND reauth_until > now()', (_token_hash(token),)).fetchone()
+    if not row:
+        raise HTTPException(428, 'Re-enter your password to confirm this action.')
+    return user
+
+
+def optional_reauth(request: Request, user: Principal = Depends(current_user)) -> bool:
+    """True when the password was re-entered recently; for actions that need it only sometimes."""
+    try:
+        require_reauth(request, user)
+        return True
+    except HTTPException:
+        return False
+
+
 def require_operator(user: Principal = Depends(current_user)) -> str:
     """Compatibility dependency: any signed-in user, returning the username."""
     return user.username
@@ -233,6 +253,53 @@ def logout(request: Request, response: Response):
     return {'signed_out': True}
 
 
+class Reauth(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    password: str = Field(min_length=1, max_length=256)
+
+
+@router.post('/reauth')
+def reauthenticate(payload: Reauth, request: Request, response: Response, user: Principal = Depends(current_user)):
+    response.headers['Cache-Control'] = 'no-store'
+    _rate_limit()
+    token = request.cookies.get(COOKIE, '')
+    with store.transaction('update') as db:
+        row = db.execute('SELECT password_hash FROM cfg_users WHERE id=%s', (user.user_id,)).fetchone()
+        if not row or not verify_password(payload.password, row['password_hash']):
+            store.audit(db, user.username, 'REAUTH_FAILED', 'user', user.user_id, None, None)
+            ok = False
+        else:
+            minutes = int(store.policy(db, 'reauth_minutes', 5))
+            db.execute("UPDATE cfg_sessions SET reauth_until = now() + make_interval(mins => %s) WHERE token_hash=%s",
+                       (minutes, _token_hash(token)))
+            ok = True
+    if not ok:
+        raise HTTPException(401, 'Password is not correct.')
+    return {'reauthenticated': True, 'minutes': minutes}
+
+
+class Pref(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    value: dict | list | str | int | float | bool | None
+
+
+@router.get('/prefs')
+def get_prefs(response: Response, user: Principal = Depends(current_user)):
+    from .controls import get_prefs as load
+    response.headers['Cache-Control'] = 'no-store'
+    return load(user.username)
+
+
+@router.put('/prefs/{key}')
+def put_pref(key: Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9._-]{1,120}$')], payload: Pref,
+             user: Principal = Depends(current_user)):
+    from .controls import set_pref
+    if len(str(payload.value)) > 20_000:
+        raise HTTPException(422, 'Preference is too large.')
+    set_pref(user.username, key, payload.value)
+    return {'saved': key}
+
+
 class PasswordChange(BaseModel):
     model_config = ConfigDict(extra='forbid')
     current_password: str = Field(min_length=1, max_length=256)
@@ -305,7 +372,7 @@ def list_users(response: Response, _: Principal = Depends(require_role('ADMIN'))
 
 
 @admin_router.post('/users', status_code=201)
-def create_user(payload: UserCreate, response: Response, admin: Principal = Depends(require_role('ADMIN'))):
+def create_user(payload: UserCreate, response: Response, admin: Principal = Depends(require_role('ADMIN')), _: Principal = Depends(require_reauth)):
     response.headers['Cache-Control'] = 'no-store'
     password_rules(payload.temporary_password, payload.username)
     with store.transaction('create') as db:
@@ -319,7 +386,7 @@ def create_user(payload: UserCreate, response: Response, admin: Principal = Depe
 
 
 @admin_router.put('/users/{user_id}')
-def update_user(user_id: UUID, payload: UserUpdate, response: Response, admin: Principal = Depends(require_role('ADMIN'))):
+def update_user(user_id: UUID, payload: UserUpdate, response: Response, admin: Principal = Depends(require_role('ADMIN')), _: Principal = Depends(require_reauth)):
     response.headers['Cache-Control'] = 'no-store'
     roles = sorted(set(payload.roles))
     with store.transaction('update') as db:
@@ -342,7 +409,7 @@ def update_user(user_id: UUID, payload: UserUpdate, response: Response, admin: P
 
 
 @admin_router.post('/users/{user_id}/password')
-def reset_password(user_id: UUID, payload: PasswordReset, response: Response, admin: Principal = Depends(require_role('ADMIN'))):
+def reset_password(user_id: UUID, payload: PasswordReset, response: Response, admin: Principal = Depends(require_role('ADMIN')), _: Principal = Depends(require_reauth)):
     response.headers['Cache-Control'] = 'no-store'
     if user_id == admin.user_id:
         raise HTTPException(422, 'Use Change password for your own account.')

@@ -28,6 +28,8 @@ class StrategyDeploymentTests(unittest.TestCase):
         with self.connect() as db:
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
+            # Four-eyes on LIVE changes is covered in test_controls; these tests exercise other rules.
+            db.execute("UPDATE cfg_policies SET value='false' WHERE key='four_eyes_live_changes'")
         self.patches = [patch('corei_os_mini.config_store._connect', self.connect),
                         patch.dict(os.environ, {'COREI_OPERATOR_USER': 'owner', 'COREI_OPERATOR_PASSWORD_HASH': hash_password('owner-login-pass-1')})]
         for p in self.patches:

@@ -118,6 +118,8 @@ class Mt5SetupAndRouting(unittest.TestCase):
             p.start()
         app.dependency_overrides[current_user] = lambda: EVERYONE
         self.client = TestClient(app, headers=HEADERS)
+        with self.connect() as db:
+            db.execute("UPDATE cfg_policies SET value='false' WHERE key='four_eyes_live_changes'")
         self.provider = self.ok(self.client.post('/api/config/providers', json={'code': 'VTM', 'name': 'VT Markets', 'kind': 'BROKER'}), 201)
 
     def tearDown(self):

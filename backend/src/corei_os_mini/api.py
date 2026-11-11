@@ -9,6 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from .operator_auth import admin_router, router as operator_router
 from .config_api import router as config_router
 from .strategy_registry import router as strategy_router
+from .controls_api import router as controls_router
+from .broker_login import oauth_router, router as broker_login_router
 from . import config_store
 from .credentials import storage_ready as credential_storage_ready
 from .config import get_settings
@@ -36,12 +38,22 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    import asyncio
+    import os
+    from . import alerts
+    task = None
+    if os.getenv('COREI_ALERTS', 'on') != 'off' and settings.database_url:
+        task = asyncio.create_task(alerts.run_forever(config_store.transaction))
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
 
 
 app = FastAPI(
     title="COREI-OS-MINI API",
-    version="0.9.0",
+    version="0.11.0",
     description="Configuration, market-data assessment and trading-core services. No provider adapter is connected yet; order sending is governed by firm-wide execution controls.",
     lifespan=lifespan,
 )
@@ -51,6 +63,9 @@ app.include_router(operator_router)
 app.include_router(admin_router)
 # Strategy routes first: config_router's /api/config/{entity} would otherwise claim them.
 app.include_router(strategy_router)
+app.include_router(controls_router)
+app.include_router(broker_login_router)
+app.include_router(oauth_router)
 app.include_router(config_router)
 
 @app.get("/health")
@@ -148,7 +163,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.10.0-mt5-routing",
+        "release": "0.11.0-institutional-controls",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

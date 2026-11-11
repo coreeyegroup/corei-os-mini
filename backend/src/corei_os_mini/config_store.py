@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
 import re
@@ -26,7 +27,7 @@ from pydantic import BaseModel, ValidationError
 
 from . import credentials
 from .config import get_settings
-from .config_models import (AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn,
+from .config_models import (AccountGroupIn, AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn,
                             ApiKeyCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
                             Mt5Settings)
 from .mt5_routing import effective_access_points
@@ -50,8 +51,11 @@ SPECS: dict[str, Spec] = {
     'connections': Spec('cfg_connections', 'connection', ConnectionIn, ('provider_id', 'code', 'platform', 'environment')),
     'accounts': Spec('cfg_accounts', 'account', AccountIn, ('connection_id', 'code', 'external_account_id')),
     'instruments': Spec('cfg_instruments', 'instrument', InstrumentIn, ('symbol',)),
-    'mappings': Spec('cfg_symbol_mappings', 'symbol mapping', MappingIn, ('connection_id', 'instrument_id')),
+    'mappings': Spec('cfg_symbol_mappings', 'symbol mapping', MappingIn, ('connection_id', 'instrument_id', 'account_id')),
+    'groups': Spec('cfg_account_groups', 'account group', AccountGroupIn, ('code',)),
 }
+# Records that are archived (kept, read-only) instead of deleted once they have history.
+ARCHIVABLE = ('providers', 'connections', 'accounts', 'groups')
 
 UNIQUE_MESSAGES = {
     'cfg_providers_code_key': 'A provider with this code already exists.',
@@ -59,8 +63,9 @@ UNIQUE_MESSAGES = {
     'cfg_accounts_code_key': 'An account with this code already exists.',
     'cfg_accounts_connection_id_external_account_id_key': 'This broker account number is already registered on this connection.',
     'cfg_instruments_symbol_key': 'An instrument with this symbol already exists.',
-    'cfg_symbol_mappings_connection_id_broker_symbol_key': 'This broker symbol is already mapped on this connection.',
-    'cfg_symbol_mappings_connection_id_instrument_id_key': 'This instrument is already mapped on this connection.',
+    'cfg_symbol_mappings_symbol_scope': 'This broker symbol is already mapped on this connection (or for this account).',
+    'cfg_symbol_mappings_instrument_scope': 'This instrument is already mapped on this connection (or for this account).',
+    'cfg_account_groups_code_key': 'An account group with this code already exists.',
 }
 
 
@@ -119,35 +124,54 @@ SELECTS = {
     'connections': '''SELECT c.*, p.code AS provider_code, p.name AS provider_name, p.status AS provider_status,
         cr.kind AS credential_kind, cr.updated_at AS credential_updated_at,
         (SELECT count(*) FROM cfg_accounts a WHERE a.connection_id=c.id) AS account_count,
-        (SELECT count(*) FROM cfg_symbol_mappings m WHERE m.connection_id=c.id) AS mapping_count
+        (SELECT count(*) FROM cfg_symbol_mappings m WHERE m.connection_id=c.id) AS mapping_count,
+        to_jsonb(st) - 'connection_id' AS live_status,
+        (SELECT count(*) FROM cfg_change_requests r WHERE r.entity='connections' AND r.entity_id=c.id AND r.status='PENDING') AS pending_changes
         FROM cfg_connections c JOIN cfg_providers p ON p.id=c.provider_id
-        LEFT JOIN cfg_credentials cr ON cr.connection_id=c.id''',
+        LEFT JOIN cfg_credentials cr ON cr.connection_id=c.id
+        LEFT JOIN cfg_connection_status st ON st.connection_id=c.id''',
     'accounts': '''SELECT a.*, c.code AS connection_code, c.name AS connection_name, c.platform, c.environment,
         c.purpose, c.status AS connection_status, c.settings->>'auth_method' AS auth_method,
+        c.adapter, c.server_utc_offset_minutes, c.dst_rule, c.registered_egress_ip, c.max_orders_per_second,
         p.id AS provider_id, p.code AS provider_code, p.name AS provider_name, p.status AS provider_status,
-        acr.kind AS credential_kind, acr.access_level AS credential_access_level,
-        acr.updated_at AS credential_updated_at, ccr.kind AS connection_credential_kind,
-        c.settings AS connection_settings
+        mcr.kind AS master_credential_kind, mcr.updated_at AS master_credential_updated_at,
+        icr.kind AS investor_credential_kind, icr.updated_at AS investor_credential_updated_at,
+        COALESCE(mcr.kind, icr.kind) AS credential_kind,
+        CASE WHEN mcr.id IS NOT NULL THEN 'FULL' WHEN icr.id IS NOT NULL THEN 'READ_ONLY' END AS credential_access_level,
+        COALESCE(mcr.updated_at, icr.updated_at) AS credential_updated_at, ccr.kind AS connection_credential_kind,
+        c.settings AS connection_settings, st.state AS connection_state,
+        (SELECT coalesce(array_agg(g.group_id::text ORDER BY g.group_id), '{}') FROM cfg_account_group_members g WHERE g.account_id=a.id) AS group_ids,
+        (SELECT max(u.used_at) FROM cfg_credential_use u WHERE u.owner_id=a.id) AS credential_last_used_at,
+        (SELECT count(*) FROM cfg_change_requests r WHERE r.entity IN ('accounts','credential') AND r.entity_id=a.id AND r.status='PENDING') AS pending_changes,
+        t.expires_at AS session_token_expires_at
         FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id
         JOIN cfg_providers p ON p.id=c.provider_id
-        LEFT JOIN cfg_credentials acr ON acr.account_id=a.id
-        LEFT JOIN cfg_credentials ccr ON ccr.connection_id=c.id''',
+        LEFT JOIN cfg_credentials mcr ON mcr.account_id=a.id AND mcr.access_level='FULL'
+        LEFT JOIN cfg_credentials icr ON icr.account_id=a.id AND icr.access_level='READ_ONLY'
+        LEFT JOIN cfg_credentials ccr ON ccr.connection_id=c.id
+        LEFT JOIN cfg_connection_status st ON st.connection_id=c.id
+        LEFT JOIN cfg_session_tokens t ON t.account_id=a.id''',
     'instruments': '''SELECT i.*, (SELECT count(*) FROM cfg_symbol_mappings m WHERE m.instrument_id=i.id) AS mapping_count
         FROM cfg_instruments i''',
     'mappings': '''SELECT m.*, i.symbol AS instrument_symbol, c.code AS connection_code, c.environment,
-        c.purpose AS connection_purpose, p.code AS provider_code
+        c.purpose AS connection_purpose, p.code AS provider_code, ac.code AS account_code
         FROM cfg_symbol_mappings m JOIN cfg_instruments i ON i.id=m.instrument_id
-        JOIN cfg_connections c ON c.id=m.connection_id JOIN cfg_providers p ON p.id=c.provider_id''',
+        JOIN cfg_connections c ON c.id=m.connection_id JOIN cfg_providers p ON p.id=c.provider_id
+        LEFT JOIN cfg_accounts ac ON ac.id=m.account_id''',
+    'groups': '''SELECT g.*, (SELECT count(*) FROM cfg_account_group_members m WHERE m.group_id=g.id) AS account_count,
+        (SELECT coalesce(array_agg(m.account_id::text), '{}') FROM cfg_account_group_members m WHERE m.group_id=g.id) AS account_ids
+        FROM cfg_account_groups g''',
 }
-ALIAS = {'providers': 'p', 'connections': 'c', 'accounts': 'a', 'instruments': 'i', 'mappings': 'm'}
+ALIAS = {'providers': 'p', 'connections': 'c', 'accounts': 'a', 'instruments': 'i', 'mappings': 'm', 'groups': 'g'}
 FILTERS = {
     'connections': {'provider_id': 'c.provider_id'},
     'accounts': {'provider_id': 'p.id', 'connection_id': 'a.connection_id'},
     'instruments': {'asset_class': 'i.asset_class'},
-    'mappings': {'connection_id': 'm.connection_id', 'instrument_id': 'm.instrument_id'},
+    'mappings': {'connection_id': 'm.connection_id', 'instrument_id': 'm.instrument_id', 'account_id': 'm.account_id'},
 }
 ORDER = {'providers': 'p.code', 'connections': 'p.code, c.code', 'accounts': 'p.code, c.code, a.code',
-         'instruments': 'i.symbol', 'mappings': 'c.code, i.symbol'}
+         'instruments': 'i.symbol', 'mappings': 'c.code, i.symbol', 'groups': 'g.code'}
+STATUS_COLUMN = {'providers': 'p.status', 'connections': 'c.status', 'accounts': 'a.status', 'groups': 'g.status'}
 
 
 def execution_controls(db) -> dict[str, dict]:
@@ -178,7 +202,21 @@ def account_routing(row: dict, latency: dict) -> dict | None:
                                    settings.get('access_points') or [], latency.get(str(row['connection_id']), {}))
 
 
-def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[str]]:
+def _today():
+    return datetime.now(timezone.utc).date()
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def policy(db, key: str, default: Any = None) -> Any:
+    row = db.execute('SELECT value FROM cfg_policies WHERE key=%s', (key,)).fetchone()
+    return row['value'] if row else default
+
+
+def account_readiness(row: dict, controls: dict[str, dict], context: dict | None = None) -> dict[str, list[str]]:
+    context = context or {}
     """Explain, in order, every reason an account cannot yet stream data or send orders."""
     data: list[str] = []
     if row['provider_status'] != 'ACTIVE':
@@ -196,9 +234,33 @@ def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[st
     routing = row.get('routing')
     if routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings']:
         data.append('NO_ADDRESS_AVAILABLE')
+    if row.get('connection_state') == 'FAILED':
+        data.append('CONNECTION_FAILED')
+    today = _today()
+    if row.get('expires_on') and row['expires_on'] < today:
+        data.append('ACCOUNT_EXPIRED')
+    if row['platform'] == 'REST_API' and row.get('registered_egress_ip') and context.get('egress_ip') \
+            and str(row['registered_egress_ip']) != context['egress_ip']:
+        data.append('STATIC_IP_MISMATCH')
     if row['platform'] not in AVAILABLE_ADAPTERS:
         data.append('ADAPTER_NOT_AVAILABLE')
     trading = list(data)
+    if row['platform'] == 'MT5' and row.get('margin_mode', 'UNKNOWN') == 'UNKNOWN':
+        trading.append('MARGIN_MODE_UNKNOWN')
+    if row['platform'] == 'MT5' and row.get('server_utc_offset_minutes') is None:
+        trading.append('SERVER_CLOCK_UNKNOWN')
+    if row.get('relationship') == 'CLIENT':
+        if not row.get('mandate_reference'):
+            trading.append('MANDATE_MISSING')
+        elif row.get('mandate_expires_on') and row['mandate_expires_on'] < today:
+            trading.append('MANDATE_EXPIRED')
+    if row['platform'] == 'MT5' and row['trading_permission'] == 'TRADING' and not row.get('master_credential_kind') \
+            and row.get('credential_kind'):
+        trading.append('MASTER_PASSWORD_MISSING')
+    if row['platform'] == 'REST_API' and row.get('auth_method') == 'OAUTH2':
+        expires = row.get('session_token_expires_at')
+        if not expires or expires <= _now():
+            trading.append('BROKER_LOGIN_NEEDED_TODAY')
     if row['purpose'] == 'MARKET_DATA':
         trading.append('CONNECTION_DATA_ONLY')
     if row['trading_permission'] != 'TRADING':
@@ -207,25 +269,41 @@ def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[st
         trading.append('READ_ONLY_CREDENTIAL')
     if not controls.get(row['environment'], {}).get('trading_enabled'):
         trading.append(f"ORDER_SENDING_OFF_{row['environment']}")
-    return {'data_blockers': data, 'trading_blockers': trading}
+    warnings = list((row.get('routing') or {}).get('warnings', []))
+    warn_days = int(context.get('expiry_warning_days', 7))
+    for field, code in (('expires_on', 'ACCOUNT_EXPIRING'), ('mandate_expires_on', 'MANDATE_EXPIRING')):
+        if row.get(field) and today <= row[field] <= today + timedelta(days=warn_days):
+            warnings.append(code)
+    if row['platform'] == 'REST_API' and row['environment'] == 'LIVE' and not row.get('registered_egress_ip'):
+        warnings.append('STATIC_IP_NOT_RECORDED')
+    if row.get('max_orders_per_second') is None:
+        warnings.append('RATE_LIMIT_NOT_SET')
+    if row.get('margin_mode_source') == 'MANUAL':
+        warnings.append('MARGIN_MODE_NOT_CONFIRMED_BY_BROKER')
+    return {'data_blockers': data, 'trading_blockers': trading, 'warnings': warnings}
 
 
 def _enrich(entity: str, rows: list[dict], db) -> list[dict]:
     if entity == 'accounts':
         controls = execution_controls(db)
         latency = latest_latency(db, list({r['connection_id'] for r in rows if r['platform'] == 'MT5'}))
+        from .network import egress_ip
+        context = {'expiry_warning_days': policy(db, 'expiry_warning_days', 7),
+                   'egress_ip': egress_ip(cached_only=True) if any(r.get('registered_egress_ip') for r in rows) else None}
         out = []
         for r in rows:
             r = {**r, 'routing': account_routing(r, latency)}
             r.pop('connection_settings', None)
-            out.append({**clean(r), **account_readiness(r, controls)})
+            out.append({**clean(r), **account_readiness(r, controls, context)})
         return out
     return [clean(r) for r in rows]
 
 
-def list_records(entity: str, filters: dict[str, str], q: str = '') -> list[dict]:
+def list_records(entity: str, filters: dict[str, str], q: str = '', include_archived: bool = False) -> list[dict]:
     alias = ALIAS[entity]
     clauses, params = [], []
+    if entity in STATUS_COLUMN and not include_archived:
+        clauses.append(f"{STATUS_COLUMN[entity]} <> 'ARCHIVED'")
     for key, column in FILTERS.get(entity, {}).items():
         if filters.get(key):
             clauses.append(f'{column}=%s')
@@ -233,7 +311,8 @@ def list_records(entity: str, filters: dict[str, str], q: str = '') -> list[dict
     if q:
         text_columns = {'providers': ['p.code', 'p.name'], 'connections': ['c.code', 'c.name', 'p.code'],
                         'accounts': ['a.code', 'a.name', 'a.external_account_id', 'a.holder_name', 'c.code', 'p.code'],
-                        'instruments': ['i.symbol', 'i.name'], 'mappings': ['m.broker_symbol', 'i.symbol', 'c.code']}[entity]
+                        'instruments': ['i.symbol', 'i.name'], 'mappings': ['m.broker_symbol', 'i.symbol', 'c.code'],
+                        'groups': ['g.code', 'g.name']}[entity]
         pattern = '%' + q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         clauses.append('(' + ' OR '.join(f'{c} ILIKE %s' for c in text_columns) + ')')
         params.extend([pattern] * len(text_columns))
@@ -277,10 +356,21 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
             if connection['purpose'] == 'MARKET_DATA':
                 raise HTTPException(422, 'This connection is market-data only. Use a trading connection to allow trading.')
             if record_id and db.execute("SELECT 1 FROM cfg_credentials WHERE account_id=%s AND access_level='READ_ONLY'",
-                                        (record_id,)).fetchone():
-                raise HTTPException(422, 'The saved password is an investor (read-only) password. Save the master password to allow trading.')
+                                        (record_id,)).fetchone() and not db.execute(
+                    "SELECT 1 FROM cfg_credentials WHERE account_id=%s AND access_level='FULL'", (record_id,)).fetchone():
+                raise HTTPException(422, 'Only an investor (read-only) password is saved. Save the master password to allow trading.')
+        if data.get('relationship') == 'CLIENT' and data['trading_permission'] == 'TRADING' and not data.get('mandate_reference'):
+            raise HTTPException(422, 'A client account needs a mandate reference before it may trade.')
+        if data.get('group_ids'):
+            found = db.execute('SELECT count(*) AS n FROM cfg_account_groups WHERE id = ANY(%s)', (list(data['group_ids']),)).fetchone()['n']
+            if found != len(set(data['group_ids'])):
+                raise HTTPException(422, 'An account group does not exist.')
     elif entity == 'mappings':
         connection = _connection(db, data['connection_id'])
+        if data.get('account_id'):
+            owner = db.execute('SELECT connection_id FROM cfg_accounts WHERE id=%s', (data['account_id'],)).fetchone()
+            if not owner or owner['connection_id'] != data['connection_id']:
+                raise HTTPException(422, 'An account-specific mapping must use an account on the same connection.')
         if data['usage'] not in PURPOSE_ALLOWS[connection['purpose']]:
             raise HTTPException(422, f"Usage {data['usage']} is not possible on a {connection['purpose']} connection.")
     elif entity == 'connections' and record_id:
@@ -301,30 +391,92 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
 # ---------- writes ----------
 
 def _json_columns(entity: str, values: dict) -> dict:
-    if entity == 'connections' and 'settings' in values:
-        values['settings'] = Jsonb(values['settings'])
-    if entity == 'accounts' and 'access_points' in values:
-        values['access_points'] = Jsonb([{'host': p['host'], 'port': int(p['port'])} for p in values['access_points']])
+    if entity == 'connections':
+        if 'settings' in values:
+            values['settings'] = Jsonb(values['settings'])
+        if 'maintenance' in values:
+            values['maintenance'] = Jsonb(values['maintenance'])
+    if entity == 'providers' and 'holidays' in values:
+        values['holidays'] = Jsonb(values['holidays'])
+    if entity == 'accounts':
+        values.pop('group_ids', None)
+        if 'access_points' in values:
+            values['access_points'] = Jsonb([{'host': p['host'], 'port': int(p['port'])} for p in values['access_points']])
+        if 'margin_mode' in values:
+            values['margin_mode_source'] = 'UNKNOWN' if values['margin_mode'] == 'UNKNOWN' else 'MANUAL'
     return values
+
+
+def _set_groups(db, account_id: UUID, group_ids: list) -> None:
+    db.execute('DELETE FROM cfg_account_group_members WHERE account_id=%s', (account_id,))
+    for group_id in dict.fromkeys(group_ids):
+        db.execute('INSERT INTO cfg_account_group_members(group_id, account_id) VALUES (%s,%s)', (group_id, account_id))
+
+
+# ---------- four-eyes on LIVE changes (DEC-31) ----------
+
+def four_eyes_on(db) -> bool:
+    return bool(policy(db, 'four_eyes_live_changes', True))
+
+
+def request_change(db, actor: str, entity: str, entity_id: UUID, action: str, summary: str, payload: dict,
+                   secret_fields: dict | None = None, base_version: int | None = None, reason: str = '') -> dict:
+    if db.execute("SELECT 1 FROM cfg_change_requests WHERE entity=%s AND entity_id=%s AND action=%s AND status='PENDING'",
+                  (entity, entity_id, action)).fetchone():
+        raise HTTPException(409, 'The same change is already waiting for approval. Approve, reject or withdraw it first.')
+    request_id = uuid4()
+    secret = credentials.encrypt(request_id, secret_fields) if secret_fields else None
+    row = db.execute('INSERT INTO cfg_change_requests(id, entity, entity_id, action, summary, payload, secret, base_version, reason, requested_by) '
+                     'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, entity, entity_id, action, summary, status, requested_by, requested_at',
+                     (request_id, entity, entity_id, action, summary[:500], Jsonb(payload), secret, base_version, reason[:500], actor)).fetchone()
+    audit(db, actor, 'REQUEST_CHANGE', 'change request', request_id, None, {'action': action, 'summary': summary, 'entity_id': str(entity_id)})
+    from .alerts import enqueue
+    enqueue(db, 'APPROVAL_NEEDED', 'WARNING', f'Approval needed: {action.replace("_", " ").lower()}',
+            f'{summary}\nRequested by {actor}. Approve or reject in COREI › Configuration › Approvals.')
+    return {'change_request': clean(row)}
+
+
+def _connection_needs_approval(before: dict | None, values: dict) -> list[str]:
+    if values['environment'] != 'LIVE':
+        return []
+    reasons = []
+    old = {(p['host'], int(p['port'])) for p in ((before or {}).get('settings') or {}).get('access_points', [])}
+    added = [f"{p['host']}:{p['port']}" for p in values['settings'].get('access_points', []) if (p['host'], int(p['port'])) not in old]
+    if added:
+        reasons.append(f"adds address{'es' if len(added) > 1 else ''} {', '.join(added[:5])}{' …' if len(added) > 5 else ''}")
+    if before and before['status'] != 'ACTIVE' and values['status'] == 'ACTIVE':
+        reasons.append(f"reactivates it (was {before['status'].lower()})")
+    return reasons
 
 
 def _insert(db, actor: str, entity: str, data: BaseModel, reason: str = '') -> UUID:
     spec = SPECS[entity]
     _rules(db, entity, data.model_dump(mode='python'), None)
     values = _json_columns(entity, data.model_dump(mode='python'))
+    group_ids = data.model_dump().get('group_ids') if entity == 'accounts' else None
     record_id = uuid4()
     columns = ['id', *values]
     db.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
         sql.Identifier(spec.table), sql.SQL(',').join(map(sql.Identifier, columns)),
         sql.SQL(',').join(sql.Placeholder() * len(columns))), (record_id, *values.values()))
+    if group_ids:
+        _set_groups(db, record_id, group_ids)
     after = db.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,)).fetchone()
-    audit(db, actor, 'CREATE', spec.label, record_id, None, after, reason)
+    audit(db, actor, 'CREATE', spec.label, record_id, None, {**after, 'group_ids': [str(g) for g in group_ids or []]} if group_ids else after, reason)
     return record_id
 
 
-def create(actor: str, entity: str, data: BaseModel) -> dict:
+def create(actor: str, entity: str, data: BaseModel, approved: bool = False, reason: str = '') -> dict:
     with transaction('create') as db:
-        return get_record(db, entity, _insert(db, actor, entity, data))
+        if entity == 'connections' and not approved and four_eyes_on(db):
+            values = data.model_dump(mode='json')
+            reasons = _connection_needs_approval(None, values)
+            if reasons:
+                _rules(db, entity, data.model_dump(mode='python'), None)
+                return request_change(db, actor, 'connections', uuid4(), 'CREATE_CONNECTION',
+                                      f"New LIVE connection {values['code']} ({values['settings'].get('server_name') or values['settings'].get('api_base_url')}) {' and '.join(reasons)}",
+                                      {'record': values})
+        return get_record(db, entity, _insert(db, actor, entity, data, reason))
 
 
 def _locked(db, spec: Spec, record_id: UUID, version: int) -> dict:
@@ -336,7 +488,8 @@ def _locked(db, spec: Spec, record_id: UUID, version: int) -> dict:
     return row
 
 
-def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: int) -> dict:
+def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: int,
+           approved: bool = False, reason: str = '') -> dict:
     spec = SPECS[entity]
     values = data.model_dump(mode='python')
     with transaction('update') as db:
@@ -344,22 +497,62 @@ def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: i
         for field in spec.immutable:
             if str(before[field]) != str(values[field]):
                 raise HTTPException(422, f'{field} cannot be changed. Create a new {spec.label} instead.')
+        if before.get('status') == 'ARCHIVED' and values.get('status') == 'ARCHIVED':
+            raise HTTPException(422, f'This {spec.label} is archived. Restore it (set status Inactive) before editing.')
         _rules(db, entity, values, record_id)
+        if entity == 'connections' and not approved and four_eyes_on(db):
+            reasons = _connection_needs_approval(before, data.model_dump(mode='json'))
+            if reasons:
+                return request_change(db, actor, 'connections', record_id, 'UPDATE_CONNECTION',
+                                      f"LIVE connection {before['code']}: change {' and '.join(reasons)}",
+                                      {'record': data.model_dump(mode='json')}, base_version=version)
+        if entity == 'accounts':
+            _set_groups(db, record_id, values.get('group_ids') or [])
         changes = _json_columns(entity, {k: v for k, v in values.items() if k not in spec.immutable})
         assignments = sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in changes)
         db.execute(sql.SQL('UPDATE {} SET {}, version=version+1, updated_at=now() WHERE id=%s').format(
             sql.Identifier(spec.table), assignments), (*changes.values(), record_id))
         after = db.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,)).fetchone()
-        audit(db, actor, 'UPDATE', spec.label, record_id, before, after)
+        audit(db, actor, 'UPDATE', spec.label, record_id, before, after, reason)
         return get_record(db, entity, record_id)
+
+
+HISTORY = {
+    'accounts': ["SELECT 1 FROM cfg_deployments WHERE account_id=%s", "SELECT 1 FROM cfg_credential_use WHERE owner_id=%s",
+                 "SELECT 1 FROM cfg_symbol_specs WHERE account_id=%s"],
+    'connections': ["SELECT 1 FROM cfg_latency_checks WHERE connection_id=%s", "SELECT 1 FROM cfg_credential_use WHERE owner_id=%s",
+                    "SELECT 1 FROM cfg_connection_status WHERE connection_id=%s AND last_login_at IS NOT NULL"],
+    'providers': [],
+    'groups': [],
+}
 
 
 def delete(actor: str, entity: str, record_id: UUID, version: int) -> None:
     spec = SPECS[entity]
     with transaction('delete') as db:
         before = _locked(db, spec, record_id, version)
+        if any(db.execute(q, (record_id,)).fetchone() for q in HISTORY.get(entity, [])):
+            raise HTTPException(409, f'This {spec.label} has history (activity, measurements or deployments). Archive it instead; it stays on record.')
         db.execute(sql.SQL('DELETE FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,))
         audit(db, actor, 'DELETE', spec.label, record_id, before, None)
+
+
+def archive(actor: str, entity: str, record_id: UUID, version: int, reason: str) -> dict:
+    if entity not in ARCHIVABLE:
+        raise HTTPException(404, 'This record type is not archived.')
+    spec = SPECS[entity]
+    with transaction('update') as db:
+        before = _locked(db, spec, record_id, version)
+        if entity == 'connections' and db.execute("SELECT 1 FROM cfg_accounts WHERE connection_id=%s AND status<>'ARCHIVED'", (record_id,)).fetchone():
+            raise HTTPException(409, 'Archive or move the accounts on this connection first.')
+        if entity == 'providers' and db.execute("SELECT 1 FROM cfg_connections WHERE provider_id=%s AND status<>'ARCHIVED'", (record_id,)).fetchone():
+            raise HTTPException(409, 'Archive the connections of this provider first.')
+        if entity == 'accounts':
+            db.execute("UPDATE cfg_deployments SET status='ENDED', version=version+1, updated_at=now() WHERE account_id=%s AND status<>'ENDED'", (record_id,))
+        after = db.execute(sql.SQL("UPDATE {} SET status='ARCHIVED', version=version+1, updated_at=now() WHERE id=%s RETURNING *").format(
+            sql.Identifier(spec.table)), (record_id,)).fetchone()
+        audit(db, actor, 'ARCHIVE', spec.label, record_id, before, after, reason)
+        return get_record(db, entity, record_id)
 
 
 # ---------- credentials ----------
@@ -369,57 +562,94 @@ def _secret_fields(credential: BaseModel) -> dict[str, str]:
             for name, value in credential if hasattr(value, 'get_secret_value')}
 
 
-def set_credential(actor: str, owner: str, owner_id: UUID, credential: BaseModel) -> dict:
+def set_credential(actor: str, owner: str, owner_id: UUID, credential: BaseModel, approved: bool = False, reason: str = '') -> dict:
     with transaction('update') as db:
-        return _save_credential(db, actor, owner, owner_id, credential)
+        return _save_credential(db, actor, owner, owner_id, credential, approved, reason)
 
 
-def _save_credential(db, actor: str, owner: str, owner_id: UUID, credential: BaseModel) -> dict:
+def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> tuple[str, dict]:
     access_level = getattr(credential, 'access_level', 'FULL')
     if owner == 'accounts':
-        account = db.execute('SELECT a.*, c.platform FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
+        account = db.execute('SELECT a.*, c.platform, c.environment FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
                              'WHERE a.id=%s FOR UPDATE OF a', (owner_id,)).fetchone()
         if not account:
             raise HTTPException(404, 'Account not found.')
         if account['platform'] != 'MT5' or not isinstance(credential, Mt5LoginCredential):
             raise HTTPException(422, 'Only MT5 accounts hold their own login. API credentials belong to the connection.')
-        if access_level == 'READ_ONLY' and account['trading_permission'] == 'TRADING':
-            raise HTTPException(422, 'An investor (read-only) password cannot be used on an account permitted to trade. '
-                                     'Change the trading permission first or save the master password.')
-        column = 'account_id'
-    else:
-        connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
-        if not connection:
-            raise HTTPException(404, 'Connection not found.')
-        expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(
-            connection['settings'].get('auth_method'))
-        if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):
-            raise HTTPException(422, 'This connection does not take this kind of credential. MT5 logins are saved on each account.')
-        column = 'connection_id'
-    existing = db.execute(sql.SQL('SELECT id, kind, access_level FROM cfg_credentials WHERE {}=%s').format(
-        sql.Identifier(column)), (owner_id,)).fetchone()
+        if access_level == 'READ_ONLY' and account['trading_permission'] == 'TRADING' and not db.execute(
+                "SELECT 1 FROM cfg_credentials WHERE account_id=%s AND access_level='FULL'", (owner_id,)).fetchone():
+            raise HTTPException(422, 'This account is permitted to trade: save its master password first. '
+                                     'The investor (read-only) password can then be added beside it.')
+        return 'account_id', account
+    connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
+    if not connection:
+        raise HTTPException(404, 'Connection not found.')
+    expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(connection['settings'].get('auth_method'))
+    if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):
+        raise HTTPException(422, 'This connection does not take this kind of credential. MT5 logins are saved on each account.')
+    return 'connection_id', connection
+
+
+def _save_credential(db, actor: str, owner: str, owner_id: UUID, credential: BaseModel,
+                     approved: bool = False, reason: str = '') -> dict:
+    access_level = getattr(credential, 'access_level', 'FULL')
+    column, record = _credential_owner(db, owner, owner_id, credential)
+    level_clause = ' AND access_level=%s' if column == 'account_id' else ''
+    existing = db.execute(sql.SQL('SELECT id, kind, access_level FROM cfg_credentials WHERE {}=%s' + level_clause).format(
+        sql.Identifier(column)), (owner_id, access_level) if level_clause else (owner_id,)).fetchone()
+    if existing and record['environment'] == 'LIVE' and not approved and four_eyes_on(db):
+        return request_change(db, actor, 'credential', owner_id, f'REPLACE_{"MASTER" if access_level == "FULL" else "INVESTOR"}_CREDENTIAL'
+                              if column == 'account_id' else 'REPLACE_API_CREDENTIAL',
+                              f"Replace the {'investor' if access_level == 'READ_ONLY' else 'master' if column == 'account_id' else 'API'} "
+                              f"credential of LIVE {SPECS[owner].label} {record['code']}",
+                              {'owner': owner, 'kind': credential.kind, 'access_level': access_level},
+                              secret_fields=_secret_fields(credential), reason=reason)
     credential_id = existing['id'] if existing else uuid4()
     ciphertext = credentials.encrypt(credential_id, _secret_fields(credential))
+    key_id = credentials.key_id()
     if existing:
-        db.execute('UPDATE cfg_credentials SET kind=%s, access_level=%s, ciphertext=%s, updated_at=now() WHERE id=%s',
-                   (credential.kind, access_level, ciphertext, credential_id))
+        db.execute('UPDATE cfg_credentials SET kind=%s, access_level=%s, ciphertext=%s, key_id=%s, updated_at=now() WHERE id=%s',
+                   (credential.kind, access_level, ciphertext, key_id, credential_id))
     else:
-        db.execute(sql.SQL('INSERT INTO cfg_credentials(id, {}, kind, access_level, ciphertext) VALUES (%s,%s,%s,%s,%s)').format(
-            sql.Identifier(column)), (credential_id, owner_id, credential.kind, access_level, ciphertext))
+        db.execute(sql.SQL('INSERT INTO cfg_credentials(id, {}, kind, access_level, ciphertext, key_id) VALUES (%s,%s,%s,%s,%s,%s)').format(
+            sql.Identifier(column)), (credential_id, owner_id, credential.kind, access_level, ciphertext, key_id))
+    if column == 'account_id':
+        db.execute('UPDATE cfg_accounts SET password_changed_on=current_date WHERE id=%s', (owner_id,))
     summary = {'kind': credential.kind, 'access_level': access_level}
     audit(db, actor, 'REPLACE_CREDENTIAL' if existing else 'SET_CREDENTIAL', SPECS[owner].label, owner_id,
-          {'kind': existing['kind'], 'access_level': existing['access_level']} if existing else None, summary)
+          {'kind': existing['kind'], 'access_level': existing['access_level']} if existing else None, summary, reason)
     return summary
 
 
-def clear_credential(actor: str, owner: str, owner_id: UUID) -> None:
+def clear_credential(actor: str, owner: str, owner_id: UUID, access_level: str | None = None) -> None:
     column = 'account_id' if owner == 'accounts' else 'connection_id'
     with transaction('delete') as db:
-        row = db.execute(sql.SQL('DELETE FROM cfg_credentials WHERE {}=%s RETURNING kind, access_level').format(
-            sql.Identifier(column)), (owner_id,)).fetchone()
+        rows = db.execute(sql.SQL('DELETE FROM cfg_credentials WHERE {}=%s AND (%s::text IS NULL OR access_level=%s) RETURNING kind, access_level').format(
+            sql.Identifier(column)), (owner_id, access_level, access_level)).fetchall()
+        if not rows:
+            raise HTTPException(404, 'No credential is stored for this record.')
+        for row in rows:
+            audit(db, actor, 'CLEAR_CREDENTIAL', SPECS[owner].label, owner_id, dict(row), None)
+
+
+def use_credential(owner: str, owner_id: UUID, used_by: str, purpose: str, access_level: str = 'FULL') -> dict[str, str]:
+    """The only way to read a stored secret: for in-process adapters. Every use is logged
+    (append-only cfg_credential_use) before the secret is returned."""
+    column = 'account_id' if owner == 'accounts' else 'connection_id'
+    with transaction('read') as db:
+        row = db.execute(sql.SQL('SELECT id, ciphertext FROM cfg_credentials WHERE {}=%s ORDER BY (access_level=%s) DESC LIMIT 1').format(
+            sql.Identifier(column)), (owner_id, access_level)).fetchone()
         if not row:
             raise HTTPException(404, 'No credential is stored for this record.')
-        audit(db, actor, 'CLEAR_CREDENTIAL', SPECS[owner].label, owner_id, dict(row), None)
+        db.execute('INSERT INTO cfg_credential_use(credential_id, owner, owner_id, used_by, purpose) VALUES (%s,%s,%s,%s,%s)',
+                   (row['id'], 'account' if owner == 'accounts' else 'connection', owner_id, used_by[:120], purpose[:200]))
+    return credentials.decrypt(row['id'], bytes(row['ciphertext']))
+
+
+def credential_use(owner_id: UUID, limit: int = 100) -> list[dict]:
+    with transaction('read') as db:
+        return [clean(r) for r in db.execute('SELECT used_by, purpose, used_at, owner FROM cfg_credential_use WHERE owner_id=%s '
+                                             'ORDER BY used_at DESC LIMIT %s', (owner_id, limit)).fetchall()]
 
 
 # ---------- execution controls and audit ----------
@@ -444,6 +674,9 @@ def set_execution_control(actor: str, environment: str, enabled: bool, reason: s
                            (enabled, reason, actor, environment)).fetchone()
         audit(db, actor, 'ORDER_SENDING_ON' if enabled else 'ORDER_SENDING_OFF', 'execution control',
               environment, before, after, reason)
+        from .alerts import enqueue
+        enqueue(db, 'ORDER_SENDING', 'CRITICAL' if enabled and environment == 'LIVE' else 'WARNING',
+                f"Order sending {'ON' if enabled else 'OFF'} for {environment}", f'By {actor}. Reason: {reason}')
         return clean(after)
 
 
@@ -465,7 +698,8 @@ def schema_ready() -> bool:
             for table in ('cfg_providers', 'cfg_connections', 'cfg_accounts', 'cfg_instruments',
                           'cfg_symbol_mappings', 'cfg_credentials', 'cfg_execution_controls', 'cfg_audit_log',
                           'cfg_users', 'cfg_sessions', 'cfg_strategies', 'cfg_strategy_versions', 'cfg_deployments',
-                          'cfg_latency_checks'):
+                          'cfg_latency_checks', 'cfg_change_requests', 'cfg_policies', 'cfg_alert_channels',
+                          'cfg_account_groups', 'cfg_credential_use', 'cfg_user_prefs'):
                 db.execute(sql.SQL('SELECT 1 FROM {} LIMIT 0').format(sql.Identifier(table)))
         return True
     except HTTPException:
@@ -505,7 +739,7 @@ def _connection_code(db, provider_code: str, environment: str) -> str:
     return code
 
 
-def setup_mt5_account(actor: str, data: Mt5AccountSetupIn) -> dict:
+def setup_mt5_account(actor: str, data: Mt5AccountSetupIn, approved: bool = False, reason: str = '') -> dict:
     """Login + server in one step. Finds the provider's connection for this server and
     environment (or the one named), adds addresses it lacks when asked, creates it when
     there is none, then creates the account and stores its password — all or nothing."""
@@ -529,6 +763,17 @@ def setup_mt5_account(actor: str, data: Mt5AccountSetupIn) -> dict:
                 raise HTTPException(409, f'{len(matches)} connections use server {data.server.server_name}: '
                                          f"{', '.join(c['code'] for c in matches)}. Choose one.")
             connection = matches[0] if matches else None
+        if data.environment == 'LIVE' and not approved and four_eyes_on(db):
+            have = {(p['host'], int(p['port'])) for p in (connection['settings'].get('access_points', []) if connection else [])}
+            extra = [p for p in data.server.access_points if (p.host, p.port) not in have]
+            if connection is None or (extra and data.add_missing_addresses):
+                what = (f'creates LIVE connection for {data.server.server_name}' if connection is None
+                        else f'adds {len(extra)} address(es) to LIVE connection {connection["code"]}')
+                return request_change(db, actor, 'accounts', uuid4(), 'ACCOUNT_SETUP',
+                                      f"Add MT5 account {data.account.get('code')} (login {data.account.get('external_account_id')}): {what}",
+                                      {'setup': data.model_dump(mode='json', exclude={'credential'}),
+                                       'credential': {'kind': 'MT5_LOGIN', 'access_level': data.credential.access_level} if data.credential else None},
+                                      secret_fields=_secret_fields(data.credential) if data.credential else None, reason=reason)
         connection_action = 'REUSED'
         if connection is None:
             new = ConnectionIn.model_validate({
@@ -536,7 +781,7 @@ def setup_mt5_account(actor: str, data: Mt5AccountSetupIn) -> dict:
                 'name': f"{provider['name']} MT5 {data.environment.lower()} · {data.server.server_name}"[:120],
                 'platform': 'MT5', 'environment': data.environment, 'purpose': 'BOTH',
                 'settings': data.server.model_dump(mode='json')})
-            connection_id = _insert(db, actor, 'connections', new, 'Created while adding an MT5 account')
+            connection_id = _insert(db, actor, 'connections', new, reason or 'Created while adding an MT5 account')
             connection_action = 'CREATED'
         else:
             connection_id = connection['id']
@@ -558,8 +803,8 @@ def setup_mt5_account(actor: str, data: Mt5AccountSetupIn) -> dict:
         except ValidationError as exc:
             raise HTTPException(422, [{'field': 'account.' + '.'.join(str(p) for p in e['loc']),
                                        'message': e['msg'].removeprefix('Value error, ')} for e in exc.errors()]) from None
-        account_id = _insert(db, actor, 'accounts', account)
+        account_id = _insert(db, actor, 'accounts', account, reason)
         if data.credential:
-            _save_credential(db, actor, 'accounts', account_id, data.credential)
+            _save_credential(db, actor, 'accounts', account_id, data.credential, approved=True, reason=reason)
         return {'connection_action': connection_action, 'connection': get_record(db, 'connections', connection_id),
                 'account': get_record(db, 'accounts', account_id), 'picked_addresses': len(picked)}

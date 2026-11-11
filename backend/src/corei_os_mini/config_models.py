@@ -7,6 +7,7 @@ Financial quantities are Decimal (exact), never float.
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 import ipaddress
 import re
@@ -25,6 +26,9 @@ Code = Annotated[str, Upper, StringConstraints(pattern=r'^[A-Z][A-Z0-9_]{1,31}$'
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 Currency = Annotated[str, Upper, StringConstraints(pattern=r'^[A-Z0-9]{2,10}$')]
 Status = Literal['ACTIVE', 'INACTIVE']
+# Providers, connections and accounts are archived (kept, read-only) once they have history.
+RecordStatus = Literal['ACTIVE', 'INACTIVE', 'ARCHIVED']
+Text = lambda n: Annotated[str, StringConstraints(strip_whitespace=True, max_length=n)]  # noqa: E731
 Purpose = Literal['MARKET_DATA', 'TRADING', 'BOTH']
 Amount = Annotated[Decimal, Field(gt=0, max_digits=38, decimal_places=12)]
 Secret = Annotated[SecretStr, Field(min_length=1, max_length=4096)]
@@ -34,11 +38,35 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+class Holiday(_Strict):
+    date: Annotated[str, StringConstraints(pattern=r'^\d{4}-\d{2}-\d{2}$')]
+    name: Text(120) = ''
+
+
 class ProviderIn(_Strict):
     code: Code
     name: Name
     kind: Literal['BROKER', 'EXCHANGE', 'DATA_VENDOR']
-    status: Status = 'ACTIVE'
+    status: RecordStatus = 'ACTIVE'
+    # The firm behind the brand: the same brand often has several legal entities.
+    legal_entity: Text(200) = ''
+    regulator: Text(120) = ''
+    licence_number: Text(80) = ''
+    jurisdiction: Text(80) = ''
+    execution_model: Literal['UNKNOWN', 'MARKET_MAKER', 'STP', 'ECN', 'EXCHANGE', 'MIXED'] = 'UNKNOWN'
+    website: Text(200) = ''
+    support_contact: Text(300) = ''
+    dealing_contact: Text(300) = ''
+    # Most capital COREI may hold at this firm across all its accounts.
+    exposure_limit: Annotated[Decimal, Field(gt=0, max_digits=20, decimal_places=2)] | None = None
+    exposure_currency: Annotated[str, Upper, StringConstraints(pattern=r'^([A-Z]{3})?$')] = ''
+    holidays: Annotated[list[Holiday], Field(max_length=400)] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def exposure_has_currency(self) -> 'ProviderIn':
+        if self.exposure_limit is not None and not self.exposure_currency:
+            raise ValueError('exposure_currency is required with exposure_limit')
+        return self
 
 
 # ---------- Connection settings, one shape per platform ----------
@@ -52,6 +80,10 @@ class Mt5AccessPoint(_Strict):
     port: Annotated[int, Field(ge=1, le=65535)]
     # Disabled access points stay on record but the adapter does not try them.
     enabled: bool = True
+    # Where this address came from. MANUAL addresses on LIVE need a second person
+    # (four-eyes), because the login password is sent to whatever address is used.
+    source: Literal['DIRECTORY', 'SERVERS_DAT', 'BROKER', 'MANUAL', 'UNKNOWN'] = 'UNKNOWN'
+    confirmed_at: Annotated[str, StringConstraints(max_length=40)] | None = None
 
     @field_validator('host')
     @classmethod
@@ -141,6 +173,17 @@ class RestApiSettings(_Strict):
 SETTINGS_BY_PLATFORM = {'MT5': Mt5Settings, 'REST_API': RestApiSettings}
 
 
+class MaintenanceWindow(_Strict):
+    weekday: Annotated[int, Field(ge=0, le=6)]  # 0 = Monday
+    start: Annotated[str, StringConstraints(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')]
+    end: Annotated[str, StringConstraints(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')]
+    timezone: Literal['UTC', 'SERVER'] = 'SERVER'
+    note: Text(120) = ''
+
+
+ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'REST_API': {'DEFAULT', 'NATIVE'}}
+
+
 class ConnectionIn(_Strict):
     provider_id: UUID
     code: Code
@@ -149,12 +192,35 @@ class ConnectionIn(_Strict):
     environment: Literal['DEMO', 'LIVE']
     purpose: Purpose
     settings: dict
-    status: Status = 'ACTIVE'
+    status: RecordStatus = 'ACTIVE'
+    # How COREI reaches the platform. Both MT5 methods stay available (DEC-29).
+    adapter: Literal['DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE', 'NATIVE'] = 'DEFAULT'
+    # Broker server clock: base offset from UTC (minutes) and daylight-saving rule.
+    server_utc_offset_minutes: Annotated[int, Field(ge=-720, le=840)] | None = None
+    dst_rule: Literal['UNKNOWN', 'NONE', 'US', 'EU'] = 'UNKNOWN'
+    clock_source: Literal['UNKNOWN', 'MANUAL', 'SERVER_FILE', 'BROKER_LOGIN'] = 'UNKNOWN'
+    max_orders_per_second: Annotated[Decimal, Field(gt=0, max_digits=8, decimal_places=2)] | None = None
+    max_order_burst: Annotated[int, Field(ge=1, le=1000)] | None = None
+    # API apps that require IP whitelisting (SEBI framework): the IP registered with the broker.
+    registered_egress_ip: str | None = None
+    maintenance: Annotated[list[MaintenanceWindow], Field(max_length=50)] = Field(default_factory=list)
+
+    @field_validator('registered_egress_ip')
+    @classmethod
+    def valid_ip(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        try:
+            return str(ipaddress.ip_address(value.strip()))
+        except ValueError:
+            raise ValueError('registered_egress_ip must be an IP address') from None
 
     @model_validator(mode='after')
     def settings_match_platform(self) -> 'ConnectionIn':
         model = SETTINGS_BY_PLATFORM[self.platform]
         self.settings = model.model_validate(self.settings).model_dump(mode='json')
+        if self.adapter not in ADAPTERS[self.platform]:
+            raise ValueError(f'adapter {self.adapter} does not apply to {self.platform}')
         return self
 
 
@@ -181,7 +247,24 @@ class AccountIn(_Strict):
     holder_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] = ''
     base_currency: Currency
     trading_permission: Literal['DISABLED', 'READ_ONLY', 'TRADING'] = 'DISABLED'
-    status: Status = 'ACTIVE'
+    status: RecordStatus = 'ACTIVE'
+    # Facts the broker decides. Typed values are marked MANUAL; the adapter overwrites
+    # them with what it reads at login (marked BROKER, with the time read).
+    margin_mode: Literal['UNKNOWN', 'HEDGING', 'NETTING', 'EXCHANGE'] = 'UNKNOWN'
+    broker_group: Text(120) = ''
+    leverage: Annotated[int, Field(ge=1, le=10000)] | None = None
+    stop_out_level: Annotated[Decimal, Field(ge=0, max_digits=8, decimal_places=2)] | None = None
+    max_open_orders: Annotated[int, Field(ge=1)] | None = None
+    max_open_positions: Annotated[int, Field(ge=1)] | None = None
+    expires_on: date | None = None
+    password_changed_on: date | None = None
+    # Whose money: OWN, FIRM (Coreeye Group) or CLIENT (needs a mandate reference).
+    relationship: Literal['OWN', 'FIRM', 'CLIENT'] = 'OWN'
+    mandate_reference: Text(200) = ''
+    mandate_expires_on: date | None = None
+    # Other systems known to use this login (MT5 terminal, EA, copier).
+    other_users: Text(300) = ''
+    group_ids: Annotated[list[UUID], Field(max_length=50)] = Field(default_factory=list)
     # Which of the server's addresses this account uses (MT5 only). See mt5_routing.
     access_mode: AccessMode = 'SERVER'
     # The account's own ordered choice; kept when switching modes so nothing is lost.
@@ -232,6 +315,9 @@ class InstrumentIn(_Strict):
 
 class MappingIn(_Strict):
     connection_id: UUID
+    # Set for a mapping that applies to one account only (e.g. XAUUSD.r on a raw account);
+    # it overrides the connection-wide mapping for that account.
+    account_id: UUID | None = None
     instrument_id: UUID
     broker_symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
     usage: Purpose
@@ -304,3 +390,48 @@ class LatencyIn(_Strict):
     addresses: Annotated[list[AddressRef], Field(min_length=1, max_length=64)]
     # When given, results are recorded against this connection's history.
     connection_id: UUID | None = None
+
+
+# ---------- Account groups, policies, approvals, alerts ----------
+
+class AccountGroupIn(_Strict):
+    code: Code
+    name: Name
+    description: Text(500) = ''
+    status: RecordStatus = 'ACTIVE'
+
+
+class PolicyIn(_Strict):
+    value: bool | int
+    version: Annotated[int, Field(ge=1)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)]
+
+
+class DecisionIn(_Strict):
+    approve: bool
+    note: Text(500) = ''
+
+
+ALERT_EVENTS = ('LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING', 'TEST')
+
+
+class AlertChannelIn(_Strict):
+    kind: Literal['EMAIL', 'TELEGRAM', 'WEBHOOK']
+    name: Name
+    # EMAIL: address; TELEGRAM: chat id; WEBHOOK: https URL.
+    target: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    events: Annotated[list[Literal['LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING']],
+                      Field(min_length=1)]
+    status: Status = 'ACTIVE'
+    # TELEGRAM bot token or WEBHOOK signing secret; write-only, stored encrypted.
+    secret: Secret | None = None
+
+    @model_validator(mode='after')
+    def target_matches_kind(self) -> 'AlertChannelIn':
+        if self.kind == 'EMAIL' and not re.fullmatch(r'[^@\s]{1,64}@[^@\s]{1,255}\.[A-Za-z]{2,}', self.target):
+            raise ValueError('EMAIL target must be an email address')
+        if self.kind == 'TELEGRAM' and not re.fullmatch(r'-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31}', self.target):
+            raise ValueError('TELEGRAM target must be a chat id or @channel')
+        if self.kind == 'WEBHOOK':
+            self.target = _url(self.target, ('https',))
+        return self

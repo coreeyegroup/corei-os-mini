@@ -19,7 +19,7 @@ from .broker_catalog import MAX_FILE, parse_catalog, search_directory
 from . import latency as latency_check
 from .config_models import CredentialEnvelope, ExecutionControlIn, LatencyIn, Mt5AccountSetupIn, VersionIn
 from .credentials import storage_ready
-from .operator_auth import Principal, current_user, require_operator, require_role
+from .operator_auth import Principal, current_user, optional_reauth, require_operator, require_reauth, require_role
 
 _trading_ops = require_role('TRADING_OPS')
 
@@ -29,7 +29,7 @@ def editor(user: Principal = Depends(_trading_ops)) -> str:
     return user.username
 
 router = APIRouter(prefix='/api/config', tags=['configuration'])
-Entity = Literal['providers', 'connections', 'accounts', 'instruments', 'mappings']
+Entity = Literal['providers', 'connections', 'accounts', 'instruments', 'mappings', 'groups']
 
 
 def _no_store(response: Response) -> None:
@@ -68,13 +68,15 @@ def get_execution_controls(response: Response, _: str = Depends(require_operator
 
 @router.put('/execution-controls/{environment}')
 def put_execution_control(environment: Literal['DEMO', 'LIVE'], payload: dict, response: Response,
-                          user: Principal = Depends(current_user)):
+                          user: Principal = Depends(current_user), reauthenticated: bool = Depends(optional_reauth)):
     """Turning order sending ON needs Risk approver. Turning it OFF is a safety action
     that Risk approver or Trading operations may take."""
     _no_store(response)
     data = parse(ExecutionControlIn, payload)
     if data.trading_enabled and not user.has('RISK_APPROVER'):
         raise HTTPException(403, 'Turning order sending on needs the Risk approver role.')
+    if data.trading_enabled and not reauthenticated:
+        raise HTTPException(428, 'Re-enter your password to confirm this action.')
     if not data.trading_enabled and not user.has('RISK_APPROVER', 'TRADING_OPS'):
         raise HTTPException(403, 'Turning order sending off needs the Risk approver or Trading operations role.')
     return store.set_execution_control(user.username, environment, data.trading_enabled, data.reason, data.version,
@@ -177,7 +179,14 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
     data = parse(Mt5AccountSetupIn, {**payload, 'credential': None})
     if credential is not None:
         data.credential = parse(CredentialEnvelope, {'credential': credential}, secret=True).credential
-    return store.setup_mt5_account(actor, data)
+    return _pending(response, store.setup_mt5_account(actor, data))
+
+
+def _pending(response: Response, result: dict) -> dict:
+    """A change that needs a second person returns 202 with the change request."""
+    if 'change_request' in result:
+        response.status_code = 202
+    return result
 
 
 # ---------- records ----------
@@ -185,12 +194,13 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
 @router.get('/{entity}')
 def list_entity(entity: Entity, response: Response, q: str = Query('', max_length=120),
                 provider_id: UUID | None = None, connection_id: UUID | None = None,
-                instrument_id: UUID | None = None, asset_class: str | None = Query(None, max_length=20),
+                instrument_id: UUID | None = None, account_id: UUID | None = None,
+                asset_class: str | None = Query(None, max_length=20), include_archived: bool = False,
                 _: str = Depends(require_operator)):
     _no_store(response)
-    filters = {'provider_id': provider_id, 'connection_id': connection_id,
+    filters = {'provider_id': provider_id, 'connection_id': connection_id, 'account_id': account_id,
                'instrument_id': instrument_id, 'asset_class': asset_class}
-    return {'items': store.list_records(entity, filters, q)}
+    return {'items': store.list_records(entity, filters, q, include_archived)}
 
 
 @router.get('/{entity}/{record_id}')
@@ -206,7 +216,7 @@ def get_entity(entity: Entity, record_id: UUID, response: Response, _: str = Dep
 @router.post('/{entity}', status_code=201)
 def create_entity(entity: Entity, payload: dict, response: Response, actor: str = Depends(editor)):
     _no_store(response)
-    return store.create(actor, entity, parse(store.SPECS[entity].model, payload))
+    return _pending(response, store.create(actor, entity, parse(store.SPECS[entity].model, payload)))
 
 
 @router.put('/{entity}/{record_id}')
@@ -214,7 +224,7 @@ def update_entity(entity: Entity, record_id: UUID, payload: dict, response: Resp
                   actor: str = Depends(editor)):
     _no_store(response)
     version = parse(VersionIn, {'version': payload.pop('version', None)}).version
-    return store.update(actor, entity, record_id, parse(store.SPECS[entity].model, payload), version)
+    return _pending(response, store.update(actor, entity, record_id, parse(store.SPECS[entity].model, payload), version))
 
 
 @router.delete('/{entity}/{record_id}', status_code=204)
@@ -226,14 +236,15 @@ def delete_entity(entity: Entity, record_id: UUID, version: int = Query(ge=1),
 
 @router.put('/{owner}/{owner_id}/credential')
 def put_credential(owner: Literal['connections', 'accounts'], owner_id: UUID, payload: dict, response: Response,
-                   actor: str = Depends(editor)):
+                   actor: str = Depends(editor), _: Principal = Depends(require_reauth)):
     _no_store(response)
     envelope = parse(CredentialEnvelope, payload, secret=True)
-    return store.set_credential(actor, owner, owner_id, envelope.credential)
+    return _pending(response, store.set_credential(actor, owner, owner_id, envelope.credential))
 
 
 @router.delete('/{owner}/{owner_id}/credential', status_code=204)
 def delete_credential(owner: Literal['connections', 'accounts'], owner_id: UUID,
-                      actor: str = Depends(editor)):
-    store.clear_credential(actor, owner, owner_id)
+                      level: Literal['FULL', 'READ_ONLY'] | None = None,
+                      actor: str = Depends(editor), _: Principal = Depends(require_reauth)):
+    store.clear_credential(actor, owner, owner_id, level)
     return Response(status_code=204, headers={'Cache-Control': 'no-store'})

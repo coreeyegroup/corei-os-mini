@@ -41,6 +41,13 @@ def _key() -> bytes:
     return key
 
 
+def key_id(key: bytes | None = None) -> str:
+    """Short fingerprint of the key (not the key): which key encrypted a record, so keys
+    can be rotated and old records found."""
+    import hashlib
+    return hashlib.sha256(b'corei-key-id:' + (key or _key())).hexdigest()[:16]
+
+
 def storage_ready() -> bool:
     try:
         _key()
@@ -49,13 +56,14 @@ def storage_ready() -> bool:
         return False
 
 
-def encrypt(credential_id: UUID, fields: dict[str, str]) -> bytes:
+def encrypt(credential_id: UUID, fields: dict[str, str], key: bytes | None = None) -> bytes:
     nonce = os.urandom(12)
     plaintext = json.dumps(fields, separators=(',', ':'), sort_keys=True).encode()
-    return nonce + AESGCM(_key()).encrypt(nonce, plaintext, _CONTEXT + str(credential_id).encode())
+    return nonce + AESGCM(key or _key()).encrypt(nonce, plaintext, _CONTEXT + str(credential_id).encode())
 
 
-def decrypt(credential_id: UUID, ciphertext: bytes) -> dict[str, str]:
-    """For in-process provider adapters only. Never expose through an HTTP route."""
-    plaintext = AESGCM(_key()).decrypt(ciphertext[:12], ciphertext[12:], _CONTEXT + str(credential_id).encode())
+def decrypt(credential_id: UUID, ciphertext: bytes, key: bytes | None = None) -> dict[str, str]:
+    """For in-process use only, through config_store.use_credential (which logs each use)
+    or an approved change request. Never expose through an HTTP route."""
+    plaintext = AESGCM(key or _key()).decrypt(ciphertext[:12], ciphertext[12:], _CONTEXT + str(credential_id).encode())
     return json.loads(plaintext)
