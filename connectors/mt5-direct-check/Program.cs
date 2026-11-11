@@ -27,8 +27,10 @@ var inspect = args.Length == 2 && args[0] == "--inspect";
 if (args.Length == 2 && args[0] == "--search") return Search(args[1]);
 if (args.Length == 1 && args[0] == "--describe-search") return DescribeSearch();
 if (args.Length == 1 && args[0] == "--describe-api") return DescribeApi();
-if (args.Length == 1 && args[0] == "--session") return Session();
-if (args.Length == 1 && args[0] == "--stream") return Stream();
+// The SDK keeps foreground threads alive after a failed login; exit explicitly so the
+// collector never waits on a process that has already answered.
+if (args.Length == 1 && args[0] == "--session") { var code = Session(); Console.Out.Flush(); Environment.Exit(code); }
+if (args.Length == 1 && args[0] == "--stream") { var code = Stream(); Console.Out.Flush(); Environment.Exit(code); }
 if (args.Length != 1 && !inspect)
 {
     Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat> | --search <broker> | --describe-search");
@@ -564,7 +566,12 @@ static object ConnectWithBuild(SessionRequest r, SessionHost h, int timeout, boo
         {
             first ??= e;
             if (build is int tb) tried.Add(tb);
-            if (!Reason(e).Contains("OLD_VERSION", StringComparison.OrdinalIgnoreCase)) throw;
+            if (!Reason(e).Contains("OLD_VERSION", StringComparison.OrdinalIgnoreCase))
+            {
+                if (build is null) throw;
+                // A newer build got past the version check and was refused for another reason: report both.
+                throw new InvalidOperationException(Reason(e) + " (with client build " + build + "; the SDK default build was refused as OLD_VERSION)", e);
+            }
         }
     }
     var note = configured is not null ? $" (COREI_MT5_CLIENT_BUILD={configured} was also refused)"
@@ -608,7 +615,24 @@ static void Call(object target, string name, int timeoutSeconds)
 static string Reason(Exception e)
 {
     while (e is TargetInvocationException or AggregateException && e.InnerException is not null) e = e.InnerException!;
-    return Truncate(e.GetType().Name + ": " + e.Message, 300);
+    var text = e.GetType().Name + ": " + e.Message;
+    // Broker refusals carry a code (an SDK enum); show its name and number so an unknown code is still identifiable.
+    foreach (var p in e.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.DeclaringType != typeof(Exception) && p.GetIndexParameters().Length == 0))
+    {
+        object? v; try { v = p.GetValue(e); } catch (Exception) { continue; }
+        if (v is Enum en) text += $" [{p.Name}={en} ({Convert.ToInt64(en)})]";
+        else if (v is int or long or short) text += $" [{p.Name}={v}]";
+    }
+    return Truncate(text, 300);
+}
+
+// The broker answered (refused the login). Another address of the same server gives the same
+// answer, and repeated refused logins can get the account or IP blocked, so stop there.
+static bool BrokerAnswered(Exception e)
+{
+    while (e is TargetInvocationException or AggregateException && e.InnerException is not null) e = e.InnerException!;
+    if (e is TimeoutException or System.Net.Sockets.SocketException or System.IO.IOException or OperationCanceledException) return false;
+    return e.GetType().Name.Contains("ServerException") || (e is InvalidOperationException && e.Message.Contains("ServerException"));
 }
 
 // Scalars of an object plus scalars one level down (Account, Group, ...), names prefixed.
@@ -679,7 +703,8 @@ static int Session()
         }
         catch (Exception e)
         {
-            attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***") });
+            attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***"), refused = BrokerAnswered(e) });
+            if (BrokerAnswered(e)) break;
             continue;
         }
         var connectMs = watch.ElapsedMilliseconds;
@@ -891,7 +916,12 @@ static int Stream()
         if (!Host().IsMatch(h.host) || h.port is < 1 or > 65535) { attempts.Add(new { h.host, h.port, ok = false, error = "invalid address" }); continue; }
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try { api = ConnectWithBuild(r, h, timeout, quotes: true); used = h; attempts.Add(new { h.host, h.port, ok = true, ms = watch.ElapsedMilliseconds }); break; }
-        catch (Exception e) { attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***") }); api = null; }
+        catch (Exception e)
+        {
+            attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***"), refused = BrokerAnswered(e) });
+            api = null;
+            if (BrokerAnswered(e)) break;
+        }
     }
     if (api is null || used is null) { Emit(new { t = "failed", attempts }); return 3; }
     var lost = new ManualResetEventSlim(false);

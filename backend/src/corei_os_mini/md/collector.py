@@ -287,7 +287,12 @@ class SourceWorker(threading.Thread):
                 connected = True
             elif message == 'end':
                 break
-        self.proc.wait(timeout=10)
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # The reader has answered; a process that lingers is killed rather than reported as an error.
+            self.proc.kill()
+            self.proc.wait(timeout=5)
         return connected
 
     def _on_line(self, raw: bytes) -> str | None:

@@ -176,9 +176,13 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('+ Add address').click();await tick();
  fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
  [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
- // The editor is a panel docked right: resize from its left edge (keyboard too), wide/normal toggle.
- const win=$('.fw.dock');assert.equal(win.getAttribute('role'),'dialog');const edge=$('.dock-edge');const width0=parseFloat(win.style.width);
- edge.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.width),width0+32);
+ // The editor is a movable, resizable window: Alt+arrows move it, Shift+arrows resize it, dock and maximise toggle.
+ const win=$('.fw.fw-float');assert.equal(win.getAttribute('role'),'dialog');assert.equal(w.document.querySelectorAll('.fw-edge').length,8,'eight resize handles');
+ const title=$('.fw-title');const x0=parseFloat(win.style.left),w0=parseFloat(win.style.width);
+ title.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',altKey:true,bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.left),x0-16);
+ title.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',shiftKey:true,bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.width),Math.min(w0+16,w.innerWidth));
+ $('[aria-label="Dock window right"]').click();await tick();assert.ok($('.fw').classList.contains('fw-dock'));
+ $('[aria-label="Float window"]').click();await tick();assert.ok($('.fw').classList.contains('fw-float'));
  $('[aria-label="Maximise window"]').click();await tick();assert.ok($('.fw').classList.contains('fw-max'));
  $('[aria-label="Restore window"]').click();await tick();assert.ok(!$('.fw').classList.contains('fw-max'));
  assert.match($('.fw-caption').textContent,/Unsaved/);

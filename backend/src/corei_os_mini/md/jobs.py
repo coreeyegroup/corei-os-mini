@@ -245,8 +245,15 @@ def verify() -> dict:
 
 # ---------- backup ----------
 
-def _pg_dump() -> str:
-    for candidate in (os.getenv('COREI_PG_DUMP'), shutil.which('pg_dump'), '/usr/lib/postgresql/18/bin/pg_dump'):
+def _pg_dump(root: str = '/usr/lib/postgresql') -> str:
+    """The newest installed pg_dump: it must be at least the server's version (an older one refuses with
+    "server version mismatch"), and a newer one dumps older servers. COREI_PG_DUMP overrides."""
+    configured = os.getenv('COREI_PG_DUMP')
+    if configured and Path(configured).is_file():
+        return configured
+    versioned = sorted((p for p in Path(root).glob('*/bin/pg_dump') if p.parent.parent.name.isdigit()),
+                       key=lambda p: int(p.parent.parent.name), reverse=True)
+    for candidate in [*map(str, versioned), shutil.which('pg_dump')]:
         if candidate and Path(candidate).is_file():
             return candidate
     raise RuntimeError('pg_dump not found (set COREI_PG_DUMP)')

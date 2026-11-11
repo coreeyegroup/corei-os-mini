@@ -358,6 +358,10 @@ class Explain(unittest.TestCase):
         self.assertFalse(explain('TimeoutException: Connect did not finish in 20 s')['permanent'])
         self.assertEqual(explain('something new')['title'], 'Connection problem')
         self.assertIsNone(explain(None))
+        # An unnamed refusal code (seen live: 1035) is permanent: back off, do not hammer the broker.
+        code = explain('ServerException: 1035 [Code=1035 (1035)] (with client build 6230; the SDK default build was refused as OLD_VERSION)')
+        self.assertEqual((code['title'], code['permanent']), ('Broker refused the login (unlisted code)', True))
+        self.assertTrue(explain('ServerException: 1035')['permanent'])
 
 
 @unittest.skipUnless(os.getenv('COREI_TEST_DATABASE_URL'), 'Set COREI_TEST_DATABASE_URL for PostgreSQL integration tests')
@@ -393,3 +397,19 @@ class ShellOverview(MarketData):
         self.assertTrue(any(x['area'] == 'Backups' for x in overview['attention']))
         self.assertEqual([o['enabled'] for o in overview['order_sending']], [False, False])
         self.ok(TestClient(app, base_url='https://testserver', headers=HEADERS).get('/api/config/overview'), 401)
+
+
+class PgDumpChoice(unittest.TestCase):
+    def test_newest_installed_pg_dump_is_used(self):
+        import tempfile
+        from pathlib import Path
+        from corei_os_mini.md.jobs import _pg_dump
+        with tempfile.TemporaryDirectory() as root:
+            for v in ('14', '18', '9'):
+                b = Path(root, v, 'bin'); b.mkdir(parents=True); (b / 'pg_dump').write_text('')
+            old = os.environ.pop('COREI_PG_DUMP', None)
+            try:
+                self.assertEqual(_pg_dump(root), str(Path(root, '18', 'bin', 'pg_dump')))
+            finally:
+                if old is not None:
+                    os.environ['COREI_PG_DUMP'] = old

@@ -495,6 +495,10 @@ function AccessPoints({ settings, change, connectionId }: { settings: Row; chang
   </div>;
 }
 
+/** DEMO or LIVE as the broker names the server (MetaQuotes-Demo, VTMarkets-Live 3); null when the name does not say. */
+export const envOfServer = (name?: string | null): 'DEMO' | 'LIVE' | null =>
+  !name ? null : /demo|trial|contest|test/i.test(name) ? 'DEMO' : /live|real/i.test(name) ? 'LIVE' : null;
+
 /** MT5: find the broker's server (directory search or servers.dat), then its addresses. */
 function Mt5Server({ settings, change, connectionId, summaryOnly }: { settings: Row; change: (s: Row) => void; connectionId?: string; summaryOnly?: ReactNode }) {
   const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -600,8 +604,10 @@ function suggestName(d: Row, refs: Record<string, Row[]>): string {
 }
 
 function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity; draft: Row; setDraft: (r: Row) => void; editing: boolean; refs: Record<string, Row[]> }) {
-  const set = (k: string, v: unknown) => {
-    const next: Row = { ...draft, [k]: v };
+  const set = (k: string | Row, v?: unknown) => {
+    const patch: Row = typeof k === 'string' ? { [k]: v } : k;
+    if (typeof k !== 'string') { k = Object.keys(patch)[0]; v = patch[k as string]; }
+    const next: Row = { ...draft, ...patch };
     if (k === 'code') next._codeEdited = v !== '';
     else if (!editing && !next._codeEdited && 'code' in next) next.code = suggestId(entity, next, refs);
     if (k === 'name') next._nameEdited = v !== '';
@@ -662,7 +668,11 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
         </div>
       </Section>
       <Section n={2} title={draft.platform === 'MT5' ? 'Server and addresses' : 'API app'}>
-        {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} change={s => set('settings', s)} connectionId={draft.id} />
+        {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} connectionId={draft.id} change={s => {
+            // The server name decides the environment on a new connection (MetaQuotes-Demo is a demo server).
+            const env = envOfServer(s.server_name);
+            set(!draft.id && env && env !== draft.environment ? { settings: s, environment: env } : { settings: s });
+          }} />
           : <RestSettings settings={draft.settings} change={s => set('settings', s)} />}
       </Section>
       <Section n={3} title="Name">
@@ -889,7 +899,8 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
         <div className="cfg-pair">
           <Field label="Provider"><select aria-label="Provider" required value={f.provider_id} onChange={e => set({ provider_id: e.target.value })}>
             <option value="" disabled>Select…</option>{refs.providers.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}</select></Field>
-          <Field label="Environment"><Choice label="Environment" value={f.environment} options={[['LIVE', 'Live'], ['DEMO', 'Demo']]} onChange={v => set({ environment: v })} /></Field>
+          <Field label="Environment" hint={envOfServer(f.server.server_name) && envOfServer(f.server.server_name) !== f.environment ? `Server ${f.server.server_name} is a ${envOfServer(f.server.server_name)!.toLowerCase()} server` : undefined}>
+            <Choice label="Environment" value={f.environment} options={[['LIVE', 'Live'], ['DEMO', 'Demo']]} onChange={v => set({ environment: v })} /></Field>
         </div>
       </Section>
       <Section n={2} title="Login">
@@ -905,7 +916,7 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
         </div>
       </Section>
       <Section n={3} title="Server">
-        <Mt5Server settings={f.server} change={server => set({ server })} connectionId={match?.id}
+        <Mt5Server settings={f.server} change={server => { const env = envOfServer(server.server_name); set(env ? { server, environment: env } : { server }); }} connectionId={match?.id}
           summaryOnly={match ? <p className="cfg-note">The server's addresses are kept on its connection; choose this account's addresses in step 4.</p> : undefined} />
         {match && <p className="cfg-note cfg-reuse">Uses existing connection <strong>{match.code}</strong> ({match.settings.access_points.length} addresses, {match.account_count} account{match.account_count === 1 ? '' : 's'}).
           {newOnServer.length > 0 && <> {newOnServer.length} address{newOnServer.length === 1 ? '' : 'es'} of this server that it does not have yet will be added to it unticked, so other accounts are not affected.</>}</p>}
@@ -1114,7 +1125,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       {entity === 'accounts' && selected && <div className="cfg-blockers rd">
         {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => <div key={k} className="rd-group"><span className="rd-head">{k === 'data_blockers' ? 'Market data' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}
             <span className={`rd-state ${selected[k]?.length ? (k === 'warnings' ? 'warn' : 'bad') : 'ok'}`}>{selected[k]?.length ? `${selected[k].length} ${k === 'warnings' ? 'warning' : 'blocker'}${selected[k].length > 1 ? 's' : ''}` : k === 'warnings' ? 'none' : 'ready'}</span></span>
-          {selected[k]?.length > 0 && <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
+          {k === 'trading_blockers' && (selected.data_blockers ?? []).some((b: string) => selected[k]?.includes(b)) && <span className="rd-same">includes the market-data blockers above</span>}
+          {selected[k]?.length > 0 && <ul>{selected[k].filter((b: string) => k !== 'trading_blockers' || !(selected.data_blockers ?? []).includes(b)).map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
             ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}
             {b === 'CONNECTION_FAILED' && selected.connection_problem && <div className="rd-reason"><b>{selected.connection_problem.title}.</b> {selected.connection_problem.detail}
               <code>{selected.connection_problem.raw}</code></div>}</li>)}</ul>}</div>)}

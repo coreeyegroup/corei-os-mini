@@ -638,6 +638,16 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Safe login and detail windows — release 0.17.0
+
+DEC-48. No migration. Rebuild the reader (`bash scripts/setup-broker-accounts.sh`) and redeploy.
+
+- **One login at a time.** A refused login stops at the first address (no more 12 addresses × 9 builds); refusals are retried every 5 minutes. The error now shows the refusal code (e.g. `ServerException: 1035 [Code=1035]`) and the MT5 build that got it.
+- The collector no longer reports "TimeoutExpired … --stream" after a failed login (the reader exits at once).
+- **Backups** use the newest installed `pg_dump` (fixes "server version mismatch" with PostgreSQL 18).
+- **New MT5 connection / Add MT5 account:** the environment follows the server name (MetaQuotes-Demo → Demo).
+- **Detail windows** float: drag the title bar to move, any edge or corner to resize, double-click the title to maximise, ⇥ to dock right. Labels sit beside fields, MT5-style. Readiness no longer repeats market-data blockers under order sending.
+
 ## Trading flow — release 0.16.0
 
 DEC-47. No migration.
