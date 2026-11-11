@@ -67,7 +67,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const problem=$('.md-problem');assert.ok(problem.textContent.includes('IC Markets B: Broker refused the connector version'));
  assert.ok(problem.textContent.includes('OLD_VERSION'));assert.ok(problem.textContent.includes('retrying every 5 minutes'));
  const rows=$$('.md-live tbody tr');assert.equal(rows.length,2);
- assert.ok(rows[0].textContent.includes('2401.15'));assert.ok(rows[0].textContent.includes('25.0'));
+ assert.ok(rows[0].textContent.includes('2401.15'));assert.equal(rows[0].querySelectorAll('td')[5].textContent,'25');
  assert.ok(rows[1].querySelector('.md-bad'));
  console.log('PASS: live prices with spread, age and score; collector status; refused login explained in plain words.');
 

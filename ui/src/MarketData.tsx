@@ -6,7 +6,7 @@ import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import FloatingWindow from './FloatingWindow';
 import { SignIn } from './Infrastructure';
-import { goto, useSection } from './nav';
+import { digitsOf, goto, useSection } from './nav';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
@@ -25,7 +25,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
 const FRAMES = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']] as const;
 const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';
-const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Number(v); return s == null || !Number.isFinite(s) ? '—' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
+const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Math.max(0, Number(v)); return s == null || !Number.isFinite(s) ? '—' : s < 1 ? 'now' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
 const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(Number(d) || 0);
 const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
 
@@ -92,8 +92,8 @@ function Live() {
         const stale = Number(l.age_seconds) > (p.stale_seconds ?? 10);
         return <tr key={`${l.account_id}${l.broker_symbol}`}><td><strong>{l.broker_symbol}</strong>{p.instrument_symbol && p.instrument_symbol !== l.broker_symbol ? <small> · {p.instrument_symbol}</small> : null}</td>
           <td title={l.account_code}>{l.account_name || l.account_code}</td><td>{p.feed_role ? <span className={`cfg-pill ${p.active_feed ? 'ok' : ''}`}>{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span> : '—'}</td>
-          <td className="num">{num(l.bid, l.digits)}</td><td className="num">{num(l.ask, l.digits)}</td>
-          <td className="num">{l.bid && l.ask ? ((Number(l.ask) - Number(l.bid)) * 10 ** Number(l.digits ?? 5)).toFixed(1) : '—'}</td>
+          <td className="num">{num(l.bid, digitsOf(l))}</td><td className="num">{num(l.ask, digitsOf(l))}</td>
+          <td className="num">{l.bid && l.ask ? Math.round((Number(l.ask) - Number(l.bid)) * 10 ** digitsOf(l)) : '—'}</td>
           <td className={`num ${stale ? 'md-bad' : ''}`}>{ago(l.age_seconds)}</td>
           <td className="num"><span className={`md-score ${scoreClass(l.score)}`}>{l.score ?? '—'}</span></td></tr>; })}
         {latest && !latest.items.length && <tr><td colSpan={8} className="infra-placeholder">No prices yet{(collectors?.items ?? []).some((c: Row) => c.problem) ? ' — see the problem above' : ''}.</td></tr>}</tbody></table>

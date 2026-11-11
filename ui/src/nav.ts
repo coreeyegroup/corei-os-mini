@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react';
 import type { View } from './layout';
 
 const pending: Partial<Record<View, string>> = {};
+/* The section each screen is showing now (for the side bar's highlight). */
+export const current: Partial<Record<View, string>> = {};
 
 export function goto(view: View, section?: string) {
   if (section) pending[view] = section;
@@ -19,6 +21,10 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
     return s && valid.includes(s) ? s : undefined;
   };
   const [section, setSection] = useState<T>(() => take() ?? initial);
+  useEffect(() => {
+    current[view] = section;
+    window.dispatchEvent(new CustomEvent('corei-section', { detail: { view, section } }));
+  }, [view, section]);
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent).detail as { view: View; section?: string };
@@ -76,3 +82,22 @@ export type Overview = {
   approvals: number;
   attention: { severity: 'CRITICAL' | 'WARNING' | 'INFO'; area: string; title: string; detail: string; goto: { view: View; section?: string } }[];
 };
+
+/* Open a database table in System › Tables. */
+let pendingTable: string | null = null;
+export function gotoTable(name: string) {
+  pendingTable = name;
+  goto('Infrastructure', 'tables');
+  window.dispatchEvent(new CustomEvent('corei-table', { detail: name }));
+}
+export function takeTable(): string | null { const t = pendingTable; pendingTable = null; return t; }
+
+/* Decimals for a symbol: the broker's digits when read, else the decimals its prices carry. */
+export function digitsOf(row: { digits?: number | null; bid?: number | string | null; ask?: number | string | null }): number {
+  if (row.digits != null && Number.isFinite(Number(row.digits))) return Number(row.digits);
+  // Round to 6 places first so binary noise (67210.45999999) does not count as decimals.
+  const dec = (v: unknown) => { if (v == null || !Number.isFinite(Number(v))) return 0; const t = Number(v).toFixed(6).replace(/0+$/, ''); const i = t.indexOf('.'); return i < 0 ? 0 : t.length - i - 1; };
+  return Math.max(dec(row.bid), dec(row.ask));
+}
+export const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Number(v);
+  return s == null || !Number.isFinite(s) ? '—' : s < 1 ? 'now' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };

@@ -35,13 +35,13 @@ export function defaults(workspace = "Research"): Layout {
     groups: [["Overview"]],
     active: ["Overview"],
     focus: 0,
-    left: false,
+    left: true,
     right: false,
-    bottom: false,
+    bottom: true,
     axis: "row",
-    leftWidth: 220,
+    leftWidth: 280,
     rightWidth: 270,
-    bottomHeight: 180,
+    bottomHeight: 170,
     maximized: false,
   };
 }

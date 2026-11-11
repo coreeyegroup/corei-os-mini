@@ -194,8 +194,8 @@ def queue_gap_backfill(plan_id: Any, timeframe: str, start: datetime, end: datet
 def latest(account_id: UUID | None = None) -> list[dict]:
     with store.transaction('read') as db:
         rows = db.execute('''SELECT l.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
-                COALESCE((SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
-                          ORDER BY s.read_at DESC LIMIT 1), 5) AS digits,
+                (SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
+                          ORDER BY s.read_at DESC LIMIT 1) AS digits,
                 (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score
             FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id''' + (' WHERE l.account_id=%s' if account_id else '') +
                           ' ORDER BY l.broker_symbol, a.code', (account_id,) if account_id else ()).fetchall()

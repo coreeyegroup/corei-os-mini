@@ -5,7 +5,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
-import { useSection } from './nav';
+import { takeTable, useSection } from './nav';
 import './configuration.css';
 import './infrastructure.css';
 
@@ -107,6 +107,13 @@ function Tables() {
   const [error, setError] = useState('');
   const load = async () => { try { setTables((await api('infra/database')).tables); } catch (e) { setError((e as Error).message); } };
   useEffect(() => { void load(); }, []);
+  // A table chosen in the side bar opens here.
+  useEffect(() => {
+    const t = takeTable(); if (t) setName(t);
+    const on = (e: Event) => { takeTable(); setName((e as CustomEvent).detail as string); };
+    window.addEventListener('corei-table', on);
+    return () => window.removeEventListener('corei-table', on);
+  }, []);
   const shown = (tables ?? []).filter(t => t.name.includes(find.toLowerCase()));
   const groups = [...new Set(shown.map(t => t.group))];
   return <div className="infra-tables">

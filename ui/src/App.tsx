@@ -4,6 +4,8 @@ import Infrastructure, { Health, SignIn } from "./Infrastructure";
 import MarketData from "./MarketData";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
+import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
+import Toolbox from "./Toolbox";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
@@ -81,8 +83,6 @@ export default function App() {
     [events, setEvents] = useState<string[]>([]),
     [palette, setPalette] = useState(false),
     [help, setHelp] = useState(false),
-    [collapsed, setCollapsed] = useState(false),
-    [filter, setFilter] = useState(""),
     [bottomTab, setBottomTab] = useState("Activity"),
     [storageError, setStorageError] = useState("");
   const [checkedAt,setCheckedAt]=useState<number|null>(null);
@@ -413,9 +413,9 @@ export default function App() {
     {section:'Appearance',label:'Appearance settings',run:()=>open('Settings')},
     {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
     {section:'Workspace',label:'Reset current workspace layout',run:()=>{if(allowLayoutChange())setLayout(defaults(layout.workspace));}},
-    {section:'View',label:'Toggle explorer',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
+    {section:'View',label:'Toggle side bar',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
     {section:'View',label:'Toggle inspector',shortcut:'Ctrl+Alt+B',run:()=>patch({right:!layout.right})},
-    {section:'View',label:'Toggle bottom panel',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
+    {section:'View',label:'Toggle toolbox (problems, events, journal)',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
     {section:'View',label:'Toggle focus mode',run:()=>patch({maximized:!layout.maximized})},
     {section:'View',label:'Layout settings',run:()=>open('Settings')},
     {section:'Layout',label:'Single group',run:()=>preset(1,'row')},
@@ -436,7 +436,7 @@ export default function App() {
   const live=overview?.order_sending.filter(o=>o.enabled).map(o=>o.environment)??[];
   const multi=layout.groups.length>1;
   return (
-    <div className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""}`}>
+    <div className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""} ${layout.left&&!layout.maximized?"with-sidebar":""}`}>
       <header className="top">
         <div className="brand"><b>◈</b> COREI<span>OS MINI</span></div>
         <MenuBar commands={commands}/>
@@ -460,30 +460,21 @@ export default function App() {
             <button key={v} title={`${viewTitle[v]} — ${descriptions[v]}`} aria-label={v}
               aria-current={active === v ? "page" : undefined}
               onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else go(v); }}>
-              <WorkbenchIcon index={iconIndex[v]}/><small>{activityLabels[v]}</small>
+              <WorkbenchIcon index={iconIndex[v]}/><span className="sr-only">{activityLabels[v]}</span>
               {(()=>{const b=badge(v);return b?<span className={`rail-badge ${b.tone}`}>{b.n}</span>:null;})()}
             </button>
           ))}
           <span className="rail-spacer"/>
           <button title="Settings — appearance and layout" aria-label="Settings" aria-current={active==='Settings'?'page':undefined} onClick={()=>go('Settings')}>
-            <WorkbenchIcon index={iconIndex.Settings}/><small>Settings</small></button>
+            <WorkbenchIcon index={iconIndex.Settings}/><span className="sr-only">Settings</span></button>
         </nav>}
         {layout.left && !layout.maximized && (
-          <aside className="explorer" style={{ width: layout.leftWidth }}>
+          <aside className="explorer sidebar" style={{ width: layout.leftWidth }}>
             <div className="panel-heading">
-              NAVIGATOR <button title="Collapse or expand" aria-expanded={!collapsed} onClick={()=>setCollapsed(!collapsed)}>{collapsed?"▸":"▾"}</button>
-              <button title="Hide navigator (Ctrl+B)" onClick={() => patch({ left: false })}>×</button>
+              <span>{viewTitle[active].toUpperCase()}</span>
+              <button title="Hide side bar (Ctrl+B)" aria-label="Hide side bar" onClick={() => patch({ left: false })}>×</button>
             </div>
-            <input aria-label="Filter explorer" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            {(multi || layout.groups[0].length > 1) && <details className="open-editors" open><summary>OPEN · {layout.groups.reduce((n,g)=>n+g.length,0)}</summary>
-              {layout.groups.map((g,i)=>g.map(v=><button key={i+v} onClick={()=>open(v,i)} className={layout.focus===i&&active===v?'selected':''}><span>{viewTitle[v]}</span>{multi&&<small>Group {i+1}</small>}</button>))}
-            </details>}
-            {!collapsed && <div className="tree">
-              {[...new Set(DESTINATIONS.map(d=>d.group))].map(group=>{
-                const items=DESTINATIONS.filter(d=>d.group===group&&(d.label+' '+d.group+' '+(d.keywords??'')).toLowerCase().includes(filter.toLowerCase()));
-                return items.length?<div key={group}><div className="nav-section-label">{group.toUpperCase()}</div>
-                  {items.map(d=><button key={d.label} className={active===d.view&&!d.section?'selected':''} onClick={()=>{goto(d.view,d.section);go(d.view);}}><span>{d.label}</span></button>)}</div>:null;})}
-            </div>}
+            <div className="sb-scroll"><ErrorBoundary name="Side bar"><Sidebar view={active} overview={overview}/></ErrorBoundary></div>
           </aside>
         )}
         {layout.left && !layout.maximized && <ResizeHandle label="Resize explorer" value={layout.leftWidth} min={160} max={380} change={leftWidth=>patch({leftWidth})}/>}
@@ -518,11 +509,9 @@ export default function App() {
             ))}
           </div>
           {layout.bottom && !layout.maximized && (
-            <section className="bottom" style={{ height: layout.bottomHeight }}>
-              <ResizeHandle label="Resize bottom panel" horizontal reverse value={layout.bottomHeight} min={120} max={400} change={bottomHeight=>patch({bottomHeight})}/>
-              <div className="bottom-tabs"><button className="active">Activity</button>
-                <button className="push" title="Hide bottom panel (Ctrl+J)" onClick={() => patch({ bottom: false })}>×</button></div>
-              <div className="event-log">{events.length ? events.map((e, i) => <div key={i}>{e}</div>) : "No activity recorded in this session."}</div>
+            <section className="bottom toolbox" style={{ height: layout.bottomHeight }}>
+              <ResizeHandle label="Resize bottom panel" horizontal reverse value={layout.bottomHeight} min={90} max={500} change={bottomHeight=>patch({bottomHeight})}/>
+              <ErrorBoundary name="Toolbox"><Toolbox overview={overview} activity={events} close={()=>patch({ bottom: false })}/></ErrorBoundary>
             </section>
           )}
         </main>
@@ -565,46 +554,37 @@ export default function App() {
 
 function Home({ overview, signedOut, runtime, error, refresh }: { overview: OverviewData | null; signedOut: boolean; runtime: Runtime | null; error: string; refresh: () => void }) {
   if (signedOut) return <SignIn title="COREI-OS-MINI" done={() => window.dispatchEvent(new Event('corei-session'))} />;
-  const live = overview?.order_sending.filter(o => o.enabled).map(o => o.environment) ?? [];
-  const actions: [string, View, string?][] = [['New collection plan', 'Market data', 'plans'], ['Live prices', 'Market data', 'live'], ['Add or check an MT5 account', 'Configuration', 'accounts'],
-    ['Review approvals', 'Configuration', 'approvals'], ['Order sending switch', 'Configuration', 'controls'], ['Database tables', 'Infrastructure', 'tables']];
-  return <div className="content home">
-    <div className="home-head"><h1>Today</h1><span className="muted">{overview ? `Signed in as ${overview.user.username}` : 'Loading…'}</span>
-      <button onClick={refresh}>Refresh</button></div>
-    {error && <div role="alert" className="notice danger">{error}</div>}
-    <div className="home-tiles">
-      <button className={`tile ${overview?.feeds.problems ? 'bad' : overview?.feeds.live ? 'ok' : ''}`} onClick={() => goto('Market data', 'live')}>
-        <small>MARKET DATA</small><strong>{overview ? (overview.feeds.paused ? 'Paused' : `${overview.feeds.live} of ${overview.feeds.collectors} live`) : '—'}</strong>
-        <span>{overview ? `${overview.feeds.active_plans} active plan${overview.feeds.active_plans === 1 ? '' : 's'}${overview.feeds.problems ? ` · ${overview.feeds.problems} problem${overview.feeds.problems > 1 ? 's' : ''}` : ''}` : ''}</span></button>
-      <button className={`tile ${live.includes('LIVE') ? 'live' : ''}`} onClick={() => goto('Configuration', 'controls')}>
-        <small>ORDER SENDING</small><strong>{live.length ? `ON · ${live.join(', ')}` : 'OFF'}</strong><span>Firm-wide switch per environment</span></button>
-      <button className={`tile ${overview?.approvals ? 'warn' : ''}`} onClick={() => goto('Configuration', 'approvals')}>
-        <small>APPROVALS</small><strong>{overview ? overview.approvals : '—'}</strong><span>Changes waiting for a second person</span></button>
-      <button className={`tile ${runtime && !runtime.database_connected ? 'bad' : runtime ? 'ok' : ''}`} onClick={() => goto('Infrastructure', 'health')}>
-        <small>SYSTEM</small><strong>{runtime ? (runtime.database_connected ? 'Running' : 'Database down') : 'Checking'}</strong><span>{runtime ? `Release ${runtime.release}` : ''}</span></button>
-    </div>
-    <div className="home-section"><h2>Needs attention</h2>
-      {overview ? (overview.attention.length ? <div className="attention">{overview.attention.map((a, n) =>
-        <div key={n} className={`attention-item ${a.severity}`}><div><span className="attention-area">{a.area}</span><strong>{a.title}</strong><p>{a.detail}</p></div>
-          <button onClick={() => goto(a.goto.view, a.goto.section)}>Open →</button></div>)}</div>
-        : <p className="muted">Nothing needs attention.</p>) : <p className="muted">Loading…</p>}
-    </div>
-    <div className="home-section"><h2>Quick actions</h2>
-      <div className="quick">{actions.map(([label, v, sec]) => <button key={label} onClick={() => goto(v, sec)}>{label} →</button>)}
-        <button onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}>Search everything <kbd>Ctrl K</kbd></button></div>
+  const problems = overview?.attention ?? [];
+  return <div className="dense-page">
+    <div className="dense-bar"><b>Overview</b>
+      <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}` : 'server ?'}` : 'Loading…'}</span>
+      <span className="push" /><button onClick={refresh}>Refresh</button></div>
+    {error && <div role="alert" className="dense-error">{error}</div>}
+    <div className="dense-grid">
+      <section className="dense-box wide"><header>Problems <span className="muted">{problems.length}</span></header>
+        <table className="dense-table"><tbody>{problems.map((a, n) => <tr key={n} title={`${a.title}\n${a.detail}`} onClick={() => goto(a.goto.view, a.goto.section)}>
+          <td className={`sev ${a.severity}`}>{a.severity === 'CRITICAL' ? '⛔' : '⚠'}</td><td className="muted nowrap">{a.area}</td><td><b>{a.title}</b></td><td className="muted">{a.detail}</td></tr>)}
+          {overview && !problems.length && <tr><td className="muted">No problems.</td></tr>}</tbody></table></section>
+      <section className="dense-box"><header>Order sending</header>
+        <table className="dense-table"><tbody>{(overview?.order_sending ?? []).map(o => <tr key={o.environment} onClick={() => goto('Configuration', 'controls')}>
+          <td><b>{o.environment}</b></td><td className={o.enabled ? (o.environment === 'LIVE' ? 'bad' : 'ok') : 'muted'}>{o.enabled ? 'ON' : 'off'}</td></tr>)}
+          <tr onClick={() => goto('Configuration', 'approvals')}><td>Approvals waiting</td><td className={overview?.approvals ? 'warn' : 'muted'}>{overview?.approvals ?? '—'}</td></tr>
+          <tr onClick={() => goto('Market data', 'plans')}><td>Active collection plans</td><td>{overview?.feeds.active_plans ?? '—'}</td></tr></tbody></table></section>
+      <section className="dense-box"><header>Feeds <span className="muted">{overview ? `${overview.feeds.live}/${overview.feeds.collectors} live` : ''}</span></header><div className="dense-list"><Feeds /></div></section>
+      <section className="dense-box"><header>Market watch</header><MarketWatch /></section>
     </div>
   </div>;
 }
 
 function Monitor({ overview, signedOut }: { overview: OverviewData | null; signedOut: boolean }) {
   if (signedOut) return <SignIn title="MONITOR" done={() => window.dispatchEvent(new Event('corei-session'))} />;
-  return <div className="content home monitor">
-    <div className="home-head"><h1>Monitor</h1><span className="muted">Everything that needs attention, and the health of every part of the system</span></div>
-    <div className="home-section"><h2>Needs attention</h2>
-      {overview ? (overview.attention.length ? <div className="attention">{overview.attention.map((a, n) =>
-        <div key={n} className={`attention-item ${a.severity}`}><div><span className="attention-area">{a.area}</span><strong>{a.title}</strong><p>{a.detail}</p></div>
-          <button onClick={() => goto(a.goto.view, a.goto.section)}>Open →</button></div>)}</div> : <p className="muted">Nothing needs attention.</p>) : <p className="muted">Loading…</p>}
-    </div>
-    <div className="home-section"><h2>System health</h2><Health /></div>
+  const problems = overview?.attention ?? [];
+  return <div className="dense-page monitor">
+    <div className="dense-bar"><b>Monitor</b><span className="muted">problems and the health of every part of the system · refreshes by itself</span></div>
+    <section className="dense-box wide"><header>Problems <span className="muted">{problems.length}</span></header>
+      <table className="dense-table"><tbody>{problems.map((a, n) => <tr key={n} title={`${a.title}\n${a.detail}`} onClick={() => goto(a.goto.view, a.goto.section)}>
+        <td className={`sev ${a.severity}`}>{a.severity === 'CRITICAL' ? '⛔' : '⚠'}</td><td className="muted nowrap">{a.area}</td><td><b>{a.title}</b></td><td className="muted">{a.detail}</td></tr>)}
+        {overview && !problems.length && <tr><td className="muted">No problems.</td></tr>}</tbody></table></section>
+    <Health />
   </div>;
 }

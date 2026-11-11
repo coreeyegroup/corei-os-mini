@@ -12,3 +12,4 @@ import "./themes.css";
 
 import "./workstation.css";
 import "./shell.css";
+import "./dense.css";

@@ -637,3 +637,13 @@ DEC-45. No migration.
 - Every screen lists its sections on its left (Setup groups its 14 sections under five headings).
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
+
+## Dense workstation — release 0.15.0
+
+DEC-46. No migration.
+
+- Laid out like VS Code and MT5: **activity bar** (icons, badges) · **side bar** with live content (Ctrl B) · main area · **Toolbox** with Problems, Events, Journal, Activity (Ctrl J) · status bar.
+- **Market:** Market Watch (bid, ask, spread; green/red on change; old prices dimmed), Feeds with state and lag, and the market-data sections.
+- **Setup:** every section with its count and the order-sending state. **System:** every database table with row counts; click one to open it.
+- **Overview** (Home): problems, order sending, feeds and Market Watch on one screen.
+- 12px type, 22px rows, no cards. Ctrl K still goes anywhere.
