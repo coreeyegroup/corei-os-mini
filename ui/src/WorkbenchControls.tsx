@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-export type Command = { label: string; section: string; shortcut?: string; run: () => void };
+export type Command = { label: string; section: string; shortcut?: string; keywords?: string; run: () => void };
 export function MenuBar({ commands }: { commands: Command[] }) {
   const [menu, setMenu] = useState('');
   const root = useRef<HTMLElement>(null);
@@ -16,7 +16,6 @@ export function MenuBar({ commands }: { commands: Command[] }) {
         {commands.filter(c=>c.section===section).map(c=><button key={c.label} onClick={()=>{c.run();setMenu('');}}><span>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
       </div>}
     </div>)}
-    <span className="menu-caption">WORKSPACE CONTROLS</span>
   </nav>;
 }
 export function CommandPalette({ commands, dismiss }: { commands: Command[]; dismiss: () => void }) {
@@ -24,7 +23,9 @@ export function CommandPalette({ commands, dismiss }: { commands: Command[]; dis
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const previous = useRef(document.activeElement as HTMLElement | null);
-  const filtered = commands.filter(c=>(c.section+' '+c.label).toLowerCase().includes(query.toLowerCase()));
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = commands.filter(c=>{const text=(c.section+' '+c.label+' '+(c.keywords??'')).toLowerCase();return words.every(w=>text.includes(w));})
+    .sort((a,b)=>Number(b.section==='Go to')-Number(a.section==='Go to'));
   useEffect(()=>{input.current?.focus();return ()=>previous.current?.focus();},[]);
   const execute=(c:Command)=>{c.run();dismiss();};
   return <div className="overlay" onPointerDown={dismiss}><div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>{
@@ -33,7 +34,7 @@ export function CommandPalette({ commands, dismiss }: { commands: Command[]; dis
     if(e.key==='Enter' && filtered[selected]){e.preventDefault();execute(filtered[selected]);}
     if(e.key==='Tab'){e.preventDefault();input.current?.focus();}
   }}>
-    <input ref={input} value={query} onChange={e=>{setQuery(e.target.value);setSelected(0);}} aria-label="Search commands" placeholder="> Search views, layout and commands" role="combobox" aria-expanded="true" aria-controls="command-results" aria-activedescendant={filtered.length?`command-${selected}`:undefined}/>
+    <input ref={input} value={query} onChange={e=>{setQuery(e.target.value);setSelected(0);}} aria-label="Search commands" placeholder="Go to a screen or section, or run a command — e.g. accounts, plans, tables" role="combobox" aria-expanded="true" aria-controls="command-results" aria-activedescendant={filtered.length?`command-${selected}`:undefined}/>
     <div className="command-results" id="command-results" role="listbox">
       {filtered.map((c,i)=><button id={`command-${i}`} role="option" aria-selected={selected===i} className={selected===i?'chosen':''} key={c.section+c.label} onMouseEnter={()=>setSelected(i)} onClick={()=>execute(c)} ref={el=>{if(selected===i)el?.scrollIntoView({block:'nearest'});}}><span><small>{c.section}: </small>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
       {!filtered.length && <p className="panel-empty">No matching commands.</p>}

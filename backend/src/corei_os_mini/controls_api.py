@@ -246,3 +246,60 @@ def broker_reads(account_id: UUID, response: Response, _: str = Depends(require_
     _no_store(response)
     from . import broker_session
     return {'items': broker_session.reads(account_id)}
+
+
+# ---------- workstation overview (top bar, status bar, Home) ----------
+
+@router.get('/overview')
+def overview(response: Response, user: Principal = Depends(current_user)):
+    """Everything the shell shows at a glance, in one call: market-data feeds, order
+    sending, approvals and what needs attention — each item says where to go."""
+    _no_store(response)
+    from .md import store as md
+    attention: list[dict] = []
+    collectors = md.collectors()
+    with store.transaction('read') as db:
+        active_plans = db.execute("SELECT count(*) AS n FROM md_collection_plans WHERE status='ACTIVE'").fetchone()['n']
+        approvals = db.execute("SELECT count(*) AS n FROM cfg_change_requests WHERE status='PENDING'").fetchone()['n']
+        paused_all = (db.execute("SELECT paused FROM md_controls WHERE scope='ALL'").fetchone() or {}).get('paused', False)
+        backup = db.execute("SELECT ok, error, started_at FROM md_backups WHERE kind='DATABASE' ORDER BY id DESC LIMIT 1").fetchone()
+        verify = db.execute("SELECT severity, detail FROM md_events WHERE kind='VERIFY' ORDER BY id DESC LIMIT 1").fetchone()
+        archive = db.execute("SELECT severity, detail FROM md_events WHERE kind='ARCHIVE' ORDER BY id DESC LIMIT 1").fetchone()
+    live = sum(1 for c in collectors if c['state'] == 'CONNECTED')
+    for c in collectors:
+        if c.get('problem'):
+            p = c['problem']
+            attention.append({'severity': 'CRITICAL' if c['state'] == 'FAILED' else 'WARNING', 'area': 'Market data',
+                              'title': f"{c['account_name'] or c['account_code']}: {p['title']}", 'detail': p['detail'],
+                              'goto': {'view': 'Market data', 'section': 'live'}})
+    stale_service = active_plans and not paused_all and (not collectors or all(
+        (c['heartbeat_age_seconds'] or 1e9) > 90 for c in collectors))
+    if stale_service:
+        attention.append({'severity': 'CRITICAL', 'area': 'Market data', 'title': 'Collector service is not running',
+                          'detail': 'Active collection plans exist but no collector has reported in the last 90 seconds. '
+                                    'On the server: sudo systemctl restart corei-os-mini-collector',
+                          'goto': {'view': 'Infrastructure', 'section': 'health'}})
+    if paused_all:
+        attention.append({'severity': 'WARNING', 'area': 'Market data', 'title': 'All market-data collection is paused',
+                          'detail': 'Resume it under Market data › Controls.', 'goto': {'view': 'Market data', 'section': 'controls'}})
+    if approvals:
+        attention.append({'severity': 'WARNING', 'area': 'Approvals', 'title': f'{approvals} change{"" if approvals == 1 else "s"} waiting for approval',
+                          'detail': 'A second person reviews and approves them.', 'goto': {'view': 'Configuration', 'section': 'approvals'}})
+    if verify and verify['severity'] == 'CRITICAL':
+        attention.append({'severity': 'CRITICAL', 'area': 'Data integrity', 'title': 'History files changed or missing',
+                          'detail': f"{len(verify['detail'].get('mismatch') or [])} changed, {len(verify['detail'].get('missing') or [])} missing.",
+                          'goto': {'view': 'Market data', 'section': 'archive'}})
+    if archive and archive['severity'] == 'CRITICAL':
+        attention.append({'severity': 'WARNING', 'area': 'Data integrity', 'title': 'Last nightly archive had errors',
+                          'detail': '; '.join((archive['detail'].get('errors') or [])[:2]), 'goto': {'view': 'Market data', 'section': 'events'}})
+    if backup is None or not backup['ok']:
+        attention.append({'severity': 'WARNING', 'area': 'Backups', 'title': 'No working database backup',
+                          'detail': (backup or {}).get('error') or 'Set COREI_BACKUP_DIR on the server; the nightly job makes them.',
+                          'goto': {'view': 'Market data', 'section': 'archive'}})
+    order = store.list_execution_controls()
+    return {'user': {'username': user.username, 'roles': sorted(user.roles)},
+            'feeds': {'active_plans': active_plans, 'collectors': len(collectors), 'live': live,
+                      'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
+            'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
+            'approvals': approvals,
+            'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}

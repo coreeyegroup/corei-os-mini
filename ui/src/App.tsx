@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import Configuration from "./Configuration";
-import Infrastructure from "./Infrastructure";
+import Infrastructure, { Health, SignIn } from "./Infrastructure";
 import MarketData from "./MarketData";
 import WorkbenchIcon from "./WorkbenchIcon";
+import ErrorBoundary from "./ErrorBoundary";
+import { api } from "./Configuration";
+import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
@@ -40,7 +43,10 @@ const descriptions: Record<View, string> = {
   Infrastructure: "Server and database health, PostgreSQL tables (view and edit), SQL console and edit log",
   Settings: "Workspace layout and navigation preferences",
 };
-const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Config',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'Infra',Settings:'Settings'};
+const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Setup',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
+/* The rail, in the order a trader works: home, the markets, trading, watching, setting up. */
+const RAIL:(View|'-')[]=['Overview','-','Market data','Strategies','Execution','Portfolio','-','Operations','-','Configuration','Infrastructure'];
+const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Configuration:'Setup',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
 const iconIndex:Record<View,number>={Overview:0,'Market data':1,Configuration:2,Strategies:5,Execution:6,Portfolio:7,Operations:8,Infrastructure:10,Settings:9};
 function stored() {
   try {
@@ -166,11 +172,24 @@ export default function App() {
       pending.current?.abort();
     };
   }, []);
+  const [overview,setOverview]=useState<OverviewData|null>(null),[signedOut,setSignedOut]=useState(false);
+  async function loadOverview(){
+    try{const d=await api('config/overview');
+      // Show status only from a well-formed answer; anything else leaves the last good one.
+      if(d&&d.feeds&&Array.isArray(d.order_sending)&&Array.isArray(d.attention)){setOverview(d);setSignedOut(false);}}
+    catch(e){if((e as {status?:number}).status===401){setSignedOut(true);setOverview(null);}}
+  }
+  useEffect(()=>{void loadOverview();const t=setInterval(()=>{if(document.visibilityState!=='hidden')void loadOverview();},15000);
+    const onSession=()=>void loadOverview();window.addEventListener('corei-session',onSession);
+    return ()=>{clearInterval(t);window.removeEventListener('corei-session',onSession);};},[]);
+  useEffect(()=>{const on=(e:Event)=>{const d=(e as CustomEvent).detail as {view:View};if(views.includes(d.view))go(d.view);};
+    window.addEventListener('corei-goto',on);return ()=>window.removeEventListener('corei-goto',on);});
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const typing = e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable="true"]');
       if (mod && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(x=>!x); return; }
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(x=>!x); return; }
       if (e.key === 'Escape') { setPalette(false); setHelp(false); setContext(null); }
       if (typing || palette || document.querySelector('dialog[open]')) return;
       if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
@@ -202,6 +221,21 @@ export default function App() {
     });
     setPalette(false);
 
+  }
+  /* Show a view: focus it where it is already open; otherwise show it in place of the
+   * current (unpinned) view of the focused group, so tabs do not pile up. */
+  function go(view: View) {
+    const at = layout.groups.findIndex(g => g.includes(view));
+    if (at >= 0) { open(view, at); return; }
+    const current = layout.active[layout.focus];
+    if (pinned.includes(current) || !allowLayoutChange()) { open(view); return; }
+    setLayout(x => {
+      const groups = x.groups.map(g => [...g]), active = [...x.active];
+      groups[x.focus] = groups[x.focus].map(v => v === current ? view : v);
+      active[x.focus] = view;
+      return { ...x, groups, active, activity: view };
+    });
+    setPalette(false);
   }
   function close(view: View, group: number) {
     if(!allowLayoutChange())return;
@@ -268,6 +302,12 @@ export default function App() {
   }
   const active = layout.active[layout.focus];
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
+  function switchWorkspace(name:string){
+    if(!allowLayoutChange())return;
+    let saved = defaults(name);
+    try { const raw = localStorage.getItem(`${key}.${name}`); if (raw) saved = { ...restore(raw), workspace: name }; } catch {}
+    setLayout(saved); log(`Layout switched to ${name}`);
+  }
 
   function body(view: View) {
     if (view === "Configuration") return <Configuration/>;
@@ -338,129 +378,27 @@ export default function App() {
           </div>
         </div>
       );
-    if (view === "Overview" || view === "Operations")
-      return (
-        <div className="content overview-workspace">
-          <div className="eyebrow">
-            {layout.workspace.toUpperCase()} / WORKSTATION
-          </div>
-          <h1>
-            {view === "Overview"
-              ? "Workspace overview"
-              : "Operational status"}
-          </h1>
-          <p>Observe → understand → decide → act → reconcile.</p>
-          <div className="metrics">
-            <article>
-              <small>BACKEND</small>
-              <strong>
-                {checking ? "Checking" : runtime ? "Connected" : "Unavailable"}
-              </strong>
-              <span>
-                {runtime
-                  ? `Release ${runtime.release}`
-                  : "Identity must be verified"}
-              </span>
-            </article>
-            <article>
-              <small>ORDER SENDING</small>
-              <strong>Controlled</strong>
-              <span>Firm-wide switch per environment · Configuration › Order sending</span>
-            </article>
-            <article>
-              <small>DATABASE CONNECTION</small>
-              <strong>
-                {runtime
-                  ? runtime.database_connected
-                    ? "Connected"
-                    : "Unavailable"
-                  : "Unknown"}
-              </strong>
-              <span>{runtime?.schema_ready === true ? "Required schema verified" : runtime?.database_connected ? "Required schema unavailable or not verified" : "Database setup required"}</span>
-            </article>
-          </div>
-          <div className="section-title">
-            <h2>{view==='Operations'?'Service readiness':'Platform capabilities'}</h2><span className="muted">{checkedAt?`Checked ${new Date(checkedAt).toLocaleTimeString()} · refresh 30s`:'Not yet verified'}</span>
-            <button disabled={checking} onClick={() => void refresh()}>
-              Refresh status
-            </button>
-          </div>
-          {error && (
-            <div role="alert" className="notice danger">
-              {error}
-            </div>
-          )}
-          {runtime ? (
-            <div className="capabilities">
-              {runtime.capabilities.map((c) => (
-                <article key={c.id}>
-                  <span className={`dot ${c.available ? "ready" : ""}`} />
-                  <div>
-                    <strong>{c.label}</strong>
-                    <p>{c.reason}</p>
-                  </div>
-                  <span className="tag">
-                    {c.available ? "AVAILABLE" : "NOT IMPLEMENTED"}
-                  </span>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty">
-              Capability state is unavailable until the backend is verified.
-            </div>
-          )}
-          <div className="section-title">
-            <h2>Start from any dimension</h2>
-          </div>
-          <div className="launchers">
-            {(
-              ["Configuration", "Market data", "Strategies", "Execution"] as View[]
-            ).map((v) => (
-              <button key={v} onClick={() => open(v)}>
-                <strong>{v} ↗</strong>
-                <span>{descriptions[v]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      );
+    if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
+    if (view === "Operations") return <Monitor overview={overview} signedOut={signedOut}/>;
+    const planned:Record<string,{what:string;now:[string,View,string?][]}>={
+      Strategies:{what:'Running strategies, their signals and performance.',now:[['Set up strategies and versions','Configuration','strategies'],['Assign a strategy to an account (deployments)','Configuration','deployments']]},
+      Execution:{what:'The order blotter: working orders, fills, rejections and reconciliation with the broker.',now:[['Order sending switch and policies','Configuration','controls'],['Check an order against broker limits (account › symbol limits)','Configuration','accounts']]},
+      Portfolio:{what:'Positions, balances, margin and exposure across accounts.',now:[['Account facts read from the broker','Configuration','accounts']]},
+    };
+    const p=planned[view];
     return (
-      <div className="content">
-        <div className="eyebrow">{view.toUpperCase()}</div>
-        <h1>{descriptions[view]}</h1>
-        <div className="notice">
-          This capability is planned and has no operational implementation in
-          the current repository.
-        </div>
-        <div className="empty">
-          <span className="empty-icon"><WorkbenchIcon index={views.indexOf(view)}/></span>
-          <h2>{view} workspace</h2>
-          <p>
-            {view === "Execution"
-              ? "No order submission controls are enabled. Final account risk and execution lifecycle integration are required."
-              : "Provider-backed state will appear here as its backend capability is implemented."}
-          </p>
-          <button disabled title="Requires backend implementation">
-            {view === "Execution"
-              ? "Submit order unavailable"
-              : `Configure ${view.toLowerCase()} unavailable`}
-          </button>
-        </div>
-        <div className="readiness-grid"><h2>Required inputs and next actions</h2><table><thead><tr><th>Dependency</th><th>Current state</th><th>Workspace</th></tr></thead><tbody>{([['Providers, connections, accounts','Configured in Configuration','Configuration'],['Instruments and symbol mappings','Configured in Configuration','Configuration'],['Provider adapters (MT5, REST API)','Not implemented yet','Operations'],['Order lifecycle and reconciliation','Not implemented yet','Operations']] as const).map(([name,state,target])=><tr key={name}><td>{name}</td><td>{state}</td><td><button onClick={()=>open(target)}>{target} →</button></td></tr>)}</tbody></table></div>
-        <div className="principle">
-          Provider · connection · account · instrument · strategy
-          <br />
-          <span>
-            Explicit eligibility connects these dimensions. Selecting a view
-            does not activate trading.
-          </span>
-        </div>
+      <div className="content home">
+        <h1>{viewTitle[view]}</h1>
+        <div className="notice">Not built yet. {p?.what}</div>
+        {p && <div className="home-section"><h2>Available now</h2><div className="quick">{p.now.map(([label,v,sec])=><button key={label} onClick={()=>goto(v,sec)}>{label} →</button>)}</div></div>}
       </div>
     );
   }
   const commands:Command[] = [
+    ...DESTINATIONS.map(d=>({section:'Go to',label:`${d.group} › ${d.label}`,keywords:d.keywords,run:()=>{goto(d.view,d.section);go(d.view);}})),
     ...views.map(v=>({section:'Navigate',label:`Open ${v}`,run:()=>open(v)})),
+    {section:'Workspace',label:'Go to… (search everything)',shortcut:'Ctrl+K',run:()=>setPalette(true)},
+    ...["Research","Execution","Operations"].map(name=>({section:'Workspace',label:`Saved layout: ${name}`,run:()=>switchWorkspace(name)})),
     {section:'Workspace',label:'Command palette',shortcut:'Ctrl+Shift+P',run:()=>setPalette(true)},
     {section:'Workspace',label:'Close active tab',run:()=>close(active,layout.focus)},
     {section:'Workspace',label:'Close other tabs in group',run:()=>closeOthers(active,layout.focus)},
@@ -489,353 +427,184 @@ export default function App() {
     {section:'Layout',label:'Change split orientation',run:()=>patch({axis:layout.axis==='row'?'column':'row'})},
     {section:'Navigate',label:'Next tab',shortcut:'Alt+Right',run:()=>cycle(1)},
     {section:'Navigate',label:'Previous tab',shortcut:'Alt+Left',run:()=>cycle(-1)},
+    {section:'Layout',label:'Open active view in other group',run:()=>{if(layout.groups.length>1)open(active,(layout.focus+1)%layout.groups.length);}},
     {section:'Help',label:'Keyboard shortcuts & workbench guide',run:()=>setHelp(true)},
   ];
+  const badge=(v:View)=>!overview?null:v==='Market data'&&overview.feeds.problems?{n:overview.feeds.problems,tone:'bad'}
+    :v==='Configuration'&&overview.approvals?{n:overview.approvals,tone:'warn'}
+    :v==='Operations'&&overview.attention.some(a=>a.severity==='CRITICAL')?{n:overview.attention.filter(a=>a.severity==='CRITICAL').length,tone:'bad'}:null;
+  const live=overview?.order_sending.filter(o=>o.enabled).map(o=>o.environment)??[];
+  const multi=layout.groups.length>1;
   return (
     <div className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""}`}>
       <header className="top">
-        <div className="brand">
-          <b>◈</b> COREI<span>OS MINI</span>
+        <div className="brand"><b>◈</b> COREI<span>OS MINI</span></div>
+        <MenuBar commands={commands}/>
+        <button className="command" onClick={() => setPalette(true)} aria-label="Go to anything">
+          <span>Go to anything…</span><kbd>Ctrl K</kbd>
+        </button>
+        <div className="status-chips" aria-label="Live status">
+          {signedOut ? <button className="chip" onClick={()=>go('Overview')}>Sign in</button> : overview && <>
+            <button className={`chip ${overview.feeds.problems?'bad':overview.feeds.live?'ok':''}`} title="Market-data feeds" onClick={()=>{goto('Market data','live');go('Market data');}}>
+              <span className="chip-dot"/>Feeds {overview.feeds.live}/{overview.feeds.collectors}{overview.feeds.problems?` · ${overview.feeds.problems} problem${overview.feeds.problems>1?'s':''}`:''}</button>
+            <button className={`chip ${live.includes('LIVE')?'live':''}`} title="Order sending (firm-wide switch)" onClick={()=>{goto('Configuration','controls');go('Configuration');}}>
+              Orders {live.length?`ON · ${live.join(', ')}`:'OFF'}</button>
+            {overview.approvals>0 && <button className="chip warn" onClick={()=>{goto('Configuration','approvals');go('Configuration');}}>Approvals {overview.approvals}</button>}
+          </>}
         </div>
-        <select
-          aria-label="Workspace"
-          value={layout.workspace}
-          onChange={(e) => {
-            if(!allowLayoutChange())return;
-            const name = e.target.value;
-            let saved = defaults(name);
-            try {
-              const raw = localStorage.getItem(`${key}.${name}`);
-              if (raw) saved = { ...restore(raw), workspace: name };
-            } catch {}
-            setLayout(saved);
-            log(`Workspace switched to ${name}`);
-          }}
-        >
-          {["Research", "Execution", "Operations"].map((x) => (
-            <option key={x}>{x}</option>
-          ))}
-        </select>
-        <button className="command" onClick={() => setPalette(true)}>
-          Search views and commands <kbd>Ctrl ⇧ P</kbd>
-        </button>
-        <button
-          title="Toggle explorer"
-          aria-pressed={layout.left}
-          onClick={() => patch({ left: !layout.left })}
-        >
-          ◧
-        </button>
-        <button
-          title="Toggle bottom panel"
-          aria-pressed={layout.bottom}
-          onClick={() => patch({ bottom: !layout.bottom })}
-        >
-          ⬒
-        </button>
-        <button
-          title="Toggle inspector"
-          aria-pressed={layout.right}
-          onClick={() => patch({ right: !layout.right })}
-        >
-          ◨
-        </button>
+        {overview && <span className="top-user" title={overview.user.roles.join(', ')}>{overview.user.username}</span>}
       </header>
-      <MenuBar commands={commands}/>
       <div className="shell">
         {appearance.activity && <nav className="activity" aria-label="Activities">
-          {views.map((v) => (
-            <button
-              key={v}
-              title={v}
-              aria-label={v}
-              aria-current={layout.activity === v ? "page" : undefined}
-              onClick={() => {
-                patch({ activity: v, left: true });
-                open(v);
-              }}
-            >
+          {RAIL.map((v,i) => v==='-' ? <span key={'sep'+i} className="rail-sep" aria-hidden="true"/> : (
+            <button key={v} title={`${viewTitle[v]} — ${descriptions[v]}`} aria-label={v}
+              aria-current={active === v ? "page" : undefined}
+              onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else go(v); }}>
               <WorkbenchIcon index={iconIndex[v]}/><small>{activityLabels[v]}</small>
+              {(()=>{const b=badge(v);return b?<span className={`rail-badge ${b.tone}`}>{b.n}</span>:null;})()}
             </button>
           ))}
+          <span className="rail-spacer"/>
+          <button title="Settings — appearance and layout" aria-label="Settings" aria-current={active==='Settings'?'page':undefined} onClick={()=>go('Settings')}>
+            <WorkbenchIcon index={iconIndex.Settings}/><small>Settings</small></button>
         </nav>}
         {layout.left && !layout.maximized && (
           <aside className="explorer" style={{ width: layout.leftWidth }}>
             <div className="panel-heading">
-              EXPLORER <button title="Collapse or expand explorer" aria-expanded={!collapsed} onClick={()=>setCollapsed(!collapsed)}>{collapsed?"▸":"▾"}</button>
-              <button
-                title="Hide explorer"
-                onClick={() => patch({ left: false })}
-              >
-                ×
-              </button>
+              NAVIGATOR <button title="Collapse or expand" aria-expanded={!collapsed} onClick={()=>setCollapsed(!collapsed)}>{collapsed?"▸":"▾"}</button>
+              <button title="Hide navigator (Ctrl+B)" onClick={() => patch({ left: false })}>×</button>
             </div>
-            <input
-              aria-label="Filter explorer"
-              placeholder="Filter views…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-            <details className="open-editors" open><summary>OPEN VIEWS · {layout.groups.reduce((n,g)=>n+g.length,0)}</summary>
-              {layout.groups.map((g,i)=>g.map(v=><button key={i+v} onClick={()=>open(v,i)} className={layout.focus===i&&active===v?'selected':''}><span>▤ {v}</span><small>Group {i+1}</small></button>))}
-            </details>
-            <div className="tree">
-              <div className="tree-project">⌄ COREI-OS-MINI</div>
-              {!collapsed && views
-                .filter((v) =>
-                  (v + " " + descriptions[v])
-                    .toLowerCase()
-                    .includes(filter.toLowerCase()),
-                )
-                .map((v) => (
-                  <div key={v}>
-                    {({Overview:"WORKSPACE",Configuration:"SETUP",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]&&<div className="nav-section-label">{({Overview:"WORKSPACE",Configuration:"SETUP",Strategies:"TRADING",Operations:"SYSTEM"} as Partial<Record<View,string>>)[v]}</div>}
-                    <button
-                      className={active === v ? "selected" : ""}
-                      onClick={() => open(v)}
-                    >
-                      <span>
-                        · {v}
-                      </span>
-                      <span className="muted">
-                        {v === "Overview"
-                          ? ""
-                          : v === "Settings"
-                            ? "local"
-                            : "—"}
-                      </span>
-                    </button>
-                  </div>
-                ))}
-            </div>
-            <div className="explorer-note">
-              COREI OS MINI
-              <p>Trading workstation<br/>Provider adapters pending</p>
-            </div>
+            <input aria-label="Filter explorer" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            {(multi || layout.groups[0].length > 1) && <details className="open-editors" open><summary>OPEN · {layout.groups.reduce((n,g)=>n+g.length,0)}</summary>
+              {layout.groups.map((g,i)=>g.map(v=><button key={i+v} onClick={()=>open(v,i)} className={layout.focus===i&&active===v?'selected':''}><span>{viewTitle[v]}</span>{multi&&<small>Group {i+1}</small>}</button>))}
+            </details>}
+            {!collapsed && <div className="tree">
+              {[...new Set(DESTINATIONS.map(d=>d.group))].map(group=>{
+                const items=DESTINATIONS.filter(d=>d.group===group&&(d.label+' '+d.group+' '+(d.keywords??'')).toLowerCase().includes(filter.toLowerCase()));
+                return items.length?<div key={group}><div className="nav-section-label">{group.toUpperCase()}</div>
+                  {items.map(d=><button key={d.label} className={active===d.view&&!d.section?'selected':''} onClick={()=>{goto(d.view,d.section);go(d.view);}}><span>{d.label}</span></button>)}</div>:null;})}
+            </div>}
           </aside>
         )}
         {layout.left && !layout.maximized && <ResizeHandle label="Resize explorer" value={layout.leftWidth} min={160} max={380} change={leftWidth=>patch({leftWidth})}/>}
         <main>
-          <div className="workspace-toolbar">
-            <span>
-              {layout.workspace} <span className="muted">/ {active}</span>
-            </span>
-            <div>
-              <button
-                onClick={split}
-                title="Split workspace or change split direction"
-              >
-                {layout.groups.length === 1
-                  ? "Split workspace"
-                  : "Change split"}
-              </button>
-              <button onClick={() => patch({ maximized: !layout.maximized })}>
-                {layout.maximized ? "Restore groups" : "Focus group"}
-              </button>
-              <button onClick={() => open("Settings")}>Layout</button>
-            </div>
-          </div>
           <div className={`groups count-${layout.groups.length}`} style={{ flexDirection: layout.axis }}>
-            {layout.groups.map(
-              (group, i) =>
-                (
-                  <section
-                    hidden={layout.maximized && layout.focus!==i}
-                    className={`group ${layout.focus === i ? "focused" : ""}`}
-                    key={i}
-                    onFocus={() => {
-                      if (layout.focus !== i) patch({ focus: i });
-                    }}
-                  >
-                    <div
-                      className="tabs"
-                      role="tablist"
-                      aria-label={`Workspace group ${i + 1}`}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        try {
-                          const d = JSON.parse(
-                            e.dataTransfer.getData("text/plain"),
-                          );
-                          if (
-                            views.includes(d.view) &&
-                            Number.isInteger(d.from) &&
-                            layout.groups[d.from]?.includes(d.view)
-                          )
-                            moveTab(d.view, d.from, i);
-                        } catch {
-                          /* Ignore unrelated dragged data. */
-                        }
-                      }}
-                    >
-                      {[...group].sort((a,b)=>Number(pinned.includes(b))-Number(pinned.includes(a))).map((v) => (
-                        <div
-                          className={`tab ${layout.active[i] === v ? "active" : ""}`}
-                          key={v}
-                          onContextMenu={e=>{e.preventDefault();setContext({view:v,group:i,x:Math.max(8,Math.min(e.clientX,window.innerWidth-240)),y:Math.max(8,Math.min(e.clientY,window.innerHeight-180))});}}
-                          draggable
-                          onDragStart={(e) =>
-                            e.dataTransfer.setData(
-                              "text/plain",
-                              JSON.stringify({ view: v, from: i }),
-                            )
-                          }
-                        >
-                          <button
-                            role="tab"
-                            aria-selected={layout.active[i] === v}
-                            tabIndex={layout.active[i]===v?0:-1}
-                            onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const tabs=[...e.currentTarget.closest('.tabs')!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];const at=tabs.indexOf(e.currentTarget);const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(at+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus();}}}
-                            onClick={() => open(v, i)}
-                          >
-                            {pinned.includes(v)?"◆ ":""}{v}
-                          </button>
-                          <button
-                            disabled={pinned.includes(v)}
-                            title={pinned.includes(v)?"Unpin this tab to close it":"Close tab"}
-                            aria-label={`Close ${v} in group ${i + 1}`}
-                            onClick={() => close(v, i)}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
+            {layout.groups.map((group, i) => (
+              <section hidden={layout.maximized && layout.focus!==i} className={`group ${layout.focus === i ? "focused" : ""}`} key={i}
+                onFocus={() => { if (layout.focus !== i) patch({ focus: i }); }}>
+                {(multi || group.length > 1 || group.some(v=>pinned.includes(v))) && <div className="tabs" role="tablist" aria-label={`Workspace group ${i + 1}`}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); try { const d = JSON.parse(e.dataTransfer.getData("text/plain"));
+                    if (views.includes(d.view) && Number.isInteger(d.from) && layout.groups[d.from]?.includes(d.view)) moveTab(d.view, d.from, i); } catch { /* unrelated drag */ } }}>
+                  {[...group].sort((a,b)=>Number(pinned.includes(b))-Number(pinned.includes(a))).map((v) => (
+                    <div className={`tab ${layout.active[i] === v ? "active" : ""}`} key={v}
+                      onContextMenu={e=>{e.preventDefault();setContext({view:v,group:i,x:Math.max(8,Math.min(e.clientX,window.innerWidth-240)),y:Math.max(8,Math.min(e.clientY,window.innerHeight-180))});}}
+                      draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ view: v, from: i }))}>
+                      <button role="tab" aria-selected={layout.active[i] === v} tabIndex={layout.active[i]===v?0:-1}
+                        onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const tabs=[...e.currentTarget.closest('.tabs')!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];const at=tabs.indexOf(e.currentTarget);const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(at+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus();}}}
+                        onClick={() => open(v, i)}>{pinned.includes(v)?"◆ ":""}{viewTitle[v]}</button>
+                      <button disabled={pinned.includes(v)} title={pinned.includes(v)?"Unpin this tab to close it":"Close tab"} aria-label={`Close ${v} in group ${i + 1}`} onClick={() => close(v, i)}>×</button>
                     </div>
-                    <div className="group-actions"><span>Workspace {i+1} <span className="muted">/ {layout.active[i]}</span></span><button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab. Unsaved form entries are not transferred." onClick={()=>openWorkspace(layout.active[i],false)}>New tab ↗</button><button aria-label={`Open ${layout.active[i]} in new window`} title="Request a separate browser window. Browser settings control tab/window behavior; a different browser application cannot be selected." onClick={()=>openWorkspace(layout.active[i],true)}>New window ▣</button><button title="Close other tabs" onClick={()=>closeOthers(layout.active[i],i)}>Keep active</button><button title="Move active tab to next group" disabled={layout.groups.length<2} onClick={()=>moveTab(layout.active[i],i,(i+1)%layout.groups.length)}>Move →</button></div>
-                    <div
-                      className="view"
-                      role="tabpanel"
-                      aria-label={layout.active[i]}
-                    >
-                      {group.map(v=><div key={v} hidden={layout.active[i]!==v}>{body(v)}</div>)}
-                    </div>
-                  </section>
-                ),
-            )}
+                  ))}
+                  <span className="tab-tools">
+                    <button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab" onClick={()=>openWorkspace(layout.active[i],false)}>↗</button>
+                    <button aria-label={`Open ${layout.active[i]} in new window`} title="Open this view in a separate window (e.g. a second monitor)" onClick={()=>openWorkspace(layout.active[i],true)}>▣</button>
+                  </span>
+                </div>}
+                <div className="view" role="tabpanel" aria-label={layout.active[i]}>
+                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></div>)}
+                </div>
+              </section>
+            ))}
           </div>
           {layout.bottom && !layout.maximized && (
             <section className="bottom" style={{ height: layout.bottomHeight }}>
               <ResizeHandle label="Resize bottom panel" horizontal reverse value={layout.bottomHeight} min={120} max={400} change={bottomHeight=>patch({bottomHeight})}/>
-              <div className="bottom-tabs">
-                {[
-                  "Activity",
-                  "Orders",
-                  "Fills",
-                  "Signals",
-                  "Alerts",
-                  "Reconciliation",
-                ].map((t) => (
-                  <button
-                    className={bottomTab === t ? "active" : ""}
-                    key={t}
-                    onClick={() => setBottomTab(t)}
-                  >
-                    {t}
-                  </button>
-                ))}
-                <button
-                  className="push"
-                  title="Hide bottom panel"
-                  onClick={() => patch({ bottom: false })}
-                >
-                  ×
-                </button>
-              </div>
-              {bottomTab === "Activity" ? (
-                <div className="event-log">
-                  {events.length
-                    ? events.map((e, i) => <div key={i}>{e}</div>)
-                    : "No activity recorded in this session."}
-                </div>
-              ) : (
-                <div className="panel-empty">
-                  {bottomTab} integration is not implemented. No operational
-                  records are available in this view.
-                </div>
-              )}
+              <div className="bottom-tabs"><button className="active">Activity</button>
+                <button className="push" title="Hide bottom panel (Ctrl+J)" onClick={() => patch({ bottom: false })}>×</button></div>
+              <div className="event-log">{events.length ? events.map((e, i) => <div key={i}>{e}</div>) : "No activity recorded in this session."}</div>
             </section>
           )}
         </main>
         {layout.right && !layout.maximized && <ResizeHandle label="Resize inspector" reverse value={layout.rightWidth} min={200} max={440} change={rightWidth=>patch({rightWidth})}/>}
         {layout.right && !layout.maximized && (
           <aside className="inspector" style={{ width: layout.rightWidth }}>
-            <div className="panel-heading">
-              CONTEXT{" "}
-              <button
-                title="Hide inspector"
-                onClick={() => patch({ right: false })}
-              >
-                ×
-              </button>
-            </div>
+            <div className="panel-heading">ATTENTION <button title="Hide (Ctrl+Alt+B)" onClick={() => patch({ right: false })}>×</button></div>
             <div className="inspector-body">
-              <div className="eyebrow">ACTIVE VIEW</div>
-              <h2>{active}</h2>
-              <p>{descriptions[active]}</p>
-              <dl>
-                <dt>Workspace</dt>
-                <dd>{layout.workspace}</dd>
-                <dt>Backend</dt><dd>{runtime?'Verified':'Unavailable'}</dd>
-                <dt>Database</dt><dd>{runtime?.database_connected?'Connected':'Not verified'}</dd>
-                <dt>Order sending</dt><dd>Firm-wide switch · see Configuration</dd>
-              </dl>
-              <div className="context-guidance"><h3>Working here</h3><p>{active==='Configuration'?'Pick a section on the left, select a row to edit it, or choose New. Accounts show exactly what still blocks data and order sending.':active==='Settings'?'Choose a theme, adjust text size and density, or arrange your panels. Preferences are saved in this browser.':'Use the explorer to switch views. Open related views in separate groups to compare information side by side.'}</p></div>
-              <h3>Workspace controls</h3>
-              <button
-                className="wide"
-                disabled={layout.groups.length < 2}
-                title="Split the workspace first to open another group"
-                onClick={() =>
-                  open(
-                    active,
-                    (layout.focus + 1) % layout.groups.length,
-                  )
-                }
-              >
-                Open in other group
-              </button>
-              <button className="wide" onClick={split}>
-                Split / change orientation
-              </button>
-              <button className="wide" onClick={() => open("Settings")}>
-                Resize panels
-              </button>
-              <div className="release">
-                {runtime?.release ?? "Backend version unavailable"}
-                <br />
-                Provider connectivity pending
-              </div>
+              {overview ? (overview.attention.length ? overview.attention.map((a,n)=><button key={n} className={`attention-item ${a.severity}`} onClick={()=>{goto(a.goto.view,a.goto.section);go(a.goto.view);}}>
+                <strong>{a.title}</strong><span>{a.detail}</span></button>) : <p className="muted">Nothing needs attention.</p>) : <p className="muted">{signedOut?'Sign in to see live status.':'Loading…'}</p>}
             </div>
           </aside>
         )}
       </div>
       {appearance.status && <footer>
-        <span>
-          <span className={`dot ${runtime ? "ready" : ""}`} />
-          {runtime
-            ? "Backend verified"
-            : checking
-              ? "Connecting…"
-              : "Backend unavailable"}
-        </span>
-        <span>
-          {appearanceError || storageError || "Local layout · no trading state stored in browser"}
-        </span>
-        <span className="push">
-          No provider adapter connected · {layout.groups.length} workspace group
-          {layout.groups.length > 1 ? "s" : ""}
-        </span>
+        <span><span className={`dot ${runtime ? "ready" : ""}`} />{runtime ? (runtime.database_connected ? "Server and database OK" : "Database unavailable") : checking ? "Connecting…" : "Server unavailable"}</span>
+        {overview && <button className="footer-link" onClick={()=>{goto('Market data','live');go('Market data');}}>
+          {overview.feeds.paused ? 'Market data paused' : overview.feeds.collectors ? `Market data: ${overview.feeds.live} of ${overview.feeds.collectors} feeds live${overview.feeds.problems?` · ${overview.feeds.problems} with a problem`:''}` : `Market data: ${overview.feeds.active_plans} active plan${overview.feeds.active_plans===1?'':'s'}`}</button>}
+        {overview && <button className="footer-link" onClick={()=>{goto('Configuration','controls');go('Configuration');}}>Order sending {live.length?`ON (${live.join(', ')})`:'OFF'}</button>}
+        {overview && overview.attention.length>0 && <button className="footer-link" onClick={()=>go('Operations')}>{overview.attention.length} item{overview.attention.length>1?'s need':' needs'} attention</button>}
+        <span className="push">{appearanceError || storageError || (multi ? `${layout.groups.length} groups · ${layout.workspace} layout` : runtime?.release ?? '')}</span>
       </footer>}
       {context && <div className="context-overlay" onPointerDown={()=>setContext(null)}><div className="tab-context" style={{left:context.x,top:context.y}} role="dialog" aria-label="Tab actions" onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Escape')setContext(null);}}>
         <button autoFocus onClick={()=>{togglePin(context.view);setContext(null);}}>{pinned.includes(context.view)?'Unpin tab':'Pin tab'}</button>
         <button disabled={pinned.includes(context.view)} onClick={()=>{close(context.view,context.group);setContext(null);}}>Close tab</button>
         <button onClick={()=>{closeOthers(context.view,context.group);setContext(null);}}>Close other unpinned tabs</button>
         <button disabled={layout.groups.length<2} onClick={()=>{moveTab(context.view,context.group,(context.group+1)%layout.groups.length);setContext(null);}}>Move to next group</button>
+        <button onClick={()=>{openWorkspace(context.view,true);setContext(null);}}>Open in separate window</button>
         <button onClick={()=>setContext(null)}>Dismiss · Esc</button>
       </div></div>}
       {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
-      {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Workbench controls</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button><p>Drag the explorer, inspector and bottom-panel edges to resize. Drag tabs between groups. Workspace selection saves each layout separately.</p>{commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}<p>Ctrl+1–4 focuses a group. Separator handles also support arrow keys. Layout presets replace the open groups. Browser-reserved shortcuts may vary.</p><div className="notice">Broker connections, orders, positions and strategies still require their backend implementation.</div></div></div>}
+      {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Working faster</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button>
+        <p><b>Ctrl K</b> goes to any screen or section by typing a few letters. The rail on the left shows the main areas; a red number means something there needs attention. Click a status chip at the top to go straight to it.</p>
+        <p>Side by side: Layout › Two columns, then drag a tab to the other group. Ctrl-click a rail icon to open it as an extra tab. Right-click a tab to pin it or open it in a separate window (second monitor).</p>
+        {commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}
+        <p>Ctrl+1–4 focuses a group. Alt+←/→ switches tabs.</p></div></div>}
     </div>
   );
+}
+
+function Home({ overview, signedOut, runtime, error, refresh }: { overview: OverviewData | null; signedOut: boolean; runtime: Runtime | null; error: string; refresh: () => void }) {
+  if (signedOut) return <SignIn title="COREI-OS-MINI" done={() => window.dispatchEvent(new Event('corei-session'))} />;
+  const live = overview?.order_sending.filter(o => o.enabled).map(o => o.environment) ?? [];
+  const actions: [string, View, string?][] = [['New collection plan', 'Market data', 'plans'], ['Live prices', 'Market data', 'live'], ['Add or check an MT5 account', 'Configuration', 'accounts'],
+    ['Review approvals', 'Configuration', 'approvals'], ['Order sending switch', 'Configuration', 'controls'], ['Database tables', 'Infrastructure', 'tables']];
+  return <div className="content home">
+    <div className="home-head"><h1>Today</h1><span className="muted">{overview ? `Signed in as ${overview.user.username}` : 'Loading…'}</span>
+      <button onClick={refresh}>Refresh</button></div>
+    {error && <div role="alert" className="notice danger">{error}</div>}
+    <div className="home-tiles">
+      <button className={`tile ${overview?.feeds.problems ? 'bad' : overview?.feeds.live ? 'ok' : ''}`} onClick={() => goto('Market data', 'live')}>
+        <small>MARKET DATA</small><strong>{overview ? (overview.feeds.paused ? 'Paused' : `${overview.feeds.live} of ${overview.feeds.collectors} live`) : '—'}</strong>
+        <span>{overview ? `${overview.feeds.active_plans} active plan${overview.feeds.active_plans === 1 ? '' : 's'}${overview.feeds.problems ? ` · ${overview.feeds.problems} problem${overview.feeds.problems > 1 ? 's' : ''}` : ''}` : ''}</span></button>
+      <button className={`tile ${live.includes('LIVE') ? 'live' : ''}`} onClick={() => goto('Configuration', 'controls')}>
+        <small>ORDER SENDING</small><strong>{live.length ? `ON · ${live.join(', ')}` : 'OFF'}</strong><span>Firm-wide switch per environment</span></button>
+      <button className={`tile ${overview?.approvals ? 'warn' : ''}`} onClick={() => goto('Configuration', 'approvals')}>
+        <small>APPROVALS</small><strong>{overview ? overview.approvals : '—'}</strong><span>Changes waiting for a second person</span></button>
+      <button className={`tile ${runtime && !runtime.database_connected ? 'bad' : runtime ? 'ok' : ''}`} onClick={() => goto('Infrastructure', 'health')}>
+        <small>SYSTEM</small><strong>{runtime ? (runtime.database_connected ? 'Running' : 'Database down') : 'Checking'}</strong><span>{runtime ? `Release ${runtime.release}` : ''}</span></button>
+    </div>
+    <div className="home-section"><h2>Needs attention</h2>
+      {overview ? (overview.attention.length ? <div className="attention">{overview.attention.map((a, n) =>
+        <div key={n} className={`attention-item ${a.severity}`}><div><span className="attention-area">{a.area}</span><strong>{a.title}</strong><p>{a.detail}</p></div>
+          <button onClick={() => goto(a.goto.view, a.goto.section)}>Open →</button></div>)}</div>
+        : <p className="muted">Nothing needs attention.</p>) : <p className="muted">Loading…</p>}
+    </div>
+    <div className="home-section"><h2>Quick actions</h2>
+      <div className="quick">{actions.map(([label, v, sec]) => <button key={label} onClick={() => goto(v, sec)}>{label} →</button>)}
+        <button onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}>Search everything <kbd>Ctrl K</kbd></button></div>
+    </div>
+  </div>;
+}
+
+function Monitor({ overview, signedOut }: { overview: OverviewData | null; signedOut: boolean }) {
+  if (signedOut) return <SignIn title="MONITOR" done={() => window.dispatchEvent(new Event('corei-session'))} />;
+  return <div className="content home monitor">
+    <div className="home-head"><h1>Monitor</h1><span className="muted">Everything that needs attention, and the health of every part of the system</span></div>
+    <div className="home-section"><h2>Needs attention</h2>
+      {overview ? (overview.attention.length ? <div className="attention">{overview.attention.map((a, n) =>
+        <div key={n} className={`attention-item ${a.severity}`}><div><span className="attention-area">{a.area}</span><strong>{a.title}</strong><p>{a.detail}</p></div>
+          <button onClick={() => goto(a.goto.view, a.goto.section)}>Open →</button></div>)}</div> : <p className="muted">Nothing needs attention.</p>) : <p className="muted">Loading…</p>}
+    </div>
+    <div className="home-section"><h2>System health</h2><Health /></div>
+  </div>;
 }

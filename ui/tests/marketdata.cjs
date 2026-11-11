@@ -34,7 +34,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/operator/session'))return ok({username:'risk-ops',display_name:'Risk',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
    if(url.endsWith('/md/latest'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'XAUUSD.r',bid:2401.15,ask:2401.4,digits:2,age_seconds:0.4,score:96},
      {account_id:'a2',account_code:'ICM_B',broker_symbol:'XAUUSD',bid:2401.0,ask:2401.3,digits:2,age_seconds:'42.5',score:31}]});
-   if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31'}]});
+   if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31',problem:null},
+     {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',state:'FAILED',host:null,port:null,lag_ms:null,subscribed:0,ticks_total:0,backlog:0,heartbeat_age_seconds:3,last_error:'ServerException: OLD_VERSION',
+      problem:{title:'Broker refused the connector version',detail:'The broker requires a newer MT5 version.',permanent:true,raw:'ServerException: OLD_VERSION'}}]});
    if(url.startsWith('/api/md/plans')&&method==='GET')return ok({items:plans});
    if(url.endsWith('/md/plans')&&method==='POST'){created.push(body);const p={...body,id:'p2',status:'DRAFT',version:1,account_code:'ICM_B',environment:'LIVE',instrument_symbol:'XAUUSD',status_reason:''};plans.push(p);return ok(p,201);}
    if(url.endsWith('/md/plans/p2/status')){statusCalls.push(body);return ok({change_request:{id:'r1',summary:'Start LIVE trading feed GOLD_B (XAUUSD)'}},202);}
@@ -60,11 +62,14 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle(3);};
 
  // Live: collector card and prices; a 42 s old price is flagged.
- assert.ok($('.md-collector').textContent.includes('connected'));
+ assert.ok($('.md-collector').textContent.includes('VT Markets gold'));assert.ok($('.md-collector').textContent.includes('live'));
+ // A refused login is explained in plain words, with the broker's own message and the next step.
+ const problem=$('.md-problem');assert.ok(problem.textContent.includes('IC Markets B: Broker refused the connector version'));
+ assert.ok(problem.textContent.includes('OLD_VERSION'));assert.ok(problem.textContent.includes('retrying every 5 minutes'));
  const rows=$$('.md-live tbody tr');assert.equal(rows.length,2);
  assert.ok(rows[0].textContent.includes('2401.15'));assert.ok(rows[0].textContent.includes('25.0'));
  assert.ok(rows[1].querySelector('.md-bad'));
- console.log('PASS: live prices with spread, age and score; collector status.');
+ console.log('PASS: live prices with spread, age and score; collector status; refused login explained in plain words.');
 
  // Plans: matrix, then a new plan with a live size estimate; starting a LIVE trading feed goes for approval.
  nav('Collection plans').click();await settle();

@@ -36,6 +36,7 @@ from uuid import UUID
 from .. import config_store as cfg
 from . import store
 from .bars import BarBuilder, FRAMES, floor
+from .explain import explain
 from .journal import Journal
 from .quality import Limits, SymbolQuality, consensus_deviation, server_offset
 
@@ -166,6 +167,8 @@ class SourceWorker(threading.Thread):
         self.job: dict | None = None
         self.job_sent_at = 0.0
         self.job_requests: deque = deque()
+        self.reported_error: str | None = None
+        self.failures = 0
 
     # ----- status -----
     def status(self) -> dict:
@@ -243,9 +246,15 @@ class SourceWorker(threading.Thread):
             if self.stopping.is_set():
                 break
             attempt = 0 if connected else attempt + 1
-            self.state = 'RECONNECTING'
             self.outage_since = self.outage_since or self.clock()
-            delay = RECONNECT_STEPS[min(attempt, len(RECONNECT_STEPS) - 1)]
+            reason = explain(self.error)
+            if reason and reason['permanent']:
+                # Retrying every few seconds cannot fix a refused version or password; check every 5 minutes.
+                self.state = 'FAILED'
+                delay = 300
+            else:
+                self.state = 'RECONNECTING'
+                delay = RECONNECT_STEPS[min(attempt, len(RECONNECT_STEPS) - 1)]
             self.stopping.wait(delay)
         self.state = 'STOPPED'
         self.flush_journal()
@@ -307,9 +316,15 @@ class SourceWorker(threading.Thread):
             attempts = m.get('attempts') or []
             self.error = next((a.get('error') for a in reversed(attempts) if a.get('error')), 'Login failed')
             self.state = 'FAILED'
-            self._event('DISCONNECTED', 'CRITICAL', message=self.error, attempts=attempts)
-            from .. import controls
-            controls.set_connection_status(self.connection_id, 'FAILED', error=self.error)
+            self.failures += 1
+            if self.error != self.reported_error:
+                # One event (and alert) per distinct problem, not one per retry.
+                self.reported_error = self.error
+                reason = explain(self.error) or {}
+                self._event('DISCONNECTED', 'CRITICAL', message=reason.get('title'), reason=self.error,
+                            next_step=reason.get('detail'), addresses_tried=len(attempts))
+                from .. import controls
+                controls.set_connection_status(self.connection_id, 'FAILED', error=self.error)
             return 'end'
         elif kind in ('disconnected', 'stopped'):
             if kind == 'disconnected' and not self.stopping.is_set():
@@ -324,6 +339,7 @@ class SourceWorker(threading.Thread):
 
     def _connected(self, m: dict) -> None:
         self.state, self.host, self.port, self.error = 'CONNECTED', m.get('host'), m.get('port'), None
+        self.reported_error, self.failures = None, 0
         self.offset = server_offset(m.get('server_time'), m.get('utc_now'))
         now = self.clock()
         outage = self.outage_since

@@ -8,6 +8,7 @@
  */
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
+import { useSection } from './nav';
 import FloatingWindow from './FloatingWindow';
 import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
@@ -36,6 +37,11 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
 ];
+
+/* Headings in the section list, so 14 sections read as five groups. */
+const GROUP_START: Partial<Record<Section, string>> = { health: 'Status', providers: 'Brokers & accounts', connections: 'Brokers & accounts', accounts: 'Brokers & accounts',
+  groups: 'Brokers & accounts', instruments: 'Instruments', mappings: 'Instruments', strategies: 'Strategies', deployments: 'Strategies',
+  approvals: 'Controls', controls: 'Controls', alerts: 'Controls', users: 'Administration', audit: 'Administration' };
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The connection reported a failure (see Health)',
@@ -100,6 +106,7 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
     if (await reauthenticate()) return api(path, method, body, raw, true);
   }
   const data = await response.json().catch(() => ({}));
+  if (response.ok && (path === 'operator/login' || path === 'operator/logout')) window.dispatchEvent(new Event('corei-session'));
   if (!response.ok) {
     const detail = data?.detail;
     const message = Array.isArray(detail) ? detail.map((d: any) => `${d.field}: ${d.message}`).join(' · ')
@@ -1454,7 +1461,7 @@ function Users({ me }: { me: Session }) {
 export default function Configuration() {
   const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
-  const [section, setSection] = useState<Section>('health'), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
+  const [section, setSection] = useSection<Section>('Configuration', 'health', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
   const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
@@ -1479,9 +1486,13 @@ export default function Configuration() {
     if (!window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) return;
     setSection(to as Section); setOpenId(o => ({ id, n: o.n + 1 }));
   };
-  useEffect(() => { void (async () => {
-    try { setUser(asSession(await api('operator/session'))); } catch { setUser(null); } finally { setChecking(false); }
-  })(); }, []);
+  useEffect(() => {
+    const check = async () => { try { setUser(asSession(await api('operator/session'))); } catch { setUser(null); } finally { setChecking(false); } };
+    void check();
+    // Signing in or out on any screen applies here too.
+    window.addEventListener('corei-session', check);
+    return () => window.removeEventListener('corei-session', check);
+  }, []);
   useEffect(() => { if (user && !user.must_change_password) void loadRefs(); }, [user]);
   async function signIn(e: FormEvent) {
     e.preventDefault(); setError('');
@@ -1505,12 +1516,12 @@ export default function Configuration() {
   const current = sections.find(s => s.id === section) ?? sections[0];
   const live = summary?.execution_controls?.find((c: Row) => c.environment === 'LIVE');
   return <div className="cfg">
-    <div className="cfg-topbar"><span className="eyebrow">CONFIGURATION</span>
+    <div className="cfg-topbar"><span className="eyebrow">SETUP</span>
     <nav className="cfg-nav" aria-label="Configuration sections">
-      {sections.map(s => <button key={s.id} aria-current={current.id === s.id ? 'page' : undefined} onClick={() => {
+      {sections.map((s, i) => [GROUP_START[s.id] && (i === 0 || GROUP_START[s.id] !== GROUP_START[sections[i - 1].id]) ? <span key={'g' + s.id} className="cfg-nav-group">{GROUP_START[s.id]}</span> : null, <button key={s.id} aria-current={current.id === s.id ? 'page' : undefined} onClick={() => {
         if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) { setSection(s.id); setOpenId(o => ({ n: o.n + 1 })); }
       }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small className={s.id === 'approvals' && summary.counts.approvals > 0 ? 'cfg-live-on' : ''}>{summary.counts[s.id]}</small>}
-        {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}
+        {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>])}
     </nav>
     <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
       <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></div>

@@ -193,7 +193,7 @@ def queue_gap_backfill(plan_id: Any, timeframe: str, start: datetime, end: datet
 
 def latest(account_id: UUID | None = None) -> list[dict]:
     with store.transaction('read') as db:
-        rows = db.execute('''SELECT l.*, a.code AS account_code, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
+        rows = db.execute('''SELECT l.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
                 COALESCE((SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
                           ORDER BY s.read_at DESC LIMIT 1), 5) AS digits,
                 (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score
@@ -238,10 +238,11 @@ def events(limit: int = 200, kind: str | None = None) -> list[dict]:
 
 def collectors() -> list[dict]:
     with store.transaction('read') as db:
-        rows = db.execute('''SELECT s.*, a.code AS account_code, extract(epoch FROM now() - s.heartbeat_at)::float8 AS heartbeat_age_seconds,
+        rows = db.execute('''SELECT s.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - s.heartbeat_at)::float8 AS heartbeat_age_seconds,
                 (SELECT count(*) FROM md_collection_plans p WHERE p.account_id=s.account_id AND p.status='ACTIVE') AS active_plans
             FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id ORDER BY a.code''').fetchall()
-    return [store.clean(r) for r in rows]
+    from .explain import explain
+    return [{**store.clean(r), 'problem': explain(r['last_error']) if r['state'] not in ('CONNECTED', 'STOPPED', 'PAUSED') else None} for r in rows]
 
 
 def bars(account_id: UUID, broker_symbol: str, timeframe: str, limit: int = 500) -> list[dict]:

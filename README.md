@@ -625,3 +625,15 @@ Migration 016 (DEC-41..44). Open source only: PostgreSQL, Parquet, DuckDB.
 - **Infrastructure › History**: read-only DuckDB over the archive (views `ticks` and `bars`).
 - Every order check now also checks the live price: age, spread and feed state.
 - Data folder: `/var/lib/corei-os-mini/market-data` (journal/, archive/).
+
+## Workstation shell — release 0.14.0
+
+DEC-45. No migration.
+
+- **Ctrl K — Go to anything:** type a few letters (e.g. *acc*, *plans*, *tables*) to jump to any screen or section, or run a command.
+- **Top bar** shows live status: market-data feeds, order sending, approvals. Click a chip to go there.
+- **Rail** (left): Home · Market · Strategies · Orders · Portfolio · Monitor · Setup · System · Settings. A red number means something there needs attention.
+- **Home** lists what needs attention, each with an *Open* button, plus quick actions. **Monitor** shows the same list and the health of every part of the system.
+- Every screen lists its sections on its left (Setup groups its 14 sections under five headings).
+- Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
+- Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.

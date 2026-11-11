@@ -5,6 +5,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
+import { useSection } from './nav';
 import './configuration.css';
 import './infrastructure.css';
 
@@ -23,10 +24,15 @@ const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';
 const bytes = (n: number) => n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`;
 
 export default function Infrastructure() {
-  const [user, setUser] = useState<Session | null | undefined>(undefined), [tab, setTab] = useState<Tab>('health');
+  const [user, setUser] = useState<Session | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Infrastructure', 'health', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
-  useEffect(() => { void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null)); }, []);
+  useEffect(() => {
+    const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
+    check();
+    window.addEventListener('corei-session', check);
+    return () => window.removeEventListener('corei-session', check);
+  }, []);
   if (user === undefined) return <div className="content"><p>Checking sign-in…</p></div>;
   if (user === null) return <SignIn done={setUser} />;
   const admin = user.roles.includes('ADMIN');
@@ -64,7 +70,7 @@ export function SignIn({ done, title = "INFRASTRUCTURE" }: { done: (s: Session) 
 
 /* ---------- health ---------- */
 
-function Health() {
+export function Health() {
   const [report, setReport] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = async () => { setBusy(true); try { setReport(await api('infra/health')); setError(''); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
   useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, []);

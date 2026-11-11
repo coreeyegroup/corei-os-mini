@@ -6,6 +6,7 @@ import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import FloatingWindow from './FloatingWindow';
 import { SignIn } from './Infrastructure';
+import { goto, useSection } from './nav';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
@@ -29,10 +30,15 @@ const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Nu
 const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
 
 export default function MarketData() {
-  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useState<Tab>('live');
+  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'live', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
-  useEffect(() => { void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null)); }, []);
+  useEffect(() => {
+    const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
+    check();
+    window.addEventListener('corei-session', check);
+    return () => window.removeEventListener('corei-session', check);
+  }, []);
   if (user === undefined) return <div className="content"><p>Checking sign-in…</p></div>;
   if (user === null) return <SignIn title="MARKET DATA" done={s => setUser(s)} />;
   const canEdit = (user.roles ?? []).includes('TRADING_OPS');
@@ -69,24 +75,28 @@ function Live() {
   const byKey = useMemo(() => Object.fromEntries((plans?.items ?? []).map((p: Row) => [`${p.account_id}|${p.broker_symbol}`, p])), [plans]);
   return <>
     {error && <p role="alert" className="cfg-error">{error}</p>}
-    <div className="md-collectors">{(collectors?.items ?? []).map((c: Row) => <div key={c.account_id} className={`md-collector ${c.state}`}>
+    {(collectors?.items ?? []).filter((c: Row) => c.problem).map((c: Row) => <div key={'p' + c.account_id} className={`md-problem ${c.state}`} role="alert">
+      <strong>{c.account_name || c.account_code}: {c.problem.title}</strong>
+      <p>{c.problem.detail}</p>
+      <small>Broker said: <code>{c.problem.raw}</code> · {c.state === 'FAILED' ? 'retrying every 5 minutes' : 'retrying'} · <button className="link" onClick={() => goto('Configuration', 'accounts')}>Open the account</button></small>
+    </div>)}
+    <div className="md-collectors">{(collectors?.items ?? []).map((c: Row) => <div key={c.account_id} className={`md-collector ${c.state}`} title={c.account_code}>
       <span className={`infra-dot ${c.state === 'CONNECTED' ? 'OK' : c.state === 'RECONNECTING' ? 'WARN' : c.state === 'FAILED' ? 'FAIL' : ''}`} />
-      <strong>{c.account_code}</strong><span>{c.state.toLowerCase()}</span>
-      <small>{c.host ? `${c.host}:${c.port}` : ''}{c.lag_ms != null ? ` · lag ${Math.round(Number(c.lag_ms))} ms` : ''} · {c.subscribed} symbols · {Number(c.ticks_total).toLocaleString()} prices
-        {c.backlog ? ` · ${c.backlog} waiting` : ''} · heartbeat {ago(c.heartbeat_age_seconds)} ago</small>
-      {c.last_error && <small className="md-error">{c.last_error}</small>}</div>)}
-      {collectors && !collectors.items.length && <p className="cfg-note">No collector has reported yet. Start a collection plan; the collector service picks it up within a few seconds.</p>}</div>
+      <strong>{c.account_name || c.account_code}</strong><span>{({ CONNECTED: 'live', RECONNECTING: 'reconnecting', FAILED: 'login refused', STARTING: 'starting', STOPPED: 'stopped', PAUSED: 'paused', UNSUPPORTED: 'not supported yet' } as Row)[c.state] ?? c.state.toLowerCase()}</span>
+      <small>{c.host ? `${c.host}:${c.port}` : ''}{c.lag_ms != null ? ` · lag ${Math.round(Number(c.lag_ms))} ms` : ''} · {c.subscribed} symbol{c.subscribed === 1 ? '' : 's'} · {Number(c.ticks_total).toLocaleString()} prices
+        {c.backlog ? ` · ${c.backlog} waiting` : ''} · updated {ago(c.heartbeat_age_seconds)} ago</small></div>)}
+      {collectors && !collectors.items.length && <p className="cfg-note">No collector is running. Create a collection plan and start it; the collector picks it up within a few seconds.</p>}</div>
     <table className="cfg-table compact md-live"><thead><tr><th>Symbol</th><th>Account</th><th>Role</th><th className="num">Bid</th><th className="num">Ask</th>
       <th className="num">Spread</th><th className="num">Age</th><th className="num">Score</th></tr></thead>
       <tbody>{(latest?.items ?? []).map((l: Row) => { const p = byKey[`${l.account_id}|${l.broker_symbol}`] ?? {};
         const stale = Number(l.age_seconds) > (p.stale_seconds ?? 10);
         return <tr key={`${l.account_id}${l.broker_symbol}`}><td><strong>{l.broker_symbol}</strong>{p.instrument_symbol && p.instrument_symbol !== l.broker_symbol ? <small> · {p.instrument_symbol}</small> : null}</td>
-          <td>{l.account_code}</td><td>{p.feed_role ? <span className={`cfg-pill ${p.active_feed ? 'ok' : ''}`}>{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span> : '—'}</td>
+          <td title={l.account_code}>{l.account_name || l.account_code}</td><td>{p.feed_role ? <span className={`cfg-pill ${p.active_feed ? 'ok' : ''}`}>{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span> : '—'}</td>
           <td className="num">{num(l.bid, l.digits)}</td><td className="num">{num(l.ask, l.digits)}</td>
           <td className="num">{l.bid && l.ask ? ((Number(l.ask) - Number(l.bid)) * 10 ** Number(l.digits ?? 5)).toFixed(1) : '—'}</td>
           <td className={`num ${stale ? 'md-bad' : ''}`}>{ago(l.age_seconds)}</td>
           <td className="num"><span className={`md-score ${scoreClass(l.score)}`}>{l.score ?? '—'}</span></td></tr>; })}
-        {latest && !latest.items.length && <tr><td colSpan={8} className="infra-placeholder">No prices yet.</td></tr>}</tbody></table>
+        {latest && !latest.items.length && <tr><td colSpan={8} className="infra-placeholder">No prices yet{(collectors?.items ?? []).some((c: Row) => c.problem) ? ' — see the problem above' : ''}.</td></tr>}</tbody></table>
   </>;
 }
 
@@ -113,7 +123,7 @@ function Plans({ canEdit }: { canEdit: boolean }) {
   const [instruments] = useLoad<Row>('config/instruments');
   const [open, setOpen] = useState<Row | null>(null), [view, setView] = useState<'matrix' | 'list'>('matrix');
   const items: Row[] = plans?.items ?? [];
-  const usedAccounts = [...new Map(items.map(p => [p.account_id, p.account_code])).entries()];
+  const usedAccounts = [...new Map(items.map(p => [p.account_id, p.account_name || p.account_code])).entries()];
   const usedInstruments = [...new Map(items.map(p => [p.instrument_id ?? `sym:${p.broker_symbol}`, p.instrument_symbol ?? p.broker_symbol])).entries()];
   return <>
     <div className="infra-toolbar">
@@ -128,10 +138,11 @@ function Plans({ canEdit }: { canEdit: boolean }) {
         return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)}>{p ? <>
           <span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span> <span className="cfg-pill">{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span>
           <small>{p.data_types.join(' · ').toLowerCase()}{p.data_types.includes('BARS') ? ` (${p.bar_timeframes.join(',')})` : ''}</small>
-          {p.score != null && <span className={`md-score ${scoreClass(p.score)}`}>{p.score}</span>}</> : '—'}</td>; })}</tr>)}
+          {p.bid == null ? <span className="md-nodata" title={p.collector_error || ''}>{p.status === 'ACTIVE' ? (p.collector_error ? 'no data · see Live' : 'waiting for data') : 'not collecting'}</span>
+            : p.score != null && <span className={`md-score ${scoreClass(p.score)}`} title="Quality score of the last full minute">{p.score}</span>}</> : '—'}</td>; })}</tr>)}
         {!items.length && <tr><td className="infra-placeholder">No plans yet.</td></tr>}</tbody></table></div>
       : <table className="cfg-table"><thead><tr><th>Plan</th><th>Account</th><th>Symbol</th><th>Instrument</th><th>Purpose</th><th>Role</th><th>Data</th><th>When</th><th>Keep</th><th>Status</th></tr></thead>
-        <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td>{p.code}</td><td>{p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
+        <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td>{p.code}</td><td title={p.account_code}>{p.account_name || p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
           <td>{p.purpose.replace('_', ' ').toLowerCase()}</td><td>{p.feed_role.toLowerCase()}</td><td>{p.data_types.join(', ').toLowerCase()}</td><td>{p.schedule.replace('_', ' ').toLowerCase()}</td>
           <td>{p.hot_days} d{p.archive ? ' → archive' : ''}</td><td><span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span>{p.pending_changes > 0 && <small> · awaiting approval</small>}</td></tr>)}</tbody></table>}
     {open && <PlanWindow plan={open} canEdit={canEdit} accounts={accounts?.items ?? []} instruments={instruments?.items ?? []}
@@ -269,6 +280,19 @@ function Quality() {
 
 /* ---------- events ---------- */
 
+function eventSummary(e: Row): string {
+  const d = e.detail ?? {};
+  const first = d.message ?? d.reason ?? d.error ?? d.warning;
+  if (e.kind === 'CONNECTED') return `${d.host ?? ''}${d.outage_seconds ? ` after ${Math.round(d.outage_seconds)} s outage` : ''}`;
+  if (e.kind === 'FEED_SWITCH' || e.kind === 'FEED_RESTORED') return `${d.from} → ${d.to}`;
+  if (e.kind === 'GAP') return `${d.gap_seconds} s without prices`;
+  if (e.kind === 'STALE') return d.state === 'cleared' ? 'prices flowing again' : `no price for ${d.seconds_since_last_price ?? '?'} s`;
+  if (e.kind === 'ARCHIVE') return `${d.tick_files ?? 0} tick files, ${d.bar_files ?? 0} bar files${d.errors?.length ? `, ${d.errors.length} errors` : ''}`;
+  if (e.kind === 'VERIFY') return `${d.ok ?? 0} of ${d.checked ?? 0} files match`;
+  if (e.kind === 'BACKFILL') return `${d.bars_saved ?? 0} bars · ${String(d.status ?? '').toLowerCase()}`;
+  return typeof first === 'string' ? first : d.state ? String(d.state) : '';
+}
+
 const KINDS = ['', 'CONNECTED', 'DISCONNECTED', 'GAP', 'STALE', 'FROZEN', 'SPIKE', 'LATENCY', 'SPREAD', 'DEVIATION', 'FEED_SWITCH', 'FEED_RESTORED', 'BACKFILL', 'ARCHIVE', 'VERIFY', 'BACKUP', 'DISK', 'BACKLOG', 'ERROR'];
 
 function Events() {
@@ -277,11 +301,12 @@ function Events() {
   return <>
     <div className="infra-toolbar"><label>Kind <select aria-label="Event kind" value={kind} onChange={e => setKind(e.target.value)}>{KINDS.map(k => <option key={k} value={k}>{k ? k.replace('_', ' ').toLowerCase() : 'All'}</option>)}</select></label></div>
     {error && <p role="alert" className="cfg-error">{error}</p>}
-    <table className="cfg-table compact"><thead><tr><th>Time</th><th>Severity</th><th>Kind</th><th>Account</th><th>Symbol</th><th>Detail</th></tr></thead>
-      <tbody>{(data?.items ?? []).map((e: Row) => <tr key={e.id} className={`md-sev-${e.severity}`}><td>{when(e.at)}</td><td>{e.severity.toLowerCase()}</td><td>{e.kind.replace('_', ' ').toLowerCase()}</td>
-        <td>{e.account_code ?? '—'}</td><td>{e.broker_symbol ?? '—'}</td>
-        <td className="infra-diff">{Object.entries(e.detail ?? {}).map(([k, v]) => <span key={k} className="md-kv">{k.replace(/_/g, ' ')}: {typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>)}</td></tr>)}
-        {data && !data.items.length && <tr><td colSpan={6} className="infra-placeholder">No events.</td></tr>}</tbody></table>
+    <table className="cfg-table compact md-events"><thead><tr><th>Time</th><th>Severity</th><th>What happened</th><th>Account</th><th>Symbol</th></tr></thead>
+      <tbody>{(data?.items ?? []).map((e: Row) => <tr key={e.id} className={`md-sev-${e.severity}`}><td>{when(e.at)}</td><td>{e.severity.toLowerCase()}</td>
+        <td><details><summary><b>{e.kind.replace(/_/g, ' ').toLowerCase()}</b>{eventSummary(e) ? ` — ${eventSummary(e)}` : ''}</summary>
+          <div className="md-detail">{Object.entries(e.detail ?? {}).map(([k, v]) => <div key={k}><span>{k.replace(/_/g, ' ')}</span><code>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</code></div>)}</div></details></td>
+        <td>{e.account_code ?? '—'}</td><td>{e.broker_symbol ?? '—'}</td></tr>)}
+        {data && !data.items.length && <tr><td colSpan={5} className="infra-placeholder">No events.</td></tr>}</tbody></table>
   </>;
 }
 

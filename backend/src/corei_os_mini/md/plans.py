@@ -113,7 +113,8 @@ class BackfillIn(BaseModel):
 SELECT = '''SELECT p.*, a.code AS account_code, a.name AS account_name, a.external_account_id, c.code AS connection_code,
         c.environment, c.platform, i.symbol AS instrument_symbol,
         l.bid, l.ask, l.received_at AS last_price_at,
-        (SELECT q.score FROM md_quality q WHERE q.account_id=p.account_id AND q.broker_symbol=p.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score,
+        (SELECT q.score FROM md_quality q WHERE q.account_id=p.account_id AND q.broker_symbol=p.broker_symbol AND q.ticks > 0 ORDER BY q.minute DESC LIMIT 1) AS score,
+        s.last_error AS collector_error,
         s.state AS collector_state, s.heartbeat_at AS collector_heartbeat_at,
         f.active_plan_id = p.id AS active_feed,
         (SELECT count(*) FROM cfg_change_requests r WHERE r.entity='md_plans' AND r.entity_id=p.id AND r.status='PENDING') AS pending_changes

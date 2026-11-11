@@ -347,3 +347,49 @@ class MarketData(unittest.TestCase):
         self.assertEqual(names['File fingerprints']['status'], 'FAIL')
         self.assertIn('Nightly archive', names)
         self.assertIn('Database backup', names)
+
+
+class Explain(unittest.TestCase):
+    def test_broker_errors_in_plain_words(self):
+        from corei_os_mini.md.explain import explain
+        old = explain('ServerException: OLD_VERSION')
+        self.assertEqual((old['title'], old['permanent']), ('Broker refused the connector version', True))
+        self.assertTrue(explain('Invalid account')['permanent'])
+        self.assertFalse(explain('TimeoutException: Connect did not finish in 20 s')['permanent'])
+        self.assertEqual(explain('something new')['title'], 'Connection problem')
+        self.assertIsNone(explain(None))
+
+
+@unittest.skipUnless(os.getenv('COREI_TEST_DATABASE_URL'), 'Set COREI_TEST_DATABASE_URL for PostgreSQL integration tests')
+class ShellOverview(MarketData):
+    # Reuses MarketData's set-up only; its own tests run once, in MarketData.
+    test_plans_estimate_controls_and_jobs = None
+    test_collector_end_to_end = None
+
+    def test_refused_login_reported_once_and_on_overview(self):
+        _, (a, b, c), instrument = self.setup_accounts()
+        self.start(self.plan(a, instrument, 'EU_A'))
+        os.environ['FAKE_WRONG_PASSWORD_LOGINS'] = '1001'
+        try:
+            self.collector = Collector(self.root)
+            self.run_collector(2.0)
+        finally:
+            os.environ.pop('FAKE_WRONG_PASSWORD_LOGINS', None)
+        with self.connect() as db:
+            failures = db.execute("SELECT detail FROM md_events WHERE kind='DISCONNECTED'").fetchall()
+            alerts = db.execute("SELECT count(*) AS n FROM cfg_alert_outbox WHERE event='MARKET_DATA'").fetchone()['n']
+        self.assertEqual(len(failures), 1)                        # one event per distinct problem, not per retry
+        self.assertEqual(failures[0]['detail']['message'], 'Login or password rejected')
+        self.assertLessEqual(alerts, 1)
+        worker = self.collector.workers[a['id']]
+        self.assertEqual(worker.state, 'FAILED')                   # waits 5 minutes: retrying cannot fix a wrong password
+        collectors = self.ok(self.alice.get('/api/md/collectors'))['items']
+        self.assertEqual(collectors[0]['problem']['title'], 'Login or password rejected')
+        overview = self.ok(self.alice.get('/api/config/overview'))
+        self.assertEqual((overview['feeds']['active_plans'], overview['feeds']['problems']), (1, 1))
+        first = overview['attention'][0]
+        self.assertEqual((first['severity'], first['goto']), ('CRITICAL', {'view': 'Market data', 'section': 'live'}))
+        self.assertIn('Login or password rejected', first['title'])
+        self.assertTrue(any(x['area'] == 'Backups' for x in overview['attention']))
+        self.assertEqual([o['enabled'] for o in overview['order_sending']], [False, False])
+        self.ok(TestClient(app, base_url='https://testserver', headers=HEADERS).get('/api/config/overview'), 401)
