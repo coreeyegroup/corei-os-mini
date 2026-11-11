@@ -10,10 +10,11 @@ import './infrastructure.css';
 
 type Row = Record<string, any>;
 type Session = { username: string; roles: string[] };
-type Tab = 'health' | 'tables' | 'sql' | 'database' | 'edits';
+type Tab = 'health' | 'tables' | 'history' | 'sql' | 'database' | 'edits';
 const TABS: { id: Tab; label: string; admin?: boolean; hint: string }[] = [
   { id: 'health', label: 'Health', hint: 'Database, services, host, clock, network and broker tools.' },
   { id: 'tables', label: 'Tables', admin: true, hint: 'View, filter, sort and edit PostgreSQL tables like a spreadsheet.' },
+  { id: 'history', label: 'History', admin: true, hint: 'Archived market data (Parquet files with fingerprints), read-only with DuckDB.' },
   { id: 'sql', label: 'SQL console', admin: true, hint: 'Read-only queries: one statement, 5-second limit.' },
   { id: 'database', label: 'Database', admin: true, hint: 'Server facts and live sessions.' },
   { id: 'edits', label: 'Edit log', admin: true, hint: 'Every row changed from this console, before and after. Cannot be edited.' },
@@ -40,6 +41,7 @@ export default function Infrastructure() {
       {!admin && <p className="cfg-note">The database views are for administrators.</p>}
       {current.id === 'health' ? <div className="cfg-pane"><Health /></div>
         : current.id === 'tables' ? <Tables />
+        : current.id === 'history' ? <div className="cfg-pane"><History /></div>
         : current.id === 'sql' ? <div className="cfg-pane"><Console /></div>
         : current.id === 'database' ? <div className="cfg-pane"><Database /></div>
         : <div className="cfg-pane"><Edits /></div>}
@@ -48,13 +50,13 @@ export default function Infrastructure() {
   </div>;
 }
 
-function SignIn({ done }: { done: (s: Session) => void }) {
+export function SignIn({ done, title = "INFRASTRUCTURE" }: { done: (s: Session) => void; title?: string }) {
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
   async function submit(e: FormEvent) {
     e.preventDefault(); setError('');
     try { done(await api('operator/login', 'POST', { username, password })); } catch (err) { setError((err as Error).message); }
   }
-  return <div className="content cfg-signin"><div className="eyebrow">INFRASTRUCTURE</div><h1>Sign in</h1>
+  return <div className="content cfg-signin"><div className="eyebrow">{title}</div><h1>Sign in</h1>
     <form className="cfg-form" onSubmit={submit}><Field label="Username"><input required autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} /></Field>
       <Field label="Password"><input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></Field>
       {error && <p role="alert" className="cfg-error">{error}</p>}<div className="cfg-actions"><button className="primary">Sign in</button></div></form></div>;
@@ -306,22 +308,43 @@ function Sheet({ table, changed }: { table: string; changed: () => void }) {
   </div>;
 }
 
+/* ---------- history (Parquet via DuckDB) ---------- */
+
+function History() {
+  const [files, setFiles] = useState<Row[] | null>(null), [error, setError] = useState('');
+  useEffect(() => { void api('infra/history/files').then(d => setFiles(d.items)).catch(e => setError((e as Error).message)); }, []);
+  const total = (files ?? []).reduce((n, f) => n + Number(f.bytes || 0), 0);
+  return <>
+    <Console path="infra/history/query" storageKey="corei-os-mini.infra.history-sql" initial={"SELECT account, broker_symbol, day, count(*) AS prices, min(bid) AS low, max(bid) AS high\nFROM ticks GROUP BY ALL ORDER BY day DESC LIMIT 100"}
+      note="Read-only DuckDB · views ticks and bars (with day and account from the folders) · 10 s limit · only the archive folder is readable." />
+    {error && <p role="alert" className="cfg-error">{error}</p>}
+    {files && <section className="cfg-panel"><header><strong>Files ({files.length}, {bytes(total)})</strong></header>
+      <table className="cfg-table compact"><thead><tr><th>Day</th><th>Kind</th><th>Account</th><th>Symbol</th><th>Rows</th><th>Size</th><th>Fingerprint</th><th>Check</th></tr></thead>
+        <tbody>{files.map(f => <tr key={f.id}><td>{f.day}</td><td>{f.kind.toLowerCase()}</td><td>{f.account_code ?? '—'}</td><td>{f.broker_symbol ?? '—'}</td>
+          <td>{f.rows != null ? Number(f.rows).toLocaleString() : '—'}</td><td>{bytes(Number(f.bytes))}</td><td title={f.sha256}><code>{String(f.sha256).slice(0, 12)}…</code></td>
+          <td>{f.verify_status.toLowerCase()} · {when(f.verified_at)}</td></tr>)}
+          {!files.length && <tr><td colSpan={8} className="infra-placeholder">Nothing archived yet.</td></tr>}</tbody></table></section>}
+  </>;
+}
+
 /* ---------- SQL console ---------- */
 
-function Console() {
-  const [text, setText] = useState(() => { try { return localStorage.getItem('corei-os-mini.infra.sql') || 'SELECT * FROM cfg_accounts LIMIT 50'; } catch { return 'SELECT 1'; } });
+function Console({ path = 'infra/query', storageKey = 'corei-os-mini.infra.sql', initial = 'SELECT * FROM cfg_accounts LIMIT 50',
+  note = 'Read-only transaction · 5 s limit · up to 1000 rows · secret columns refused. Change data in Tables.' }:
+  { path?: string; storageKey?: string; initial?: string; note?: string }) {
+  const [text, setText] = useState(() => { try { return localStorage.getItem(storageKey) || initial; } catch { return initial; } });
   const [result, setResult] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   async function run(e?: FormEvent) {
     e?.preventDefault(); setBusy(true); setError('');
-    try { localStorage.setItem('corei-os-mini.infra.sql', text); } catch { /* convenience only */ }
-    try { setResult(await api('infra/query', 'POST', { sql: text })); } catch (err) { setError((err as Error).message); setResult(null); } finally { setBusy(false); }
+    try { localStorage.setItem(storageKey, text); } catch { /* convenience only */ }
+    try { setResult(await api(path, 'POST', { sql: text })); } catch (err) { setError((err as Error).message); setResult(null); } finally { setBusy(false); }
   }
   return <>
     <form className="infra-console" onSubmit={run}>
       <textarea aria-label="SQL" spellCheck={false} value={text} onChange={e => setText(e.target.value)}
         onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void run(); } }} />
       <div className="cfg-actions"><button className="primary" disabled={busy}>{busy ? 'Running…' : 'Run (Ctrl+Enter)'}</button>
-        <span className="cfg-note">Read-only transaction · 5 s limit · up to 1000 rows · secret columns refused. Change data in Tables.</span></div>
+        <span className="cfg-note">{note}</span></div>
     </form>
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {result && <><p className="cfg-note">{result.rows.length} row{result.rows.length === 1 ? '' : 's'}{result.truncated ? ' (first 1000)' : ''} · {result.ms} ms</p>

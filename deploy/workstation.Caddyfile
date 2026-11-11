@@ -24,7 +24,7 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
-    @operational path /api/operator/* /api/config/* /api/admin/* /api/oauth/* /api/infra/*
+    @operational path /api/operator/* /api/config/* /api/admin/* /api/oauth/* /api/infra/* /api/md/*
     handle @operational {
         request_body {
             max_size 64KB

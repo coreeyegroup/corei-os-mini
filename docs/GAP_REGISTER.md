@@ -46,11 +46,11 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 ### Phase 1 — Connect and collect
 | ID | Gap | Status |
 |---|---|---|
-| G-P1-01 | No working provider adapter; MT5 connection method not chosen (licensed mtapi direct connection vs terminal bridge) | BLOCKED — decision 1 |
+| G-P1-01 | No working provider adapter; MT5 connection method not chosen (licensed mtapi direct connection vs terminal bridge) | PARTIAL (0.13.0) — read-only MT5 data through the licensed SDK (account reads, price stream, history); order sending open; terminal bridge kept as an option |
 | G-P1-02 | Common adapter contract (capabilities, session, subscribe, account state, orders) | OPEN |
-| G-P1-03 | Connection status lifecycle and reconnect handling | OPEN (needs G-P1-01) |
-| G-P1-04 | Tick/quote storage | OPEN |
-| G-P1-05 | Feed assessment on a live stream | OPEN (needs G-P1-01) |
+| G-P1-03 | Connection status lifecycle and reconnect handling | PARTIAL (0.13.0) — market-data stream: status, reconnect through the account addresses, outage backfill; order sessions open |
+| G-P1-04 | Tick/quote storage | DONE (0.13.0) — DEC-41..44: journal, PostgreSQL by day, Parquet history, fingerprints, backups |
+| G-P1-05 | Feed assessment on a live stream | DONE (0.13.0) — per-minute quality on the live stream, broker comparison, feed switching, price check before orders |
 | G-P1-06 | Instrument contract details | DONE (0.8.0) |
 | G-P1-07 | MT5 server discovery: broker directory search, servers.dat, per-account address choice, latency test | DONE (0.10.0) — DEC-26..28 |
 | G-P1-08 | Refresh a connection's addresses from what the broker sends after login; record order round-trip and slippage per account × address | OPEN (needs G-P1-01) |
@@ -63,6 +63,11 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-C-08 | Credential key on a separate host or hardware key | OPEN — rotation done; separation is an infrastructure step |
 | G-C-09 | Infrastructure console: health, PostgreSQL table view/editor, read-only SQL console, edit log | DONE (0.12.0) — DEC-40 |
 | G-C-10 | Scheduled broker reads (e.g. at each session open) and alert when broker limits change | OPEN |
+| G-MD-01 | MT5 price stream, collection plans, bars, backfill, quality, feed switch, archive, verify, backups, History console | DONE (0.13.0) |
+| G-MD-02 | Order-book depth from MT5 (stored when the broker publishes it) | OPEN — plans accept DEPTH; the reader does not stream it yet |
+| G-MD-03 | Upstox / other API feeds through the same plans | OPEN — plans are kept, collector reports UNSUPPORTED |
+| G-MD-04 | Per-symbol trading-session hours from the broker (SESSIONS schedule uses Mon–Fri and provider holidays until then) | OPEN |
+| G-MD-05 | Second collector on another machine (live redundancy) | OPEN — outages are recorded and filled from broker history |
 
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |

@@ -28,8 +28,16 @@ POLICIES = {
     'expiry_warning_days': ('int', 'Days before an account or mandate expiry that warnings and alerts start (1–90).'),
     'infra_edit_controlled_tables': ('bool', 'Let administrators edit configuration tables (providers, connections, accounts, '
                                      'deployments…) directly in the Infrastructure table editor. Edits there skip four-eyes.'),
+    'md_four_eyes_trading_feeds': ('bool', 'Starting a LIVE market-data trading feed needs a second person (while four-eyes on LIVE changes is on).'),
+    'md_max_symbols_per_account': ('int', 'Most symbols one account may collect at once (1–5000).'),
+    'md_deviation_bp': ('int', 'Basis points a source may differ from the other sources for the same instrument before it is flagged (1–1000).'),
+    'md_disk_warn_pct': ('int', 'Disk use (%) at which market data raises a warning (50–99).'),
+    'md_disk_pause_pct': ('int', 'Disk use (%) at which research and monitoring plans are paused; trading feeds continue (50–99).'),
+    'md_journal_days': ('int', 'Days the raw journal files are kept after their day is archived and verified (1–3650).'),
+    'md_backup_keep': ('int', 'Database backups kept (1–365).'),
 }
-LIMITS = {'reauth_minutes': (1, 60), 'expiry_warning_days': (1, 90)}
+LIMITS = {'reauth_minutes': (1, 60), 'expiry_warning_days': (1, 90), 'md_max_symbols_per_account': (1, 5000), 'md_deviation_bp': (1, 1000),
+          'md_disk_warn_pct': (50, 99), 'md_disk_pause_pct': (50, 99), 'md_journal_days': (1, 3650), 'md_backup_keep': (1, 365)}
 
 
 # ---------- policies ----------
@@ -132,6 +140,10 @@ def _apply(row: dict, secret: dict, actor: str, reason: str) -> Any:
         envelope = CredentialEnvelope.model_validate({'credential': {'kind': payload['kind'], **secret,
                                                                      **({'access_level': payload['access_level']} if payload['kind'] == 'MT5_LOGIN' else {})}})
         return store.set_credential(actor, payload['owner'], row['entity_id'], envelope.credential, approved=True, reason=reason)
+    if action == 'ACTIVATE_MD_PLAN':
+        from .md import plans
+        return plans.set_status(actor, row['entity_id'], plans.StatusIn(status='ACTIVE', version=payload['version'], reason=payload['reason']),
+                                approved=True)
     if action == 'ACCOUNT_SETUP':
         data = Mt5AccountSetupIn.model_validate({**payload['setup'], 'credential': None})
         if payload.get('credential'):

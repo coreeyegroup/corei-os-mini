@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Configuration from "./Configuration";
 import Infrastructure from "./Infrastructure";
+import MarketData from "./MarketData";
 import WorkbenchIcon from "./WorkbenchIcon";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
@@ -30,7 +31,7 @@ type Runtime = {
 };
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
-  "Market data": "Feed selection, source quality and assessment history",
+  "Market data": "Collection plans, live prices, feed quality and broker comparison, backfill, archive and backups",
   Configuration: "Providers, connections, accounts, instruments, symbol mappings and order-sending controls",
   Strategies: "Strategy versions, instrument universes and assignments",
   Execution: "Account allocation, order lifecycle and reconciliation",
@@ -77,15 +78,10 @@ export default function App() {
     [collapsed, setCollapsed] = useState(false),
     [filter, setFilter] = useState(""),
     [bottomTab, setBottomTab] = useState("Activity"),
-    [storageError, setStorageError] = useState(""),
-    [recordId, setRecordId] = useState(""),
-    [record, setRecord] = useState<unknown>(null),
-    [recordError, setRecordError] = useState(""),
-    [recordBusy, setRecordBusy] = useState(false);
+    [storageError, setStorageError] = useState("");
   const [checkedAt,setCheckedAt]=useState<number|null>(null);
   const alive = useRef(true),
-    pending = useRef<AbortController | null>(null),
-    recordRequest = useRef<AbortController | null>(null);
+    pending = useRef<AbortController | null>(null);
   const log = (message: string) =>
     setEvents((previous) =>
       [`${new Date().toLocaleTimeString()}  ${message}`, ...previous].slice(
@@ -168,7 +164,6 @@ export default function App() {
       clearInterval(interval);
       alive.current = false;
       pending.current?.abort();
-      recordRequest.current?.abort();
     };
   }, []);
   useEffect(() => {
@@ -271,54 +266,13 @@ export default function App() {
       return { ...x, groups, active, focus: to };
     });
   }
-  async function loadRecord() {
-    if (!runtime) return;
-    setRecord(null);
-    setRecordError("");
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        recordId,
-      )
-    ) {
-      setRecordError("Enter a complete assessment UUID.");
-      return;
-    }
-    recordRequest.current?.abort();
-    const controller = new AbortController();
-    recordRequest.current = controller;
-    const timer = setTimeout(() => controller.abort(), 8000);
-    setRecordBusy(true);
-    try {
-      const r = await fetch(
-        `/api/market-data/assessments/${encodeURIComponent(recordId)}`,
-        { signal: controller.signal, cache: "no-store" },
-      );
-      if (!r.ok)
-        throw new Error(
-          r.status === 404
-            ? "Assessment not found."
-            : `Assessment unavailable (HTTP ${r.status}).`,
-        );
-      const data = await r.json();
-      if (alive.current && recordRequest.current === controller) {
-        setRecord(data);
-        log("Historical assessment loaded");
-      }
-    } catch (e) {
-      if (alive.current && recordRequest.current === controller)
-        setRecordError(e instanceof Error ? e.message : String(e));
-    } finally {
-      clearTimeout(timer);
-      if (alive.current && recordRequest.current === controller)
-        setRecordBusy(false);
-    }
-  }
   const active = layout.active[layout.focus];
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
 
   function body(view: View) {
     if (view === "Configuration") return <Configuration/>;
     if (view === "Infrastructure") return <Infrastructure/>;
+    if (view === "Market data") return <MarketData/>;
     if (view === "Settings")
       return (
         <div className="content">
@@ -469,55 +423,6 @@ export default function App() {
               </button>
             ))}
           </div>
-        </div>
-      );
-    if (view === "Market data")
-      return (
-        <div className="content">
-          <div className="eyebrow">MARKET INTELLIGENCE</div>
-          <h1>Sources & quality</h1>
-          <p>
-            Data-source selection remains independent from execution routing.
-          </p>
-          <div className="notice">
-            Provider streaming is not implemented. No live prices or feed
-            latency measurements are available.
-          </div>
-          <div className="section-title">
-            <h2>Retrieve a saved assessment</h2>
-            <span className="tag">HISTORICAL INPUT</span>
-          </div>
-          <p>
-            Load an assessment already persisted by this repository's demo API.
-            Its timestamps describe the supplied batch, not the current market.
-          </p>
-          <form
-            className="record-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void loadRecord();
-            }}
-          >
-            <input
-              aria-label="Assessment UUID"
-              placeholder="Assessment UUID"
-              value={recordId}
-              onChange={(e) => setRecordId(e.target.value)}
-            />
-            <button disabled={!runtime || recordBusy}>
-              {recordBusy ? "Loading…" : "Load record"}
-            </button>
-          </form>
-          {recordError && (
-            <p role="alert" className="danger">
-              {recordError}
-            </p>
-          )}
-          {record ? (
-            <pre className="record">{JSON.stringify(record, null, 2)}</pre>
-          ) : (
-            <div className="empty">No assessment loaded.</div>
-          )}
         </div>
       );
     return (

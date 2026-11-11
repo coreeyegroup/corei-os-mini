@@ -4,6 +4,7 @@ CSV import/export, archive, credential-use log and symbol specifications.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -211,7 +212,15 @@ def order_check(account_id: UUID, payload: dict, response: Response, _: str = De
         account = store.get_record(db, 'accounts', account_id)
     if not account:
         raise HTTPException(404, 'Account not found.')
-    return check_order(draft, specs.get(draft.broker_symbol), account)
+    from .md.store import price_check
+    live = price_check(account_id, draft.broker_symbol)
+    if draft.reference_price is None and live['price']:
+        reference = live['price']['ask'] if draft.side == 'BUY' else live['price']['bid']
+        if reference:
+            draft = draft.model_copy(update={'reference_price': Decimal(str(reference))})
+    result = check_order(draft, specs.get(draft.broker_symbol), account)
+    problems = [*result['problems'], *live['problems']]
+    return {**result, 'ok': not problems, 'problems': problems, 'warnings': live['warnings'], 'live_price': live['price']}
 
 
 # ---------- read real data from the broker (MT5, read-only login) ----------

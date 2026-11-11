@@ -116,3 +116,21 @@ async def query(payload: dict, response: Response, _: Principal = Depends(_admin
 def cancel(pid: int, payload: dict, user: Principal = Depends(_admin), _: Principal = Depends(require_reauth)):
     data = _parse(CancelIn, payload)
     return infra.cancel_session(user.username, pid, data.reason)
+
+
+class HistoryQueryIn(_Strict):
+    sql: Annotated[str, StringConstraints(min_length=1, max_length=20_000)]
+    limit: int = Field(default=1000, ge=1, le=5000)
+
+
+@router.get('/history/files')
+def history_files(response: Response, _: Principal = Depends(_admin)):
+    _no_store(response)
+    return {'items': infra.history_files()}
+
+
+@router.post('/history/query')
+async def history_query(payload: dict, response: Response, _: Principal = Depends(_admin)):
+    _no_store(response)
+    data = _parse(HistoryQueryIn, payload)
+    return await run_in_threadpool(infra.history_query, data.sql, data.limit)

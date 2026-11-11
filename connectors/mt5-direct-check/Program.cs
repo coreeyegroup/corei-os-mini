@@ -20,11 +20,15 @@ using mtapi.mt5;
 // --session logs in ONCE with the request read from stdin (the password never appears
 // on the command line), reads account facts, server time and symbol specifications,
 // disconnects and prints them. It never sends, changes or cancels orders.
+// --stream logs in once (request on stdin's first line), then writes one JSON line per
+// price update, heartbeats and history answers to stdout, and takes subscribe /
+// unsubscribe / history / stop commands as further stdin lines. Read-only as well.
 var inspect = args.Length == 2 && args[0] == "--inspect";
 if (args.Length == 2 && args[0] == "--search") return Search(args[1]);
 if (args.Length == 1 && args[0] == "--describe-search") return DescribeSearch();
 if (args.Length == 1 && args[0] == "--describe-api") return DescribeApi();
 if (args.Length == 1 && args[0] == "--session") return Session();
+if (args.Length == 1 && args[0] == "--stream") return Stream();
 if (args.Length != 1 && !inspect)
 {
     Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat> | --search <broker> | --describe-search");
@@ -649,8 +653,243 @@ static int Session()
 }
 
 
+// ---------- --stream: live prices for the market-data collector ----------
+
+static void Emit(object message)
+{
+    var line = JsonSerializer.Serialize(message);
+    lock (StreamOut) { Console.Out.WriteLine(line); Console.Out.Flush(); }
+}
+
+static string Utc(DateTime t) => (t.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(t, DateTimeKind.Utc) : t.ToUniversalTime()).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+
+static object? Member(object o, params string[] names)
+{
+    var t = o.GetType();
+    foreach (var n in names)
+    {
+        var p = t.GetProperty(n, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        if (p is not null && p.GetIndexParameters().Length == 0) { try { return p.GetValue(o); } catch (Exception) { } }
+        var f = t.GetField(n, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        if (f is not null) { try { return f.GetValue(o); } catch (Exception) { } }
+    }
+    return null;
+}
+
+static double? Num(object? v) => v switch { null => null, double d => d, float f => f, decimal m => (double)m, IConvertible c when v is not string and not bool and not DateTime => c.ToDouble(null), _ => null };
+
+static void OnQuote(object quote)
+{
+    var received = DateTime.UtcNow;
+    var symbol = Member(quote, "Symbol", "Name") as string;
+    if (symbol is null) return;
+    var time = Member(quote, "Time", "Datetime", "DateTime");
+    Emit(new
+    {
+        t = "q", s = symbol, n = Interlocked.Increment(ref StreamSeq),
+        b = Num(Member(quote, "Bid")), a = Num(Member(quote, "Ask")), l = Num(Member(quote, "Last")),
+        v = Num(Member(quote, "Volume", "Vol")),
+        st = time is DateTime dt ? DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("yyyy-MM-ddTHH:mm:ss.fff") : null,
+        rx = Utc(received),
+    });
+}
+
+// Attach OnQuote to the SDK's quote event, whatever its delegate type: the event whose
+// handler's last argument carries Bid and Ask.
+static string AttachQuotes(object api)
+{
+    foreach (var e in api.GetType().GetEvents(BindingFlags.Public | BindingFlags.Instance))
+    {
+        var invoke = e.EventHandlerType?.GetMethod("Invoke");
+        var ps = invoke?.GetParameters();
+        if (ps is null || ps.Length == 0) continue;
+        var arg = ps[^1].ParameterType;
+        if (arg.GetProperty("Bid") is null && arg.GetField("Bid") is null) continue;
+        var parameters = ps.Select(p => System.Linq.Expressions.Expression.Parameter(p.ParameterType, p.Name)).ToArray();
+        Action<object> sink = OnQuote;
+        var call = System.Linq.Expressions.Expression.Invoke(System.Linq.Expressions.Expression.Constant(sink),
+            System.Linq.Expressions.Expression.Convert(parameters[^1], typeof(object)));
+        var handler = System.Linq.Expressions.Expression.Lambda(e.EventHandlerType!, call, parameters).Compile();
+        e.AddEventHandler(api, handler);
+        return e.Name;
+    }
+    throw new InvalidOperationException("SDK has no quote event with Bid/Ask");
+}
+
+static void AttachDisconnect(object api, Action onDisconnect)
+{
+    foreach (var e in api.GetType().GetEvents(BindingFlags.Public | BindingFlags.Instance).Where(e => e.Name.Contains("Disconnect", StringComparison.OrdinalIgnoreCase)))
+    {
+        var ps = e.EventHandlerType!.GetMethod("Invoke")!.GetParameters();
+        var parameters = ps.Select(p => System.Linq.Expressions.Expression.Parameter(p.ParameterType, p.Name)).ToArray();
+        var body = System.Linq.Expressions.Expression.Invoke(System.Linq.Expressions.Expression.Constant(onDisconnect));
+        e.AddEventHandler(api, System.Linq.Expressions.Expression.Lambda(e.EventHandlerType!, body, parameters).Compile());
+    }
+}
+
+static bool? IsConnected(object api)
+{
+    foreach (var n in new[] { "Connected", "IsConnected" })
+        if (api.GetType().GetProperty(n)?.GetValue(api) is bool b) return b;
+    return null;
+}
+
+static void SubscribeSymbols(object api, IEnumerable<string> symbols, bool subscribe)
+{
+    var name = subscribe ? "Subscribe" : "Unsubscribe";
+    var methods = api.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => m.Name == name).ToArray();
+    var single = methods.FirstOrDefault(m => m.GetParameters() is [{ ParameterType: var t }] && t == typeof(string));
+    var many = methods.FirstOrDefault(m => m.GetParameters() is [{ ParameterType: var t }] && t == typeof(string[]));
+    var list = symbols.ToArray();
+    if (list.Length == 0) return;
+    if (many is not null) { many.Invoke(api, new object[] { list }); return; }
+    if (single is null) throw new InvalidOperationException("SDK has no " + name + "(string)");
+    foreach (var s in list) single.Invoke(api, new object[] { s });
+}
+
+// History bars through whichever history method the SDK offers: (symbol, timeframe, from, to)
+// or (symbol, timeframe, from, count). Timeframe as the SDK's enum (M1/PERIOD_M1/…) or minutes.
+static List<object> History(object api, string symbol, string frame, DateTime from, DateTime to)
+{
+    var minutes = FrameMinutes[Array.IndexOf(Frames, frame)];
+    var candidates = api.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        .Where(m => m.Name.Contains("History", StringComparison.OrdinalIgnoreCase) && m.Name.Contains("Quote", StringComparison.OrdinalIgnoreCase)
+                    && m.ReturnType != typeof(void) && m.GetParameters().Any(p => p.ParameterType == typeof(string)))
+        .OrderByDescending(m => m.GetParameters().Count(p => p.ParameterType == typeof(DateTime))).ToArray();
+    Exception? last = null;
+    foreach (var m in candidates)
+    {
+        try
+        {
+            var args = m.GetParameters().Select(p =>
+            {
+                var n = (p.Name ?? "").ToLowerInvariant();
+                var t = Nullable.GetUnderlyingType(p.ParameterType) ?? p.ParameterType;
+                if (t == typeof(string)) return (object?)symbol;
+                if (t.IsEnum)
+                {
+                    var name = Enum.GetNames(t).FirstOrDefault(x => x.Equals(frame, StringComparison.OrdinalIgnoreCase) || x.EndsWith("_" + frame, StringComparison.OrdinalIgnoreCase))
+                        ?? Enum.GetNames(t).FirstOrDefault(x => Convert.ToInt64(Enum.Parse(t, x)) == minutes);
+                    if (name is null) throw new InvalidOperationException("timeframe " + frame + " not in " + t.Name);
+                    return Enum.Parse(t, name);
+                }
+                if (t == typeof(DateTime)) return n.Contains("to") || n.Contains("end") ? to : from;
+                if ((t == typeof(int) || t == typeof(ushort) || t == typeof(short)) && (n.Contains("time") || n.Contains("frame") || n.Contains("period")))
+                    return Convert.ChangeType(minutes, t);
+                if (t == typeof(int) || t == typeof(ushort)) return Convert.ChangeType(Math.Min(65000, (int)Math.Ceiling((to - from).TotalMinutes / minutes) + 1), t);
+                if (p.HasDefaultValue) return p.DefaultValue;
+                throw new InvalidOperationException("unmapped " + t.Name + " " + p.Name);
+            }).ToArray();
+            var result = m.Invoke(api, args);
+            if (result is Task task) { task.Wait(TimeSpan.FromSeconds(60)); result = task.GetType().GetProperty("Result")?.GetValue(task); }
+            if (result is not IEnumerable items) continue;
+            var bars = new List<object>();
+            foreach (var bar in items)
+            {
+                if (bar is null) continue;
+                var time = Member(bar, "Time", "OpenTime", "Datetime");
+                if (time is not DateTime t0) continue;
+                bars.Add(new
+                {
+                    t = DateTime.SpecifyKind(t0, DateTimeKind.Unspecified).ToString("yyyy-MM-ddTHH:mm:ss"),
+                    o = Num(Member(bar, "OpenPrice", "Open")), h = Num(Member(bar, "HighPrice", "High")),
+                    l = Num(Member(bar, "LowPrice", "Low")), c = Num(Member(bar, "ClosePrice", "Close")),
+                    v = Num(Member(bar, "Volume", "TickVolume", "RealVolume")),
+                    sp = Num(Member(bar, "Spread")),
+                });
+            }
+            return bars;
+        }
+        catch (Exception e) { last = e; }
+    }
+    throw last ?? new InvalidOperationException("SDK has no quote history method");
+}
+
+static int Stream()
+{
+    SessionRequest? r;
+    try { r = JsonSerializer.Deserialize<SessionRequest>(Console.In.ReadLine() ?? ""); } catch (JsonException) { r = null; }
+    if (r is null || r.login == 0 || string.IsNullOrEmpty(r.password) || r.hosts is not { Length: > 0 })
+    {
+        Console.Error.WriteLine("STREAM_REQUEST_INVALID");
+        return 2;
+    }
+    var timeout = Math.Clamp(r.timeout_seconds, 5, 60);
+    object? api = null;
+    SessionHost? used = null;
+    var attempts = new List<object>();
+    foreach (var h in r.hosts.Take(12))
+    {
+        if (!Host().IsMatch(h.host) || h.port is < 1 or > 65535) { attempts.Add(new { h.host, h.port, ok = false, error = "invalid address" }); continue; }
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try { api = Construct(r, h); AttachQuotes(api); Call(api, "Connect", timeout); used = h; attempts.Add(new { h.host, h.port, ok = true, ms = watch.ElapsedMilliseconds }); break; }
+        catch (Exception e) { attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***") }); api = null; }
+    }
+    if (api is null || used is null) { Emit(new { t = "failed", attempts }); return 3; }
+    var lost = new ManualResetEventSlim(false);
+    AttachDisconnect(api, () => lost.Set());
+    string? serverTime = null;
+    try { serverTime = (api.GetType().GetProperty("ServerTime")?.GetValue(api) as DateTime?)?.ToString("yyyy-MM-ddTHH:mm:ss"); } catch (Exception) { }
+    Emit(new { t = "connected", used.host, used.port, attempts, server_time = serverTime, utc_now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss"),
+               sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString() });
+    var subscribed = new HashSet<string>(StringComparer.Ordinal);
+    try { SubscribeSymbols(api, r.symbols ?? Array.Empty<string>(), true); foreach (var s in r.symbols ?? Array.Empty<string>()) subscribed.Add(s); Emit(new { t = "subscribed", symbols = subscribed.ToArray() }); }
+    catch (Exception e) { Emit(new { t = "error", msg = "subscribe: " + Reason(e) }); }
+
+    var stop = false;
+    var commands = new Thread(() =>
+    {
+        string? line;
+        while (!stop && (line = Console.In.ReadLine()) is not null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                var cmd = root.GetProperty("cmd").GetString();
+                string[] Symbols() => root.TryGetProperty("symbols", out var s) ? s.EnumerateArray().Select(x => x.GetString()!).Where(x => !string.IsNullOrEmpty(x)).ToArray() : Array.Empty<string>();
+                if (cmd == "stop") { stop = true; lost.Set(); break; }
+                if (cmd == "subscribe") { var add = Symbols().Where(x => !subscribed.Contains(x)).ToArray(); SubscribeSymbols(api, add, true); foreach (var x in add) subscribed.Add(x); Emit(new { t = "subscribed", symbols = subscribed.ToArray() }); }
+                else if (cmd == "unsubscribe") { var del = Symbols().Where(subscribed.Contains).ToArray(); try { SubscribeSymbols(api, del, false); } catch (Exception) { } foreach (var x in del) subscribed.Remove(x); Emit(new { t = "subscribed", symbols = subscribed.ToArray() }); }
+                else if (cmd == "history")
+                {
+                    var id = root.GetProperty("id").GetString();
+                    var symbol = root.GetProperty("symbol").GetString()!;
+                    var frame = root.GetProperty("timeframe").GetString()!;
+                    if (Array.IndexOf(Frames, frame) < 0) { Emit(new { t = "history_error", id, msg = "unknown timeframe" }); continue; }
+                    var from = DateTime.Parse(root.GetProperty("from").GetString()!, null, System.Globalization.DateTimeStyles.RoundtripKind);
+                    var to = DateTime.Parse(root.GetProperty("to").GetString()!, null, System.Globalization.DateTimeStyles.RoundtripKind);
+                    try { Emit(new { t = "bars", id, symbol, timeframe = frame, bars = History(api, symbol, frame, from, to) }); }
+                    catch (Exception e) { Emit(new { t = "history_error", id, msg = Reason(e) }); }
+                }
+            }
+            catch (Exception e) { Emit(new { t = "error", msg = "command: " + Reason(e) }); }
+        }
+        stop = true; lost.Set();
+    }) { IsBackground = true };
+    commands.Start();
+    var beat = Math.Clamp(r.heartbeat_seconds, 1, 60);
+    while (!stop)
+    {
+        if (lost.Wait(TimeSpan.FromSeconds(beat))) break;
+        if (IsConnected(api) == false) break;
+        string? st = null;
+        try { st = (api.GetType().GetProperty("ServerTime")?.GetValue(api) as DateTime?)?.ToString("yyyy-MM-ddTHH:mm:ss"); } catch (Exception) { }
+        Emit(new { t = "hb", rx = Utc(DateTime.UtcNow), server_time = st, subscribed = subscribed.Count });
+    }
+    try { Call(api, "Disconnect", 10); } catch (Exception) { }
+    Emit(new { t = stop ? "stopped" : "disconnected" });
+    return stop ? 0 : 4;
+}
+
+
 partial class Program
 {
+    static readonly object StreamOut = new();
+    static long StreamSeq;
+    static readonly string[] Frames = { "M1", "M5", "M15", "M30", "H1", "H4", "D1" };
+    static readonly int[] FrameMinutes = { 1, 5, 15, 30, 60, 240, 1440 };
+
     [GeneratedRegex(@"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252}|[0-9A-Fa-f:]+:[0-9A-Fa-f:]+):\d{1,5}$")]
     private static partial Regex Endpoint();
 
@@ -664,4 +903,4 @@ partial class Program
 }
 
 sealed record SessionHost(string host, int port);
-sealed record SessionRequest(ulong login, string password, SessionHost[] hosts, string[]? symbols, int max_symbols = 2000, int timeout_seconds = 20);
+sealed record SessionRequest(ulong login, string password, SessionHost[] hosts, string[]? symbols, int max_symbols = 2000, int timeout_seconds = 20, int heartbeat_seconds = 5);

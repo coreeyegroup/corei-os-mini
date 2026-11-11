@@ -14,7 +14,11 @@ import urllib.request
 
 HOST = 'corei-os-mini.coreeye.in'
 SERVICE = 'corei-os-mini-workstation'
+COLLECTOR = 'corei-os-mini-collector'
+NIGHTLY = 'corei-os-mini-md-nightly'
 PORT = 18786
+MD_ROOT = Path('/var/lib/corei-os-mini/market-data')
+ENV_FILE = Path('/etc/corei-os-mini/workstation.env')
 
 
 def replace_site(text, block):
@@ -42,6 +46,94 @@ def replace_site(text, block):
 
 def run(*args):
     return subprocess.run(args, check=True)
+
+
+def env_value(name):
+    """A value from the workstation env file (KEY=value lines), or None."""
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            key, _, value = line.strip().partition('=')
+            if key == name and value.strip():
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def install_market_data(root, user, python):
+    """The market-data collector service and the nightly archive/verify/backup timer.
+    Data lives in /var/lib/corei-os-mini/market-data (owner: the repository user, 0750);
+    backups go to COREI_BACKUP_DIR from the env file when it is set."""
+    account = pwd.getpwnam(user)
+    for folder in (MD_ROOT.parent, MD_ROOT):
+        folder.mkdir(mode=0o750, parents=True, exist_ok=True)
+    os.chown(MD_ROOT, account.pw_uid, account.pw_gid)
+    os.chmod(MD_ROOT, 0o750)
+    writable = [str(MD_ROOT)]
+    backup_dir = env_value('COREI_BACKUP_DIR')
+    if backup_dir:
+        target = Path(backup_dir)
+        if not target.is_absolute() or not re.fullmatch(r'[A-Za-z0-9_./-]+', backup_dir):
+            print('COREI_BACKUP_DIR must be an absolute path without special characters; backups stay off.')
+        else:
+            target.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chown(target, account.pw_uid, account.pw_gid)
+            writable.append(str(target))
+    common = f'''User={user}
+WorkingDirectory={root}/backend
+Environment=COREI_MD_ROOT={MD_ROOT}
+EnvironmentFile=-{ENV_FILE}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={' '.join(writable)}
+UMask=0027
+'''
+    units = {
+        COLLECTOR + '.service': f'''[Unit]
+Description=COREI-OS-MINI market-data collector
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+{common}ExecStart={python} -m corei_os_mini.md.collector
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+''',
+        NIGHTLY + '.service': f'''[Unit]
+Description=COREI-OS-MINI market-data archive, fingerprint check and backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+{common}ExecStart={python} -m corei_os_mini.md.jobs nightly
+TimeoutStartSec=6h
+''',
+        NIGHTLY + '.timer': '''[Unit]
+Description=Nightly COREI-OS-MINI market-data jobs (02:30 IST)
+
+[Timer]
+OnCalendar=*-*-* 21:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
+''',
+    }
+    for name, text in units.items():
+        Path('/etc/systemd/system/' + name).write_text(text)
+    run('systemctl', 'daemon-reload')
+    run('systemctl', 'enable', COLLECTOR, NIGHTLY + '.timer')
+    run('systemctl', 'restart', COLLECTOR)
+    run('systemctl', 'start', NIGHTLY + '.timer')
+    print('Market data: collector', COLLECTOR, 'running; nightly jobs at 02:30 IST;',
+          'backups to ' + backup_dir if backup_dir and len(writable) > 1 else 'backups OFF until COREI_BACKUP_DIR is set in ' + str(ENV_FILE))
 
 
 def main():
@@ -94,6 +186,7 @@ User={user}
 WorkingDirectory={root}/backend
 Environment=COREI_EXECUTION_MODE=paper
 Environment=COREI_ENABLE_DEMO=false
+Environment=COREI_MD_ROOT={MD_ROOT}
 EnvironmentFile=-/etc/corei-os-mini/workstation.env
 ExecStart={python} -m uvicorn corei_os_mini.api:app --host 127.0.0.1 --port {PORT}
 Restart=on-failure
@@ -144,6 +237,10 @@ WantedBy=multi-user.target
         raise
     finally:
         temp_link.unlink(missing_ok=True)
+    try:
+        install_market_data(root, user, python)
+    except Exception as exc:  # the web workstation stays deployed; the collector is reported
+        print('WARNING: market-data services were not installed:', exc)
     print('Deployed: https://' + HOST + '/')
     print('Caddy backup:', backup)
     print('Workstation deployed. Registry routes require operator login; provider connectivity and order submission remain unavailable.')

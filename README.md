@@ -613,3 +613,15 @@ Migration 015 (DEC-38..40).
 - **Real data from MT5:** on an MT5 account, *Real data from the broker › Log in and read now* logs in once (investor password preferred), stores margin mode, leverage, group, stop-out, the server clock offset, the address that answered, and every symbol's broker limits, then disconnects. Each read is kept with every address tried. Nothing is traded.
   - Run `bash scripts/describe-mt5-api.sh` once on the server and send the file it writes: it lists the installed SDK's exact login and symbol fields so any field not yet matched can be added.
 - **Infrastructure** (new item in the left bar): health of the database, services, host, clock, network and broker tools; for administrators a spreadsheet-style table editor (filter per column, sort, edit in place with the keyboard, add and delete rows, export CSV), a read-only SQL console, live database sessions and the edit log. Every change asks for a reason and your password and is logged before and after. Configuration tables open for direct editing only when the policy `infra_edit_controlled_tables` is turned on (Config › Order sending › Policies).
+
+## Market data — release 0.13.0
+
+Migration 016 (DEC-41..44). Open source only: PostgreSQL, Parquet, DuckDB.
+
+- **Market data** (left bar) — *Live* prices, spread, age and score with each collector's state; *Collection plans* (matrix of instruments × accounts; what to collect, when, how long to keep, quality rules; size estimate before starting); *Quality* (broker comparison per instrument); *Events*; *Backfill* from broker history; *Controls* (pause all or one account, with a reason); *Archive* (history files with fingerprints, backups).
+- **Collector service** `corei-os-mini-collector` streams prices from MT5 (investor password, read-only), writes the journal first, then PostgreSQL every second; reconnects through the account's addresses and fills outages from broker history.
+- **Nightly timer** `corei-os-mini-md-nightly` (02:30 IST): archive to Parquet with fingerprints, journal fingerprints and retirement, verification of every file, backups.
+- **Backups:** set `COREI_BACKUP_DIR=/path/on/another/disk` in `/etc/corei-os-mini/workstation.env`, then redeploy. Until then Health shows backups as not configured.
+- **Infrastructure › History**: read-only DuckDB over the archive (views `ticks` and `bars`).
+- Every order check now also checks the live price: age, spread and feed state.
+- Data folder: `/var/lib/corei-os-mini/market-data` (journal/, archive/).

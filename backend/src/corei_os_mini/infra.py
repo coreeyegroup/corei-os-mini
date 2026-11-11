@@ -57,10 +57,20 @@ READ_ONLY_TABLES = {
     'cfg_users': 'Users are managed on the Users screen (roles, password rules).',
     'cfg_policies': 'Policies are changed on the Controls screen with a reason.',
     'cfg_execution_controls': 'Order sending is switched on the Controls screen with a reason.',
+    'md_ticks': 'Prices as received are never edited.',
+    'md_bars': 'Bars are built from prices or read from the broker.',
+    'md_latest': 'Latest prices are written by the collector.',
+    'md_quality': 'Quality is measured, not typed.',
+    'md_events': 'Market-data events are a record of what happened.',
+    'md_collector_status': 'Collector status is written by the collector.',
+    'md_files': 'File fingerprints are written by the archive and checked nightly.',
+    'md_backups': 'Backup records are written by the backup job.',
+    'md_jobs': 'Backfill jobs are managed on the Market data screen.',
 }
 CONTROLLED_TABLES = {'cfg_providers', 'cfg_connections', 'cfg_accounts', 'cfg_symbol_mappings', 'cfg_instruments',
                      'cfg_strategies', 'cfg_strategy_versions', 'cfg_deployments', 'cfg_account_groups',
-                     'cfg_account_group_members', 'cfg_alert_channels', 'cfg_connection_status', 'cfg_symbol_specs'}
+                     'cfg_account_group_members', 'cfg_alert_channels', 'cfg_connection_status', 'cfg_symbol_specs',
+                     'md_collection_plans', 'md_controls', 'md_feed_state'}
 MAX_PAGE = 500
 _STARTED = time.time()
 
@@ -169,6 +179,12 @@ def health() -> dict:
     ip = network.egress_ip(cached_only=True)
     add('Host', 'Outbound IP', 'OK' if ip else 'UNKNOWN', ip or 'not measured yet (open Controls › Network)')
 
+    # Market data
+    try:
+        _market_data_health(add)
+    except HTTPException as exc:
+        add('Market data', 'Market data', 'UNKNOWN', str(exc.detail))
+
     # Broker tools and secrets
     reader = Path(os.getenv('COREI_MT5_CATALOG_PARSER', '/opt/corei-os-mini/server-catalog/ServerCatalog'))
     add('Broker tools', 'MT5 reader', 'OK' if reader.is_file() else 'FAIL',
@@ -206,17 +222,21 @@ def database() -> dict:
 def tables() -> list[dict]:
     allow_controlled = _controlled_allowed()
     with store.transaction('read') as db:
-        rows = db.execute("""SELECT c.relname AS name, c.reltuples::bigint AS estimated_rows, pg_total_relation_size(c.oid) AS bytes,
+        rows = db.execute("""SELECT c.relname AS name,
+                CASE WHEN c.relkind='p' THEN (SELECT COALESCE(sum(GREATEST(k.reltuples, 0)), 0)::bigint FROM pg_inherits h JOIN pg_class k ON k.oid=h.inhrelid WHERE h.inhparent=c.oid)
+                     ELSE c.reltuples::bigint END AS estimated_rows,
+                CASE WHEN c.relkind='p' THEN (SELECT COALESCE(sum(pg_total_relation_size(h.inhrelid)), 0) FROM pg_inherits h WHERE h.inhparent=c.oid)
+                     ELSE pg_total_relation_size(c.oid) END AS bytes,
                 s.n_live_tup AS live_rows, s.last_autovacuum, s.last_autoanalyze,
                 EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid AND i.indisprimary) AS has_key
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relid=c.oid
-            WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') ORDER BY c.relname""").fetchall()
+            WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition ORDER BY c.relname""").fetchall()
     out = []
     for r in rows:
         mode, why = _mode(r['name'], r['has_key'], allow_controlled)
         out.append({**store.clean(r), 'rows': max(r['live_rows'] or 0, r['estimated_rows'] or 0), 'mode': mode, 'why': why,
                     'group': 'Configuration' if r['name'].startswith('cfg_') else 'Infrastructure' if r['name'].startswith('infra_')
-                    else 'Market and research'})
+                    else 'Market data' if r['name'].startswith('md_') else 'Research and other'})
     return out
 
 
@@ -289,12 +309,19 @@ def read_table(table: str, offset: int = 0, limit: int = 100, sort: str | None =
             order = sql.SQL(' ORDER BY ') + sql.SQL(', ').join(sql.Identifier(k) for k in keys)
         else:
             order = sql.SQL('')
-        total = db.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table)) + where, params).fetchone()['n']
+        estimated = False
+        if not clauses:
+            guess = db.execute("""SELECT CASE WHEN c.relkind='p' THEN (SELECT COALESCE(sum(GREATEST(k.reltuples, 0)), 0) FROM pg_inherits h
+                    JOIN pg_class k ON k.oid=h.inhrelid WHERE h.inhparent=c.oid) ELSE GREATEST(c.reltuples, 0) END AS n
+                FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND c.relname=%s""", (table,)).fetchone()
+            estimated = bool(guess and guess['n'] > 200_000)
+        total = int(guess['n']) if estimated else \
+            db.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table)) + where, params).fetchone()['n']
         rows = db.execute(sql.SQL('SELECT {} FROM {}').format(_select_list(columns), sql.Identifier(table)) + where + order
                           + sql.SQL(' LIMIT %s OFFSET %s'), [*params, limit, max(offset, 0)]).fetchall()
     mode, why = _mode(table, bool(keys), _controlled_allowed())
     return {'table': table, 'mode': mode, 'why': why, 'columns': [{k: v for k, v in c.items() if k != 'binary'} for c in columns],
-            'key': keys, 'total': total, 'offset': offset, 'limit': limit, 'rows': [dict(r) for r in rows]}
+            'key': keys, 'total': total, 'total_estimated': estimated, 'offset': offset, 'limit': limit, 'rows': [dict(r) for r in rows]}
 
 
 def _editable(db, table: str) -> tuple[list[dict], list[str]]:
@@ -474,3 +501,126 @@ def cancel_session(actor: str, pid: int, reason: str) -> dict:
         ok = db.execute('SELECT pg_cancel_backend(%s) AS ok', (pid,)).fetchone()['ok']
         store.audit(db, actor, 'INFRA_CANCEL_QUERY', 'database', pid, None, {'query': row['query'], 'cancelled': ok}, reason)
     return {'cancelled': bool(ok)}
+
+
+# ---------- market data health ----------
+
+def _age(t) -> float | None:
+    return (datetime.now(timezone.utc) - t).total_seconds() if t else None
+
+
+def _market_data_health(add) -> None:
+    from .md.collector import md_root
+    with store.transaction('read') as db:
+        if not db.execute("SELECT to_regclass('md_collection_plans') AS t").fetchone()['t']:
+            add('Market data', 'Market data', 'WARN', 'Tables missing — run configure-workstation-database.sh')
+            return
+        active = db.execute("SELECT count(*) AS n FROM md_collection_plans WHERE status='ACTIVE'").fetchone()['n']
+        paused_all = db.execute("SELECT paused FROM md_controls WHERE scope='ALL'").fetchone()
+        collectors = db.execute('SELECT s.*, a.code FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id').fetchall()
+        last_archive = db.execute("SELECT at, severity, detail FROM md_events WHERE kind='ARCHIVE' ORDER BY id DESC LIMIT 1").fetchone()
+        last_verify = db.execute("SELECT at, severity, detail FROM md_events WHERE kind='VERIFY' ORDER BY id DESC LIMIT 1").fetchone()
+        backups = {r['kind']: r for r in db.execute("SELECT DISTINCT ON (kind) * FROM md_backups ORDER BY kind, id DESC").fetchall()}
+        growth = db.execute("SELECT COALESCE(sum(bytes), 0) AS b FROM md_files WHERE created_at > now() - interval '7 days' AND kind <> 'JOURNAL'").fetchone()['b']
+    if paused_all and paused_all['paused']:
+        add('Market data', 'Collection', 'WARN', 'Paused for everything (Market data › Controls)')
+    else:
+        add('Market data', 'Collection', 'OK', f'{active} active plan{"" if active == 1 else "s"}')
+    if active and not collectors:
+        add('Market data', 'Collector service', 'FAIL', 'No collector has reported — start corei-os-mini-collector')
+    for c in collectors:
+        age = _age(c['heartbeat_at'])
+        status = 'OK' if c['state'] == 'CONNECTED' and age is not None and age < 30 else \
+                 'UNKNOWN' if c['state'] in ('PAUSED', 'STOPPED', 'UNSUPPORTED') else 'FAIL' if age is None or age > 120 or c['state'] == 'FAILED' else 'WARN'
+        lag = f", lag {c['lag_ms']:.0f} ms" if c['lag_ms'] is not None else ''
+        add('Market data', f"Feed {c['code']}", status, f"{c['state'].lower()}{', ' + c['host'] if c['host'] else ''}{lag}, "
+            f"{c['subscribed']} symbols, heartbeat {int(age)} s ago" if age is not None else c['state'].lower())
+        if c['backlog'] and c['backlog'] > 10_000:
+            add('Market data', f"Write backlog {c['code']}", 'WARN', f"{c['backlog']} prices waiting for the database (all are in the journal)")
+    if last_archive:
+        age = _age(last_archive['at'])
+        add('Market data', 'Nightly archive', 'FAIL' if last_archive['severity'] == 'CRITICAL' else 'WARN' if age > 30 * 3600 else 'OK',
+            f"{int(age // 3600)} h ago · {last_archive['detail'].get('tick_files', 0)} tick files, {last_archive['detail'].get('bar_files', 0)} bar files"
+            + (f" · {len(last_archive['detail'].get('errors') or [])} errors" if last_archive['detail'].get('errors') else ''))
+    else:
+        add('Market data', 'Nightly archive', 'UNKNOWN', 'Not run yet (timer corei-os-mini-md-nightly)')
+    if last_verify:
+        d = last_verify['detail']
+        add('Market data', 'File fingerprints', 'FAIL' if last_verify['severity'] == 'CRITICAL' else 'OK',
+            f"{d.get('ok', 0)} of {d.get('checked', 0)} files match" + (f"; changed: {len(d.get('mismatch') or [])}, missing: {len(d.get('missing') or [])}"
+                                                                         if last_verify['severity'] == 'CRITICAL' else ''))
+    else:
+        add('Market data', 'File fingerprints', 'UNKNOWN', 'Not checked yet')
+    for kind, label in (('DATABASE', 'Database backup'), ('FILES', 'Files backup')):
+        b = backups.get(kind)
+        if not b:
+            add('Backups', label, 'WARN', 'No backup yet — set COREI_BACKUP_DIR; the nightly job makes them')
+            continue
+        age = _age(b['finished_at'] or b['started_at'])
+        add('Backups', label, 'FAIL' if not b['ok'] else 'WARN' if age > 30 * 3600 else 'OK',
+            (f"{int(age // 3600)} h ago · {b['path'] or ''}" if b['ok'] else (b['error'] or 'failed')))
+    try:
+        usage = shutil.disk_usage(md_root() if md_root().exists() else '/')
+        per_day = growth / 7 if growth else 0
+        days = usage.free / per_day if per_day else None
+        add('Market data', 'Disk forecast', 'WARN' if days is not None and days < 30 else 'OK',
+            f"{usage.free / 1e9:.1f} GB free" + (f", about {int(days)} days at the last week's archive growth" if days else ', no archive growth yet'))
+    except OSError:
+        pass
+
+
+# ---------- history (Parquet) ----------
+
+def history_files(limit: int = 500) -> list[dict]:
+    from .md import store as md
+    return md.files(limit)
+
+
+def history_query(text: str, limit: int = 1000) -> dict:
+    """Read-only DuckDB over the archived Parquet files. Views: ticks, bars (with day and
+    account columns from the folder names). DuckDB may read only the archive folder."""
+    import threading
+    import duckdb
+    from .md.collector import md_root
+    statement = text.strip().rstrip(';').strip()
+    if not statement:
+        raise HTTPException(422, 'Enter a query.')
+    if ';' in statement:
+        raise HTTPException(422, 'Run one statement at a time.')
+    if not re.match(r'^(select|with|describe|summarize)\b', statement, re.I) or re.search(r'\b(copy|attach|install|load|export|import|pragma|set|create|call)\b', statement, re.I):
+        raise HTTPException(422, 'The history console is read-only: SELECT, WITH, DESCRIBE or SUMMARIZE over the views ticks and bars.')
+    root = md_root() / 'archive'
+    con = duckdb.connect()
+    try:
+        con.execute("SET memory_limit='1GB'")
+        con.execute('SET threads=2')
+        con.execute(f"SET allowed_directories=['{root}/']")
+        views = []
+        for name in ('ticks', 'bars'):
+            if any((root / name).rglob('*.parquet')) if (root / name).is_dir() else False:
+                con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{root / name}/**/*.parquet', hive_partitioning=true, union_by_name=true)")
+                views.append(name)
+        con.execute('SET enable_external_access=false')
+        con.execute('SET lock_configuration=true')
+        if not views:
+            raise HTTPException(422, 'No history has been archived yet. Prices move to history after their plan\'s days in the database.')
+        timer = threading.Timer(10.0, con.interrupt)
+        started = time.perf_counter()
+        timer.start()
+        try:
+            cursor = con.execute(statement)
+            columns = [d[0] for d in cursor.description or []]
+            rows = cursor.fetchmany(limit + 1)
+        except duckdb.InterruptException as exc:
+            raise HTTPException(422, 'The query took longer than 10 seconds and was stopped.') from exc
+        except duckdb.Error as exc:
+            raise HTTPException(422, str(exc).split('\n')[0][:400]) from exc
+        finally:
+            timer.cancel()
+    finally:
+        con.close()
+
+    def cell(v):
+        return v if v is None or isinstance(v, (bool, int, float, str)) else str(v)
+    return {'columns': columns, 'rows': [dict(zip(columns, map(cell, r))) for r in rows[:limit]], 'truncated': len(rows) > limit,
+            'ms': round((time.perf_counter() - started) * 1000, 1), 'views': views}
