@@ -212,3 +212,28 @@ def order_check(account_id: UUID, payload: dict, response: Response, _: str = De
     if not account:
         raise HTTPException(404, 'Account not found.')
     return check_order(draft, specs.get(draft.broker_symbol), account)
+
+
+# ---------- read real data from the broker (MT5, read-only login) ----------
+
+class BrokerReadIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    symbols: list[str] | None = Field(default=None, max_length=500)
+    max_symbols: int = Field(default=2000, ge=0, le=5000)
+
+
+@router.post('/accounts/{account_id}/read-from-broker')
+async def read_from_broker(account_id: UUID, response: Response, payload: dict | None = None, user: Principal = Depends(_ops)):
+    """Log in once (investor password preferred), store account facts, server clock offset
+    and every symbol's trading rules, then disconnect. Sends no orders."""
+    _no_store(response)
+    data = _parse(BrokerReadIn, payload or {})
+    from . import broker_session
+    return await run_in_threadpool(broker_session.read_account, user.username, account_id, data.symbols, data.max_symbols)
+
+
+@router.get('/accounts/{account_id}/broker-reads')
+def broker_reads(account_id: UUID, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    from . import broker_session
+    return {'items': broker_session.reads(account_id)}

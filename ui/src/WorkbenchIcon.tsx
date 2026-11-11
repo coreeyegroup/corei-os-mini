@@ -9,5 +9,6 @@ const paths=[
  'M3 8h18v13H3z M8 8V3h8v5 M3 13h18 M10 13v3h4v-3',
  'M2 12h4l3-7 6 14 3-7h4',
  'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6',
+ 'M4 4h16v6H4z M4 14h16v6H4z M8 7h.01 M8 17h.01 M12 10v4',
 ];
 export default function WorkbenchIcon({index}:{index:number}){return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[index]??paths[0]}/></svg>}

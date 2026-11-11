@@ -10,6 +10,7 @@ from .operator_auth import admin_router, router as operator_router
 from .config_api import router as config_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
+from .infra_api import router as infra_router
 from .broker_login import oauth_router, router as broker_login_router
 from . import config_store
 from .credentials import storage_ready as credential_storage_ready
@@ -64,6 +65,7 @@ app.include_router(admin_router)
 # Strategy routes first: config_router's /api/config/{entity} would otherwise claim them.
 app.include_router(strategy_router)
 app.include_router(controls_router)
+app.include_router(infra_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
 app.include_router(config_router)
@@ -163,7 +165,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.11.0-institutional-controls",
+        "release": "0.12.0-broker-reads-and-infrastructure",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

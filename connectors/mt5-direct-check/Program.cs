@@ -16,9 +16,15 @@ using mtapi.mt5;
 // --search <broker> asks the broker directory (the SDK's Broker.Search / SearchMQ, the
 // same lookup as MT5 "Open an Account") and prints the result in the same shape.
 // --describe-search prints the SDK's search method signatures and result shapes.
+// --describe-api prints the SDK's MT5API surface (no login).
+// --session logs in ONCE with the request read from stdin (the password never appears
+// on the command line), reads account facts, server time and symbol specifications,
+// disconnects and prints them. It never sends, changes or cancels orders.
 var inspect = args.Length == 2 && args[0] == "--inspect";
 if (args.Length == 2 && args[0] == "--search") return Search(args[1]);
 if (args.Length == 1 && args[0] == "--describe-search") return DescribeSearch();
+if (args.Length == 1 && args[0] == "--describe-api") return DescribeApi();
+if (args.Length == 1 && args[0] == "--session") return Session();
 if (args.Length != 1 && !inspect)
 {
     Console.Error.WriteLine("Usage: ServerCatalog [--inspect] <servers.dat> | --search <broker> | --describe-search");
@@ -433,6 +439,216 @@ static void Collect(object? value, string? company, Dictionary<string, (string? 
     foreach (var (_, v) in members) Collect(v, company, servers, depth + 1, seen);
 }
 
+
+// ---------- --describe-api: the SDK's connection surface (for the account adapter) ----------
+
+static object TypeSurface(Type t, int depth, HashSet<Type> seen)
+{
+    if (!seen.Add(t)) return new { type = t.FullName, seen = true };
+    const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+    string P(ParameterInfo p) => $"{p.ParameterType.Name} {p.Name}{(p.HasDefaultValue ? " = " + (p.DefaultValue ?? "null") : "")}";
+    var nested = new Dictionary<string, object>();
+    if (depth > 0)
+        foreach (var related in t.GetProperties(flags).Select(p => p.PropertyType)
+                     .Concat(t.GetMethods(flags).Select(m => Unwrap(m.ReturnType)))
+                     .Select(x => x.IsArray ? x.GetElementType()! : x.IsGenericType ? x.GetGenericArguments().Last() : x)
+                     .Where(x => x.Assembly == typeof(MT5API).Assembly && !x.IsEnum).Distinct().Take(40))
+            nested[related.FullName ?? related.Name] = TypeSurface(related, depth - 1, seen);
+    return new
+    {
+        type = t.FullName,
+        constructors = t.GetConstructors().Select(c => string.Join(", ", c.GetParameters().Select(P))).ToArray(),
+        properties = t.GetProperties(flags).Select(p => $"{p.PropertyType.Name} {p.Name}{(p.CanWrite ? " {get;set;}" : "")}").ToArray(),
+        fields = t.GetFields(flags).Select(f => $"{f.FieldType.Name} {f.Name}").ToArray(),
+        methods = t.GetMethods(flags).Where(m => !m.IsSpecialName).Select(m => $"{(m.IsStatic ? "static " : "")}{m.ReturnType.Name} {m.Name}({string.Join(", ", m.GetParameters().Select(P))})").Distinct().ToArray(),
+        events = t.GetEvents(flags).Select(e => $"{e.EventHandlerType?.Name} {e.Name}").ToArray(),
+        nested,
+    };
+}
+
+static int DescribeApi()
+{
+    var asm = typeof(MT5API).Assembly;
+    var enums = asm.GetExportedTypes().Where(t => t.IsEnum && (t.Name.Contains("Margin") || t.Name.Contains("Fill") || t.Name.Contains("Order")
+        || t.Name.Contains("Trade") || t.Name.Contains("Account") || t.Name.Contains("Execution") || t.Name.Contains("Symbol")))
+        .ToDictionary(t => t.FullName!, t => Enum.GetNames(t));
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        sdk_version = asm.GetName().Version?.ToString(),
+        api = TypeSurface(typeof(MT5API), 2, new HashSet<Type>()),
+        exported_types = asm.GetExportedTypes().Select(t => t.FullName).OrderBy(n => n).ToArray(),
+        enums,
+    }, new JsonSerializerOptions { WriteIndented = true }));
+    return 0;
+}
+
+// ---------- --session: one read-only login (request on stdin) ----------
+
+// Name fragments of SDK methods the session must never call: it reads, it does not trade.
+static bool Forbidden(string name) => new[] { "Order", "Close", "Modify", "Cancel", "Send", "Trade", "Position", "Subscribe" }
+    .Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase));
+
+static object? ArgFor(ParameterInfo p, SessionRequest r, SessionHost h)
+{
+    var n = (p.Name ?? "").ToLowerInvariant();
+    var t = Nullable.GetUnderlyingType(p.ParameterType) ?? p.ParameterType;
+    if (t == typeof(string) && n.Contains("pass")) return r.password;
+    if (t == typeof(string) && (n.Contains("host") || n.Contains("server") || n.Contains("addr"))) return h.host;
+    if ((t == typeof(int) || t == typeof(ushort) || t == typeof(uint)) && n.Contains("port")) return Convert.ChangeType(h.port, t);
+    if ((t == typeof(ulong) || t == typeof(long) || t == typeof(uint) || t == typeof(int)) && (n.Contains("user") || n.Contains("login") || n.Contains("account")))
+        return Convert.ChangeType(r.login, t);
+    if (p.HasDefaultValue) return p.DefaultValue;
+    throw new InvalidOperationException("unmapped " + p.ParameterType.Name + " " + p.Name);
+}
+
+static object Construct(SessionRequest r, SessionHost h)
+{
+    foreach (var c in typeof(MT5API).GetConstructors().OrderByDescending(c => c.GetParameters().Count(p => !p.HasDefaultValue)))
+    {
+        object?[] values;
+        try { values = c.GetParameters().Select(p => ArgFor(p, r, h)).ToArray(); } catch (InvalidOperationException) { continue; }
+        if (values.Length == 0) continue;
+        return c.Invoke(values);
+    }
+    var api = Activator.CreateInstance(typeof(MT5API))!;
+    foreach (var (names, value) in new (string[], object)[] { (new[] { "User", "Login" }, r.login), (new[] { "Password" }, r.password),
+                 (new[] { "Host", "Server" }, h.host), (new[] { "Port" }, h.port) })
+    {
+        var prop = names.Select(n => typeof(MT5API).GetProperty(n)).FirstOrDefault(pr => pr is { CanWrite: true })
+            ?? throw new InvalidOperationException("SDK has no settable " + names[0]);
+        prop.SetValue(api, Convert.ChangeType(value, Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType));
+    }
+    return api;
+}
+
+static void Call(object target, string name, int timeoutSeconds)
+{
+    var m = target.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        .Where(x => x.Name == name || x.Name == name + "Async").OrderBy(x => x.GetParameters().Count(p => !p.HasDefaultValue))
+        .FirstOrDefault() ?? throw new InvalidOperationException("SDK has no " + name);
+    var args = m.GetParameters().Select(p => p.ParameterType == typeof(int) && (p.Name ?? "").Contains("time", StringComparison.OrdinalIgnoreCase)
+        ? (object?)(timeoutSeconds * 1000) : p.HasDefaultValue ? p.DefaultValue : p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null).ToArray();
+    var work = Task.Run(() => { var res = m.Invoke(target, args); if (res is Task t) t.GetAwaiter().GetResult(); });
+    if (!work.Wait(TimeSpan.FromSeconds(timeoutSeconds))) throw new TimeoutException(name + " did not finish in " + timeoutSeconds + " s");
+}
+
+static string Reason(Exception e)
+{
+    while (e is TargetInvocationException or AggregateException && e.InnerException is not null) e = e.InnerException!;
+    return Truncate(e.GetType().Name + ": " + e.Message, 300);
+}
+
+// Scalars of an object plus scalars one level down (Account, Group, ...), names prefixed.
+static Dictionary<string, object> Facts(object source, int depth = 1)
+{
+    var result = Describe(source);
+    if (depth <= 0) return result;
+    foreach (var p in source.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                 .Where(p => p.CanRead && p.GetIndexParameters().Length == 0 && !p.PropertyType.IsPrimitive && p.PropertyType != typeof(string)
+                             && !p.PropertyType.IsEnum && !typeof(IEnumerable).IsAssignableFrom(p.PropertyType) && p.PropertyType.IsClass))
+    {
+        object? v; try { v = p.GetValue(source); } catch (Exception) { continue; }
+        if (v is null || v.GetType().Assembly != typeof(MT5API).Assembly) continue;
+        foreach (var kv in Describe(v)) result.TryAdd(p.Name + "." + kv.Key, kv.Value);
+    }
+    return result;
+}
+
+static IEnumerable<string> SymbolNames(object symbols)
+{
+    foreach (var name in new[] { "Names", "SymbolNames", "Infos", "Sessions" })
+    {
+        var p = symbols.GetType().GetProperty(name);
+        var value = p?.GetValue(symbols);
+        if (value is IDictionary d) return d.Keys.Cast<object>().Select(k => k.ToString()!).ToArray();
+        if (value is IEnumerable<string> list) return list.ToArray();
+    }
+    var m = symbols.GetType().GetMethods().FirstOrDefault(x => x.GetParameters().Length == 0 && x.Name.Contains("Names"));
+    return m?.Invoke(symbols, null) is IEnumerable<string> names ? names.ToArray() : Array.Empty<string>();
+}
+
+static Dictionary<string, object> SymbolFacts(object symbols, string symbol)
+{
+    var result = new Dictionary<string, object>();
+    foreach (var m in symbols.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                 .Where(m => m.GetParameters() is [{ ParameterType: var t }] && t == typeof(string) && !Forbidden(m.Name)
+                             && m.ReturnType != typeof(void) && m.ReturnType != typeof(bool) && !m.ReturnType.IsPrimitive && m.ReturnType != typeof(string)
+                             && (m.Name.StartsWith("Get") || m.Name.Contains("Info") || m.Name.Contains("Group") || m.Name.Contains("Exist")) ))
+    {
+        object? v; try { v = m.Invoke(symbols, new object[] { symbol }); } catch (Exception) { continue; }
+        if (v is null) continue;
+        var prefix = m.Name.StartsWith("Get") ? m.Name[3..] : m.Name;
+        foreach (var kv in Facts(v)) result.TryAdd(prefix + "." + kv.Key, kv.Value);
+    }
+    return result;
+}
+
+static int Session()
+{
+    SessionRequest? r;
+    try { r = JsonSerializer.Deserialize<SessionRequest>(Console.In.ReadToEnd()); }
+    catch (JsonException) { r = null; }
+    if (r is null || r.login == 0 || string.IsNullOrEmpty(r.password) || r.hosts is not { Length: > 0 })
+    {
+        Console.Error.WriteLine("SESSION_REQUEST_INVALID");
+        return 2;
+    }
+    var timeout = Math.Clamp(r.timeout_seconds, 5, 60);
+    var attempts = new List<object>();
+    foreach (var h in r.hosts.Take(12))
+    {
+        if (!Host().IsMatch(h.host) || h.port is < 1 or > 65535) { attempts.Add(new { h.host, h.port, ok = false, error = "invalid address" }); continue; }
+        object api;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            api = Construct(r, h);
+            Call(api, "Connect", timeout);
+        }
+        catch (Exception e)
+        {
+            attempts.Add(new { h.host, h.port, ok = false, ms = watch.ElapsedMilliseconds, error = Reason(e).Replace(r.password, "***") });
+            continue;
+        }
+        var connectMs = watch.ElapsedMilliseconds;
+        attempts.Add(new { h.host, h.port, ok = true, ms = connectMs });
+        var utcNow = DateTime.UtcNow;
+        var account = Facts(api);
+        account.Remove("Password");
+        object? serverTime = null;
+        try { serverTime = (api.GetType().GetProperty("ServerTime")?.GetValue(api) as DateTime?)?.ToString("yyyy-MM-ddTHH:mm:ss"); } catch (Exception) { }
+        var symbols = new Dictionary<string, object>();
+        var available = 0;
+        string? symbolError = null;
+        try
+        {
+            var holder = api.GetType().GetProperty("Symbols")?.GetValue(api);
+            if (holder is not null)
+            {
+                var names = SymbolNames(holder).ToArray();
+                available = names.Length;
+                var wanted = r.symbols is { Length: > 0 } ? r.symbols.Where(s => names.Contains(s, StringComparer.OrdinalIgnoreCase) || names.Length == 0)
+                    : names.Take(Math.Clamp(r.max_symbols, 0, 5000));
+                foreach (var sym in wanted) symbols[sym] = SymbolFacts(holder, sym);
+            }
+            else symbolError = "SDK has no Symbols property";
+        }
+        catch (Exception e) { symbolError = Reason(e); }
+        try { Call(api, "Disconnect", 10); } catch (Exception) { }
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            connected = true, h.host, h.port, connect_ms = connectMs, attempts,
+            utc_now = utcNow.ToString("yyyy-MM-ddTHH:mm:ss"), server_time = serverTime,
+            account, symbols_available = available, symbols, symbol_error = symbolError,
+            sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(),
+        }));
+        return 0;
+    }
+    Console.WriteLine(JsonSerializer.Serialize(new { connected = false, attempts }));
+    return 0;
+}
+
+
 partial class Program
 {
     [GeneratedRegex(@"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252}|[0-9A-Fa-f:]+:[0-9A-Fa-f:]+):\d{1,5}$")]
@@ -446,3 +662,6 @@ partial class Program
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$")]
     private static partial Regex SearchTerm();
 }
+
+sealed record SessionHost(string host, int port);
+sealed record SessionRequest(ulong login, string password, SessionHost[] hosts, string[]? symbols, int max_symbols = 2000, int timeout_seconds = 20);

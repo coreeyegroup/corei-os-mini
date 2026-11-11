@@ -9,7 +9,7 @@
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
 import FloatingWindow from './FloatingWindow';
-import { Alerts, Approvals, BrokerLogin, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
 type Section = 'health' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
@@ -79,9 +79,14 @@ export const BLOCKERS: Record<string, string> = {
 
 class ApiError extends Error {}
 
-/** Set by the Configuration screen: asks for the password again and resolves true when done. */
-let reauthenticate: (() => Promise<boolean>) | null = null;
-export function setReauthHandler(handler: (() => Promise<boolean>) | null) { reauthenticate = handler; }
+/** Registered by each signed-in screen (Configuration, Infrastructure): asks for the password
+ *  again and resolves true when done. The most recently opened screen asks. */
+const reauthHandlers: (() => Promise<boolean>)[] = [];
+const reauthenticate = () => reauthHandlers.length ? reauthHandlers[reauthHandlers.length - 1]() : null;
+export function addReauthHandler(handler: () => Promise<boolean>): () => void {
+  reauthHandlers.push(handler);
+  return () => { const i = reauthHandlers.lastIndexOf(handler); if (i >= 0) reauthHandlers.splice(i, 1); };
+}
 
 export async function api(path: string, method = 'GET', body?: unknown, raw?: BodyInit, retried = false): Promise<any> {
   const response = await fetch('/api/' + path, {
@@ -91,7 +96,7 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
     body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
   if (response.status === 204) return null;
-  if (response.status === 428 && reauthenticate && !retried) {
+  if (response.status === 428 && reauthHandlers.length && !retried) {
     if (await reauthenticate()) return api(path, method, body, raw, true);
   }
   const data = await response.json().catch(() => ({}));
@@ -733,7 +738,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
           {text('broker_group', 'Broker account group / type', { maxLength: 120 }, 'e.g. Raw ECN, Standard')}
         </div>
         <div className="cfg-pair">{text('leverage', 'Leverage (1:x)', { type: 'number', min: 1, max: 10000 })}{text('stop_out_level', 'Stop-out level (%)', { inputMode: 'decimal' })}</div>
-        <div className="cfg-pair">{text('max_open_orders', 'Broker limit: open orders', { type: 'number', min: 1 })}{text('max_open_positions', 'Broker limit: open positions', { type: 'number', min: 1 })}</div>
+        <div className="cfg-pair">{text('max_open_orders', 'Broker cap: open orders', { type: 'number', min: 1 }, "The broker's hard cap, if it has one; not a COREI limit")}{text('max_open_positions', 'Broker cap: open positions', { type: 'number', min: 1 }, "The broker's hard cap, if it has one")}</div>
       </Section>
       <Section n={mt5 ? 5 : 4} title="Ownership, lifecycle and groups">
         <div className="cfg-pair">
@@ -756,8 +761,9 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     {pick('asset_class', 'Asset class', ['FX', 'METAL', 'INDEX', 'COMMODITY', 'CRYPTO', 'EQUITY', 'FUTURE', 'OPTION'])}
     <div className="cfg-pair">{text('base_currency', 'Base currency', { required: true })}{text('quote_currency', 'Quote currency', { required: true })}</div>
     <div className="cfg-pair">{text('price_precision', 'Price decimals', { required: true, type: 'number', min: 0, max: 12 })}{text('tick_size', 'Tick size', { required: true, inputMode: 'decimal' })}</div>
-    <div className="cfg-pair">{text('quantity_precision', 'Quantity decimals', { required: true, type: 'number', min: 0, max: 12 })}{text('quantity_step', 'Quantity step', { required: true, inputMode: 'decimal' })}</div>
-    <div className="cfg-pair">{text('min_quantity', 'Minimum quantity', { required: true, inputMode: 'decimal' })}{text('contract_size', 'Contract size', { required: true, inputMode: 'decimal' })}</div>
+    <p className="cfg-note">These describe the contract itself (smallest tradable unit and increments). They are not your trade size: the size of each order is decided per order by the strategy, signal strength and portfolio risk.</p>
+    <div className="cfg-pair">{text('quantity_precision', 'Quantity decimals', { required: true, type: 'number', min: 0, max: 12 })}{text('quantity_step', 'Smallest increment (contract)', { required: true, inputMode: 'decimal' })}</div>
+    <div className="cfg-pair">{text('min_quantity', 'Smallest tradable quantity (contract)', { required: true, inputMode: 'decimal' })}{text('contract_size', 'Contract size', { required: true, inputMode: 'decimal' })}</div>
     {text('contract_unit', 'Contract unit', { required: true, maxLength: 32 }, 'e.g. oz, units, barrels')}
     {text('trading_session', 'Trading session', { maxLength: 200 }, 'Optional description, e.g. Sun 23:00 – Fri 22:00 UTC')}{status}</>;
 
@@ -943,7 +949,7 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />],
     ['Status', r => <><Status value={r.status} />{r.warnings?.length > 0 && <> <span className="cfg-pill" title={r.warnings.map((w: string) => BLOCKERS[w] ?? w).join('\n')}>{r.warnings.length} warning{r.warnings.length > 1 ? 's' : ''}</span></>}<Pending r={r} /></>]],
   instruments: [['Symbol', r => r.symbol], ['Name', r => r.name], ['Class', r => r.asset_class], ['Tick', r => r.tick_size],
-    ['Min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],
+    ['Contract min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],
   mappings: [['Instrument', r => r.instrument_symbol], ['Provider', r => r.provider_code], ['Connection', r => <Link to="connections" id={r.connection_id}>{r.connection_code}</Link>], ['Env', r => <Env value={r.environment} />],
     ['Applies to', r => r.account_id ? <Link to="accounts" id={r.account_id}>{r.account_code}</Link> : 'All accounts'], ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
 };
@@ -966,7 +972,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
-  const [adding, setAdding] = useState(false), [importing, setImporting] = useState(false);
+  const [adding, setAdding] = useState(false), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
   const prefKey = `corei-os-mini.list.${entity}`;
   const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
   const setViewPref = (patch: Row) => { const next = { ...view, ...patch }; setView(next); try { localStorage.setItem(prefKey, JSON.stringify(next)); } catch { /* preference only */ } };
@@ -1112,7 +1118,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {canEdit && selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
-      {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} />}
+      {selected && entity === 'accounts' && selected.platform === 'MT5' && <BrokerRead account={selected} canEdit={canEdit} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
+      {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}
       {selected && (entity === 'accounts' || entity === 'connections') && <CredentialUse owner={entity} id={selected.id} />}
       </div>
     </FloatingWindow>}
@@ -1458,7 +1465,7 @@ export default function Configuration() {
     } catch (e) { if ((e as any).status === 401) setUser(null); else setError((e as Error).message); }
   }
   // Sensitive actions answer 428: ask for the password again, then the request is retried.
-  useEffect(() => { setReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))); return () => setReauthHandler(null); }, []);
+  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   // Window positions and list views follow the user to other devices.
   useEffect(() => {
     if (!user || user.must_change_password) return;
@@ -1514,10 +1521,10 @@ export default function Configuration() {
       {brokerLogin && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
         : `Broker login failed${new URLSearchParams(window.location.search).get('reason') ? ': ' + new URLSearchParams(window.location.search).get('reason') : '.'}`}</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {current.id === 'health' ? <HealthBoard navigate={navigate} />
-        : current.id === 'approvals' ? <Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} />
-        : current.id === 'alerts' ? <Alerts canEdit={canEdit} />
-        : current.id === 'controls' ? <><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></> : current.id === 'audit' ? <AuditLog />
+      {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
+        : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
+        : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
+        : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
         : current.id === 'users' ? <Users me={user} />
         : current.id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
         : current.id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />

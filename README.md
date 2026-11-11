@@ -604,3 +604,12 @@ From the provider/connection/account audit of 11 Nov 2026 (DEC-29..37). Migratio
 - **Upstox daily login** from the account window (OAuth redirect `/api/oauth/upstox/callback` or authenticator code + PIN).
 - Outbound IP is discovered automatically; set `COREI_EGRESS_IP` in the env file if the server sits behind a fixed NAT.
 - Key rotation: `scripts/rotate-credential-key.py` (see its header).
+
+## Broker reads and Infrastructure — release 0.12.0
+
+Migration 015 (DEC-38..40).
+
+- **Lot sizes stay flexible.** Instrument and broker quantities are labelled as contract and broker limits; the size of each order is decided per order by the strategy, signal strength and portfolio risk (G-P3-06). Health, Approvals, Alerts and Order sending now scroll.
+- **Real data from MT5:** on an MT5 account, *Real data from the broker › Log in and read now* logs in once (investor password preferred), stores margin mode, leverage, group, stop-out, the server clock offset, the address that answered, and every symbol's broker limits, then disconnects. Each read is kept with every address tried. Nothing is traded.
+  - Run `bash scripts/describe-mt5-api.sh` once on the server and send the file it writes: it lists the installed SDK's exact login and symbol fields so any field not yet matched can be added.
+- **Infrastructure** (new item in the left bar): health of the database, services, host, clock, network and broker tools; for administrators a spreadsheet-style table editor (filter per column, sort, edit in place with the keyboard, add and delete rows, export CSV), a read-only SQL console, live database sessions and the edit log. Every change asks for a reason and your password and is logged before and after. Configuration tables open for direct editing only when the policy `infra_edit_controlled_tables` is turned on (Config › Order sending › Policies).

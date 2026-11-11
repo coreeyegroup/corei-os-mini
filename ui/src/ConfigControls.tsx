@@ -282,11 +282,13 @@ export function BrokerLogin({ account, canEdit, reload }: { account: Row; canEdi
 
 /* ---------- symbol specifications and order check ---------- */
 
-export function SymbolSpecs({ account, canEdit }: { account: Row; canEdit: boolean }) {
+export function SymbolSpecs({ account, canEdit, refresh = 0 }: { account: Row; canEdit: boolean; refresh?: number }) {
+  const [filter, setFilter] = useState('');
   const [items, setItems] = useState<Row[] | null>(null), [form, setForm] = useState<Row | null>(null), [check, setCheck] = useState<Row>({ broker_symbol: '', side: 'BUY', volume: '' });
   const [result, setResult] = useState<Row | null>(null), [error, setError] = useState('');
   const load = async () => { try { setItems((await api(`config/accounts/${account.id}/symbol-specs`)).items); } catch (e) { setError((e as Error).message); } };
-  useEffect(() => { void load(); }, [account.id]);
+  useEffect(() => { void load(); }, [account.id, refresh]);
+  const shown = (items ?? []).filter(s => !filter || s.broker_symbol.toLowerCase().includes(filter.toLowerCase()));
   async function add(e: FormEvent) {
     e.preventDefault(); if (!form) return; setError('');
     try { await api(`config/accounts/${account.id}/symbol-specs`, 'POST', { broker_symbol: form.broker_symbol, spec: { digits: Number(form.digits), volume_min: form.volume_min,
@@ -299,16 +301,18 @@ export function SymbolSpecs({ account, canEdit }: { account: Row; canEdit: boole
     try { setResult(await api(`config/accounts/${account.id}/order-check`, 'POST', { ...check, volume: String(check.volume) })); } catch (err) { setError((err as Error).message); }
   }
   const set = (k: string, v: unknown) => setForm({ ...form, [k]: v });
-  return <details className="cfg-more cfg-specs"><summary>Symbol rules on this account ({items?.length ?? 0})</summary>
-    <p className="cfg-note">Each account can have its own lot sizes, filling modes and stop distances, even on the same server. They are read from the broker at login; until then they can be entered by hand (marked Manual). Every order is checked against them before it is sent.</p>
-    {items && items.length > 0 && <table className="cfg-table compact"><thead><tr><th>Symbol</th><th>Lots (min / step / max)</th><th>Filling</th><th>Stops</th><th>Mode</th><th>Source</th></tr></thead><tbody>
-      {items.map(s => <tr key={s.broker_symbol}><td>{s.broker_symbol}</td><td>{s.spec.volume_min} / {s.spec.volume_step} / {s.spec.volume_max}</td><td>{s.spec.filling_modes?.join(', ')}</td>
+  return <details className="cfg-more cfg-specs"><summary>Broker's order limits on this account ({items?.length ?? 0} symbols)</summary>
+    <p className="cfg-note">These are the <strong>broker's</strong> hard limits for each symbol on this account: the smallest lot it accepts, the increment, its maximum, the filling modes and the minimum stop distance. They are <strong>not your trade size</strong>. The size of each order is flexible and decided per order by the strategy, signal strength and portfolio risk; COREI only checks that the chosen size is one the broker will accept (for example rounding 0.137 lots to the broker's 0.01 step). The limits are read from the broker at login; until then they can be entered by hand.</p>
+    {items && items.length > 12 && <input className="cfg-search" aria-label="Find symbol" placeholder={`Find among ${items.length} symbols`} value={filter} onChange={e => setFilter(e.target.value)} />}
+    {shown.length > 0 && <table className="cfg-table compact"><thead><tr><th>Symbol</th><th>Lots (min / step / max)</th><th>Filling</th><th>Stops</th><th>Mode</th><th>Source</th></tr></thead><tbody>
+      {shown.slice(0, 200).map(s => <tr key={s.broker_symbol}><td>{s.broker_symbol}</td><td>{s.spec.volume_min} / {s.spec.volume_step} / {s.spec.volume_max}</td><td>{s.spec.filling_modes?.join(', ')}</td>
         <td>{s.spec.stops_level_points ?? 0} pts</td><td>{s.spec.trade_mode ?? 'FULL'}</td><td>{s.source === 'BROKER' ? 'Broker' : 'Manual'} · {when(s.read_at)}</td></tr>)}</tbody></table>}
-    {canEdit && !form && <button type="button" onClick={() => setForm({ broker_symbol: '', digits: 2, volume_min: '0.01', volume_step: '0.01', volume_max: '100', filling_modes: ['IOC'], stops_level_points: 0, trade_mode: 'FULL' })}>Enter rules for a symbol…</button>}
+    {shown.length > 200 && <p className="cfg-note">Showing 200 of {shown.length}; type to narrow.</p>}
+    {canEdit && !form && <button type="button" onClick={() => setForm({ broker_symbol: '', digits: 2, volume_min: '0.01', volume_step: '0.01', volume_max: '100', filling_modes: ['IOC'], stops_level_points: 0, trade_mode: 'FULL' })}>Enter the broker's limits for a symbol…</button>}
     {form && <form className="cfg-form" onSubmit={add}>
       <div className="cfg-pair"><Field label="Broker symbol"><input aria-label="Spec symbol" required value={form.broker_symbol} onChange={e => set('broker_symbol', e.target.value)} /></Field>
         <Field label="Price digits"><input aria-label="Spec digits" type="number" min={0} max={12} value={form.digits} onChange={e => set('digits', e.target.value)} /></Field></div>
-      <div className="cfg-pair"><Field label="Lot min / step / max"><span className="cfg-address-edit"><input aria-label="Spec min" value={form.volume_min} onChange={e => set('volume_min', e.target.value)} />
+      <div className="cfg-pair"><Field label="Broker accepts: smallest lot / increment / largest"><span className="cfg-address-edit"><input aria-label="Spec min" value={form.volume_min} onChange={e => set('volume_min', e.target.value)} />
         <input aria-label="Spec step" value={form.volume_step} onChange={e => set('volume_step', e.target.value)} /><input aria-label="Spec max" value={form.volume_max} onChange={e => set('volume_max', e.target.value)} /></span></Field>
         <Field label="Stops level (points)"><input aria-label="Spec stops" type="number" min={0} value={form.stops_level_points} onChange={e => set('stops_level_points', e.target.value)} /></Field></div>
       <Field label="Filling modes allowed"><div className="cfg-checks">{['FOK', 'IOC', 'RETURN'].map(m => <label key={m}><input type="checkbox" checked={form.filling_modes.includes(m)}
@@ -317,7 +321,7 @@ export function SymbolSpecs({ account, canEdit }: { account: Row; canEdit: boole
       <div className="cfg-actions"><button className="primary">Save rules</button><button type="button" onClick={() => setForm(null)}>Cancel</button></div>
     </form>}
     <form className="cfg-form cfg-order-check" onSubmit={run}>
-      <strong>Check an order (nothing is sent)</strong>
+      <strong>Would the broker accept this order? (nothing is sent)</strong>
       <div className="cfg-pair"><Field label="Symbol"><input aria-label="Check symbol" required value={check.broker_symbol} onChange={e => setCheck({ ...check, broker_symbol: e.target.value })} /></Field>
         <Field label="Side and lots"><span className="cfg-address-edit"><Choice label="Check side" value={check.side} options={['BUY', 'SELL']} onChange={v => setCheck({ ...check, side: v })} />
           <input aria-label="Check volume" required inputMode="decimal" value={check.volume} onChange={e => setCheck({ ...check, volume: e.target.value })} /></span></Field></div>
@@ -327,6 +331,45 @@ export function SymbolSpecs({ account, canEdit }: { account: Row; canEdit: boole
     </form>
     {error && <p role="alert" className="cfg-error">{error}</p>}
   </details>;
+}
+
+/* ---------- read real data from the broker (MT5) ---------- */
+
+export function BrokerRead({ account, canEdit, onRead }: { account: Row; canEdit: boolean; onRead: () => void }) {
+  const [reads, setReads] = useState<Row[] | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const load = async () => { try { setReads((await api(`config/accounts/${account.id}/broker-reads`)).items); } catch (e) { setError((e as Error).message); } };
+  useEffect(() => { void load(); }, [account.id]);
+  async function read() {
+    setBusy(true); setError('');
+    try { await api(`config/accounts/${account.id}/read-from-broker`, 'POST', {}); await load(); onRead(); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  const last = reads?.[0];
+  const hasPassword = Boolean(account.investor_credential_kind || account.master_credential_kind);
+  return <section className="cfg-panel cfg-broker-read" aria-label="Read from broker">
+    <header><strong>Real data from the broker</strong>
+      {canEdit && <button type="button" className="primary" disabled={busy || !hasPassword} onClick={() => void read()}>{busy ? 'Logging in…' : 'Log in and read now'}</button>}</header>
+    <p className="cfg-note">One read-only login {account.investor_credential_kind ? 'with the investor password' : 'with the master password (save an investor password to read without trading rights)'}.
+      COREI stores the margin mode, leverage, group and stop-out, the server clock offset, the address that answered, and every symbol's broker limits. Nothing is traded.</p>
+    {!hasPassword && <p className="cfg-note">Save a password above first.</p>}
+    {last && (last.connected
+      ? <dl className="cfg-facts">
+          <div><dt>Last read</dt><dd>{when(last.read_at)} by {last.requested_by}</dd></div>
+          <div><dt>Answered</dt><dd>{last.host}:{last.port}{last.connect_ms != null ? ` · ${last.connect_ms} ms` : ''}</dd></div>
+          <div><dt>Margin mode</dt><dd>{last.stored?.facts?.margin_mode ?? 'not reported'}</dd></div>
+          <div><dt>Leverage</dt><dd>{last.stored?.facts?.leverage ? `1:${last.stored.facts.leverage}` : '—'}</dd></div>
+          <div><dt>Group</dt><dd>{last.stored?.facts?.broker_group ?? '—'}</dd></div>
+          <div><dt>Balance</dt><dd>{last.stored?.facts?.balance != null ? `${last.stored.facts.balance} ${last.stored.facts.currency ?? ''}` : '—'}</dd></div>
+          <div><dt>Server clock</dt><dd>{last.server_time_offset_minutes != null ? `UTC${last.server_time_offset_minutes >= 0 ? '+' : '−'}${Math.abs(last.server_time_offset_minutes) / 60}h` : '—'}</dd></div>
+          <div><dt>Symbols</dt><dd>{last.symbols_stored} stored of {last.symbols_available}{last.symbols_unmapped?.length ? ` · ${last.symbols_unmapped.length} need mapping` : ''}</dd></div>
+        </dl>
+      : <p role="status" className="cfg-error">Last login failed {when(last.read_at)}: {last.error}</p>)}
+    {last && last.attempts?.length > 0 && <details className="cfg-more"><summary>Addresses tried ({last.attempts.length})</summary>
+      <table className="cfg-table compact"><tbody>{last.attempts.map((a: Row, i: number) => <tr key={i}><td>{a.host}:{a.port}</td><td>{a.ok ? 'Logged in' : a.error}</td><td>{a.ms != null ? `${a.ms} ms` : ''}</td></tr>)}</tbody></table></details>}
+    {reads && reads.length > 1 && <details className="cfg-more"><summary>Earlier reads ({reads.length - 1})</summary>
+      <table className="cfg-table compact"><tbody>{reads.slice(1).map(r => <tr key={r.id}><td>{when(r.read_at)}</td><td>{r.requested_by}</td><td>{r.connected ? `${r.host} · ${r.symbols_stored} symbols` : r.error}</td></tr>)}</tbody></table></details>}
+    {error && <p role="alert" className="cfg-error">{error}</p>}
+  </section>;
 }
 
 /* ---------- credential-use log ---------- */

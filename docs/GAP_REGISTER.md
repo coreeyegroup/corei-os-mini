@@ -59,8 +59,10 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-C-04 | Health board, set-up checklist, links between records, sortable lists, CSV import/export, per-user window positions | DONE (0.11.0) |
 | G-C-05 | Alerts (e-mail, Telegram, webhook) | DONE (0.11.0) — DEC-37; needs SMTP settings or a bot token on the server |
 | G-C-06 | Upstox daily login (OAuth and TOTP), static-IP check, rate limiter, pre-send order check | DONE as building blocks (0.11.0) — DEC-36; used by the adapters when built |
-| G-C-07 | Facts read at login (margin mode, symbol rules, leverage), live connection status, Test login | OPEN — storage and screens done; filled by the MT5 / Upstox adapters (G-P1-01) |
+| G-C-07 | Facts read at login (margin mode, symbol rules, leverage), live connection status, Test login | DONE for MT5 (0.12.0) — DEC-39, *Log in and read now* on the account; Upstox reads come with its adapter |
 | G-C-08 | Credential key on a separate host or hardware key | OPEN — rotation done; separation is an infrastructure step |
+| G-C-09 | Infrastructure console: health, PostgreSQL table view/editor, read-only SQL console, edit log | DONE (0.12.0) — DEC-40 |
+| G-C-10 | Scheduled broker reads (e.g. at each session open) and alert when broker limits change | OPEN |
 
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |
@@ -79,6 +81,7 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-P3-03 | Atomic per-account capacity reservation | OPEN |
 | G-P3-04 | Kill controls | PARTIAL — firm-wide order-sending switch per environment (0.8.0); account/strategy/instrument scopes open |
 | G-P3-05 | Group policy when one child fails | OPEN |
+| G-P3-06 | Position sizing per order (strategy, signal strength, portfolio risk), rounded to the broker's step | OPEN — DEC-38; nothing in configuration fixes a size |
 
 ### Phase 4 — Execution and reconciliation
 | ID | Gap | Status |

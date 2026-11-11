@@ -12,6 +12,7 @@ body in X-COREI-Signature when the channel has a secret.
 from __future__ import annotations
 
 import asyncio
+import time
 import hashlib
 import hmac
 import json
@@ -168,6 +169,9 @@ def daily_checks(transaction) -> int:
         return enqueue(db, 'EXPIRY', 'WARNING', f'{len(rows)} account(s) expiring within {days} days', body)
 
 
+heartbeat: dict[str, float | None] = {'at': None, 'failed_at': None}
+
+
 async def run_forever(transaction, interval: float = 15.0) -> None:
     last_daily = 0.0
     loop = asyncio.get_running_loop()
@@ -177,7 +181,9 @@ async def run_forever(transaction, interval: float = 15.0) -> None:
             if loop.time() - last_daily > 3600:
                 await loop.run_in_executor(None, daily_checks, transaction)
                 last_daily = loop.time()
+            heartbeat['at'] = time.time()
         except Exception:  # noqa: BLE001 - the loop must survive a database restart
+            heartbeat['failed_at'] = time.time()
             log.warning('Alert delivery cycle failed', exc_info=True)
         await asyncio.sleep(interval)
 

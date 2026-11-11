@@ -6,6 +6,7 @@ export const views = [
   "Execution",
   "Portfolio",
   "Operations",
+  "Infrastructure",
   "Settings",
 ] as const;
 export type View = (typeof views)[number];

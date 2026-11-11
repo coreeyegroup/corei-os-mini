@@ -26,6 +26,8 @@ POLICIES = {
     'four_eyes_live_changes': ('bool', 'LIVE address additions, LIVE reactivation and LIVE credential replacement need a second person.'),
     'reauth_minutes': ('int', 'Minutes a re-entered password stays valid for sensitive actions (1–60).'),
     'expiry_warning_days': ('int', 'Days before an account or mandate expiry that warnings and alerts start (1–90).'),
+    'infra_edit_controlled_tables': ('bool', 'Let administrators edit configuration tables (providers, connections, accounts, '
+                                     'deployments…) directly in the Infrastructure table editor. Edits there skip four-eyes.'),
 }
 LIMITS = {'reauth_minutes': (1, 60), 'expiry_warning_days': (1, 90)}
 

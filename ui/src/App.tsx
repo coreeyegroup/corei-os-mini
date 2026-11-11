@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Configuration from "./Configuration";
+import Infrastructure from "./Infrastructure";
 import WorkbenchIcon from "./WorkbenchIcon";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
@@ -35,10 +36,11 @@ const descriptions: Record<View, string> = {
   Execution: "Account allocation, order lifecycle and reconciliation",
   Portfolio: "Positions, balances, fees and shared exposure",
   Operations: "Connection health, service status and operational records",
+  Infrastructure: "Server and database health, PostgreSQL tables (view and edit), SQL console and edit log",
   Settings: "Workspace layout and navigation preferences",
 };
-const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Config',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Settings:'Settings'};
-const iconIndex:Record<View,number>={Overview:0,'Market data':1,Configuration:2,Strategies:5,Execution:6,Portfolio:7,Operations:8,Settings:9};
+const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Config',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'Infra',Settings:'Settings'};
+const iconIndex:Record<View,number>={Overview:0,'Market data':1,Configuration:2,Strategies:5,Execution:6,Portfolio:7,Operations:8,Infrastructure:10,Settings:9};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
@@ -316,6 +318,7 @@ export default function App() {
 
   function body(view: View) {
     if (view === "Configuration") return <Configuration/>;
+    if (view === "Infrastructure") return <Infrastructure/>;
     if (view === "Settings")
       return (
         <div className="content">
