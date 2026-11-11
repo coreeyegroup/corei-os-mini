@@ -52,6 +52,8 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-P1-04 | Tick/quote storage | OPEN |
 | G-P1-05 | Feed assessment on a live stream | OPEN (needs G-P1-01) |
 | G-P1-06 | Instrument contract details | DONE (0.8.0) |
+| G-P1-07 | MT5 server discovery: broker directory search, servers.dat, per-account address choice, latency test | DONE (0.10.0) — DEC-26..28 |
+| G-P1-08 | Refresh a connection's addresses from what the broker sends after login; record order round-trip and slippage per account × address | OPEN (needs G-P1-01) |
 
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |

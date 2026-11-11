@@ -236,3 +236,23 @@ label.cfg-link input { position: absolute; width: 1px; height: 1px; opacity: 0; 
 .cfg-filebutton input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
 .cfg-address-table th:first-child, .cfg-address-table td:first-child { width: 40px; text-align: center; }
 .cfg-address-table th:nth-child(2), .cfg-address-table td:nth-child(2) { width: 28px; }
+
+/* Latency and per-account address choice */
+.cfg-latency { font-variant-numeric: tabular-nums; font-family: var(--mono, ui-monospace, monospace); font-size: .9em; padding: 1px 6px; border-radius: 3px; }
+.cfg-latency.fast { color: var(--ok, #3fb950); background: color-mix(in srgb, var(--ok, #3fb950) 14%, transparent); }
+.cfg-latency.mid { color: var(--warn, #d29922); background: color-mix(in srgb, var(--warn, #d29922) 14%, transparent); }
+.cfg-latency.slow { color: var(--danger, #f85149); background: color-mix(in srgb, var(--danger, #f85149) 14%, transparent); }
+.cfg-route { display: flex; flex-direction: column; gap: 8px; }
+.cfg-route-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 900px) { .cfg-route-modes { grid-template-columns: 1fr; } }
+.cfg-route-mode { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); cursor: pointer; background: var(--canvas); }
+.cfg-route-mode.on { border-color: var(--accent); background: var(--selection); }
+.cfg-route-mode span { display: flex; flex-direction: column; gap: 3px; }
+.cfg-route-mode small { color: var(--muted); font-size: .82em; line-height: 1.35; }
+.cfg-route-mode input { margin-top: 3px; }
+.cfg-route-preview { margin: 0; padding: 0 0 0 26px; border: 1px solid var(--line); max-height: 220px; overflow: auto; }
+.cfg-route-preview li { padding: 4px 8px 4px 2px; border-bottom: 1px solid var(--line); }
+.cfg-route-preview li:last-child { border-bottom: 0; }
+.cfg-route-preview li > span:first-child { margin-right: 10px; }
+.cfg-warnings { margin: 0; padding: 8px 8px 8px 26px; border-left: 3px solid var(--warn, #d29922); background: color-mix(in srgb, var(--warn, #d29922) 8%, transparent); }
+.cfg-reuse { border-left: 3px solid var(--accent); padding: 6px 10px; background: var(--canvas); }

@@ -22,12 +22,14 @@ from fastapi import HTTPException
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from . import credentials
 from .config import get_settings
 from .config_models import (AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn,
-                            ApiKeyCredential, OAuthClientCredential, Mt5LoginCredential)
+                            ApiKeyCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
+                            Mt5Settings)
+from .mt5_routing import effective_access_points
 from .persistence import PersistenceNotConfigured, _connect
 
 # Provider adapters register their platform here when implemented. Until then every
@@ -124,7 +126,8 @@ SELECTS = {
         c.purpose, c.status AS connection_status, c.settings->>'auth_method' AS auth_method,
         p.id AS provider_id, p.code AS provider_code, p.name AS provider_name, p.status AS provider_status,
         acr.kind AS credential_kind, acr.access_level AS credential_access_level,
-        acr.updated_at AS credential_updated_at, ccr.kind AS connection_credential_kind
+        acr.updated_at AS credential_updated_at, ccr.kind AS connection_credential_kind,
+        c.settings AS connection_settings
         FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id
         JOIN cfg_providers p ON p.id=c.provider_id
         LEFT JOIN cfg_credentials acr ON acr.account_id=a.id
@@ -152,6 +155,29 @@ def execution_controls(db) -> dict[str, dict]:
     return {r['environment']: clean(r) for r in rows}
 
 
+def latest_latency(db, connection_ids: list) -> dict:
+    """{connection_id: {(host, port): latest sample}} from the latency history."""
+    if not connection_ids:
+        return {}
+    rows = db.execute('SELECT DISTINCT ON (connection_id, host, port) connection_id, host, port, reachable, latency_ms, '
+                      'measured_at, measured_from FROM cfg_latency_checks WHERE connection_id = ANY(%s) '
+                      'ORDER BY connection_id, host, port, measured_at DESC', (connection_ids,)).fetchall()
+    out: dict = {}
+    for r in rows:
+        out.setdefault(str(r['connection_id']), {})[(r['host'], r['port'])] = {
+            'reachable': r['reachable'], 'latency_ms': r['latency_ms'], 'measured_at': r['measured_at'].isoformat(),
+            'measured_from': r['measured_from']}
+    return out
+
+
+def account_routing(row: dict, latency: dict) -> dict | None:
+    if row.get('platform') != 'MT5':
+        return None
+    settings = row.get('connection_settings') or {}
+    return effective_access_points(row.get('access_mode') or 'SERVER', row.get('access_points') or [],
+                                   settings.get('access_points') or [], latency.get(str(row['connection_id']), {}))
+
+
 def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[str]]:
     """Explain, in order, every reason an account cannot yet stream data or send orders."""
     data: list[str] = []
@@ -167,6 +193,9 @@ def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[st
         data.append('ACCOUNT_CREDENTIAL_MISSING')
     if row['platform'] == 'REST_API' and not row.get('connection_credential_kind'):
         data.append('CONNECTION_CREDENTIAL_MISSING')
+    routing = row.get('routing')
+    if routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings']:
+        data.append('NO_ADDRESS_AVAILABLE')
     if row['platform'] not in AVAILABLE_ADAPTERS:
         data.append('ADAPTER_NOT_AVAILABLE')
     trading = list(data)
@@ -184,7 +213,13 @@ def account_readiness(row: dict, controls: dict[str, dict]) -> dict[str, list[st
 def _enrich(entity: str, rows: list[dict], db) -> list[dict]:
     if entity == 'accounts':
         controls = execution_controls(db)
-        return [{**clean(r), **account_readiness(r, controls)} for r in rows]
+        latency = latest_latency(db, list({r['connection_id'] for r in rows if r['platform'] == 'MT5'}))
+        out = []
+        for r in rows:
+            r = {**r, 'routing': account_routing(r, latency)}
+            r.pop('connection_settings', None)
+            out.append({**clean(r), **account_readiness(r, controls)})
+        return out
     return [clean(r) for r in rows]
 
 
@@ -230,6 +265,14 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
         connection = _connection(db, data['connection_id'])
         if connection['platform'] == 'MT5' and not re.fullmatch(r'[1-9][0-9]{0,19}', data['external_account_id']):
             raise HTTPException(422, 'MT5 account number must be digits only (the broker login).')
+        if connection['platform'] != 'MT5' and (data.get('access_mode', 'SERVER') != 'SERVER' or data.get('access_points')):
+            raise HTTPException(422, 'Address choice applies to MT5 accounts only.')
+        if data.get('access_mode') == 'ACCOUNT':
+            on_server = {(p['host'], int(p['port'])) for p in connection['settings'].get('access_points', [])}
+            missing = [f"{p['host']}:{p['port']}" for p in data['access_points'] if (p['host'], int(p['port'])) not in on_server]
+            if missing:
+                raise HTTPException(422, f"{', '.join(missing[:3])} {'is' if len(missing) == 1 else 'are'} not among the addresses of "
+                                         f"{connection['settings'].get('server_name')}. Add {'it' if len(missing) == 1 else 'them'} to the connection first.")
         if data['trading_permission'] == 'TRADING':
             if connection['purpose'] == 'MARKET_DATA':
                 raise HTTPException(422, 'This connection is market-data only. Use a trading connection to allow trading.')
@@ -257,21 +300,31 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
 
 # ---------- writes ----------
 
-def create(actor: str, entity: str, data: BaseModel) -> dict:
-    spec = SPECS[entity]
-    values = data.model_dump(mode='python')
-    if entity == 'connections':
+def _json_columns(entity: str, values: dict) -> dict:
+    if entity == 'connections' and 'settings' in values:
         values['settings'] = Jsonb(values['settings'])
+    if entity == 'accounts' and 'access_points' in values:
+        values['access_points'] = Jsonb([{'host': p['host'], 'port': int(p['port'])} for p in values['access_points']])
+    return values
+
+
+def _insert(db, actor: str, entity: str, data: BaseModel, reason: str = '') -> UUID:
+    spec = SPECS[entity]
+    _rules(db, entity, data.model_dump(mode='python'), None)
+    values = _json_columns(entity, data.model_dump(mode='python'))
     record_id = uuid4()
+    columns = ['id', *values]
+    db.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
+        sql.Identifier(spec.table), sql.SQL(',').join(map(sql.Identifier, columns)),
+        sql.SQL(',').join(sql.Placeholder() * len(columns))), (record_id, *values.values()))
+    after = db.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,)).fetchone()
+    audit(db, actor, 'CREATE', spec.label, record_id, None, after, reason)
+    return record_id
+
+
+def create(actor: str, entity: str, data: BaseModel) -> dict:
     with transaction('create') as db:
-        _rules(db, entity, data.model_dump(mode='python'), None)
-        columns = ['id', *values]
-        db.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
-            sql.Identifier(spec.table), sql.SQL(',').join(map(sql.Identifier, columns)),
-            sql.SQL(',').join(sql.Placeholder() * len(columns))), (record_id, *values.values()))
-        after = db.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,)).fetchone()
-        audit(db, actor, 'CREATE', spec.label, record_id, None, after)
-        return get_record(db, entity, record_id)
+        return get_record(db, entity, _insert(db, actor, entity, data))
 
 
 def _locked(db, spec: Spec, record_id: UUID, version: int) -> dict:
@@ -292,9 +345,7 @@ def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: i
             if str(before[field]) != str(values[field]):
                 raise HTTPException(422, f'{field} cannot be changed. Create a new {spec.label} instead.')
         _rules(db, entity, values, record_id)
-        changes = {k: v for k, v in values.items() if k not in spec.immutable}
-        if entity == 'connections':
-            changes['settings'] = Jsonb(changes['settings'])
+        changes = _json_columns(entity, {k: v for k, v in values.items() if k not in spec.immutable})
         assignments = sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in changes)
         db.execute(sql.SQL('UPDATE {} SET {}, version=version+1, updated_at=now() WHERE id=%s').format(
             sql.Identifier(spec.table), assignments), (*changes.values(), record_id))
@@ -319,42 +370,46 @@ def _secret_fields(credential: BaseModel) -> dict[str, str]:
 
 
 def set_credential(actor: str, owner: str, owner_id: UUID, credential: BaseModel) -> dict:
-    access_level = getattr(credential, 'access_level', 'FULL')
     with transaction('update') as db:
-        if owner == 'accounts':
-            account = db.execute('SELECT a.*, c.platform FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
-                                 'WHERE a.id=%s FOR UPDATE OF a', (owner_id,)).fetchone()
-            if not account:
-                raise HTTPException(404, 'Account not found.')
-            if account['platform'] != 'MT5' or not isinstance(credential, Mt5LoginCredential):
-                raise HTTPException(422, 'Only MT5 accounts hold their own login. API credentials belong to the connection.')
-            if access_level == 'READ_ONLY' and account['trading_permission'] == 'TRADING':
-                raise HTTPException(422, 'An investor (read-only) password cannot be used on an account permitted to trade. '
-                                         'Change the trading permission first or save the master password.')
-            column = 'account_id'
-        else:
-            connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
-            if not connection:
-                raise HTTPException(404, 'Connection not found.')
-            expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(
-                connection['settings'].get('auth_method'))
-            if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):
-                raise HTTPException(422, 'This connection does not take this kind of credential. MT5 logins are saved on each account.')
-            column = 'connection_id'
-        existing = db.execute(sql.SQL('SELECT id, kind, access_level FROM cfg_credentials WHERE {}=%s').format(
-            sql.Identifier(column)), (owner_id,)).fetchone()
-        credential_id = existing['id'] if existing else uuid4()
-        ciphertext = credentials.encrypt(credential_id, _secret_fields(credential))
-        if existing:
-            db.execute('UPDATE cfg_credentials SET kind=%s, access_level=%s, ciphertext=%s, updated_at=now() WHERE id=%s',
-                       (credential.kind, access_level, ciphertext, credential_id))
-        else:
-            db.execute(sql.SQL('INSERT INTO cfg_credentials(id, {}, kind, access_level, ciphertext) VALUES (%s,%s,%s,%s,%s)').format(
-                sql.Identifier(column)), (credential_id, owner_id, credential.kind, access_level, ciphertext))
-        summary = {'kind': credential.kind, 'access_level': access_level}
-        audit(db, actor, 'REPLACE_CREDENTIAL' if existing else 'SET_CREDENTIAL', SPECS[owner].label, owner_id,
-              {'kind': existing['kind'], 'access_level': existing['access_level']} if existing else None, summary)
-        return summary
+        return _save_credential(db, actor, owner, owner_id, credential)
+
+
+def _save_credential(db, actor: str, owner: str, owner_id: UUID, credential: BaseModel) -> dict:
+    access_level = getattr(credential, 'access_level', 'FULL')
+    if owner == 'accounts':
+        account = db.execute('SELECT a.*, c.platform FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
+                             'WHERE a.id=%s FOR UPDATE OF a', (owner_id,)).fetchone()
+        if not account:
+            raise HTTPException(404, 'Account not found.')
+        if account['platform'] != 'MT5' or not isinstance(credential, Mt5LoginCredential):
+            raise HTTPException(422, 'Only MT5 accounts hold their own login. API credentials belong to the connection.')
+        if access_level == 'READ_ONLY' and account['trading_permission'] == 'TRADING':
+            raise HTTPException(422, 'An investor (read-only) password cannot be used on an account permitted to trade. '
+                                     'Change the trading permission first or save the master password.')
+        column = 'account_id'
+    else:
+        connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
+        if not connection:
+            raise HTTPException(404, 'Connection not found.')
+        expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(
+            connection['settings'].get('auth_method'))
+        if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):
+            raise HTTPException(422, 'This connection does not take this kind of credential. MT5 logins are saved on each account.')
+        column = 'connection_id'
+    existing = db.execute(sql.SQL('SELECT id, kind, access_level FROM cfg_credentials WHERE {}=%s').format(
+        sql.Identifier(column)), (owner_id,)).fetchone()
+    credential_id = existing['id'] if existing else uuid4()
+    ciphertext = credentials.encrypt(credential_id, _secret_fields(credential))
+    if existing:
+        db.execute('UPDATE cfg_credentials SET kind=%s, access_level=%s, ciphertext=%s, updated_at=now() WHERE id=%s',
+                   (credential.kind, access_level, ciphertext, credential_id))
+    else:
+        db.execute(sql.SQL('INSERT INTO cfg_credentials(id, {}, kind, access_level, ciphertext) VALUES (%s,%s,%s,%s,%s)').format(
+            sql.Identifier(column)), (credential_id, owner_id, credential.kind, access_level, ciphertext))
+    summary = {'kind': credential.kind, 'access_level': access_level}
+    audit(db, actor, 'REPLACE_CREDENTIAL' if existing else 'SET_CREDENTIAL', SPECS[owner].label, owner_id,
+          {'kind': existing['kind'], 'access_level': existing['access_level']} if existing else None, summary)
+    return summary
 
 
 def clear_credential(actor: str, owner: str, owner_id: UUID) -> None:
@@ -409,8 +464,102 @@ def schema_ready() -> bool:
         with transaction('read') as db:
             for table in ('cfg_providers', 'cfg_connections', 'cfg_accounts', 'cfg_instruments',
                           'cfg_symbol_mappings', 'cfg_credentials', 'cfg_execution_controls', 'cfg_audit_log',
-                          'cfg_users', 'cfg_sessions', 'cfg_strategies', 'cfg_strategy_versions', 'cfg_deployments'):
+                          'cfg_users', 'cfg_sessions', 'cfg_strategies', 'cfg_strategy_versions', 'cfg_deployments',
+                          'cfg_latency_checks'):
                 db.execute(sql.SQL('SELECT 1 FROM {} LIMIT 0').format(sql.Identifier(table)))
         return True
     except HTTPException:
         return False
+
+
+# ---------- MT5 latency history and one-step account setup ----------
+
+def record_latency(actor: str, connection_id: UUID, measured_from: str, results: list[dict]) -> None:
+    with transaction('update') as db:
+        connection = _connection(db, connection_id)
+        if connection['platform'] != 'MT5':
+            raise HTTPException(422, 'Latency is measured for MT5 connections only.')
+        for r in results:
+            db.execute('INSERT INTO cfg_latency_checks(connection_id,host,port,reachable,latency_ms,error,measured_from,measured_by) '
+                       'VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+                       (connection_id, r['host'], r['port'], r['reachable'], r['latency_ms'], (r['error'] or None) and r['error'][:200],
+                        measured_from, actor))
+
+
+def connection_latency(connection_id: UUID) -> list[dict]:
+    with transaction('read') as db:
+        latest = latest_latency(db, [connection_id]).get(str(connection_id), {})
+    return [{'host': h, 'port': p, **v} for (h, p), v in latest.items()]
+
+
+def _server_key(name: str) -> str:
+    return ' '.join(name.split()).lower()
+
+
+def _connection_code(db, provider_code: str, environment: str) -> str:
+    base = f'{provider_code}_MT5_{environment}'[:29].rstrip('_')
+    taken = {r['code'] for r in db.execute('SELECT code FROM cfg_connections WHERE code LIKE %s', (base + '%',)).fetchall()}
+    code, n = base, 2
+    while code in taken:
+        code, n = f'{base}_{n}', n + 1
+    return code
+
+
+def setup_mt5_account(actor: str, data: Mt5AccountSetupIn) -> dict:
+    """Login + server in one step. Finds the provider's connection for this server and
+    environment (or the one named), adds addresses it lacks when asked, creates it when
+    there is none, then creates the account and stores its password — all or nothing."""
+    picked = [(p.host, p.port) for p in data.server.access_points]
+    with transaction('create') as db:
+        provider = db.execute('SELECT * FROM cfg_providers WHERE id=%s', (data.provider_id,)).fetchone()
+        if not provider:
+            raise HTTPException(422, 'Provider does not exist.')
+        if data.connection_id:
+            connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (data.connection_id,)).fetchone()
+            if not connection or connection['provider_id'] != data.provider_id or connection['platform'] != 'MT5' \
+                    or connection['environment'] != data.environment \
+                    or _server_key(connection['settings'].get('server_name', '')) != _server_key(data.server.server_name):
+                raise HTTPException(422, 'The chosen connection is not this provider\'s MT5 connection for this server and environment.')
+        else:
+            matches = [c for c in db.execute(
+                "SELECT * FROM cfg_connections WHERE provider_id=%s AND platform='MT5' AND environment=%s ORDER BY code FOR UPDATE",
+                (data.provider_id, data.environment)).fetchall()
+                if _server_key(c['settings'].get('server_name', '')) == _server_key(data.server.server_name)]
+            if len(matches) > 1:
+                raise HTTPException(409, f'{len(matches)} connections use server {data.server.server_name}: '
+                                         f"{', '.join(c['code'] for c in matches)}. Choose one.")
+            connection = matches[0] if matches else None
+        connection_action = 'REUSED'
+        if connection is None:
+            new = ConnectionIn.model_validate({
+                'provider_id': data.provider_id, 'code': _connection_code(db, provider['code'], data.environment),
+                'name': f"{provider['name']} MT5 {data.environment.lower()} · {data.server.server_name}"[:120],
+                'platform': 'MT5', 'environment': data.environment, 'purpose': 'BOTH',
+                'settings': data.server.model_dump(mode='json')})
+            connection_id = _insert(db, actor, 'connections', new, 'Created while adding an MT5 account')
+            connection_action = 'CREATED'
+        else:
+            connection_id = connection['id']
+            have = {(p['host'], int(p['port'])) for p in connection['settings'].get('access_points', [])}
+            extra = [p for p in data.server.access_points if (p.host, p.port) not in have]
+            if extra and data.add_missing_addresses:
+                settings = dict(connection['settings'])
+                settings['access_points'] = [*settings.get('access_points', []),
+                                             *[{**p.model_dump(mode='json'), 'enabled': False} for p in extra]]
+                settings = Mt5Settings.model_validate(settings).model_dump(mode='json')
+                after = db.execute('UPDATE cfg_connections SET settings=%s, version=version+1, updated_at=now() WHERE id=%s RETURNING *',
+                                   (Jsonb(settings), connection_id)).fetchone()
+                audit(db, actor, 'UPDATE', 'connection', connection_id, connection, after,
+                      f'Added {len(extra)} address(es) while adding an MT5 account')
+                connection_action = 'ADDRESSES_ADDED'
+        payload = {**data.account, 'connection_id': str(connection_id)}
+        try:
+            account = AccountIn.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(422, [{'field': 'account.' + '.'.join(str(p) for p in e['loc']),
+                                       'message': e['msg'].removeprefix('Value error, ')} for e in exc.errors()]) from None
+        account_id = _insert(db, actor, 'accounts', account)
+        if data.credential:
+            _save_credential(db, actor, 'accounts', account_id, data.credential)
+        return {'connection_action': connection_action, 'connection': get_record(db, 'connections', connection_id),
+                'account': get_record(db, 'accounts', account_id), 'picked_addresses': len(picked)}

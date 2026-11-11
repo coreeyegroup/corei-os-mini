@@ -30,6 +30,23 @@ Rules this follows:
 - Each MT5 account saves its own password (master = can trade, investor = read only).
 - Filter Accounts by holder (search box) to see everything one person or company owns across brokers.
 
+## Adding MT5 accounts (Accounts › Add MT5 account)
+
+One window, in the order MT5 uses: **provider and environment → login, holder, password → server → this account's addresses → name and permission**.
+
+- **Server:** *Find servers* asks the MT5 broker directory live (current servers and addresses); *Open servers.dat* reads a terminal's file; *Enter manually* is the fallback.
+- If COREI already has a connection for that provider, environment and server, the account is attached to it. Otherwise one is created. Nothing is duplicated.
+- **Addresses for this account** — switchable later on the account, nothing is lost by switching:
+
+| Choice | Uses | When |
+|---|---|---|
+| Use the server's addresses (default) | The connection's ticked addresses, in its order | Most accounts; one place to maintain |
+| Fastest first | The connection's ticked addresses, fastest by the latest latency test | When latency matters and you test regularly |
+| Choose for this account | Only the addresses you tick, in your order (from that server's list) | A specific account must use a specific route |
+
+- **Test latency** measures TCP connect time from the COREI server (not your PC), best of three, without logging in. Private addresses (10.x, 192.168.x, …) are not tested; they only work inside the broker's network.
+- An MT5 login belongs to one server; it cannot be moved to another server. What differs per route is the address. Slippage is mostly the broker's execution; it will be recorded per fill once the MT5 adapter exists.
+
 ## Example 2 — Indian broker with an OAuth API (Upstox)
 
 Upstox facts this relies on (checked 10 Nov 2026, Upstox developer documentation):

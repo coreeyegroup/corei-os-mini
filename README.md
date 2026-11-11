@@ -582,3 +582,11 @@ After updating, re-enter providers, connections and accounts in **Configuration*
 **Configuration › Connections › New connection (MT5) › Analyze servers.dat** reads every broker server and access point in a terminal's `servers.dat` (up to 32 MiB, 100,000 servers) into one table of *address · server name · company · access point*, with a **broker filter** (server name or company) and an **address or name** filter. Tick rows of one server and choose *Use selected access points*; they are used in the order ticked and the server's other access points are kept unselected. Extended (newer-format) access records are read where they contain an address; anything unreadable is counted and shown, never silently dropped. Parsed files stay in memory for 30 minutes for the user who uploaded them and are not stored.
 
 If brokers that another tool shows are missing or listed as *no readable address*, run `bash scripts/inspect-servers-dat.sh /path/to/servers.dat` on the server. It reports how many access records the installed SDK could decode and prints the structure of any it could not, so the reader can be extended for that layout.
+
+## MT5 servers, routing and one-step accounts — release 0.10.0
+
+- **Accounts › Add MT5 account**: login, holder, password and server in one window. The server's connection is reused (or created) automatically; see docs/CONFIGURATION_GUIDE.md and DEC-26.
+- **Find servers** searches the MT5 broker directory live (SDK `Broker.Search`), next to *Open servers.dat*. Check from the server with `bash scripts/search-mt5-broker.sh VTMarkets`.
+- **Per-account address choice** (DEC-27): server's addresses (default), fastest first, or the account's own list. Switching keeps the account's own list.
+- **Test latency** (DEC-28) on connections and accounts: TCP connect time from the COREI server, public addresses only, kept as history.
+- Migration 013 adds `cfg_accounts.access_mode`, `cfg_accounts.access_points` and `cfg_latency_checks`. Apply migrations, re-run `scripts/setup-broker-accounts.sh` (reader update), then deploy.

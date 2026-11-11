@@ -22,7 +22,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[]};
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
- const searched=[];
+ const searched=[],latencyCalls=[],setups=[];
  const requests=[];let n=0;
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
@@ -61,6 +61,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
        {server_name:'Marketmates-Live',company_name:'Marketmates Ltd',details:{CompanyName:'Marketmates Ltd'},access_points:[{name:'Access Point 1',host:'142.91.121.204',port:1950},{name:'Access Point 2',host:'142.91.121.204',port:443},{name:'Access Point 3',host:'5.181.78.117',port:1950}]},
        {server_name:'MetaQuotes-Demo',company_name:'MetaQuotes Ltd.',details:{CompanyName:'MetaQuotes Ltd.',TimeZone:120,DST:1,Description:'MetaTrader 5 demo server operated by MetaQuotes Ltd. for testing and evaluation'},
         access_points:Array.from({length:50},(_,i)=>({name:'Access Point '+(i+1),host:i<25?'78.140.180.'+(i+1):'2a00:1178:1:60::'+(i+1).toString(16),port:i%2?1950:443}))}];
+     if(parts[1]==='latency'){const body=JSON.parse(options.body);latencyCalls.push(body);
+       return ok({measured_from:'core-node',attempts:3,results:body.addresses.map(a=>({...a,reachable:true,latency_ms:Number(a.host.split('.').pop())+1,median_ms:Number(a.host.split('.').pop())+2,error:null}))});}
+     if(parts[1]==='account-setup'){const body=JSON.parse(options.body);setups.push(body);
+       const c=db.connections.find(x=>x.id===body.connection_id);
+       const extra=body.server.access_points.filter(p=>!c.settings.access_points.some(q=>q.host===p.host&&q.port===p.port));
+       c.settings.access_points.push(...extra.map(p=>({...p,enabled:false})));c.version++;
+       const row={...body.account,id:`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`,connection_id:c.id,version:1,updated_at:new Date().toISOString(),
+         credential_kind:body.credential?'MT5_LOGIN':null,routing:{mode:body.account.access_mode,used_mode:body.account.access_mode,addresses:[],warnings:[]}};
+       db.accounts.push(row);
+       return ok({connection_action:extra.length?'ADDRESSES_ADDED':'REUSED',connection:enrich('connections',c),account:enrich('accounts',row)},201);}
      if(parts[1]==='broker-search'){const query=JSON.parse(options.body).query;searched.push(query);
        return ok({catalog_id:'cat1',source:'broker-directory',query,server_count:servers.length,access_point_count:56,skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:0});}
      if(method==='POST')return ok({catalog_id:'cat1',server_count:servers.length,access_point_count:servers.reduce((n,s)=>n+s.access_points.length,0),skipped_servers:0,invalid_addresses:0,servers_without_access_points:0,unreadable_extended_records:2});
@@ -74,6 +84,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
        .filter(r=>b.every(t=>(r.server_name+' '+r.company_name).toLowerCase().includes(t))&&q.every(t=>`${r.host}:${r.port} ${r.name}`.toLowerCase().includes(t)));
      return ok({total:rows.length,server_matches:new Set(rows.map(r=>r.server_name)).size,offset:0,items:rows.slice(0,200)});}
    const entity=parts[0];
+   if(parts[2]==='latency')return ok({items:[]});
    if(parts[2]==='credential'){const body=JSON.parse(options.body);const row=db[entity].find(x=>x.id===parts[1]);
      row.credential_kind=body.credential.kind;row.credential_access_level=body.credential.access_level;row.credential_updated_at=new Date().toISOString();
      return ok({kind:body.credential.kind,access_level:body.credential.access_level});}
@@ -239,7 +250,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  nav('Accounts').click();await tick();await tick();
  button('New account').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
- assert.match($('.cfg-detail').textContent,/DEMO from the connection/);
+ assert.match($('.cfg-detail').textContent,/Environment DEMO · server ICMarketsSC-Demo/);
  fill(byLabel('Broker login (MT5 account number)'),'51234567');await tick();
  assert.equal(byLabel('Account ID').value,'ICM_DEMO_51234567');
  fill(byLabel('Account holder'),'Yatheesh N S');fill(byLabel('Account name'),'Demo 1');await tick();
@@ -255,6 +266,25 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(!$('.cfg-blockers').textContent.includes('MT5 login password not saved'));
  console.log('PASS: account readiness explains blockers; credential is write-only and cleared after save.');
 
+ // Account address choice: server's / fastest / own list; latency test recorded on the connection.
+ assert.match($('.cfg-route').textContent,/This account will connect through/);
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
+ button('Test latency').click();await tick();await tick();
+ assert.equal(latencyCalls.at(-1).connection_id,conn.id);
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-latency')].map(x=>x.textContent),['12 ms','11 ms']);
+ $('.cfg-route input[value="FASTEST"]').click();await tick();
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.10:443','192.0.2.11:444']);
+ $('.cfg-route input[value="ACCOUNT"]').click();await tick();
+ byLabel('Account uses 192.0.2.11:444').click();await tick();
+ await submit($('.cfg-detail .cfg-form'));
+ const routed=JSON.parse(requests.filter(r=>r.method==='PUT'&&r.url.includes('/accounts/')).at(-1).body);
+ assert.equal(routed.access_mode,'ACCOUNT');assert.deepEqual(routed.access_points,[{host:'192.0.2.10',port:443}]);
+ $('.cfg-route input[value="SERVER"]').click();await tick();
+ assert.match($('.cfg-route').textContent,/own choice \(1 address\) is kept/);
+ $('.cfg-route input[value="ACCOUNT"]').click();await tick();
+ assert.equal(byLabel('Account uses 192.0.2.10:443').checked,true);
+ console.log('PASS: account chooses server addresses, fastest first or its own list; latency test recorded; own list kept when switching.');
+
  // Stale edit shows conflict
  db.accounts[0].version=5;fill(byLabel('Account name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/Changed by someone else/);
@@ -262,6 +292,35 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.confirm=()=>false;nav('Providers').click();await tick();
  assert.match($('.cfg-head h1').textContent,/Accounts/);w.confirm=()=>true;
  console.log('PASS: version conflict surfaced; unsaved changes block navigation until discarded.');
+
+ // Add MT5 account in one step: login, password, server; existing connection reused.
+ $('[aria-label="Close window"]').click();await tick();
+ button('Add MT5 account').click();await tick();
+ const addWin=$('.fw');assert.match(addWin.textContent,/Add MT5 account/);
+ assert.equal(button('Add account').disabled,true);
+ fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'DEMO');await tick();
+ fill(byLabel('Broker login'),'777001');fill(byLabel('Account holder'),'Coreeye Group Pvt Ltd');fill(byLabel('Password'),'setup-secret');await tick();
+ const datFile=addWin.querySelector('.cfg-finder input[type="file"]');Object.defineProperty(datFile,'files',{value:[new w.File(['x'],'servers.dat')]});
+ datFile.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();await new Promise(r=>setTimeout(r,300));
+ fill(byLabel('Filter servers'),'icmarkets');await new Promise(r=>setTimeout(r,350));await tick();await tick();
+ button('Use ICMarketsSC-Demo').click();await tick();
+ assert.match(addWin.textContent,/Uses existing connection ICM_MT5_DEMO/);
+ assert.match(addWin.textContent,/2 addresses of this server that it does not have yet will be added to it unticked/);
+ $('.fw .cfg-route input[value="ACCOUNT"]').click();await tick();
+ byLabel('Account uses 203.0.113.10:443').click();await tick();
+ fill(byLabel('Account name'),'Firm gold');await tick();
+ assert.equal(byLabel('Account ID').value,'ICM_DEMO_777001');
+ await submit($('#cfg-add-mt5'));await tick();
+ const sent=setups.at(-1);
+ assert.equal(sent.connection_id,conn.id);assert.equal(sent.environment,'DEMO');
+ assert.equal(sent.account.access_mode,'ACCOUNT');
+ assert.deepEqual(sent.account.access_points,[{host:'192.0.2.11',port:444},{host:'192.0.2.10',port:443},{host:'203.0.113.10',port:443}]);
+ assert.deepEqual(sent.server.access_points.map(p=>[p.host,p.enabled]),[['203.0.113.10',true],['10.30.210.41',false]]);
+ assert.equal(sent.credential.password,'setup-secret');assert.equal(sent.server.server_name,'ICMarketsSC-Demo');
+ assert.match($('.cfg-detail').textContent,/New addresses were added to the server unticked/);
+ assert.ok(!w.document.body.textContent.includes('setup-secret'));
+ $('[aria-label="Close window"]').click();await tick();
+ console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
 
  // Order sending: confirmation required
  nav('Order sending').click();await tick();await tick();

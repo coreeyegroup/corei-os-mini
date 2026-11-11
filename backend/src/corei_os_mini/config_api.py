@@ -16,7 +16,8 @@ from starlette.concurrency import run_in_threadpool
 from . import config_store as store
 from . import broker_catalog as catalogs
 from .broker_catalog import MAX_FILE, parse_catalog, search_directory
-from .config_models import CredentialEnvelope, ExecutionControlIn, VersionIn
+from . import latency as latency_check
+from .config_models import CredentialEnvelope, ExecutionControlIn, LatencyIn, Mt5AccountSetupIn, VersionIn
 from .credentials import storage_ready
 from .operator_auth import Principal, current_user, require_operator, require_role
 
@@ -144,6 +145,39 @@ def mt5_server_detail(catalog_id: str, response: Response, name: str = Query(min
     """Full description and all access points of one server in the analysed file."""
     _no_store(response)
     return catalogs.server(catalogs.recall(catalog_id, user), name)
+
+
+@router.post('/mt5/latency')
+async def test_mt5_latency(payload: dict, response: Response, user: str = Depends(editor)):
+    """TCP connect time from this server to each address (no login, nothing sent).
+    Public addresses only. Recorded against the connection when connection_id is given."""
+    _no_store(response)
+    data = parse(LatencyIn, payload)
+    try:
+        measured = await latency_check.measure([(a.host, a.port) for a in data.addresses])
+    except RuntimeError:
+        raise HTTPException(429, 'Another latency test is running. Try again in a few seconds.') from None
+    if data.connection_id:
+        await run_in_threadpool(store.record_latency, user, data.connection_id, measured['measured_from'], measured['results'])
+    return measured
+
+
+@router.get('/connections/{connection_id}/latency')
+def get_connection_latency(connection_id: UUID, response: Response, _: str = Depends(require_operator)):
+    """Latest measurement per address of this connection."""
+    _no_store(response)
+    return {'items': store.connection_latency(connection_id)}
+
+
+@router.post('/mt5/account-setup', status_code=201)
+def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(editor)):
+    """Add an MT5 account in one step (login, password, server and addresses)."""
+    _no_store(response)
+    credential = payload.get('credential')
+    data = parse(Mt5AccountSetupIn, {**payload, 'credential': None})
+    if credential is not None:
+        data.credential = parse(CredentialEnvelope, {'credential': credential}, secret=True).credential
+    return store.setup_mt5_account(actor, data)
 
 
 # ---------- records ----------

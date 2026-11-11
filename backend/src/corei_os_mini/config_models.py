@@ -158,6 +158,20 @@ class ConnectionIn(_Strict):
         return self
 
 
+class AddressRef(_Strict):
+    """One address (host and port) of an MT5 server, referenced by an account."""
+    host: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=253)]
+    port: Annotated[int, Field(ge=1, le=65535)]
+
+    @field_validator('host')
+    @classmethod
+    def valid_host(cls, value: str) -> str:
+        return Mt5AccessPoint.valid_host(value)
+
+
+AccessMode = Literal['SERVER', 'FASTEST', 'ACCOUNT']
+
+
 class AccountIn(_Strict):
     connection_id: UUID
     code: Code
@@ -168,6 +182,19 @@ class AccountIn(_Strict):
     base_currency: Currency
     trading_permission: Literal['DISABLED', 'READ_ONLY', 'TRADING'] = 'DISABLED'
     status: Status = 'ACTIVE'
+    # Which of the server's addresses this account uses (MT5 only). See mt5_routing.
+    access_mode: AccessMode = 'SERVER'
+    # The account's own ordered choice; kept when switching modes so nothing is lost.
+    access_points: Annotated[list[AddressRef], Field(max_length=MAX_ACCESS_POINTS)] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def own_addresses(self) -> 'AccountIn':
+        keys = [(p.host, p.port) for p in self.access_points]
+        if len(keys) != len(set(keys)):
+            raise ValueError('access_points must not repeat an address')
+        if self.access_mode == 'ACCOUNT' and not keys:
+            raise ValueError('choose at least one address for this account, or use the server\'s addresses')
+        return self
 
 
 def _places(value: Decimal) -> int:
@@ -253,3 +280,27 @@ class ExecutionControlIn(_Strict):
 
 class VersionIn(_Strict):
     version: Annotated[int, Field(ge=1)]
+
+
+# ---------- MT5 one-step setup and latency ----------
+
+class Mt5AccountSetupIn(_Strict):
+    """Add an MT5 account the way MT5 does it: login, password, server. The server's
+    connection is reused when one already exists for this provider, environment and
+    server name, otherwise it is created in the same transaction."""
+    provider_id: UUID
+    environment: Literal['DEMO', 'LIVE']
+    server: Mt5Settings
+    # Optional explicit connection; must match provider, environment and server name.
+    connection_id: UUID | None = None
+    # Addresses picked here that the existing connection lacks are added to it (unticked
+    # for the server, so other accounts are unaffected).
+    add_missing_addresses: bool = True
+    account: dict
+    credential: Mt5LoginCredential | None = None
+
+
+class LatencyIn(_Strict):
+    addresses: Annotated[list[AddressRef], Field(min_length=1, max_length=64)]
+    # When given, results are recorded against this connection's history.
+    connection_id: UUID | None = None

@@ -44,6 +44,10 @@ const BLOCKERS: Record<string, string> = {
   READ_ONLY_CREDENTIAL: 'Saved password is an investor (read-only) password',
   ORDER_SENDING_OFF_DEMO: 'Order sending is off for DEMO',
   ORDER_SENDING_OFF_LIVE: 'Order sending is off for LIVE',
+  NO_ADDRESS_AVAILABLE: 'No server address is selected for this account',
+  ACCOUNT_ADDRESSES_REMOVED_BY_SERVER: 'Some addresses chosen for this account are no longer listed by the server; they are skipped',
+  ACCOUNT_ADDRESSES_FALLBACK_TO_SERVER: 'None of the addresses chosen for this account are listed by the server any more; using the server\'s addresses',
+  NO_LATENCY_MEASURED: 'Fastest first has no latency test yet; using the server\'s order until one is run',
   DEPLOYMENT_NOT_ACTIVE: 'Deployment is not active',
   STRATEGY_RETIRED: 'Strategy is retired',
   VERSION_NOT_APPROVED: 'Strategy version is not approved',
@@ -109,7 +113,7 @@ const blank: Record<Entity, Row> = {
   providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE' },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
     settings: { server_name: '', access_points: [{ name: 'Added manually', host: '', port: 443 }] } },
-  accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE' },
+  accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE', access_mode: 'SERVER', access_points: [] },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
     tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
   mappings: { connection_id: '', instrument_id: '', broker_symbol: '', usage: 'BOTH', broker_contract_size: '', broker_price_digits: '', status: 'ACTIVE' },
@@ -117,7 +121,7 @@ const blank: Record<Entity, Row> = {
 const FIELDS: Record<Entity, string[]> = {
   providers: ['code', 'name', 'kind', 'status'],
   connections: ['provider_id', 'code', 'name', 'platform', 'environment', 'purpose', 'settings', 'status'],
-  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status'],
+  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status', 'access_mode', 'access_points'],
   instruments: ['symbol', 'name', 'asset_class', 'base_currency', 'quote_currency', 'price_precision', 'quantity_precision',
     'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status'],
   mappings: ['connection_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
@@ -135,6 +139,8 @@ function toPayload(entity: Entity, draft: Row): Row {
     out.broker_contract_size = draft.broker_contract_size === '' || draft.broker_contract_size == null ? null : String(draft.broker_contract_size);
     out.broker_price_digits = draft.broker_price_digits === '' || draft.broker_price_digits == null ? null : Number(draft.broker_price_digits);
   }
+  if (entity === 'accounts') { out.access_mode = draft.access_mode ?? 'SERVER';
+    out.access_points = (draft.access_points ?? []).map((p: Row) => ({ host: p.host, port: Number(p.port) })); }
   if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision); }
   if (entity === 'connections' && draft.platform === 'MT5')
     out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
@@ -274,9 +280,99 @@ function ServerPicker({ catalog, use, close }: { catalog: Row; use: (server: Row
   </div>;
 }
 
+/** Latency test (TCP connect time from the COREI server, no login). Results are kept
+ *  per address; when a connection id is given they are also recorded in its history. */
+function useLatency(connectionId?: string) {
+  const [results, setResults] = useState<Record<string, Row>>({}), [busy, setBusy] = useState(false), [error, setError] = useState(''), [from, setFrom] = useState('');
+  useEffect(() => {
+    if (!connectionId) return;
+    api(`config/connections/${connectionId}/latency`).then(d => setResults(Object.fromEntries(d.items.map((r: Row) => [`${r.host}|${r.port}`, r])))).catch(() => undefined);
+  }, [connectionId]);
+  async function test(points: Row[]) {
+    setBusy(true); setError('');
+    try {
+      const next: Record<string, Row> = {};
+      for (let i = 0; i < points.length; i += 64) {
+        const batch = points.slice(i, i + 64).map(p => ({ host: p.host, port: Number(p.port) }));
+        const data = await api('config/mt5/latency', 'POST', { addresses: batch, ...(connectionId ? { connection_id: connectionId } : {}) });
+        setFrom(data.measured_from);
+        for (const r of data.results) next[`${r.host}|${r.port}`] = { ...r, measured_at: new Date().toISOString(), measured_from: data.measured_from };
+      }
+      setResults(old => ({ ...old, ...next }));
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  return { results, busy, error, from, test, get: (p: Row) => results[`${p.host}|${p.port}`] };
+}
+
+function LatencyBadge({ sample }: { sample?: Row }) {
+  if (!sample) return <span className="cfg-muted-cell">—</span>;
+  if (!sample.reachable) return <span className="cfg-pill off" title={sample.error ?? 'Not reachable'}>{sample.error?.startsWith('Private') ? 'Not tested' : 'No answer'}</span>;
+  const ms = Number(sample.latency_ms);
+  return <span className={`cfg-latency ${ms < 60 ? 'fast' : ms < 150 ? 'mid' : 'slow'}`} title={`Best of 3${sample.median_ms != null ? `, median ${sample.median_ms} ms` : ''}${sample.measured_from ? ` · from ${sample.measured_from}` : ''}${sample.measured_at ? ` · ${new Date(sample.measured_at).toLocaleString()}` : ''}`}>{ms.toFixed(ms < 10 ? 1 : 0)} ms</span>;
+}
+
+const ACCESS_MODES: [string, string, string][] = [
+  ['SERVER', "Use the server's addresses", "The connection's ticked addresses, in the connection's order. Changes to the server apply to this account."],
+  ['FASTEST', 'Fastest first', "The connection's ticked addresses, fastest by the latest latency test first."],
+  ['ACCOUNT', 'Choose for this account', "Only the addresses ticked here, in this order. Must be among the server's addresses."],
+];
+
+/** How one MT5 account chooses among its server's addresses. */
+function AccountAddresses({ mode, own, serverPoints, connectionId, change, routing }: {
+  mode: string; own: Row[]; serverPoints: Row[]; connectionId?: string; routing?: Row;
+  change: (mode: string, own: Row[]) => void }) {
+  const lat = useLatency(connectionId);
+  const key = (p: Row) => `${p.host}|${p.port}`;
+  const onServer = new Map(serverPoints.map(p => [key(p), p]));
+  const chosen = own.filter(p => onServer.has(key(p)));
+  const missing = own.filter(p => !onServer.has(key(p)));
+  const rest = serverPoints.filter(p => !own.some(o => key(o) === key(p)));
+  const ticked = serverPoints.filter(p => p.enabled !== false);
+  const preview = mode === 'ACCOUNT' ? (chosen.length ? chosen : ticked)
+    : mode === 'FASTEST' ? [...ticked].sort((a, b) => { const x = lat.get(a), y = lat.get(b);
+        const va = x?.reachable ? Number(x.latency_ms) : Infinity, vb = y?.reachable ? Number(y.latency_ms) : Infinity; return va - vb; })
+    : ticked;
+  const move = (i: number, d: number) => { const next = [...chosen]; const [x] = next.splice(i, 1); next.splice(i + d, 0, x); change(mode, next); };
+  return <div className="cfg-route">
+    <div className="cfg-route-modes" role="radiogroup" aria-label="Address choice">
+      {ACCESS_MODES.map(([value, label, hint]) => <label key={value} className={`cfg-route-mode${mode === value ? ' on' : ''}`}>
+        <input type="radio" name="access_mode" value={value} checked={mode === value} onChange={() => change(value, value === 'ACCOUNT' && !own.length ? ticked.map(p => ({ host: p.host, port: p.port })) : own)} />
+        <span><strong>{label}</strong><small>{hint}</small></span></label>)}
+    </div>
+    <div className="cfg-addresses-head">
+      <strong>{mode === 'ACCOUNT' ? 'Addresses for this account' : 'This account will connect through'}</strong>
+      <span className="cfg-note">{lat.from ? `Latency from ${lat.from}` : 'Latency is measured from the COREI server'}</span>
+      <span className="cfg-row-actions"><button type="button" disabled={lat.busy || !serverPoints.length} onClick={() => void lat.test(serverPoints)}>{lat.busy ? 'Testing…' : 'Test latency'}</button></span>
+    </div>
+    {lat.error && <p role="alert" className="cfg-error">{lat.error}</p>}
+    {mode === 'ACCOUNT' ? <div className="cfg-address-box"><table className="cfg-table compact cfg-address-table"><thead><tr><th>Use</th><th>#</th><th>Address</th><th>Latency</th><th /></tr></thead><tbody>
+      {chosen.map((p, i) => <tr key={key(p)}>
+        <td><input type="checkbox" aria-label={`Account uses ${address(p)}`} checked onChange={() => change(mode, own.filter(o => key(o) !== key(p)))} /></td>
+        <td className="cfg-address-n">{i + 1}</td><td className="cfg-mono">{address(p)}{onServer.get(key(p))?.enabled === false && <span className="cfg-pill off" title="Unticked for the server's other accounts">Not used by server</span>}</td>
+        <td><LatencyBadge sample={lat.get(p)} /></td>
+        <td className="cfg-row-actions"><button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
+          <button type="button" disabled={i === chosen.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button></td></tr>)}
+      {rest.map(p => <tr key={key(p)} className="cfg-off">
+        <td><input type="checkbox" aria-label={`Account uses ${address(p)}`} checked={false} onChange={() => change(mode, [...chosen, { host: p.host, port: p.port }])} /></td>
+        <td /><td className="cfg-mono">{address(p)}{isPrivate(p.host) && <span className="cfg-pill off">Private</span>}</td><td><LatencyBadge sample={lat.get(p)} /></td><td /></tr>)}
+      {missing.map(p => <tr key={key(p)} className="cfg-off"><td /><td /><td className="cfg-mono">{address(p)} <span className="cfg-pill warn">No longer on server</span></td><td /><td className="cfg-row-actions">
+        <button type="button" onClick={() => change(mode, own.filter(o => key(o) !== key(p)))} aria-label={`Forget ${address(p)}`}>✕</button></td></tr>)}
+    </tbody></table></div>
+    : <ol className="cfg-route-preview">{preview.map(p => <li key={key(p)}><span className="cfg-mono">{address(p)}</span><LatencyBadge sample={lat.get(p)} /></li>)}
+        {!preview.length && <li className="cfg-note">No address is ticked on the server.</li>}</ol>}
+    {mode === 'ACCOUNT' && !chosen.length && <p role="alert" className="cfg-error">Tick at least one address, or use the server's addresses.</p>}
+    {mode !== 'ACCOUNT' && own.length > 0 && <p className="cfg-note">This account's own choice ({own.length} address{own.length === 1 ? '' : 'es'}) is kept; switch to “Choose for this account” to use it again.</p>}
+    {routing && routing.warnings?.length > 0 && <ul className="cfg-warnings">{routing.warnings.map((w: string) => <li key={w}>{BLOCKERS[w] ?? w}</li>)}</ul>}
+  </div>;
+}
+
 /** Addresses of the chosen server: which are used, in which order. */
-function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+function AccessPoints({ settings, change, connectionId }: { settings: Row; change: (s: Row) => void; connectionId?: string }) {
   const points: Row[] = settings.access_points ?? [];
+  const lat = useLatency(connectionId);
+  const fastestFirst = () => { const ms = (p: Row) => { const r = lat.get(p); return r?.reachable ? Number(r.latency_ms) : Infinity; };
+    const order = points.map((p, i) => ({ p, i })).sort((x, y) => (x.p.enabled === false ? 1 : 0) - (y.p.enabled === false ? 1 : 0) || ms(x.p) - ms(y.p) || x.i - y.i);
+    setPoints(order.map(o => o.p)); setEditable(old => new Set([...old].map(k => order.findIndex(o => o.i === k)))); };
   const [editable, setEditable] = useState(() => new Set(points.map((p, i) => p.host ? -1 : i)));
   const setPoints = (next: Row[]) => change({ ...settings, access_points: next });
   const setPoint = (i: number, patch: Row) => setPoints(points.map((p, j) => j === i ? { ...p, ...patch } : p));
@@ -291,9 +387,13 @@ function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) =>
       <span className="cfg-row-actions">
         <button type="button" disabled={on === points.length} onClick={() => setPoints(points.map(p => ({ ...p, enabled: true })))}>Select all</button>
         <button type="button" disabled={on === 0} onClick={() => setPoints(points.map(p => ({ ...p, enabled: false })))}>Clear all</button>
+        <button type="button" disabled={lat.busy || !points.some(p => p.host)} onClick={() => void lat.test(points.filter(p => p.host))}>{lat.busy ? 'Testing…' : 'Test latency'}</button>
+        <button type="button" disabled={!Object.keys(lat.results).length} onClick={fastestFirst} title="Ticked addresses, fastest first">Fastest first</button>
       </span>
     </div>
-    <div className="cfg-address-box"><table className="cfg-table compact cfg-address-table"><thead><tr><th>Use</th><th>#</th><th>Address</th><th>Name in file</th><th /></tr></thead><tbody>
+    {lat.error && <p role="alert" className="cfg-error">{lat.error}</p>}
+    {lat.from && <p className="cfg-note">Latency measured from {lat.from} (the COREI server), best of 3 TCP connects. No login is made.</p>}
+    <div className="cfg-address-box"><table className="cfg-table compact cfg-address-table"><thead><tr><th>Use</th><th>#</th><th>Address</th><th>Latency</th><th>Name in file</th><th /></tr></thead><tbody>
       {points.map((p, i) => { const edit = editable.has(i);
         return <tr key={i} className={p.enabled === false ? 'cfg-off' : ''}>
           <td><input type="checkbox" aria-label={`Use access point ${i + 1}`} checked={p.enabled !== false} onChange={e => setPoint(i, { enabled: e.target.checked })} /></td>
@@ -303,6 +403,7 @@ function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) =>
               <input aria-label={`Access point ${i + 1} port`} placeholder="Port" required type="number" min={1} max={65535} value={p.port} onChange={e => setPoint(i, { port: e.target.value })} />
             </span> : <span className="cfg-mono">{address(p)}</span>}
             {!edit && isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}</td>
+          <td>{p.host ? <LatencyBadge sample={lat.get(p)} /> : null}</td>
           <td className="cfg-muted-cell">{edit ? 'Added manually' : p.name}</td>
           <td className="cfg-row-actions">
             <button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up" title="Try earlier">↑</button>
@@ -316,7 +417,7 @@ function AccessPoints({ settings, change }: { settings: Row; change: (s: Row) =>
 }
 
 /** MT5: find the broker's server (directory search or servers.dat), then its addresses. */
-function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+function Mt5Server({ settings, change, connectionId, summaryOnly }: { settings: Row; change: (s: Row) => void; connectionId?: string; summaryOnly?: ReactNode }) {
   const [catalog, setCatalog] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [term, setTerm] = useState(''), [manual, setManual] = useState(false), [changing, setChanging] = useState(false), [version, setVersion] = useState(0);
   const points: Row[] = settings.access_points ?? [];
@@ -366,7 +467,7 @@ function Mt5Server({ settings, change }: { settings: Row; change: (s: Row) => vo
     </div>}
     {!showFinder && manual && <Field label="Broker server name" hint="Exactly as in MT5, e.g. VTMarkets-Live 3">
       <input aria-label="Broker server name" required maxLength={120} value={settings.server_name ?? ''} onChange={e => change({ ...settings, server_name: e.target.value })} /></Field>}
-    {!showFinder && points.length > 0 && <AccessPoints key={version} settings={settings} change={change} />}
+    {!showFinder && points.length > 0 && (summaryOnly ?? <AccessPoints key={version} settings={settings} change={change} connectionId={connectionId} />)}
     {!showFinder && points.length > 0 && !points.some(p => p.enabled !== false) && <p role="alert" className="cfg-error">Select at least one address.</p>}
     {!showFinder && !manual && (settings.company_name || Object.keys(settings.server_details ?? {}).length > 0) &&
       <details className="cfg-more"><summary>Server details</summary><ServerDescription settings={settings} /></details>}
@@ -455,7 +556,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
         </div>
       </Section>
       <Section n={2} title={draft.platform === 'MT5' ? 'Server and addresses' : 'API app'}>
-        {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} change={s => set('settings', s)} />
+        {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} change={s => set('settings', s)} connectionId={draft.id} />
           : <RestSettings settings={draft.settings} change={s => set('settings', s)} />}
       </Section>
       <Section n={3} title="Name">
@@ -474,16 +575,34 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
   if (entity === 'accounts') {
     const connection = refs.connections.find(c => c.id === draft.connection_id);
-    return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform} · ${r.environment}`)}
-      {connection && <p className="cfg-note">Environment <Env value={connection.environment} /> from the connection.</p>}
-      {text('external_account_id', connection?.platform === 'MT5' ? 'Broker login (MT5 account number)' : 'Broker client ID',
-        { required: true, maxLength: 64 }, connection?.platform === 'MT5' ? 'The number you log in to MT5 with, e.g. 51234567' : 'The broker\'s client code for this account, e.g. Upstox UCC')}
-      {text('holder_name', 'Account holder', { maxLength: 120 }, 'Person or company that owns the account at the broker, e.g. Yatheesh N S or Coreeye Group Pvt Ltd')}
-      {code('Account ID', 'ICMARKETS_LIVE_51234567')}
-      {text('name', 'Account name', { required: true, maxLength: 120 }, 'What the account is for, e.g. Gold main, Hedge, Scalping test')}
-      {text('base_currency', 'Account currency', { required: true, maxLength: 10 }, 'Deposit currency at the broker, e.g. USD, INR')}
-      {pick('trading_permission', 'Trading permission', [['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading']],
-        'Orders also need order sending switched on for the environment')}{status}</>;
+    const mt5 = connection?.platform === 'MT5';
+    return <>
+      <Section n={1} title="Connection">
+        {ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform === 'MT5' ? r.settings?.server_name ?? 'MT5' : 'API'} · ${r.environment}`)}
+        {connection && <p className="cfg-note">Environment <Env value={connection.environment} />{mt5 ? <> · server <strong>{connection.settings?.server_name}</strong></> : null}</p>}
+      </Section>
+      <Section n={2} title="Account">
+        <div className="cfg-pair">
+          {text('external_account_id', mt5 ? 'Broker login (MT5 account number)' : 'Broker client ID',
+            { required: true, maxLength: 64 }, mt5 ? 'The number you log in to MT5 with' : 'The broker\'s client code, e.g. Upstox UCC')}
+          {text('holder_name', 'Account holder', { maxLength: 120 }, 'Person or company that owns it')}
+        </div>
+        <div className="cfg-pair">
+          {text('name', 'Account name', { required: true, maxLength: 120 }, 'What it is for, e.g. Gold main, Hedge')}
+          {code('Account ID', 'VTMARKETS_LIVE_1298617')}
+        </div>
+        <div className="cfg-pair">
+          {text('base_currency', 'Account currency', { required: true, maxLength: 10 }, 'e.g. USD, INR')}
+          {pick('trading_permission', 'Trading permission', [['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading']],
+            'Orders also need order sending on for the environment')}
+        </div>
+        <details className="cfg-more"><summary>More options</summary>{status}</details>
+      </Section>
+      {mt5 && <Section n={3} title="Server addresses for this account">
+        <AccountAddresses mode={draft.access_mode ?? 'SERVER'} own={draft.access_points ?? []} serverPoints={connection.settings?.access_points ?? []}
+          connectionId={connection.id} routing={editing ? draft.routing : undefined}
+          change={(mode, own) => setDraft({ ...draft, access_mode: mode, access_points: own })} />
+      </Section>}</>;
   }
 
   if (entity === 'instruments') return <>
@@ -541,6 +660,105 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
   </form>;
 }
 
+/* ---------- add an MT5 account in one step ---------- */
+
+const serverKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Login, password and server together, the way MT5 does it. The server's connection is
+ *  reused when one exists for this provider, environment and server (or created). */
+function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row, note: string) => void }) {
+  const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
+    base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
+    server: { server_name: '', access_points: [] as Row[] } });
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const provider = refs.providers.find(p => p.id === f.provider_id);
+  const set = (patch: Row) => setF(old => {
+    const next = { ...old, ...patch };
+    if (!next._codeEdited && provider && next.external_account_id) next.code = `${(refs.providers.find(p => p.id === next.provider_id) ?? provider).code}_${next.environment}_${idPart(next.external_account_id)}`.slice(0, 32).replace(/_+$/, '');
+    return next;
+  });
+  const existing = f.server.server_name ? refs.connections.filter(c => c.platform === 'MT5' && c.provider_id === f.provider_id && c.environment === f.environment
+    && serverKey(c.settings?.server_name ?? '') === serverKey(f.server.server_name)) : [];
+  const match = existing.length === 1 ? existing[0] : null;
+  const key = (p: Row) => `${p.host}|${p.port}`;
+  const picked: Row[] = (f.server.access_points ?? []).filter((p: Row) => p.host);
+  const newOnServer = match ? picked.filter(p => !(match.settings.access_points ?? []).some((q: Row) => key(q) === key(p))) : [];
+  // Addresses the account may choose from: the server's (existing connection) plus any picked here.
+  const serverPoints: Row[] = match ? [...match.settings.access_points, ...newOnServer.map(p => ({ ...p, enabled: false }))] : picked;
+  const ready = f.provider_id && f.external_account_id && f.name && f.code && f.server.server_name && picked.length > 0
+    && (f.access_mode !== 'ACCOUNT' || f.access_points.length > 0);
+  async function save(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      const server = { server_name: f.server.server_name, company_name: f.server.company_name || null, server_details: f.server.server_details ?? {},
+        access_points: picked.map((p: Row) => ({ name: p.name || f.server.server_name, host: p.host, port: Number(p.port), enabled: p.enabled !== false })) };
+      const result = await api('config/mt5/account-setup', 'POST', {
+        provider_id: f.provider_id, environment: f.environment, server, ...(match ? { connection_id: match.id } : {}),
+        account: { code: f.code, name: f.name, external_account_id: f.external_account_id, holder_name: f.holder_name, base_currency: f.base_currency,
+          trading_permission: f.trading_permission, access_mode: f.access_mode, access_points: f.access_points.map((p: Row) => ({ host: p.host, port: Number(p.port) })) },
+        ...(f.password ? { credential: { kind: 'MT5_LOGIN', password: f.password, access_level: f.access_level } } : {}) });
+      setF(old => ({ ...old, password: '' }));
+      const note = result.connection_action === 'CREATED' ? `Account added. Connection ${result.connection.code} was created for ${server.server_name}.`
+        : result.connection_action === 'ADDRESSES_ADDED' ? `Account added to ${result.connection.code}. New addresses were added to the server unticked; other accounts are unchanged.`
+        : `Account added to ${result.connection.code}.`;
+      created(result.account, note);
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  const dirty = !!(f.provider_id || f.external_account_id || f.server.server_name || f.password);
+  return <FloatingWindow storageKey="corei-os-mini.add-mt5-account.v1" width={780} title="Add MT5 account" subtitle="Login, password and server in one step"
+    onClose={() => { if (!dirty || window.confirm('Discard this account?')) close(); }}
+    footer={<div className="cfg-actions"><button className="primary" form="cfg-add-mt5" disabled={busy || !ready}>{busy ? 'Adding…' : 'Add account'}</button>
+      {!ready && <span className="cfg-note">Fill in broker, login, name and server with at least one address.</span>}</div>}>
+    <form className="cfg-form" id="cfg-add-mt5" onSubmit={save} autoComplete="off">
+      <Section n={1} title="Broker">
+        <div className="cfg-pair">
+          <Field label="Provider"><select aria-label="Provider" required value={f.provider_id} onChange={e => set({ provider_id: e.target.value })}>
+            <option value="" disabled>Select…</option>{refs.providers.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}</select></Field>
+          <Field label="Environment"><Choice label="Environment" value={f.environment} options={[['LIVE', 'Live'], ['DEMO', 'Demo']]} onChange={v => set({ environment: v })} /></Field>
+        </div>
+      </Section>
+      <Section n={2} title="Login">
+        <div className="cfg-pair">
+          <Field label="Broker login (MT5 account number)"><input aria-label="Broker login" required inputMode="numeric" pattern="[1-9][0-9]{0,19}" maxLength={20}
+            value={f.external_account_id} onChange={e => set({ external_account_id: e.target.value.trim() })} /></Field>
+          <Field label="Account holder" hint="Person or company that owns it"><input aria-label="Account holder" maxLength={120} value={f.holder_name} onChange={e => set({ holder_name: e.target.value })} /></Field>
+        </div>
+        <div className="cfg-pair">
+          <Field label="Password" hint="Stored encrypted; can be added later"><input aria-label="Password" type="password" autoComplete="new-password" maxLength={4096}
+            value={f.password} onChange={e => set({ password: e.target.value })} /></Field>
+          <Field label="Password type"><Choice label="Password type" value={f.access_level} options={[['FULL', 'Master (can trade)'], ['READ_ONLY', 'Investor (read only)']]} onChange={v => set({ access_level: v })} /></Field>
+        </div>
+      </Section>
+      <Section n={3} title="Server">
+        <Mt5Server settings={f.server} change={server => set({ server })} connectionId={match?.id}
+          summaryOnly={match ? <p className="cfg-note">The server's addresses are kept on its connection; choose this account's addresses in step 4.</p> : undefined} />
+        {match && <p className="cfg-note cfg-reuse">Uses existing connection <strong>{match.code}</strong> ({match.settings.access_points.length} addresses, {match.account_count} account{match.account_count === 1 ? '' : 's'}).
+          {newOnServer.length > 0 && <> {newOnServer.length} address{newOnServer.length === 1 ? '' : 'es'} of this server that it does not have yet will be added to it unticked, so other accounts are not affected.</>}</p>}
+        {existing.length > 1 && <p className="cfg-error">{existing.length} connections use this server ({existing.map(c => c.code).join(', ')}). Add the account from the account form and choose one.</p>}
+        {!match && f.server.server_name && f.provider_id && <p className="cfg-note">A new connection will be created for this server.</p>}
+      </Section>
+      <Section n={4} title="Addresses for this account">
+        {serverPoints.length ? <AccountAddresses mode={f.access_mode} own={f.access_points} serverPoints={serverPoints} connectionId={match?.id}
+          change={(mode, own) => set({ access_mode: mode, access_points: own })} />
+          : <p className="cfg-note">Choose the server first.</p>}
+      </Section>
+      <Section n={5} title="Name and permission">
+        <div className="cfg-pair">
+          <Field label="Account name" hint="What it is for, e.g. Gold main"><input aria-label="Account name" required maxLength={120} value={f.name} onChange={e => set({ name: e.target.value })} /></Field>
+          <Field label="Account ID" hint="Suggested; fixed after saving"><input aria-label="Account ID" required maxLength={32} pattern="[A-Za-z][A-Za-z0-9_]{1,31}" value={f.code}
+            onChange={e => set({ code: e.target.value, _codeEdited: e.target.value !== '' })} /></Field>
+        </div>
+        <div className="cfg-pair">
+          <Field label="Account currency"><input aria-label="Account currency" required maxLength={10} value={f.base_currency} onChange={e => set({ base_currency: e.target.value })} /></Field>
+          <Field label="Trading permission" hint="Orders also need order sending on"><Choice label="Trading permission" value={f.trading_permission}
+            options={[['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only'], ['TRADING', 'Trading']]} onChange={v => set({ trading_permission: v })} /></Field>
+        </div>
+      </Section>
+      {error && <p role="alert" className="cfg-error">{error}</p>}
+    </form>
+  </FloatingWindow>;
+}
+
 /* ---------- record list + detail ---------- */
 
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
@@ -563,6 +781,7 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
+  const [adding, setAdding] = useState(false);
   const parentFilter = entity === 'connections' ? ['provider_id', refs.providers, (r: Row) => r.code] as const
     : entity === 'accounts' ? ['connection_id', refs.connections, (r: Row) => r.code] as const
     : entity === 'mappings' ? ['connection_id', refs.connections, (r: Row) => r.code] as const : null;
@@ -608,7 +827,8 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
         {parentFilter && <select aria-label="Filter" value={parent} onChange={e => setParent(e.target.value)}>
           <option value="">All {parentFilter[0] === 'provider_id' ? 'providers' : 'connections'}</option>
           {parentFilter[1].map(r => <option key={r.id} value={r.id}>{parentFilter[2](r)}</option>)}</select>}
-        {canEdit ? <button className="primary" onClick={() => open(null)}>New {SINGULAR[entity]}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
+        {canEdit && entity === 'accounts' && <button className="primary" onClick={() => setAdding(true)}>Add MT5 account</button>}
+        {canEdit ? <button className={entity === 'accounts' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
       {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No {entity === 'mappings' ? 'symbol mappings' : entity} yet. {canEdit ? `Choose New ${SINGULAR[entity]} to add one.` : ''}</p> :
@@ -617,8 +837,10 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
             {columns.map(([h, cell]) => <td key={h}>{cell(r)}</td>)}</tr>)}
         </tbody></table></div>}
     </div>
-    {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : 'corei-os-mini.config-window.v1'}
-      width={entity === 'connections' ? 760 : 560}
+    {adding && <AddMt5Account refs={refs} close={() => setAdding(false)} created={(account, note) => {
+      setAdding(false); reloadRefs(); void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
+    {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : entity === 'accounts' ? 'corei-os-mini.account-window.v1' : 'corei-os-mini.config-window.v1'}
+      width={entity === 'connections' || entity === 'accounts' ? 780 : 560}
       footer={canEdit ? <div className="cfg-actions">
           <button className="primary" form="cfg-record-form" disabled={busy || !dirty}>{selected ? 'Save changes' : `Create ${SINGULAR[entity]}`}</button>
           {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}</div>

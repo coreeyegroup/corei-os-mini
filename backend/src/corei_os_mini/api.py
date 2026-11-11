@@ -148,7 +148,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.9.0-roles-strategies",
+        "release": "0.10.0-mt5-routing",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,
@@ -160,6 +160,8 @@ def workstation(response: Response) -> dict[str, object]:
              "reason": "Administrator, trading operations, risk approver and observer roles. Requires migration 010."},
             {"id": "strategies", "label": "Strategies and deployments", "available": config_ready,
              "reason": "Strategy versions with approval and the deployment matrix. Requires migration 011."},
+            {"id": "mt5_routing", "label": "MT5 servers and routing", "available": config_ready,
+             "reason": "Broker directory search, servers.dat analysis, latency test and per-account address choice. Requires migration 013."},
             {"id": "credential_storage", "label": "Credential encryption", "available": credential_storage_ready(),
              "reason": "Requires the server key file created by scripts/setup-broker-accounts.sh."},
             {"id": "providers", "label": "Provider connectivity", "available": bool(config_store.AVAILABLE_ADAPTERS),
