@@ -65,8 +65,10 @@ def install_market_data(root, user, python):
     Data lives in /var/lib/corei-os-mini/market-data (owner: the repository user, 0750);
     backups go to COREI_BACKUP_DIR from the env file when it is set."""
     account = pwd.getpwnam(user)
-    for folder in (MD_ROOT.parent, MD_ROOT):
-        folder.mkdir(mode=0o750, parents=True, exist_ok=True)
+    # The parent is only passed through (0755, root); the data folder itself is private to the service user.
+    MD_ROOT.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    os.chmod(MD_ROOT.parent, 0o755)
+    MD_ROOT.mkdir(mode=0o750, exist_ok=True)
     os.chown(MD_ROOT, account.pw_uid, account.pw_gid)
     os.chmod(MD_ROOT, 0o750)
     writable = [str(MD_ROOT)]

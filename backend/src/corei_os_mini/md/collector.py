@@ -581,7 +581,15 @@ class Collector:
             store.event('DISK', 'WARNING', detail={'used_pct': round(used, 1), 'warn_pct': warn, 'free_gb': round(usage.free / 1e9, 1)})
 
     def run(self, interval: float = 5.0) -> None:
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o750)
+        try:
+            if not self.root.is_dir():
+                self.root.mkdir(parents=True, mode=0o750)
+            probe = self.root / '.write-check'
+            probe.write_bytes(b'')
+            probe.unlink()
+        except OSError as exc:
+            raise SystemExit(f'Market-data folder {self.root} is not writable by this user ({exc}). '
+                             'Run bash scripts/deploy-workstation.sh, or: sudo chmod 755 ' + str(self.root.parent)) from None
         self.writer.start()
         while not self.stop_event.is_set():
             try:
