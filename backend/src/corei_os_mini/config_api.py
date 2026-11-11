@@ -56,7 +56,9 @@ def summary(response: Response, _: str = Depends(require_operator)):
     with store.transaction('read') as db:
         counts['strategies'] = db.execute('SELECT count(*) AS n FROM cfg_strategies').fetchone()['n']
         counts['deployments'] = db.execute("SELECT count(*) AS n FROM cfg_deployments WHERE status<>'ENDED'").fetchone()['n']
-    return {'counts': counts, 'execution_controls': store.list_execution_controls(),
+        counts['approvals'] = db.execute("SELECT count(*) AS n FROM cfg_change_requests WHERE status='PENDING'").fetchone()['n']
+        four_eyes = store.four_eyes_on(db)
+    return {'counts': counts, 'four_eyes_live_changes': four_eyes, 'execution_controls': store.list_execution_controls(),
             'credential_storage_ready': storage_ready(), 'available_adapters': sorted(store.AVAILABLE_ADAPTERS)}
 
 

@@ -19,7 +19,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // ---- mock backend ----
  let signedIn=false;const session={roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],must:true};
- const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[]};
+ const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[],groups:[]};const prefs={};const approvals=[];const importCalls=[];let needReauth=false,reauthCalls=0;
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
  const searched=[],latencyCalls=[],setups=[];
@@ -40,6 +40,21 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.endsWith('/operator/login')){signedIn=true;return ok(me);}
    if(url.endsWith('/operator/logout')){signedIn=false;return ok({signed_out:true});}
    if(url.endsWith('/operator/password')){session.must=false;return ok({changed:true});}
+   if(url.includes('/operator/prefs')){if(method==='PUT'){prefs[decodeURIComponent(url.split('/prefs/')[1])]=JSON.parse(options.body).value;return ok({saved:true});}return ok(prefs);}
+   if(url.endsWith('/operator/reauth')){reauthCalls++;needReauth=false;return ok({reauthenticated:true,minutes:5});}
+   if(url.endsWith('/config/health'))return ok({generated_at:new Date().toISOString(),network:{egress_ip:'203.0.113.200',clock_synchronised:true,server_time_utc:'2026-11-11T10:00:00Z'},
+     controls:Object.values(controls),four_eyes_live_changes:true,pending_approvals:approvals.length,failed_alerts:0,
+     checklist:[{step:'Add a provider (broker)',done:db.providers.length>0,section:'providers'},{step:'Add an account (MT5: login, password and server)',done:db.accounts.length>0,section:'accounts'}],
+     connections:db.connections.map(r=>enrich('connections',r)),accounts:db.accounts.map(r=>enrich('accounts',r)),
+     summary:{accounts:db.accounts.length,data_ready:0,trading_ready:0,with_warnings:0}});
+   if(url.includes('/config/approvals/')&&url.endsWith('/decision')){const id=url.split('/approvals/')[1].split('/')[0];const r=approvals.find(a=>a.id===id);
+     const body=JSON.parse(options.body);r.status=body.approve?'APPLIED':'REJECTED';r.decided_by='risk-ops';if(body.approve&&r.apply)r.apply();return ok({id,status:r.status});}
+   if(url.includes('/config/approvals'))return ok({items:approvals.filter(a=>!url.includes('status=PENDING')||a.status==='PENDING')});
+   if(url.endsWith('/accounts/import')){const body=JSON.parse(options.body);importCalls.push(body);
+     const lines=body.csv.trim().split('\n').slice(1);return ok({dry_run:body.dry_run,applied:!body.dry_run,ok:true,counts:{ok:lines.length,error:0},rows:lines.map((l,i)=>({line:i+2,code:l.split(',')[1],status:'OK'}))});}
+   if(url.endsWith('/config/policies'))return ok({items:[{key:'four_eyes_live_changes',value:true,version:1,kind:'bool',description:'LIVE changes need a second person.',updated_by:'system',updated_at:new Date().toISOString()}]});
+   if(url.includes('/credential-use'))return ok({items:[]});
+   if(url.includes('/symbol-specs'))return ok({items:[]});
    if(url.includes('/api/admin/users')){
      if(method==='GET')return ok({items:users});
      const body=JSON.parse(options.body);
@@ -85,12 +100,19 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return ok({total:rows.length,server_matches:new Set(rows.map(r=>r.server_name)).size,offset:0,items:rows.slice(0,200)});}
    const entity=parts[0];
    if(parts[2]==='latency')return ok({items:[]});
+   if(parts[2]==='credential'&&needReauth)return fail(428,'Re-enter your password to confirm this action.');
    if(parts[2]==='credential'){const body=JSON.parse(options.body);const row=db[entity].find(x=>x.id===parts[1]);
      row.credential_kind=body.credential.kind;row.credential_access_level=body.credential.access_level;row.credential_updated_at=new Date().toISOString();
+     if(body.credential.access_level==='READ_ONLY'){row.investor_credential_kind=body.credential.kind;row.investor_credential_updated_at=row.credential_updated_at;}
+     else{row.master_credential_kind=body.credential.kind;row.master_credential_updated_at=row.credential_updated_at;}
      return ok({kind:body.credential.kind,access_level:body.credential.access_level});}
    if(method==='GET'&&parts.length===1)return ok({items:db[entity].map(r=>enrich(entity,r))});
    if(method==='POST'){const body=JSON.parse(options.body);
      if(entity==='providers'&&db.providers.some(p=>p.code===body.code.toUpperCase()))return fail(409,'A provider with this code already exists.');
+     if(entity==='connections'&&body.environment==='LIVE'){const cr={id:'cr'+(approvals.length+1),entity:'connections',action:'CREATE_CONNECTION',status:'PENDING',
+       summary:`New LIVE connection ${body.code.toUpperCase()} adds address ${body.settings.access_points[0].host}:${body.settings.access_points[0].port}`,requested_by:'other-user',requested_at:new Date().toISOString(),
+       apply:()=>db.connections.push({...body,code:body.code.toUpperCase(),id:'live-conn',version:1,updated_at:new Date().toISOString()})};approvals.push(cr);
+       return ok({change_request:cr},202);}
      const row={...body,id:`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`,version:1,updated_at:new Date().toISOString(),...(body.code?{code:body.code.toUpperCase()}:{})};
      db[entity].push(row);return ok(enrich(entity,row),201);}
    if(method==='PUT'){const body=JSON.parse(options.body);const row=db[entity].find(x=>x.id===parts[1]);
@@ -100,7 +122,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  w.eval(js);await tick();await tick();
  const $=s=>w.document.querySelector(s);
- const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
+ const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const byLabel=l=>$(`.cfg-detail [aria-label="${l}"]`)||$(`[aria-label="${l}"]`);
  const nav=label=>[...w.document.querySelectorAll('.cfg-nav button')].find(b=>b.querySelector('span').textContent===label);
  const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
@@ -120,7 +142,11 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-user').textContent,/risk-ops/);
  assert.match($('.cfg-nav').textContent,/Order sending/);
  assert.match($('.cfg-user').textContent,/Administrator, Observer, Risk approver, Trading operations/);
+ assert.match($('.cfg-head h1').textContent,/Health/);  // opens on the health board
+ assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
+ assert.match($('.cfg-health').textContent,/Next: Add a provider/);
  console.log('PASS: operator sign-in, forced password change, roles shown, section navigation.');
+ nav('Providers').click();await tick();await tick();
 
  // Provider: create, duplicate rejected with backend message
  button('New provider').click();await tick();
@@ -142,7 +168,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
  assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
- assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name']);
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name','4Method, clock and limits']);
  button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Connection name'),'ICM MT5 demo');
  fill(byLabel('Broker server name'),'ICMarketsSC-Demo');
@@ -321,6 +347,58 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(!w.document.body.textContent.includes('setup-secret'));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
+
+ // Re-authentication: a sensitive action asks for the password again, then retries by itself.
+ nav('Accounts').click();await tick();await tick();
+ [...w.document.querySelectorAll('.cfg-table tbody tr')].find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
+ needReauth=true;fill(byLabel('New password'),'rotated-secret');await tick();
+ $('.cfg-credential').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
+ assert.ok($('[aria-label="Confirm with your password"]'),'password re-entry dialog shown');
+ fill(byLabel('Your password'),'My-own-pass-993');await tick();
+ await submit($('.cfg-modal form'));await tick();await tick();
+ assert.equal(reauthCalls,1);assert.equal($('.cfg-modal'),null);
+ assert.equal(JSON.parse(requests.filter(r=>r.url.endsWith('/credential')).at(-1).body).credential.password,'rotated-secret');
+ assert.match($('.cfg-credential').textContent,/Saved and encrypted/);
+ console.log('PASS: re-authentication dialog appears on 428 and the action is retried.');
+
+ // Links between records and sortable lists.
+ $('[aria-label="Close window"]').click();await tick();
+ const chip=[...w.document.querySelectorAll('.cfg-table [data-nav^="connections:"]')][0];chip.click();await tick();await tick();await tick();
+ assert.match($('.cfg-head h1').textContent,/Connections/);
+ assert.match($('.fw-title').textContent,/Connection · ICM_MT5_DEMO/);
+ $('[aria-label="Close window"]').click();await tick();
+ nav('Accounts').click();await tick();await tick();
+ [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
+ [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
+ assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-table tbody tr td:first-child')].map(td=>td.textContent),['ICM_DEMO_51234567','ICM_DEMO_777001']);  // numeric-aware: 51234567 > 777001
+ console.log('PASS: chips open the linked record in its section; lists sort by column.');
+
+ // CSV import: checked first, then applied.
+ button('Import CSV').click();await tick();
+ fill(byLabel('CSV'),'connection_code,code,name,external_account_id,base_currency\nICM_MT5_DEMO,ICM_D2,Second,5002,USD');await tick();
+ button('Check').click();await tick();await tick();
+ assert.equal(importCalls.at(-1).dry_run,true);assert.match($('.fw').textContent,/All 1 rows are valid/);
+ button('Import 1 accounts').click();await tick();await tick();
+ assert.equal(importCalls.at(-1).dry_run,false);
+ console.log('PASS: CSV import checks first and applies all-or-nothing.');
+
+ // Four-eyes: a LIVE connection goes to Approvals; another person approves it.
+ nav('Connections').click();await tick();await tick();
+ button('New connection').click();await tick();
+ fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'LIVE');await tick();
+ button('Enter server and addresses manually').click();await tick();
+ fill(byLabel('Broker server name'),'ICMarketsSC-Live');fill(byLabel('Access point 1 host'),'198.51.100.7');await tick();
+ await submit($('.cfg-detail .cfg-form'));await tick();
+ assert.equal($('.fw'),null,'window closes; nothing created yet');
+ assert.match($('.cfg-records').textContent,/Sent for approval: New LIVE connection ICM_MT5_LIVE adds address 198\.51\.100\.7:443/);
+ assert.ok(!db.connections.some(c=>c.environment==='LIVE'));
+ nav('Approvals').click();await tick();await tick();
+ assert.match($('.cfg-requests').textContent,/create connection/);
+ button('Approve and apply').click();await tick();await tick();
+ assert.ok(db.connections.some(c=>c.environment==='LIVE'));
+ assert.match($('.cfg-approvals').textContent,/Change applied/);
+ console.log('PASS: LIVE change waits under Approvals and is applied by a second person.');
 
  // Order sending: confirmation required
  nav('Order sending').click();await tick();await tick();

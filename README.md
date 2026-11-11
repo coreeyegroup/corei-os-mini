@@ -590,3 +590,17 @@ If brokers that another tool shows are missing or listed as *no readable address
 - **Per-account address choice** (DEC-27): server's addresses (default), fastest first, or the account's own list. Switching keeps the account's own list.
 - **Test latency** (DEC-28) on connections and accounts: TCP connect time from the COREI server, public addresses only, kept as history.
 - Migration 013 adds `cfg_accounts.access_mode`, `cfg_accounts.access_points` and `cfg_latency_checks`. Apply migrations, re-run `scripts/setup-broker-accounts.sh` (reader update), then deploy.
+
+## Institutional controls — release 0.11.0
+
+From the provider/connection/account audit of 11 Nov 2026 (DEC-29..37). Migration 014.
+
+- **Health** (new first screen): every account's readiness and reasons, connection state and clock, outbound IP, clock sync, pending approvals, failed alerts, and a set-up checklist.
+- **Approvals** (four-eyes): LIVE address additions, LIVE reactivation, LIVE password replacement and LIVE one-step account set-up wait for a second person. Single operator: a Risk approver can switch the policy off under *Order sending › Policies* (recorded, alerted, and shown as a warning).
+- **Re-enter password** before saving credentials, turning order sending on, approving, and changing policies or users.
+- Providers: legal entity, regulator, licence, jurisdiction, execution model, contacts, exposure limit, holidays. Connections: connection method (both MT5 methods), server clock and DST, order rate limit, registered static IP, maintenance windows. Accounts: margin mode, broker group, leverage, stop-out, broker limits, expiry, ownership and mandate, other users of the login, account groups; master and investor passwords; password-use log; symbol rules and an order check.
+- Archive instead of delete; per-account symbol mappings; sortable lists, filters, links between records; CSV import (checked, all-or-nothing) and export.
+- **Alerts:** e-mail (set `COREI_SMTP_HOST`, `COREI_SMTP_PORT`, `COREI_SMTP_USER`, `COREI_SMTP_PASSWORD`, `COREI_SMTP_FROM` in `/etc/corei-os-mini/workstation.env`), Telegram (bot token on the channel) or webhook.
+- **Upstox daily login** from the account window (OAuth redirect `/api/oauth/upstox/callback` or authenticator code + PIN).
+- Outbound IP is discovered automatically; set `COREI_EGRESS_IP` in the env file if the server sits behind a fixed NAT.
+- Key rotation: `scripts/rotate-credential-key.py` (see its header).

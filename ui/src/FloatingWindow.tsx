@@ -33,7 +33,11 @@ export default function FloatingWindow({ title, subtitle, onClose, children, foo
   const drag = useRef<{ x: number; y: number; start: Box; edge: Edge | 'move' } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(box)); } catch { /* preference only */ } }, [box, storageKey]);
+  useEffect(() => {
+    try { localStorage.setItem(storageKey, JSON.stringify(box)); } catch { /* preference only */ }
+    // Also kept per user on the server (Configuration listens and saves it, debounced).
+    window.dispatchEvent(new CustomEvent('corei-pref', { detail: { key: storageKey, value: box } }));
+  }, [box, storageKey]);
   useEffect(() => { const onResize = () => setBox(b => fit(b)); window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize); }, []);
   useEffect(() => { ref.current?.querySelector<HTMLElement>('.fw-title')?.focus(); }, []);
 

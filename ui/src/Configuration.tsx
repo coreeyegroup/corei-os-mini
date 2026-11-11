@@ -9,29 +9,49 @@
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
 import FloatingWindow from './FloatingWindow';
+import { Alerts, Approvals, BrokerLogin, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
-type Row = Record<string, any>;
-type Section = 'providers' | 'connections' | 'accounts' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'controls' | 'users' | 'audit';
-type Entity = Exclude<Section, 'controls' | 'audit' | 'users' | 'strategies' | 'deployments'>;
+export type Row = Record<string, any>;
+type Section = 'health' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
+type Entity = Exclude<Section, 'health' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts'>;
+export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
 const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRADING_OPS: 'Change configuration and credentials; turn order sending off',
   RISK_APPROVER: 'Turn order sending on or off', OBSERVER: 'Read configuration and audit log' };
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
+  { id: 'health', label: 'Health', hint: 'Can each account trade right now, and if not, why' },
   { id: 'providers', label: 'Providers', hint: 'Brokers, exchanges and data vendors' },
   { id: 'connections', label: 'Connections', hint: 'Platform, environment and endpoints per provider' },
   { id: 'accounts', label: 'Accounts', hint: 'Broker accounts, login and trading permission' },
+  { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
   { id: 'strategies', label: 'Strategies', hint: 'Strategy rules and their approved versions' },
   { id: 'deployments', label: 'Deployments', hint: 'Which strategy version trades which instrument on which account, and from which data source' },
-  { id: 'controls', label: 'Order sending', hint: 'Firm-wide switch per environment' },
+  { id: 'approvals', label: 'Approvals', hint: 'LIVE changes waiting for a second person (four-eyes)' },
+  { id: 'controls', label: 'Order sending', hint: 'Firm-wide switch per environment, and control policies' },
+  { id: 'alerts', label: 'Alerts', hint: 'E-mail, Telegram and webhook notifications' },
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
 ];
 
-const BLOCKERS: Record<string, string> = {
+export const BLOCKERS: Record<string, string> = {
+  CONNECTION_FAILED: 'The connection reported a failure (see Health)',
+  ACCOUNT_EXPIRED: 'The account has expired at the broker',
+  STATIC_IP_MISMATCH: "This server's outbound IP is not the IP registered with the broker app",
+  MARGIN_MODE_UNKNOWN: 'Margin mode (hedging or netting) is not known',
+  SERVER_CLOCK_UNKNOWN: "The broker server's clock (UTC offset) is not set on the connection",
+  MANDATE_MISSING: 'Client account has no mandate reference',
+  MANDATE_EXPIRED: 'Client mandate has expired',
+  MASTER_PASSWORD_MISSING: 'Only the investor password is saved; trading needs the master password',
+  BROKER_LOGIN_NEEDED_TODAY: "Today's broker login (2FA) has not been done or has expired",
+  ACCOUNT_EXPIRING: 'Account expires soon',
+  MANDATE_EXPIRING: 'Client mandate expires soon',
+  STATIC_IP_NOT_RECORDED: 'No registered static IP recorded for this LIVE API app (SEBI framework)',
+  RATE_LIMIT_NOT_SET: 'No order rate limit set on the connection (a safe default of 5 per second applies)',
+  MARGIN_MODE_NOT_CONFIRMED_BY_BROKER: 'Margin mode was typed, not yet confirmed by the broker',
   PROVIDER_INACTIVE: 'Provider is inactive',
   CONNECTION_INACTIVE: 'Connection is inactive',
   ACCOUNT_INACTIVE: 'Account is inactive',
@@ -59,7 +79,11 @@ const BLOCKERS: Record<string, string> = {
 
 class ApiError extends Error {}
 
-async function api(path: string, method = 'GET', body?: unknown, raw?: BodyInit): Promise<any> {
+/** Set by the Configuration screen: asks for the password again and resolves true when done. */
+let reauthenticate: (() => Promise<boolean>) | null = null;
+export function setReauthHandler(handler: (() => Promise<boolean>) | null) { reauthenticate = handler; }
+
+export async function api(path: string, method = 'GET', body?: unknown, raw?: BodyInit, retried = false): Promise<any> {
   const response = await fetch('/api/' + path, {
     method, cache: 'no-store', credentials: 'same-origin',
     headers: { 'x-corei-request': 'workstation', ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -67,6 +91,9 @@ async function api(path: string, method = 'GET', body?: unknown, raw?: BodyInit)
     body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
   if (response.status === 204) return null;
+  if (response.status === 428 && reauthenticate && !retried) {
+    if (await reauthenticate()) return api(path, method, body, raw, true);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data?.detail;
@@ -79,22 +106,27 @@ async function api(path: string, method = 'GET', body?: unknown, raw?: BodyInit)
 
 /* ---------- small building blocks ---------- */
 
-function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+/** A change that needs a second person comes back as {change_request}. */
+export function pendingMessage(result: Row | null): string | null {
+  return result?.change_request ? `Sent for approval: ${result.change_request.summary}. A second person must approve it under Approvals.` : null;
+}
+
+export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return <label className="cfg-field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
 
-function Choice({ value, options, onChange, disabled, label }: { value: string; options: (string | [string, string])[];
+export function Choice({ value, options, onChange, disabled, label }: { value: string; options: (string | [string, string])[];
   onChange: (v: string) => void; disabled?: boolean; label: string }) {
   return <select aria-label={label} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}>
     {options.map(o => Array.isArray(o) ? <option key={o[0]} value={o[0]}>{o[1]}</option> : <option key={o}>{o}</option>)}
   </select>;
 }
 
-function Status({ value }: { value: string }) {
-  return <span className={`cfg-pill ${value === 'ACTIVE' || value === 'TRADING' ? 'ok' : value === 'INACTIVE' || value === 'DISABLED' ? 'off' : ''}`}>{value}</span>;
+export function Status({ value }: { value: string }) {
+  return <span className={`cfg-pill ${value === 'ACTIVE' || value === 'TRADING' ? 'ok' : value === 'INACTIVE' || value === 'DISABLED' || value === 'ARCHIVED' ? 'off' : ''}`}>{value}</span>;
 }
 
-function Env({ value }: { value: string }) {
+export function Env({ value }: { value: string }) {
   return <span className={`cfg-pill ${value === 'LIVE' ? 'live' : 'demo'}`}>{value}</span>;
 }
 
@@ -103,34 +135,49 @@ function Ready({ blockers }: { blockers: string[] }) {
   return <span className="cfg-pill warn" title={blockers.map(b => BLOCKERS[b] ?? b).join('\n')}>{blockers.length} blocker{blockers.length > 1 ? 's' : ''}</span>;
 }
 
-function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+export function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return <section className="cfg-section"><h4><span>{n}</span>{title}</h4><div className="cfg-section-body">{children}</div></section>;
 }
 
 /* ---------- forms per entity ---------- */
 
 const blank: Record<Entity, Row> = {
-  providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE' },
+  providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE', legal_entity: '', regulator: '', licence_number: '', jurisdiction: '',
+    execution_model: 'UNKNOWN', website: '', support_contact: '', dealing_contact: '', exposure_limit: '', exposure_currency: '', holidays: [] },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
-    settings: { server_name: '', access_points: [{ name: 'Added manually', host: '', port: 443 }] } },
-  accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE', access_mode: 'SERVER', access_points: [] },
+    settings: { server_name: '', access_points: [{ name: 'Added manually', host: '', port: 443, source: 'MANUAL' }] },
+    adapter: 'DEFAULT', server_utc_offset_minutes: '', dst_rule: 'UNKNOWN', clock_source: 'UNKNOWN', max_orders_per_second: '', max_order_burst: '',
+    registered_egress_ip: '', maintenance: [] },
+  accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE',
+    access_mode: 'SERVER', access_points: [], margin_mode: 'UNKNOWN', broker_group: '', leverage: '', stop_out_level: '', max_open_orders: '', max_open_positions: '',
+    expires_on: '', password_changed_on: '', relationship: 'OWN', mandate_reference: '', mandate_expires_on: '', other_users: '', group_ids: [] },
+  groups: { code: '', name: '', description: '', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
     tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
-  mappings: { connection_id: '', instrument_id: '', broker_symbol: '', usage: 'BOTH', broker_contract_size: '', broker_price_digits: '', status: 'ACTIVE' },
+  mappings: { connection_id: '', account_id: '', instrument_id: '', broker_symbol: '', usage: 'BOTH', broker_contract_size: '', broker_price_digits: '', status: 'ACTIVE' },
 };
 const FIELDS: Record<Entity, string[]> = {
-  providers: ['code', 'name', 'kind', 'status'],
-  connections: ['provider_id', 'code', 'name', 'platform', 'environment', 'purpose', 'settings', 'status'],
-  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status', 'access_mode', 'access_points'],
+  providers: ['code', 'name', 'kind', 'status', 'legal_entity', 'regulator', 'licence_number', 'jurisdiction', 'execution_model', 'website',
+    'support_contact', 'dealing_contact', 'exposure_limit', 'exposure_currency', 'holidays'],
+  connections: ['provider_id', 'code', 'name', 'platform', 'environment', 'purpose', 'settings', 'status', 'adapter', 'server_utc_offset_minutes',
+    'dst_rule', 'clock_source', 'max_orders_per_second', 'max_order_burst', 'registered_egress_ip', 'maintenance'],
+  accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status', 'access_mode', 'access_points',
+    'margin_mode', 'broker_group', 'leverage', 'stop_out_level', 'max_open_orders', 'max_open_positions', 'expires_on', 'password_changed_on',
+    'relationship', 'mandate_reference', 'mandate_expires_on', 'other_users', 'group_ids'],
+  groups: ['code', 'name', 'description', 'status'],
   instruments: ['symbol', 'name', 'asset_class', 'base_currency', 'quote_currency', 'price_precision', 'quantity_precision',
     'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status'],
-  mappings: ['connection_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
+  mappings: ['connection_id', 'account_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
 };
 const IMMUTABLE: Record<Entity, string[]> = {
   providers: ['code'], connections: ['provider_id', 'code', 'platform', 'environment'],
-  accounts: ['connection_id', 'code', 'external_account_id'], instruments: ['symbol'], mappings: ['connection_id', 'instrument_id'],
+  accounts: ['connection_id', 'code', 'external_account_id'], instruments: ['symbol'], mappings: ['connection_id', 'instrument_id', 'account_id'], groups: ['code'],
 };
-const SINGULAR: Record<Entity, string> = { providers: 'provider', connections: 'connection', accounts: 'account', instruments: 'instrument', mappings: 'symbol mapping' };
+const SINGULAR: Record<Entity, string> = { providers: 'provider', connections: 'connection', accounts: 'account', instruments: 'instrument', mappings: 'symbol mapping', groups: 'account group' };
+const ARCHIVABLE: Entity[] = ['providers', 'connections', 'accounts', 'groups'];
+const orNull = (v: unknown) => v === '' || v == null ? null : v;
+const numOrNull = (v: unknown) => v === '' || v == null ? null : Number(v);
+const strOrNull = (v: unknown) => v === '' || v == null ? null : String(v);
 
 function toPayload(entity: Entity, draft: Row): Row {
   const out: Row = {};
@@ -140,11 +187,26 @@ function toPayload(entity: Entity, draft: Row): Row {
     out.broker_price_digits = draft.broker_price_digits === '' || draft.broker_price_digits == null ? null : Number(draft.broker_price_digits);
   }
   if (entity === 'accounts') { out.access_mode = draft.access_mode ?? 'SERVER';
-    out.access_points = (draft.access_points ?? []).map((p: Row) => ({ host: p.host, port: Number(p.port) })); }
+    out.access_points = (draft.access_points ?? []).map((p: Row) => ({ host: p.host, port: Number(p.port) }));
+    for (const k of ['leverage', 'max_open_orders', 'max_open_positions']) out[k] = numOrNull(draft[k]);
+    out.stop_out_level = strOrNull(draft.stop_out_level);
+    for (const k of ['expires_on', 'password_changed_on', 'mandate_expires_on']) out[k] = orNull(draft[k]);
+    for (const k of ['margin_mode', 'relationship']) out[k] = draft[k] ?? blank.accounts[k];
+    for (const k of ['broker_group', 'mandate_reference', 'other_users']) out[k] = draft[k] ?? '';
+    out.group_ids = [...(draft.group_ids ?? [])].sort(); }
+  if (entity === 'providers') { out.exposure_limit = strOrNull(draft.exposure_limit);
+    for (const k of ['legal_entity', 'regulator', 'licence_number', 'jurisdiction', 'website', 'support_contact', 'dealing_contact', 'exposure_currency']) out[k] = draft[k] ?? '';
+    out.execution_model = draft.execution_model ?? 'UNKNOWN'; out.holidays = draft.holidays ?? []; }
+  if (entity === 'connections') { out.server_utc_offset_minutes = numOrNull(draft.server_utc_offset_minutes); out.max_order_burst = numOrNull(draft.max_order_burst);
+    out.max_orders_per_second = strOrNull(draft.max_orders_per_second); out.registered_egress_ip = orNull(draft.registered_egress_ip);
+    out.adapter = draft.adapter ?? 'DEFAULT'; out.dst_rule = draft.dst_rule ?? 'UNKNOWN'; out.clock_source = draft.clock_source ?? 'UNKNOWN';
+    out.maintenance = draft.maintenance ?? []; }
+  if (entity === 'mappings') out.account_id = orNull(draft.account_id);
   if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision); }
   if (entity === 'connections' && draft.platform === 'MT5')
     out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
-      access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false })) };
+      access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
+        source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })) };
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
@@ -404,7 +466,9 @@ function AccessPoints({ settings, change, connectionId }: { settings: Row; chang
             </span> : <span className="cfg-mono">{address(p)}</span>}
             {!edit && isPrivate(p.host) && <span className="cfg-pill off" title="Only reachable inside the broker's network">Private</span>}</td>
           <td>{p.host ? <LatencyBadge sample={lat.get(p)} /> : null}</td>
-          <td className="cfg-muted-cell">{edit ? 'Added manually' : p.name}</td>
+          <td className="cfg-muted-cell">{edit ? 'Added manually' : p.name}{p.source && p.source !== 'UNKNOWN' && <span className={`cfg-pill ${p.source === 'MANUAL' ? 'warn' : 'off'}`}
+            title={p.source === 'MANUAL' ? 'Typed by hand: on LIVE a second person must approve it' : `From ${p.source === 'DIRECTORY' ? 'the broker directory' : p.source === 'BROKER' ? 'the broker at login' : 'servers.dat'}${p.confirmed_at ? ' · ' + new Date(p.confirmed_at).toLocaleDateString() : ''}`}>
+            {{ DIRECTORY: 'Directory', SERVERS_DAT: 'servers.dat', BROKER: 'Broker', MANUAL: 'Manual' }[p.source as string]}</span>}</td>
           <td className="cfg-row-actions">
             <button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up" title="Try earlier">↑</button>
             <button type="button" disabled={i === points.length - 1} onClick={() => move(i, 1)} aria-label="Move down" title="Try later">↓</button>
@@ -412,7 +476,7 @@ function AccessPoints({ settings, change, connectionId }: { settings: Row; chang
         </tr>; })}
     </tbody></table></div>
     <button type="button" className="cfg-more-link" disabled={points.length >= 256}
-      onClick={() => { setEditable(new Set([...editable, points.length])); setPoints([...points, { name: settings.server_name || 'Added manually', host: '', port: 443, enabled: true }]); }}>+ Add address</button>
+      onClick={() => { setEditable(new Set([...editable, points.length])); setPoints([...points, { name: settings.server_name || 'Added manually', host: '', port: 443, enabled: true, source: 'MANUAL' }]); }}>+ Add address</button>
   </div>;
 }
 
@@ -430,9 +494,10 @@ function Mt5Server({ settings, change, connectionId, summaryOnly }: { settings: 
   function use(server: Row, picked: Row[]) {
     const id = (p: Row) => `${p.host}|${p.port}`, wanted = new Set(picked.map(id));
     const rest = server.access_points.filter((p: Row) => !wanted.has(id(p)));
+    const source = catalog?.source === 'broker-directory' ? 'DIRECTORY' : 'SERVERS_DAT', confirmed_at = new Date().toISOString();
     change({ server_name: server.server_name, company_name: server.company_name ?? null, server_details: server.details ?? {},
-      access_points: [...picked.map(p => ({ name: p.name, host: p.host, port: p.port, enabled: true })),
-        ...rest.map((p: Row) => ({ name: p.name, host: p.host, port: p.port, enabled: false }))] });
+      access_points: [...picked.map(p => ({ name: p.name, host: p.host, port: p.port, enabled: true, source, confirmed_at })),
+        ...rest.map((p: Row) => ({ name: p.name, host: p.host, port: p.port, enabled: false, source, confirmed_at }))] });
     setCatalog(null); setManual(false); setChanging(false); setTerm(''); setVersion(v => v + 1);
   }
   if (catalog) return <ServerPicker catalog={catalog} use={use} close={() => setCatalog(null)} />;
@@ -458,7 +523,7 @@ function Mt5Server({ settings, change, connectionId, summaryOnly }: { settings: 
       {error && <p role="alert" className="cfg-error">{error}</p>}
       <div className="cfg-finder-foot">
         {changing ? <button type="button" onClick={() => { setChanging(false); setError(''); }}>← Keep {settings.server_name}</button>
-          : <button type="button" className="cfg-link" onClick={() => { setManual(true); if (!points.length) change({ ...settings, access_points: [{ name: 'Added manually', host: '', port: 443, enabled: true }] }); }}>Enter server and addresses manually</button>}
+          : <button type="button" className="cfg-link" onClick={() => { setManual(true); if (!points.length) change({ ...settings, access_points: [{ name: 'Added manually', host: '', port: 443, enabled: true, source: 'MANUAL' }] }); }}>Enter server and addresses manually</button>}
       </div>
     </div>}
     {!showFinder && hasServer && !manual && <div className="cfg-chosen">
@@ -536,14 +601,40 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
   const ref = (k: string, label: string, rows: Row[], show: (r: Row) => string) =>
     <Field label={label} hint={locked(k) ? 'Fixed after creation' : undefined}><select aria-label={label} required value={draft[k] ?? ''} disabled={locked(k)} onChange={e => set(k, e.target.value)}>
       <option value="" disabled>Select…</option>{rows.map(r => <option key={r.id} value={r.id}>{show(r)}</option>)}</select></Field>;
-  const status = pick('status', 'Status', ['ACTIVE', 'INACTIVE']);
+  const status = pick('status', 'Status', editing && draft.status === 'ARCHIVED' ? ['ARCHIVED', 'INACTIVE'] : ['ACTIVE', 'INACTIVE']);
   const code = (label: string, example: string) => text('code', label, { required: true, maxLength: 32, pattern: '[A-Za-z][A-Za-z0-9_]{1,31}' },
     `Suggested; fixed after saving. e.g. ${example}`);
 
   if (entity === 'providers') return <>
-    {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand and legal entity, e.g. IC Markets (Raw Trading Ltd), Upstox (RKSV Securities)')}
-    {code('Provider ID', 'ICMARKETS, EXNESS, UPSTOX')}
-    {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['DATA_VENDOR', 'Data vendor']])}{status}</>;
+    <Section n={1} title="Provider">
+      {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand, e.g. IC Markets, VT Markets, Upstox')}
+      <div className="cfg-pair">{code('Provider ID', 'ICMARKETS, EXNESS, UPSTOX')}
+        {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['DATA_VENDOR', 'Data vendor']])}</div>
+    </Section>
+    <Section n={2} title="Legal entity and regulation">
+      {text('legal_entity', 'Legal entity', { maxLength: 200 }, 'The firm that holds the accounts, e.g. VT Markets (Pty) Ltd. One brand can have several.')}
+      <div className="cfg-pair">{text('regulator', 'Regulator', { maxLength: 120 }, 'e.g. FSCA, ASIC, SEBI')}{text('licence_number', 'Licence number', { maxLength: 80 })}</div>
+      <div className="cfg-pair">{text('jurisdiction', 'Jurisdiction', { maxLength: 80 }, 'e.g. South Africa, India')}
+        {pick('execution_model', 'Execution model', [['UNKNOWN', 'Not known'], ['MARKET_MAKER', 'Market maker'], ['STP', 'STP'], ['ECN', 'ECN'], ['EXCHANGE', 'Exchange'], ['MIXED', 'Mixed / per account type']])}</div>
+    </Section>
+    <Section n={3} title="Contacts, exposure and calendar">
+      {text('website', 'Website', { maxLength: 200 })}
+      <div className="cfg-pair">{text('support_contact', 'Support contact', { maxLength: 300 }, 'Phone, e-mail, chat')}
+        {text('dealing_contact', 'Dealing desk (stuck orders)', { maxLength: 300 })}</div>
+      <div className="cfg-pair">{text('exposure_limit', 'Exposure limit', { inputMode: 'decimal' }, 'Most capital to hold at this firm across all accounts')}
+        {text('exposure_currency', 'Exposure currency', { maxLength: 3 }, 'e.g. USD')}</div>
+      <Field label="Holidays (market closed)" hint="One per line: YYYY-MM-DD Name">
+        <textarea aria-label="Holidays" rows={3} value={(draft.holidays ?? []).map((h: Row) => `${h.date} ${h.name ?? ''}`.trim()).join('\n')}
+          onChange={e => set('holidays', e.target.value.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ date: l.slice(0, 10), name: l.slice(10).trim() })))} /></Field>
+      {status}
+    </Section></>;
+
+  if (entity === 'groups') return <>
+    {text('name', 'Group name', { required: true, maxLength: 120 }, 'e.g. Gold desk, Client book A')}
+    {code('Group ID', 'GOLD_DESK')}
+    {text('description', 'Description', { maxLength: 500 })}
+    {status}
+    {editing && <p className="cfg-note">{draft.account_count ?? 0} account(s). Add accounts to a group from each account's window.</p>}</>;
 
   if (entity === 'connections') {
     const platform = (v: string) => setDraft({ ...draft, platform: v, settings: v === 'MT5' ? blank.connections.settings : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
@@ -570,6 +661,36 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
             {status}
           </div>
         </details>
+      </Section>
+      <Section n={4} title="Method, clock and limits">
+        <div className="cfg-pair">
+          {pick('adapter', 'Connection method', draft.platform === 'MT5'
+            ? [['DEFAULT', 'Default (decided at go-live)'], ['MTAPI_DIRECT', 'Direct (mtapi SDK, no terminal)'], ['TERMINAL_BRIDGE', 'Terminal bridge (MT5 terminal + EA)']]
+            : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']], 'Both MT5 methods stay available')}
+          {pick('clock_source', 'Clock set from', [['UNKNOWN', 'Not set'], ['MANUAL', 'Entered by hand'], ['SERVER_FILE', 'servers.dat'], ['BROKER_LOGIN', 'Broker at login']])}
+        </div>
+        <div className="cfg-pair">
+          {text('server_utc_offset_minutes', 'Server time offset from UTC (minutes)', { type: 'number', min: -720, max: 840 },
+            'Most MT5 brokers: 120 in winter (GMT+2), 180 in summer')}
+          {pick('dst_rule', 'Daylight saving', [['UNKNOWN', 'Not known'], ['NONE', 'None'], ['US', 'US rule (2nd Sun Mar – 1st Sun Nov)'], ['EU', 'EU rule (last Sun Mar – last Sun Oct)']])}
+        </div>
+        {draft.platform === 'MT5' && draft.settings?.server_details?.TimeZone != null && draft.server_utc_offset_minutes === '' &&
+          <p className="cfg-note">servers.dat states TimeZone {String(draft.settings.server_details.TimeZone)}. <button type="button" className="cfg-link"
+            onClick={() => setDraft({ ...draft, server_utc_offset_minutes: String(Number(draft.settings.server_details.TimeZone) * (Math.abs(Number(draft.settings.server_details.TimeZone)) <= 14 ? 60 : 1)), clock_source: 'SERVER_FILE' })}>Use it</button> — confirm against the broker's server time.</p>}
+        <div className="cfg-pair">
+          {text('max_orders_per_second', 'Max orders per second', { inputMode: 'decimal' }, 'Indian broker APIs (SEBI): 10. Empty = 5.')}
+          {text('max_order_burst', 'Burst', { type: 'number', min: 1, max: 1000 }, 'Orders allowed at once')}
+        </div>
+        {draft.platform === 'REST_API' && text('registered_egress_ip', 'Registered static IP', { maxLength: 45 },
+          "The IP whitelisted on the broker app (SEBI framework). Must equal this server's outbound IP (see Health).")}
+        <Field label="Maintenance windows" hint="One per line: weekday(0=Mon) HH:MM-HH:MM note, in server time">
+          <textarea aria-label="Maintenance windows" rows={2} value={(draft.maintenance ?? []).map((m: Row) => `${m.weekday} ${m.start}-${m.end} ${m.note ?? ''}`.trim()).join('\n')}
+            onChange={e => set('maintenance', e.target.value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+              const m = l.match(/^(\d)\s+(\d\d:\d\d)-(\d\d:\d\d)\s*(.*)$/); return m ? { weekday: Number(m[1]), start: m[2], end: m[3], note: m[4], timezone: 'SERVER' } : { weekday: -1, start: l, end: '', note: '' }; }))} /></Field>
+        {editing && draft.live_status && <p className="cfg-note">Live status: <strong>{draft.live_status.state}</strong>
+          {draft.live_status.current_host ? ` · on ${draft.live_status.current_host}:${draft.live_status.current_port}` : ''}
+          {draft.live_status.last_heartbeat_at ? ` · heartbeat ${new Date(draft.live_status.last_heartbeat_at).toLocaleTimeString()}` : ''}
+          {draft.live_status.last_error ? ` · ${draft.live_status.last_error}` : ''}</p>}
       </Section></>;
   }
 
@@ -602,7 +723,32 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
         <AccountAddresses mode={draft.access_mode ?? 'SERVER'} own={draft.access_points ?? []} serverPoints={connection.settings?.access_points ?? []}
           connectionId={connection.id} routing={editing ? draft.routing : undefined}
           change={(mode, own) => setDraft({ ...draft, access_mode: mode, access_points: own })} />
-      </Section>}</>;
+      </Section>}
+      <Section n={mt5 ? 4 : 3} title="Broker facts">
+        <p className="cfg-note">{draft.broker_facts_read_at ? `Read from the broker ${new Date(draft.broker_facts_read_at).toLocaleString()}.`
+          : 'Not read from the broker yet. Values typed here are marked as typed and replaced by what the broker reports at login.'}</p>
+        <div className="cfg-pair">
+          {pick('margin_mode', 'Margin mode', [['UNKNOWN', 'Not known'], ['HEDGING', 'Hedging (several positions per symbol)'], ['NETTING', 'Netting (one position per symbol)'], ['EXCHANGE', 'Exchange']],
+            draft.margin_mode_source === 'BROKER' ? 'Confirmed by the broker' : draft.margin_mode !== 'UNKNOWN' ? 'Typed; not yet confirmed by the broker' : 'On netting, a SELL closes a BUY')}
+          {text('broker_group', 'Broker account group / type', { maxLength: 120 }, 'e.g. Raw ECN, Standard')}
+        </div>
+        <div className="cfg-pair">{text('leverage', 'Leverage (1:x)', { type: 'number', min: 1, max: 10000 })}{text('stop_out_level', 'Stop-out level (%)', { inputMode: 'decimal' })}</div>
+        <div className="cfg-pair">{text('max_open_orders', 'Broker limit: open orders', { type: 'number', min: 1 })}{text('max_open_positions', 'Broker limit: open positions', { type: 'number', min: 1 })}</div>
+      </Section>
+      <Section n={mt5 ? 5 : 4} title="Ownership, lifecycle and groups">
+        <div className="cfg-pair">
+          {pick('relationship', 'Whose money', [['OWN', 'Own (the holder)'], ['FIRM', 'Firm (Coreeye Group)'], ['CLIENT', 'Client (managed for someone else)']],
+            draft.relationship === 'CLIENT' ? 'Needs a written mandate; licensing rules may apply' : undefined)}
+          {text('mandate_reference', 'Mandate reference', { maxLength: 200 }, 'Agreement number or document link')}
+        </div>
+        <div className="cfg-pair">{text('mandate_expires_on', 'Mandate expires', { type: 'date' })}{text('expires_on', 'Account expires', { type: 'date' }, 'Demo accounts expire; idle live accounts get archived')}</div>
+        {text('other_users', 'Other users of this login', { maxLength: 300 }, 'e.g. MT5 terminal on office PC, copier — they can conflict with COREI')}
+        {editing && draft.password_changed_on && <p className="cfg-note">Password last saved {draft.password_changed_on}.</p>}
+        {(refs.groups ?? []).length > 0 && <Field label="Account groups"><div className="cfg-checks">
+          {(refs.groups ?? []).map((g: Row) => <label key={g.id}><input type="checkbox" checked={(draft.group_ids ?? []).includes(g.id)}
+            onChange={e => set('group_ids', e.target.checked ? [...(draft.group_ids ?? []), g.id] : (draft.group_ids ?? []).filter((x: string) => x !== g.id))} /> {g.name}</label>)}
+        </div></Field>}
+      </Section></>;
   }
 
   if (entity === 'instruments') return <>
@@ -615,7 +761,11 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     {text('contract_unit', 'Contract unit', { required: true, maxLength: 32 }, 'e.g. oz, units, barrels')}
     {text('trading_session', 'Trading session', { maxLength: 200 }, 'Optional description, e.g. Sun 23:00 – Fri 22:00 UTC')}{status}</>;
 
+  const accountsHere = (refs.accounts ?? []).filter((a: Row) => a.connection_id === draft.connection_id);
   return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.purpose}`)}
+    <Field label="Applies to" hint={locked('account_id') ? 'Fixed after creation' : 'An account-specific symbol overrides the connection-wide one for that account (e.g. XAUUSD.r on a raw account)'}>
+      <select aria-label="Applies to" value={draft.account_id ?? ''} disabled={locked('account_id')} onChange={e => set('account_id', e.target.value)}>
+        <option value="">Every account on this connection</option>{accountsHere.map((a: Row) => <option key={a.id} value={a.id}>Only {a.code}</option>)}</select></Field>
     {ref('instrument_id', 'Instrument', refs.instruments, r => `${r.symbol} · ${r.name}`)}
     {text('broker_symbol', 'Broker symbol', { required: true, maxLength: 64 }, 'As shown in the broker platform, e.g. XAUUSD.r')}
     {pick('usage', 'Used for', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
@@ -629,34 +779,40 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
   const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
   const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '' };
   const [secret, setSecret] = useState(empty), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
-  const saved = row.credential_kind;
+  const levels = owner === 'accounts'
+    ? [['FULL', 'Master password', row.master_credential_kind, row.master_credential_updated_at], ['READ_ONLY', 'Investor password', row.investor_credential_kind, row.investor_credential_updated_at]] as const
+    : [['FULL', kind === 'API_KEY' ? 'API key and secret' : 'OAuth client', row.credential_kind, row.credential_updated_at]] as const;
+  const savedLevel = (level: string) => levels.find(l => l[0] === level)?.[2];
   async function save(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setMessage('');
     const credential = kind === 'MT5_LOGIN' ? { kind, password: secret.password, access_level: secret.access_level }
       : kind === 'API_KEY' ? { kind, api_key: secret.api_key, api_secret: secret.api_secret } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
-    try { await api(`config/${owner}/${row.id}/credential`, 'PUT', { credential }); setSecret(empty); setMessage('Credential saved and encrypted.'); reload(); }
+    try { const result = await api(`config/${owner}/${row.id}/credential`, 'PUT', { credential }); setSecret(empty);
+      setMessage(pendingMessage(result) ?? 'Saved and encrypted. It cannot be viewed, only replaced.'); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
-  async function remove() {
-    if (!window.confirm('Remove the stored credential? The adapter will not be able to log in until a new one is saved.')) return;
+  async function remove(level: string, label: string) {
+    if (!window.confirm(`Remove the ${label.toLowerCase()}? The adapter cannot use it until a new one is saved.`)) return;
     setBusy(true); setError('');
-    try { await api(`config/${owner}/${row.id}/credential`, 'DELETE'); setMessage('Credential removed.'); reload(); }
+    try { await api(`config/${owner}/${row.id}/credential${owner === 'accounts' ? '?level=' + level : ''}`, 'DELETE'); setMessage(`${label} removed.`); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   const input = (k: keyof typeof empty, label: string) => <Field label={label}><input aria-label={label} required type="password" autoComplete="new-password" maxLength={4096}
     value={secret[k]} onChange={e => setSecret({ ...secret, [k]: e.target.value })} /></Field>;
   return <form className="cfg-credential" onSubmit={save}>
     <h3>{owner === 'accounts' ? 'MT5 login' : kind === 'API_KEY' ? 'API key' : 'OAuth client'}</h3>
-    <p className="cfg-note">{saved ? <>Saved{row.credential_access_level === 'READ_ONLY' ? ' · investor (read-only) password' : ''} · updated {new Date(row.credential_updated_at).toLocaleString()}. Stored encrypted; it cannot be viewed, only replaced.</>
-      : 'Not saved.'}</p>
-    {kind === 'MT5_LOGIN' && <>{input('password', saved ? 'New password' : 'Password')}
-      <Field label="Password type"><Choice label="Password type" value={secret.access_level} options={[['FULL', 'Master password (can trade)'], ['READ_ONLY', 'Investor password (read only)']]}
-        onChange={v => setSecret({ ...secret, access_level: v })} /></Field></>}
+    <ul className="cfg-cred-status">{levels.map(([level, label, saved, updated]) => <li key={level}>
+      <span>{label}</span>{saved ? <span className="cfg-pill ok">Saved · {new Date(updated).toLocaleDateString()}</span> : <span className="cfg-pill off">Not saved</span>}
+      {saved && <button type="button" className="cfg-link" disabled={busy} onClick={() => void remove(level, label)}>Remove</button>}</li>)}</ul>
+    {owner === 'accounts' && <p className="cfg-note">The master password can trade. The investor password is read-only and is used for data and monitoring, so a leak there cannot place orders.</p>}
+    {kind === 'MT5_LOGIN' && <><Field label="Password type"><Choice label="Password type" value={secret.access_level} options={[['FULL', 'Master password (can trade)'], ['READ_ONLY', 'Investor password (read only)']]}
+        onChange={v => setSecret({ ...secret, access_level: v })} /></Field>
+      {input('password', savedLevel(secret.access_level) ? 'New password' : 'Password')}</>}
     {kind === 'API_KEY' && <>{input('api_key', 'API key')}{input('api_secret', 'API secret')}</>}
     {kind === 'OAUTH_CLIENT' && <>{input('client_id', 'Client ID')}{input('client_secret', 'Client secret')}</>}
     {error && <p role="alert" className="cfg-error">{error}</p>}{message && <p role="status" className="cfg-ok">{message}</p>}
-    <div className="cfg-actions"><button className="primary" disabled={busy}>{saved ? 'Replace credential' : 'Save credential'}</button>
-      {saved && <button type="button" disabled={busy} onClick={() => void remove()}>Remove</button>}</div>
+    <div className="cfg-actions"><button className="primary" disabled={busy}>{savedLevel(secret.access_level) ? 'Replace' : 'Save'}</button>
+      <small className="cfg-note">You may be asked for your own password again. On LIVE, replacing a saved password needs a second person.</small></div>
   </form>;
 }
 
@@ -666,7 +822,7 @@ const serverKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase
 
 /** Login, password and server together, the way MT5 does it. The server's connection is
  *  reused when one exists for this provider, environment and server (or created). */
-function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row, note: string) => void }) {
+function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void }) {
   const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
     base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
     server: { server_name: '', access_points: [] as Row[] } });
@@ -691,13 +847,16 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
     e.preventDefault(); setBusy(true); setError('');
     try {
       const server = { server_name: f.server.server_name, company_name: f.server.company_name || null, server_details: f.server.server_details ?? {},
-        access_points: picked.map((p: Row) => ({ name: p.name || f.server.server_name, host: p.host, port: Number(p.port), enabled: p.enabled !== false })) };
+        access_points: picked.map((p: Row) => ({ name: p.name || f.server.server_name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
+          source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })) };
       const result = await api('config/mt5/account-setup', 'POST', {
         provider_id: f.provider_id, environment: f.environment, server, ...(match ? { connection_id: match.id } : {}),
         account: { code: f.code, name: f.name, external_account_id: f.external_account_id, holder_name: f.holder_name, base_currency: f.base_currency,
           trading_permission: f.trading_permission, access_mode: f.access_mode, access_points: f.access_points.map((p: Row) => ({ host: p.host, port: Number(p.port) })) },
         ...(f.password ? { credential: { kind: 'MT5_LOGIN', password: f.password, access_level: f.access_level } } : {}) });
       setF(old => ({ ...old, password: '' }));
+      const pending = pendingMessage(result);
+      if (pending) { created(null, pending); return; }
       const note = result.connection_action === 'CREATED' ? `Account added. Connection ${result.connection.code} was created for ${server.server_name}.`
         : result.connection_action === 'ADDRESSES_ADDED' ? `Account added to ${result.connection.code}. New addresses were added to the server unticked; other accounts are unchanged.`
         : `Account added to ${result.connection.code}.`;
@@ -761,38 +920,74 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
 
 /* ---------- record list + detail ---------- */
 
+/** A link to another record; the list handles the click (data-nav="section:id"). */
+const Link = ({ to, id, children }: { to: string; id?: string; children: ReactNode }) =>
+  id ? <button type="button" className="cfg-chip" data-nav={`${to}:${id}`} title="Open">{children}</button> : <>{children}</>;
+const Pending = ({ r }: { r: Row }) => r.pending_changes > 0 ? <> <span className="cfg-pill warn" title="A change is waiting for a second person under Approvals">Awaiting approval</span></> : null;
+
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
-  providers: [['Provider ID', r => r.code], ['Provider name', r => r.name], ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
-  connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => r.provider_code],
+  providers: [['Provider ID', r => r.code], ['Provider name', r => r.name], ['Legal entity', r => r.legal_entity || '—'], ['Regulator', r => r.regulator || '—'],
+    ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
+  groups: [['Group ID', r => r.code], ['Name', r => r.name], ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
+  connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => <Link to="providers" id={r.provider_id}>{r.provider_code}</Link>],
     ['Platform', r => r.platform === 'MT5' ? 'MT5' : 'API'], ['Env', r => <Env value={r.environment} />],
     ['Server', r => r.platform === 'MT5' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
+    ['Clock', r => r.server_utc_offset_minutes == null ? <span className="cfg-pill warn">Not set</span> : `UTC${r.server_utc_offset_minutes >= 0 ? '+' : ''}${r.server_utc_offset_minutes / 60}${r.dst_rule && r.dst_rule !== 'NONE' && r.dst_rule !== 'UNKNOWN' ? ' ' + r.dst_rule + ' DST' : ''}`],
+    ['Live', r => r.live_status?.state ? <span className={`cfg-pill ${r.live_status.state === 'CONNECTED' ? 'ok' : r.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{r.live_status.state}</span> : <span className="cfg-note">—</span>],
     ['Accounts', r => r.account_count],
-    ['Status', r => <><Status value={r.status} />{r.platform !== 'MT5' && !r.credential_kind && <> <span className="cfg-pill warn">No API key</span></>}</>]],
-  accounts: [['Account ID', r => r.code], ['Holder', r => r.holder_name || '—'], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],
-    ['Broker login', r => r.external_account_id], ['Ccy', r => r.base_currency], ['Permission', r => <Status value={r.trading_permission} />],
-    ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />], ['Status', r => <Status value={r.status} />]],
+    ['Status', r => <><Status value={r.status} />{r.platform !== 'MT5' && !r.credential_kind && <> <span className="cfg-pill warn">No API key</span></>}<Pending r={r} /></>]],
+  accounts: [['Account ID', r => r.code], ['Holder', r => r.holder_name || '—'], ['Provider', r => <Link to="providers" id={r.provider_id}>{r.provider_code}</Link>],
+    ['Connection', r => <Link to="connections" id={r.connection_id}>{r.connection_code}</Link>], ['Env', r => <Env value={r.environment} />],
+    ['Broker login', r => r.external_account_id], ['Mode', r => r.margin_mode === 'UNKNOWN' ? <span className="cfg-pill warn" title="Margin mode not known">?</span> : String(r.margin_mode).toLowerCase()],
+    ['Permission', r => <Status value={r.trading_permission} />],
+    ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />],
+    ['Status', r => <><Status value={r.status} />{r.warnings?.length > 0 && <> <span className="cfg-pill" title={r.warnings.map((w: string) => BLOCKERS[w] ?? w).join('\n')}>{r.warnings.length} warning{r.warnings.length > 1 ? 's' : ''}</span></>}<Pending r={r} /></>]],
   instruments: [['Symbol', r => r.symbol], ['Name', r => r.name], ['Class', r => r.asset_class], ['Tick', r => r.tick_size],
     ['Min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],
-  mappings: [['Instrument', r => r.instrument_symbol], ['Provider', r => r.provider_code], ['Connection', r => r.connection_code], ['Env', r => <Env value={r.environment} />],
-    ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
+  mappings: [['Instrument', r => r.instrument_symbol], ['Provider', r => r.provider_code], ['Connection', r => <Link to="connections" id={r.connection_id}>{r.connection_code}</Link>], ['Env', r => <Env value={r.environment} />],
+    ['Applies to', r => r.account_id ? <Link to="accounts" id={r.account_id}>{r.account_code}</Link> : 'All accounts'], ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
 };
 
-function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: Record<string, Row[]>; reloadRefs: () => void; canEdit: boolean }) {
+const SORT_RAW: Record<string, (r: Row) => string | number> = {
+  Status: r => r.status, Env: r => r.environment, Permission: r => r.trading_permission, Data: r => r.data_blockers?.length ?? 0,
+  Trading: r => r.trading_blockers?.length ?? 0, Connection: r => r.connection_code ?? r.code, Provider: r => r.provider_code, Live: r => r.live_status?.state ?? '',
+  Clock: r => r.server_utc_offset_minutes ?? -9999, Mode: r => r.margin_mode, 'Applies to': r => r.account_code ?? '',
+};
+/** Which field to focus when a readiness reason is clicked. */
+const BLOCKER_FIELD: Record<string, string> = {
+  MARGIN_MODE_UNKNOWN: 'Margin mode', MARGIN_MODE_NOT_CONFIRMED_BY_BROKER: 'Margin mode', MANDATE_MISSING: 'Mandate reference', MANDATE_EXPIRED: 'Mandate expires',
+  MANDATE_EXPIRING: 'Mandate expires', ACCOUNT_EXPIRED: 'Account expires', ACCOUNT_EXPIRING: 'Account expires', ACCOUNT_PERMISSION_DISABLED: 'Trading permission',
+  ACCOUNT_NOT_PERMITTED_TO_TRADE: 'Trading permission', ACCOUNT_INACTIVE: 'Status', ACCOUNT_CREDENTIAL_MISSING: 'Password', MASTER_PASSWORD_MISSING: 'Password',
+  READ_ONLY_CREDENTIAL: 'Password',
+};
+
+function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { entity: Entity; refs: Record<string, Row[]>; reloadRefs: () => void;
+  canEdit: boolean; navigate: Navigate; openId?: string }) {
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(false), [importing, setImporting] = useState(false);
+  const prefKey = `corei-os-mini.list.${entity}`;
+  const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
+  const setViewPref = (patch: Row) => { const next = { ...view, ...patch }; setView(next); try { localStorage.setItem(prefKey, JSON.stringify(next)); } catch { /* preference only */ } };
   const parentFilter = entity === 'connections' ? ['provider_id', refs.providers, (r: Row) => r.code] as const
     : entity === 'accounts' ? ['connection_id', refs.connections, (r: Row) => r.code] as const
     : entity === 'mappings' ? ['connection_id', refs.connections, (r: Row) => r.code] as const : null;
   async function load(keepId?: string) {
     try {
       const params = new URLSearchParams(); if (q) params.set('q', q); if (parentFilter && parent) params.set(parentFilter[0], parent);
+      if (view.archived) params.set('include_archived', 'true');
       const data = await api(`config/${entity}?${params}`); setRows(data.items); setLoadError('');
       if (keepId) { const fresh = data.items.find((r: Row) => r.id === keepId); setSelected(fresh ?? null); if (fresh) setDraft({ ...fresh }); }
-    } catch (e) { setLoadError((e as Error).message); }
+      return data.items as Row[];
+    } catch (e) { setLoadError((e as Error).message); return []; }
   }
-  useEffect(() => { const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent]);
+  useEffect(() => { const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent, view.archived]);
+  useEffect(() => { if (!openId) return; void (async () => {
+    let row = rows?.find(r => r.id === openId);
+    if (!row) row = (await load()).find(r => r.id === openId) ?? (await api(`config/${entity}/${openId}`).catch(() => null));
+    if (row) { setSelected(row); setDraft({ ...row, settings: row.settings ? JSON.parse(JSON.stringify(row.settings)) : undefined }); }
+  })(); }, [openId]);
   const dirty = useMemo(() => !!draft && JSON.stringify(toPayload(entity, draft)) !== JSON.stringify(selected ? toPayload(entity, selected) : toPayload(entity, blank[entity])), [draft, selected, entity]);
   useEffect(() => {
     const guard = (e: Event) => { if (dirty && !window.confirm('Discard unsaved configuration changes?')) e.preventDefault(); };
@@ -809,17 +1004,44 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
     try {
       const body = toPayload(entity, draft);
       const saved = selected ? await api(`config/${entity}/${selected.id}`, 'PUT', { ...body, version: selected.version }) : await api(`config/${entity}`, 'POST', body);
+      const pending = pendingMessage(saved);
+      if (pending) { setNotice(pending); if (selected) { setDraft({ ...selected }); await load(selected.id); } else { setSelected(null); setDraft(null); await load(); } reloadRefs(); return; }
       setNotice(selected ? 'Changes saved.' : `${SINGULAR[entity][0].toUpperCase() + SINGULAR[entity].slice(1)} created.`);
       setSelected(saved); setDraft({ ...saved }); await load(saved.id); reloadRefs();
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  async function archive() {
+    if (!selected) return;
+    const reason = window.prompt(`Archive ${selected.code}? It stays on record (read-only) and leaves the lists. Reason:`);
+    if (!reason || reason.trim().length < 5) { if (reason !== null) setError('Give a reason of at least 5 characters.'); return; }
+    setBusy(true); setError('');
+    try { const done = await api(`config/${entity}/${selected.id}/archive`, 'POST', { version: selected.version, reason: reason.trim() });
+      setSelected(null); setDraft(null); setNotice(`${done.code} archived.`); await load(); reloadRefs(); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   async function remove() {
     if (!selected || !window.confirm(`Delete this ${SINGULAR[entity]}? This cannot be undone. Records that depend on it must be removed first.`)) return;
     setBusy(true); setError('');
     try { await api(`config/${entity}/${selected.id}?version=${selected.version}`, 'DELETE'); setSelected(null); setDraft(null); setNotice('Deleted.'); await load(); reloadRefs(); }
-    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+    catch (err) { setError((err as Error).message + (ARCHIVABLE.includes(entity) && (err as any).status === 409 ? ' Use Archive.' : '')); } finally { setBusy(false); }
+  }
+  function focusField(code: string) {
+    const label = BLOCKER_FIELD[code]; if (!label) return;
+    const target = [...document.querySelectorAll<HTMLElement>('.cfg-detail [aria-label]')].find(el => el.getAttribute('aria-label')?.startsWith(label));
+    target?.scrollIntoView({ block: 'center' }); target?.focus();
   }
   const columns = COLUMNS[entity];
+  const sorted = useMemo(() => {
+    let list = rows ?? [];
+    if (entity === 'accounts' && view.env) list = list.filter(r => r.environment === view.env);
+    if (entity === 'accounts' && view.notReady) list = list.filter(r => r.trading_blockers?.length);
+    if (!view.sort) return list;
+    const column = columns.find(([h]) => h === view.sort); if (!column) return list;
+    const key = (r: Row) => { const v = column[1](r); return typeof v === 'string' || typeof v === 'number' ? v : SORT_RAW[column[0]]?.(r) ?? ''; };
+    return [...list].sort((x, y) => { const a = key(x), b = key(y); const c = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true });
+      return view.desc ? -c : c; });
+  }, [rows, view, entity]);
+  const exportable = ['providers', 'connections', 'accounts'].includes(entity);
   return <div className="cfg-records">
     <div className="cfg-list">
       <div className="cfg-toolbar">
@@ -827,41 +1049,71 @@ function Records({ entity, refs, reloadRefs, canEdit }: { entity: Entity; refs: 
         {parentFilter && <select aria-label="Filter" value={parent} onChange={e => setParent(e.target.value)}>
           <option value="">All {parentFilter[0] === 'provider_id' ? 'providers' : 'connections'}</option>
           {parentFilter[1].map(r => <option key={r.id} value={r.id}>{parentFilter[2](r)}</option>)}</select>}
+        {entity === 'accounts' && <><select aria-label="Environment filter" value={view.env ?? ''} onChange={e => setViewPref({ env: e.target.value })}>
+          <option value="">LIVE and DEMO</option><option value="LIVE">LIVE only</option><option value="DEMO">DEMO only</option></select>
+          <label className="cfg-check"><input type="checkbox" checked={!!view.notReady} onChange={e => setViewPref({ notReady: e.target.checked })} /> Not ready to trade</label></>}
+        {ARCHIVABLE.includes(entity) && <label className="cfg-check"><input type="checkbox" checked={!!view.archived} onChange={e => setViewPref({ archived: e.target.checked })} /> Show archived</label>}
+        <span className="cfg-toolbar-gap" />
+        {exportable && <a className="cfg-button" href={`/api/config/export/${entity}.csv`} download>Export CSV</a>}
+        {canEdit && entity === 'accounts' && <button onClick={() => setImporting(true)}>Import CSV</button>}
         {canEdit && entity === 'accounts' && <button className="primary" onClick={() => setAdding(true)}>Add MT5 account</button>}
         {canEdit ? <button className={entity === 'accounts' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
-      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No {entity === 'mappings' ? 'symbol mappings' : entity} yet. {canEdit ? `Choose New ${SINGULAR[entity]} to add one.` : ''}</p> :
-        <div className="cfg-scroll"><table className="cfg-table"><thead><tr>{columns.map(([h]) => <th key={h}>{h}</th>)}</tr></thead><tbody>
-          {rows.map(r => <tr key={r.id} className={selected?.id === r.id ? 'selected' : ''} tabIndex={0} onClick={() => open(r)} onKeyDown={e => { if (e.key === 'Enter') open(r); }}>
+      {!draft && notice && <p role="status" className="cfg-ok">{notice}</p>}
+      {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No {entity === 'mappings' ? 'symbol mappings' : entity === 'groups' ? 'account groups' : entity} yet. {canEdit ? `Choose New ${SINGULAR[entity]} to add one.` : ''}</p> :
+        <div className="cfg-scroll"><table className="cfg-table" onClick={e => { const link = (e.target as HTMLElement).closest<HTMLElement>('[data-nav]');
+          if (link) { e.stopPropagation(); const [to, id] = link.dataset.nav!.split(':'); navigate(to, id); } }}>
+          <thead><tr>{columns.map(([h]) => <th key={h} aria-sort={view.sort === h ? (view.desc ? 'descending' : 'ascending') : undefined}>
+            <button type="button" className="cfg-sort" onClick={() => setViewPref({ sort: h, desc: view.sort === h ? !view.desc : false })}>{h}{view.sort === h ? (view.desc ? ' ▼' : ' ▲') : ''}</button></th>)}</tr></thead>
+          <tbody>
+          {sorted.map(r => <tr key={r.id} className={`${selected?.id === r.id ? 'selected' : ''}${r.status === 'ARCHIVED' ? ' cfg-off' : ''}`} tabIndex={0}
+            onClick={e => { if (!(e.target as HTMLElement).closest('[data-nav]')) open(r); }} onKeyDown={e => { if (e.key === 'Enter') open(r); }}>
             {columns.map(([h, cell]) => <td key={h}>{cell(r)}</td>)}</tr>)}
+          {!sorted.length && <tr><td colSpan={columns.length} className="cfg-note">Nothing matches the filters.</td></tr>}
         </tbody></table></div>}
     </div>
+    {importing && <ImportAccounts close={() => setImporting(false)} done={() => { setImporting(false); void load(); reloadRefs(); }} />}
     {adding && <AddMt5Account refs={refs} close={() => setAdding(false)} created={(account, note) => {
-      setAdding(false); reloadRefs(); void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
+      setAdding(false); reloadRefs();
+      if (!account) { setNotice(note); void load(); return; }
+      void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
     {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : entity === 'accounts' ? 'corei-os-mini.account-window.v1' : 'corei-os-mini.config-window.v1'}
-      width={entity === 'connections' || entity === 'accounts' ? 780 : 560}
+      width={entity === 'connections' || entity === 'accounts' || entity === 'providers' ? 780 : 560}
       footer={canEdit ? <div className="cfg-actions">
           <button className="primary" form="cfg-record-form" disabled={busy || !dirty}>{selected ? 'Save changes' : `Create ${SINGULAR[entity]}`}</button>
+          {selected && ARCHIVABLE.includes(entity) && selected.status !== 'ARCHIVED' && <button type="button" disabled={busy} onClick={() => void archive()}>Archive</button>}
           {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}</div>
         : <p className="cfg-note">Read only. Changes need the Trading operations role.</p>}
       title={selected ? `${SINGULAR[entity][0].toUpperCase()}${SINGULAR[entity].slice(1)} · ${selected.code ?? selected.symbol ?? selected.broker_symbol}` : `New ${SINGULAR[entity]}`}
       subtitle={selected ? `Version ${selected.version} · updated ${new Date(selected.updated_at).toLocaleString()}${dirty ? ' · unsaved changes' : ''}` : dirty ? 'Unsaved' : undefined}
       onClose={() => { if (!dirty || window.confirm('Discard unsaved changes?')) { setSelected(null); setDraft(null); } }}>
       <div className="cfg-detail">
+      {selected && (entity === 'accounts' || entity === 'connections') && <p className="cfg-crumbs">
+        <button type="button" className="cfg-chip" onClick={() => navigate('providers', selected.provider_id)}>{selected.provider_code}</button>
+        {entity === 'accounts' && <> › <button type="button" className="cfg-chip" onClick={() => navigate('connections', selected.connection_id)}>{selected.connection_code}</button></>}
+        {' › '}<strong>{selected.code}</strong>
+        {entity === 'connections' && selected.account_count > 0 && <> · <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button></>}</p>}
+      {selected?.pending_changes > 0 && <p className="cfg-note cfg-reuse">A change to this {SINGULAR[entity]} is waiting for approval. <button type="button" className="cfg-link" onClick={() => navigate('approvals')}>Open Approvals</button></p>}
       {entity === 'accounts' && selected && <div className="cfg-blockers">
         <h3>Readiness</h3>
-        {(['data_blockers', 'trading_blockers'] as const).map(k => <div key={k}><strong>{k === 'data_blockers' ? 'Market data and account state' : 'Order sending'}</strong>
-          {selected[k].length ? <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKERS[b] ?? b}</li>)}</ul> : <p className="cfg-ok">Ready</p>}</div>)}
+        {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => <div key={k}><strong>{k === 'data_blockers' ? 'Market data and account state' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}</strong>
+          {selected[k]?.length ? <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
+            ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}</li>)}</ul>
+            : <p className="cfg-ok">{k === 'warnings' ? 'None' : 'Ready'}</p>}</div>)}
       </div>}
       <form className="cfg-form" id="cfg-record-form" onSubmit={save}>
-        <fieldset className="cfg-plain" disabled={!canEdit}>
+        <fieldset className="cfg-plain" disabled={!canEdit || (selected?.status === 'ARCHIVED' && draft.status === 'ARCHIVED')}>
           <RecordForm key={selected?.id ?? 'new'} entity={entity} draft={draft} setDraft={setDraft} editing={!!selected} refs={refs} />
         </fieldset>
+        {selected?.status === 'ARCHIVED' && <p className="cfg-note">Archived. Set status to Inactive and save to restore it.</p>}
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
       </form>
       {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {canEdit && selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
+      {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
+      {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} />}
+      {selected && (entity === 'accounts' || entity === 'connections') && <CredentialUse owner={entity} id={selected.id} />}
       </div>
     </FloatingWindow>}
   </div>;
@@ -1195,14 +1447,31 @@ function Users({ me }: { me: Session }) {
 export default function Configuration() {
   const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
-  const [section, setSection] = useState<Section>('providers'), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [] });
-  const [summary, setSummary] = useState<Row | null>(null);
+  const [section, setSection] = useState<Section>('health'), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
+  const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
+  const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
+  const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
   async function loadRefs() {
     try {
-      const [p, c, i, s] = await Promise.all(['providers', 'connections', 'instruments', 'summary'].map(x => api('config/' + x)));
-      setRefs({ providers: p.items, connections: c.items, instruments: i.items }); setSummary(s);
+      const [p, c, i, g, a, s] = await Promise.all(['providers', 'connections', 'instruments', 'groups', 'accounts', 'summary'].map(x => api('config/' + x)));
+      setRefs({ providers: p.items, connections: c.items, instruments: i.items, groups: g.items, accounts: a.items }); setSummary(s);
     } catch (e) { if ((e as any).status === 401) setUser(null); else setError((e as Error).message); }
   }
+  // Sensitive actions answer 428: ask for the password again, then the request is retried.
+  useEffect(() => { setReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))); return () => setReauthHandler(null); }, []);
+  // Window positions and list views follow the user to other devices.
+  useEffect(() => {
+    if (!user || user.must_change_password) return;
+    let timer: number | undefined; const queue: Record<string, unknown> = {};
+    void api('operator/prefs').then((prefs: Row) => { for (const [k, v] of Object.entries(prefs ?? {})) try { if (!localStorage.getItem(k)) localStorage.setItem(k, JSON.stringify(v)); } catch { /* preference only */ } }).catch(() => undefined);
+    const save = (e: Event) => { const { key, value } = (e as CustomEvent).detail ?? {}; if (!key) return; queue[key] = value;
+      window.clearTimeout(timer); timer = window.setTimeout(() => { for (const [k, v] of Object.entries(queue)) { void api(`operator/prefs/${encodeURIComponent(k)}`, 'PUT', { value: v }).catch(() => undefined); delete queue[k]; } }, 1500); };
+    window.addEventListener('corei-pref', save); return () => { window.removeEventListener('corei-pref', save); window.clearTimeout(timer); };
+  }, [user]);
+  const navigate: Navigate = (to, id) => {
+    if (!window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) return;
+    setSection(to as Section); setOpenId(o => ({ id, n: o.n + 1 }));
+  };
   useEffect(() => { void (async () => {
     try { setUser(asSession(await api('operator/session'))); } catch { setUser(null); } finally { setChecking(false); }
   })(); }, []);
@@ -1225,14 +1494,15 @@ export default function Configuration() {
     {user.must_change_password && <button className="link" onClick={() => void signOut()}>Sign out</button>}</div>;
 
   const sections = SECTIONS.filter(s => s.id !== 'users' || user.roles.includes('ADMIN'));
+  const canEdit = user.roles.includes('TRADING_OPS');
   const current = sections.find(s => s.id === section) ?? sections[0];
   const live = summary?.execution_controls?.find((c: Row) => c.environment === 'LIVE');
   return <div className="cfg">
     <div className="cfg-topbar"><span className="eyebrow">CONFIGURATION</span>
     <nav className="cfg-nav" aria-label="Configuration sections">
       {sections.map(s => <button key={s.id} aria-current={current.id === s.id ? 'page' : undefined} onClick={() => {
-        if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) setSection(s.id);
-      }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small>{summary.counts[s.id]}</small>}
+        if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) { setSection(s.id); setOpenId(o => ({ n: o.n + 1 })); }
+      }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small className={s.id === 'approvals' && summary.counts.approvals > 0 ? 'cfg-live-on' : ''}>{summary.counts[s.id]}</small>}
         {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}
     </nav>
     <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
@@ -1240,12 +1510,20 @@ export default function Configuration() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
+      {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
+      {brokerLogin && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
+        : `Broker login failed${new URLSearchParams(window.location.search).get('reason') ? ': ' + new URLSearchParams(window.location.search).get('reason') : '.'}`}</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {current.id === 'controls' ? <OrderSending changed={() => void loadRefs()} roles={user.roles} /> : current.id === 'audit' ? <AuditLog />
+      {current.id === 'health' ? <HealthBoard navigate={navigate} />
+        : current.id === 'approvals' ? <Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} />
+        : current.id === 'alerts' ? <Alerts canEdit={canEdit} />
+        : current.id === 'controls' ? <><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></> : current.id === 'audit' ? <AuditLog />
         : current.id === 'users' ? <Users me={user} />
         : current.id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
         : current.id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />
-        : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={user.roles.includes('TRADING_OPS')} />}
+        : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={canEdit} navigate={navigate}
+            openId={openId.id ? `${openId.id}` : undefined} />}
     </section>
+    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }

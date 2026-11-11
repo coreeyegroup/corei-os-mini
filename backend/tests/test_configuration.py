@@ -402,7 +402,7 @@ class ConfigurationPostgresTests(unittest.TestCase):
             db.execute('UPDATE cfg_audit_log SET actor=%s', ('mallory',))
 
         summary = self.client.get('/api/config/summary').json()
-        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1, 'groups': 0,
+        self.assertEqual(summary['counts'], {'providers': 1, 'connections': 3, 'accounts': 1, 'instruments': 1, 'mappings': 1, 'groups': 0, 'approvals': 0,
                                              'strategies': 0, 'deployments': 0})
 
 

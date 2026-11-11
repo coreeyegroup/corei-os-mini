@@ -54,6 +54,13 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-P1-06 | Instrument contract details | DONE (0.8.0) |
 | G-P1-07 | MT5 server discovery: broker directory search, servers.dat, per-account address choice, latency test | DONE (0.10.0) — DEC-26..28 |
 | G-P1-08 | Refresh a connection's addresses from what the broker sends after login; record order round-trip and slippage per account × address | OPEN (needs G-P1-01) |
+| G-C-02 | Audit 11 Nov 2026: provider legal entity/regulator, connection clock/rate/static IP, account broker facts, ownership/mandate, groups, archive, per-account symbols | DONE (0.11.0) — DEC-29, DEC-30, DEC-34, DEC-35 |
+| G-C-03 | Four-eyes on LIVE changes, step-up re-authentication, credential-use log, investor passwords, key rotation | DONE (0.11.0) — DEC-31..33 |
+| G-C-04 | Health board, set-up checklist, links between records, sortable lists, CSV import/export, per-user window positions | DONE (0.11.0) |
+| G-C-05 | Alerts (e-mail, Telegram, webhook) | DONE (0.11.0) — DEC-37; needs SMTP settings or a bot token on the server |
+| G-C-06 | Upstox daily login (OAuth and TOTP), static-IP check, rate limiter, pre-send order check | DONE as building blocks (0.11.0) — DEC-36; used by the adapters when built |
+| G-C-07 | Facts read at login (margin mode, symbol rules, leverage), live connection status, Test login | OPEN — storage and screens done; filled by the MT5 / Upstox adapters (G-P1-01) |
+| G-C-08 | Credential key on a separate host or hardware key | OPEN — rotation done; separation is an infrastructure step |
 
 ### Phase 2 — Strategy and signal
 | ID | Gap | Status |
