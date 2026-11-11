@@ -638,6 +638,15 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Trading flow — release 0.16.0
+
+DEC-47. No migration.
+
+- The rail now follows a trade: **1 Market data · 2 Intelligence · 3 Signals · 4 Strategies · 5 Risk · 6 Portfolio · 7 Execution · 8 Post-trade** (number under each icon). Each opens a screen with the stage's components, what each does, build state, and *open →* to what already works. *Build plan* shows all components by build step; the side bar's *Trading flow* shows progress per stage.
+- Account readiness: market data and order sending listed separately; MT5 market data is no longer reported as "adapter not implemented"; the clock measured at login counts; a LIVE connection pointing at a demo server is a warning; a failed connection shows the reason.
+- Detail panels (accounts, connections, plans) dock on the right with a draggable left edge, instead of a floating window.
+- Bold text reduced to labels that matter; field labels are muted.
+
 ## Dense workstation — release 0.15.0
 
 DEC-46. No migration.
@@ -650,4 +659,4 @@ DEC-46. No migration.
 
 ### MT5 "OLD_VERSION" (broker refuses the connector's MT5 version)
 
-The reader retries a refused login automatically with current MT5 client builds (5430, 5370, 5200, 4755) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.
+The reader retries a refused login automatically with current MT5 client builds (6230 down to 5370) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.

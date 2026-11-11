@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
 import { current, digitsOf, DESTINATIONS, goto, gotoTable, type Overview } from './nav';
+import { FlowList } from './Pipeline';
+import { stageOf } from './flow';
 
 type Row = Record<string, any>;
 
@@ -128,14 +130,21 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
     <Pane title="Market watch"><MarketWatch /></Pane>
     <Pane title="Feeds" count={overview ? `${overview.feeds.live}/${overview.feeds.collectors}` : undefined}><Feeds /></Pane>
     <Pane title="Market data"><Sections view="Market data" /></Pane>
+    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
   </>;
   if (view === 'Configuration') return <Pane title="Setup"><SetupTree /></Pane>;
   if (view === 'Infrastructure') return <>
     <Pane title="System"><Sections view="Infrastructure" /></Pane>
     <Pane title="Tables"><TablesList /></Pane>
   </>;
+  if (stageOf(view)) return <>
+    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
+    <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
+    <Pane title="Market watch"><MarketWatch /></Pane>
+  </>;
   if (view === 'Overview' || view === 'Operations') return <>
     <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
+    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
     <Pane title="Feeds" count={overview ? `${overview.feeds.live}/${overview.feeds.collectors}` : undefined}><Feeds /></Pane>
     <Pane title="Market watch"><MarketWatch /></Pane>
   </>;

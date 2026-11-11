@@ -44,7 +44,10 @@ const GROUP_START: Partial<Record<Section, string>> = { health: 'Status', provid
   approvals: 'Controls', controls: 'Controls', alerts: 'Controls', users: 'Administration', audit: 'Administration' };
 
 export const BLOCKERS: Record<string, string> = {
-  CONNECTION_FAILED: 'The connection reported a failure (see Health)',
+  CONNECTION_FAILED: 'The broker connection failed — reason below',
+  ORDER_ADAPTER_NOT_AVAILABLE: 'Sending orders to this platform is not built yet (market data and account reads work)',
+  LIVE_CONNECTION_ON_DEMO_SERVER: 'This connection is marked LIVE but its server name says demo — check the environment',
+  DEMO_CONNECTION_ON_LIVE_SERVER: 'This connection is marked DEMO but its server name says live — check the environment',
   ACCOUNT_EXPIRED: 'The account has expired at the broker',
   STATIC_IP_MISMATCH: "This server's outbound IP is not the IP registered with the broker app",
   MARGIN_MODE_UNKNOWN: 'Margin mode (hedging or netting) is not known',
@@ -1108,12 +1111,13 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {' › '}<strong>{selected.code}</strong>
         {entity === 'connections' && selected.account_count > 0 && <> · <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button></>}</p>}
       {selected?.pending_changes > 0 && <p className="cfg-note cfg-reuse">A change to this {SINGULAR[entity]} is waiting for approval. <button type="button" className="cfg-link" onClick={() => navigate('approvals')}>Open Approvals</button></p>}
-      {entity === 'accounts' && selected && <div className="cfg-blockers">
-        <h3>Readiness</h3>
-        {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => <div key={k}><strong>{k === 'data_blockers' ? 'Market data and account state' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}</strong>
-          {selected[k]?.length ? <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
-            ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}</li>)}</ul>
-            : <p className="cfg-ok">{k === 'warnings' ? 'None' : 'Ready'}</p>}</div>)}
+      {entity === 'accounts' && selected && <div className="cfg-blockers rd">
+        {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => <div key={k} className="rd-group"><span className="rd-head">{k === 'data_blockers' ? 'Market data' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}
+            <span className={`rd-state ${selected[k]?.length ? (k === 'warnings' ? 'warn' : 'bad') : 'ok'}`}>{selected[k]?.length ? `${selected[k].length} ${k === 'warnings' ? 'warning' : 'blocker'}${selected[k].length > 1 ? 's' : ''}` : k === 'warnings' ? 'none' : 'ready'}</span></span>
+          {selected[k]?.length > 0 && <ul>{selected[k].map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
+            ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}
+            {b === 'CONNECTION_FAILED' && selected.connection_problem && <div className="rd-reason"><b>{selected.connection_problem.title}.</b> {selected.connection_problem.detail}
+              <code>{selected.connection_problem.raw}</code></div>}</li>)}</ul>}</div>)}
       </div>}
       <form className="cfg-form" id="cfg-record-form" onSubmit={save}>
         <fieldset className="cfg-plain" disabled={!canEdit || (selected?.status === 'ARCHIVED' && draft.status === 'ARCHIVED')}>

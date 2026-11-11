@@ -69,9 +69,13 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Infrastructure', section: 'sql', label: 'SQL console', group: 'System' },
   { view: 'Infrastructure', section: 'database', label: 'Database sessions', group: 'System' },
   { view: 'Infrastructure', section: 'edits', label: 'Table edit log', group: 'System' },
-  { view: 'Strategies', label: 'Strategies', group: 'Trading' },
-  { view: 'Execution', label: 'Orders', group: 'Trading' },
-  { view: 'Portfolio', label: 'Portfolio', group: 'Trading' },
+  { view: 'Intelligence', label: '2 Market intelligence', group: 'Trading flow', keywords: 'features indicators regime screening' },
+  { view: 'Signals', label: '3 Signals', group: 'Trading flow', keywords: 'signal decision intent' },
+  { view: 'Strategies', label: '4 Strategies', group: 'Trading flow' },
+  { view: 'Risk', label: '5 Risk', group: 'Trading flow', keywords: 'limits sizing drawdown margin exposure var' },
+  { view: 'Execution', label: '7 Orders (execution)', group: 'Trading flow', keywords: 'oms ems order fill routing' },
+  { view: 'Portfolio', label: '6 Portfolio', group: 'Trading flow', keywords: 'positions pnl exposure capital' },
+  { view: 'Post-trade', label: '8 Post-trade', group: 'Trading flow', keywords: 'reconciliation tca reports compliance' },
   { view: 'Settings', label: 'Appearance & layout', group: 'Settings', keywords: 'theme font density' },
 ];
 

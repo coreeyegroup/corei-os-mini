@@ -1,6 +1,10 @@
 export const views = [
   "Overview",
   "Market data",
+  "Intelligence",
+  "Signals",
+  "Risk",
+  "Post-trade",
   "Configuration",
   "Strategies",
   "Execution",

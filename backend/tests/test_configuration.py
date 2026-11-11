@@ -195,13 +195,21 @@ class ModelTests(unittest.TestCase):
                    credential_access_level='FULL', connection_credential_kind=None, master_credential_kind='MT5_LOGIN',
                    margin_mode='HEDGING', server_utc_offset_minutes=120, max_orders_per_second=5)
         result = account_readiness(row, {'LIVE': {'trading_enabled': False}})
-        self.assertEqual(result['data_blockers'], ['ADAPTER_NOT_AVAILABLE'])
-        self.assertEqual(result['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'ORDER_SENDING_OFF_LIVE'])
+        # MT5 market data works (read-only); sending MT5 orders is not built yet.
+        self.assertEqual(result['data_blockers'], [])
+        self.assertEqual(result['trading_blockers'], ['ORDER_ADAPTER_NOT_AVAILABLE', 'ORDER_SENDING_OFF_LIVE'])
         self.assertEqual(result['warnings'], [])
+        self.assertEqual(account_readiness({**row, 'platform': 'REST_API', 'connection_credential_kind': 'API_KEY'},
+                                           {'LIVE': {'trading_enabled': True}})['data_blockers'], ['ADAPTER_NOT_AVAILABLE'])
+        # A clock measured at login counts; a LIVE connection on a demo server is flagged.
+        measured = account_readiness({**row, 'server_utc_offset_minutes': None, 'measured_offset_ms': 7_200_000,
+                                      'environment': 'LIVE', 'connection_settings': {'server_name': 'MetaQuotes-Demo'}}, {'LIVE': {'trading_enabled': True}})
+        self.assertNotIn('SERVER_CLOCK_UNKNOWN', measured['trading_blockers'])
+        self.assertIn('LIVE_CONNECTION_ON_DEMO_SERVER', measured['warnings'])
         # The facts the broker decides must be known before trading.
         unknown = account_readiness({**row, 'margin_mode': 'UNKNOWN', 'server_utc_offset_minutes': None, 'master_credential_kind': None,
                                      'relationship': 'CLIENT', 'max_orders_per_second': None}, {'LIVE': {'trading_enabled': True}})
-        self.assertEqual(unknown['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN',
+        self.assertEqual(unknown['trading_blockers'], ['ORDER_ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN',
                                                        'MANDATE_MISSING', 'MASTER_PASSWORD_MISSING'])
         self.assertEqual(unknown['warnings'], ['RATE_LIMIT_NOT_SET'])
         missing = account_readiness({**row, 'credential_kind': None, 'status': 'INACTIVE'}, {'LIVE': {'trading_enabled': True}})
@@ -371,7 +379,7 @@ class ConfigurationPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.put('/api/config/execution-controls/DEMO', json={**on, 'confirm_environment': 'DEMO'}).status_code, 409)
         current = self.client.get(f"/api/config/accounts/{account['id']}").json()
         # Margin mode and server clock are not known until read from the broker or entered.
-        self.assertEqual(current['trading_blockers'], ['ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN'])
+        self.assertEqual(current['trading_blockers'], ['ORDER_ADAPTER_NOT_AVAILABLE', 'MARGIN_MODE_UNKNOWN', 'SERVER_CLOCK_UNKNOWN'])
 
         # REST connections hold API credentials; MT5 logins never go on a REST account.
         rest = self.post('connections', dict(provider_id=provider['id'], code='ICM_API', name='ICM API', platform='REST_API',

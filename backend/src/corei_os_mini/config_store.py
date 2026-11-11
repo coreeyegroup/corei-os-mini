@@ -33,9 +33,12 @@ from .config_models import (AccountGroupIn, AccountIn, ConnectionIn, InstrumentI
 from .mt5_routing import effective_access_points
 from .persistence import PersistenceNotConfigured, _connect
 
-# Provider adapters register their platform here when implemented. Until then every
-# account reports ADAPTER_NOT_AVAILABLE rather than implying it can connect.
-AVAILABLE_ADAPTERS: set[str] = set()
+# What COREI can actually do per platform. Market data and account reads exist for MT5
+# (read-only, through the MT5 SDK); sending orders is built per platform later. An
+# account on a platform not listed reports the blocker instead of implying it works.
+DATA_ADAPTERS: set[str] = {'MT5'}
+ORDER_ADAPTERS: set[str] = set()
+AVAILABLE_ADAPTERS = DATA_ADAPTERS
 
 
 @dataclass(frozen=True)
@@ -139,7 +142,8 @@ SELECTS = {
         COALESCE(mcr.kind, icr.kind) AS credential_kind,
         CASE WHEN mcr.id IS NOT NULL THEN 'FULL' WHEN icr.id IS NOT NULL THEN 'READ_ONLY' END AS credential_access_level,
         COALESCE(mcr.updated_at, icr.updated_at) AS credential_updated_at, ccr.kind AS connection_credential_kind,
-        c.settings AS connection_settings, st.state AS connection_state,
+        c.settings AS connection_settings, st.state AS connection_state, st.last_error AS connection_error,
+        st.server_time_offset_ms AS measured_offset_ms,
         (SELECT coalesce(array_agg(g.group_id::text ORDER BY g.group_id), '{}') FROM cfg_account_group_members g WHERE g.account_id=a.id) AS group_ids,
         (SELECT max(u.used_at) FROM cfg_credential_use u WHERE u.owner_id=a.id) AS credential_last_used_at,
         (SELECT count(*) FROM cfg_change_requests r WHERE r.entity IN ('accounts','credential') AND r.entity_id=a.id AND r.status='PENDING') AS pending_changes,
@@ -242,12 +246,15 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if row['platform'] == 'REST_API' and row.get('registered_egress_ip') and context.get('egress_ip') \
             and str(row['registered_egress_ip']) != context['egress_ip']:
         data.append('STATIC_IP_MISMATCH')
-    if row['platform'] not in AVAILABLE_ADAPTERS:
+    if row['platform'] not in DATA_ADAPTERS:
         data.append('ADAPTER_NOT_AVAILABLE')
     trading = list(data)
+    if row['platform'] not in ORDER_ADAPTERS:
+        trading.append('ORDER_ADAPTER_NOT_AVAILABLE')
     if row['platform'] == 'MT5' and row.get('margin_mode', 'UNKNOWN') == 'UNKNOWN':
         trading.append('MARGIN_MODE_UNKNOWN')
-    if row['platform'] == 'MT5' and row.get('server_utc_offset_minutes') is None:
+    # The broker's clock: entered on the connection, or measured at the last login.
+    if row['platform'] == 'MT5' and row.get('server_utc_offset_minutes') is None and row.get('measured_offset_ms') is None:
         trading.append('SERVER_CLOCK_UNKNOWN')
     if row.get('relationship') == 'CLIENT':
         if not row.get('mandate_reference'):
@@ -270,6 +277,11 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if not controls.get(row['environment'], {}).get('trading_enabled'):
         trading.append(f"ORDER_SENDING_OFF_{row['environment']}")
     warnings = list((row.get('routing') or {}).get('warnings', []))
+    server = str(((row.get('connection_settings') or {}).get('server_name')) or '')
+    if row.get('environment') == 'LIVE' and 'demo' in server.lower():
+        warnings.append('LIVE_CONNECTION_ON_DEMO_SERVER')
+    elif row.get('environment') == 'DEMO' and 'live' in server.lower() and 'demo' not in server.lower():
+        warnings.append('DEMO_CONNECTION_ON_LIVE_SERVER')
     warn_days = int(context.get('expiry_warning_days', 7))
     for field, code in (('expires_on', 'ACCOUNT_EXPIRING'), ('mandate_expires_on', 'MANDATE_EXPIRING')):
         if row.get(field) and today <= row[field] <= today + timedelta(days=warn_days):
@@ -291,10 +303,14 @@ def _enrich(entity: str, rows: list[dict], db) -> list[dict]:
         context = {'expiry_warning_days': policy(db, 'expiry_warning_days', 7),
                    'egress_ip': egress_ip(cached_only=True) if any(r.get('registered_egress_ip') for r in rows) else None}
         out = []
+        from .md.explain import explain
         for r in rows:
             r = {**r, 'routing': account_routing(r, latency)}
+            readiness = account_readiness(r, controls, context)
+            # The broker's own reason for a failed connection, in plain words.
+            problem = explain(r.get('connection_error')) if r.get('connection_state') in ('FAILED', 'DEGRADED') else None
             r.pop('connection_settings', None)
-            out.append({**clean(r), **account_readiness(r, controls, context)})
+            out.append({**clean(r), **readiness, 'connection_problem': problem})
         return out
     return [clean(r) for r in rows]
 

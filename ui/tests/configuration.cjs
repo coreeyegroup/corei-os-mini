@@ -176,11 +176,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('+ Add address').click();await tick();
  fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
  [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
- // The editor is a floating window: keyboard move/resize, maximise/restore, all eight resize edges.
- const win=$('.fw');assert.equal(win.getAttribute('role'),'dialog');assert.equal(win.querySelectorAll('.fw-edge').length,8);
- const left0=parseFloat(win.style.left),width0=parseFloat(win.style.width);
- $('.fw-title').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.left),left0-16);
- $('.fw-title').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',shiftKey:true,bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.width),width0-16);
+ // The editor is a panel docked right: resize from its left edge (keyboard too), wide/normal toggle.
+ const win=$('.fw.dock');assert.equal(win.getAttribute('role'),'dialog');const edge=$('.dock-edge');const width0=parseFloat(win.style.width);
+ edge.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));await tick();assert.equal(parseFloat($('.fw').style.width),width0+32);
  $('[aria-label="Maximise window"]').click();await tick();assert.ok($('.fw').classList.contains('fw-max'));
  $('[aria-label="Restore window"]').click();await tick();assert.ok(!$('.fw').classList.contains('fw-max'));
  assert.match($('.fw-caption').textContent,/Unsaved/);

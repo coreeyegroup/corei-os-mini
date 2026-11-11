@@ -10,5 +10,10 @@ const paths=[
  'M2 12h4l3-7 6 14 3-7h4',
  'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6',
  'M4 4h16v6H4z M4 14h16v6H4z M8 7h.01 M8 17h.01 M12 10v4',
+
+ 'M12 3a6 6 0 00-4 10.5V17h8v-3.5A6 6 0 0012 3z M9 21h6',
+ 'M2 12a10 10 0 0120 0 M6 12a6 6 0 0112 0 M10 12a2 2 0 014 0 M12 12v9',
+ 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M9 12l2 2 4-4',
+ 'M5 4h11l3 3v13H5z M9 12l2 2 4-4 M9 17h6',
 ];
 export default function WorkbenchIcon({index}:{index:number}){return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[index]??paths[0]}/></svg>}

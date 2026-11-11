@@ -104,6 +104,17 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(sq('.cfg-nav [aria-current="page"]').textContent,'Collection plans');
  assert.ok(sqa('.sb-row.selected').some(r=>r.textContent==='Collection plans'),'side bar highlights the open section');
  assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Market watch')),'Market watch in the side bar');
+ // The trading flow: eight stages on the rail, each a screen with its components and build state.
+ const stages=['Market data','Intelligence','Signals','Strategies','Risk','Portfolio','Execution','Post-trade'];
+ stages.forEach((v,i)=>assert.equal(sq(`nav.activity [aria-label="${v}"] .rail-n`).textContent,String(i+1)));
+ sq('nav.activity [aria-label="Risk"]').click();for(let i=0;i<4;i++)await tick();
+ assert.equal(sqa('.pl-flow .pl-node').length,8);assert.ok(sq('.pl-node.on').textContent.includes('Risk')&&sq('.pl-head').textContent.includes('Risk intelligence'));
+ assert.ok(sqa('.pl-table tbody tr').some(r=>r.textContent.includes('Constraint engine')&&r.textContent.includes('next')));
+ assert.ok(sqa('.sb-row.selected').some(r=>r.textContent.includes('Risk intelligence')),'flow list highlights the stage');
+ sqa('.tabs-mini button').find(b=>b.textContent.startsWith('Build plan')).click();await tick();
+ assert.equal(sqa('.pl-step').length,7);
+ sqa('.pl-node').find(n=>n.textContent.includes('Post-trade')).click();for(let i=0;i<4;i++)await tick();
+ assert.equal(sq('nav.activity [aria-current="page"]').getAttribute('aria-label'),'Post-trade');
  assert.deepEqual(shErrors,[]);
- console.log('PASS: shell shows live status chips and badges, rail opens screens in place, Ctrl+K goes straight to a section, attention list.');sw.close();
+ console.log('PASS: shell shows live status chips and badges, rail opens screens in place, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -11,7 +11,7 @@ RULES = [
      'The SDK must be updated to a newer release from its vendor, then run scripts/setup-broker-accounts.sh.'),
     (r'OLD_VERSION', True, 'Broker refused the connector version',
      "The broker requires a newer MT5 version than the connector presented. COREI retries automatically with current MT5 client builds "
-     '(5430, 5370, 5200, 4755) when the SDK allows it. If it is still refused, set COREI_MT5_CLIENT_BUILD to the build the broker\'s own '
+     '(6230 down to 5370) when the SDK allows it. MetaQuotes\' own demo servers (MetaQuotes-Demo) accept only the newest build. If it is still refused, set COREI_MT5_CLIENT_BUILD to the build the broker\'s own '
      'MT5 terminal shows (Help › About) in /etc/corei-os-mini/workstation.env and redeploy, or update the MT5 SDK.'),
     (r'INVALID_ACCOUNT|Invalid account|INVALID_PASSWORD|Authorization|AUTH', True, 'Login or password rejected',
      'The broker rejected the login. Check the MT5 login number and save the investor (read-only) password again on the account.'),

@@ -6,6 +6,8 @@ import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
 import Toolbox from "./Toolbox";
+import Stage from "./Pipeline";
+import { stageOf } from "./flow";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
@@ -36,20 +38,24 @@ type Runtime = {
 };
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
-  "Market data": "Collection plans, live prices, feed quality and broker comparison, backfill, archive and backups",
+  "Market data": "1 · Market data: collection plans, live prices, feed quality and broker comparison, backfill, archive and backups",
   Configuration: "Providers, connections, accounts, instruments, symbol mappings and order-sending controls",
-  Strategies: "Strategy versions, instrument universes and assignments",
-  Execution: "Account allocation, order lifecycle and reconciliation",
-  Portfolio: "Positions, balances, fees and shared exposure",
+  Intelligence: "2 · Market intelligence: features, sessions, regimes, screening",
+  Signals: "3 · Signal intelligence: signal model, lifecycle, decision engine",
+  Strategies: "4 · Strategy intelligence: versions, deployments, runtime, backtest",
+  Risk: "5 · Risk intelligence: limits, sizing, loss limits, margin and exposure",
+  Portfolio: "6 · Portfolio intelligence: positions, P&L, exposure, capital",
+  Execution: "7 · Execution: OMS, MT5 order adapter, routing, fills",
+  "Post-trade": "8 · Post-trade: reconciliation, TCA, reports, audit, compliance",
   Operations: "Connection health, service status and operational records",
   Infrastructure: "Server and database health, PostgreSQL tables (view and edit), SQL console and edit log",
   Settings: "Workspace layout and navigation preferences",
 };
-const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Configuration:'Setup',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
-/* The rail, in the order a trader works: home, the markets, trading, watching, setting up. */
-const RAIL:(View|'-')[]=['Overview','-','Market data','Strategies','Execution','Portfolio','-','Operations','-','Configuration','Infrastructure'];
-const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Configuration:'Setup',Strategies:'Strategies',Execution:'Orders',Portfolio:'Portfolio',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
-const iconIndex:Record<View,number>={Overview:0,'Market data':1,Configuration:2,Strategies:5,Execution:6,Portfolio:7,Operations:8,Infrastructure:10,Settings:9};
+const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy',Risk:'Risk',Portfolio:'Portfolio',Execution:'Orders','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
+/* The rail: home, then the trading flow in order (1 market data → 8 post-trade), watching, setting up. */
+const RAIL:(View|'-')[]=['Overview','-','Market data','Intelligence','Signals','Strategies','Risk','Portfolio','Execution','Post-trade','-','Operations','-','Configuration','Infrastructure'];
+const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies',Risk:'Risk',Portfolio:'Portfolio',Execution:'Orders','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
+const iconIndex:Record<View,number>={Overview:0,'Market data':1,Intelligence:11,Signals:12,Strategies:5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
@@ -380,19 +386,8 @@ export default function App() {
       );
     if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
     if (view === "Operations") return <Monitor overview={overview} signedOut={signedOut}/>;
-    const planned:Record<string,{what:string;now:[string,View,string?][]}>={
-      Strategies:{what:'Running strategies, their signals and performance.',now:[['Set up strategies and versions','Configuration','strategies'],['Assign a strategy to an account (deployments)','Configuration','deployments']]},
-      Execution:{what:'The order blotter: working orders, fills, rejections and reconciliation with the broker.',now:[['Order sending switch and policies','Configuration','controls'],['Check an order against broker limits (account › symbol limits)','Configuration','accounts']]},
-      Portfolio:{what:'Positions, balances, margin and exposure across accounts.',now:[['Account facts read from the broker','Configuration','accounts']]},
-    };
-    const p=planned[view];
-    return (
-      <div className="content home">
-        <h1>{viewTitle[view]}</h1>
-        <div className="notice">Not built yet. {p?.what}</div>
-        {p && <div className="home-section"><h2>Available now</h2><div className="quick">{p.now.map(([label,v,sec])=><button key={label} onClick={()=>goto(v,sec)}>{label} →</button>)}</div></div>}
-      </div>
-    );
+    if (stageOf(view)) return <Stage view={view} open={v=>goto(v)}/>;
+    return null;
   }
   const commands:Command[] = [
     ...DESTINATIONS.map(d=>({section:'Go to',label:`${d.group} › ${d.label}`,keywords:d.keywords,run:()=>{goto(d.view,d.section);go(d.view);}})),
@@ -461,6 +456,7 @@ export default function App() {
               aria-current={active === v ? "page" : undefined}
               onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else go(v); }}>
               <WorkbenchIcon index={iconIndex[v]}/><span className="sr-only">{activityLabels[v]}</span>
+              {stageOf(v)&&<span className="rail-n" aria-hidden="true">{stageOf(v)!.n}</span>}
               {(()=>{const b=badge(v);return b?<span className={`rail-badge ${b.tone}`}>{b.n}</span>:null;})()}
             </button>
           ))}
