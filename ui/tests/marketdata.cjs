@@ -33,8 +33,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
    if(url.endsWith('/operator/session'))return ok({username:'risk-ops',display_name:'Risk',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
    if(url.endsWith('/md/latest'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'XAUUSD.r',bid:2401.15,ask:2401.4,digits:2,age_seconds:0.4,score:96},
-     {account_id:'a2',account_code:'ICM_B',broker_symbol:'XAUUSD',bid:2401.0,ask:2401.3,digits:2,age_seconds:42,score:31}]});
-   if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:2}]});
+     {account_id:'a2',account_code:'ICM_B',broker_symbol:'XAUUSD',bid:2401.0,ask:2401.3,digits:2,age_seconds:'42.5',score:31}]});
+   if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31'}]});
    if(url.startsWith('/api/md/plans')&&method==='GET')return ok({items:plans});
    if(url.endsWith('/md/plans')&&method==='POST'){created.push(body);const p={...body,id:'p2',status:'DRAFT',version:1,account_code:'ICM_B',environment:'LIVE',instrument_symbol:'XAUUSD',status_reason:''};plans.push(p);return ok(p,201);}
    if(url.endsWith('/md/plans/p2/status')){statusCalls.push(body);return ok({change_request:{id:'r1',summary:'Start LIVE trading feed GOLD_B (XAUUSD)'}},202);}

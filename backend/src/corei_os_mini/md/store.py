@@ -193,7 +193,7 @@ def queue_gap_backfill(plan_id: Any, timeframe: str, start: datetime, end: datet
 
 def latest(account_id: UUID | None = None) -> list[dict]:
     with store.transaction('read') as db:
-        rows = db.execute('''SELECT l.*, a.code AS account_code, extract(epoch FROM now() - l.received_at) AS age_seconds,
+        rows = db.execute('''SELECT l.*, a.code AS account_code, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
                 COALESCE((SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
                           ORDER BY s.read_at DESC LIMIT 1), 5) AS digits,
                 (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score
@@ -214,11 +214,11 @@ def quality_summary(hours: int = 24) -> list[dict]:
     gaps, spikes and deviation — the broker comparison."""
     with store.transaction('read') as db:
         rows = db.execute('''SELECT q.account_id, a.code AS account_code, c.code AS connection_code, q.broker_symbol,
-                p.instrument_id, i.symbol AS instrument_symbol, round(avg(q.score)::numeric, 1) AS score,
-                sum(q.ticks) AS ticks, round(avg(q.latency_p50_ms)::numeric, 1) AS latency_p50_ms, round(max(q.latency_p95_ms)::numeric, 1) AS latency_p95_ms,
-                round(avg(q.spread_avg)::numeric, 2) AS spread_avg, round(max(q.spread_max)::numeric, 2) AS spread_max,
-                round((max(q.max_gap_ms) / 1000)::numeric, 1) AS max_gap_seconds, sum(q.spikes) AS spikes,
-                round(avg(abs(q.deviation_bp))::numeric, 2) AS deviation_bp, count(*) FILTER (WHERE q.ticks = 0) AS empty_minutes
+                p.instrument_id, i.symbol AS instrument_symbol, round(avg(q.score)::numeric, 1)::float8 AS score,
+                sum(q.ticks)::bigint AS ticks, round(avg(q.latency_p50_ms)::numeric, 1)::float8 AS latency_p50_ms, round(max(q.latency_p95_ms)::numeric, 1)::float8 AS latency_p95_ms,
+                round(avg(q.spread_avg)::numeric, 2)::float8 AS spread_avg, round(max(q.spread_max)::numeric, 2)::float8 AS spread_max,
+                round((max(q.max_gap_ms) / 1000)::numeric, 1)::float8 AS max_gap_seconds, sum(q.spikes)::int AS spikes,
+                round(avg(abs(q.deviation_bp))::numeric, 2)::float8 AS deviation_bp, count(*) FILTER (WHERE q.ticks = 0) AS empty_minutes
             FROM md_quality q JOIN cfg_accounts a ON a.id=q.account_id JOIN cfg_connections c ON c.id=a.connection_id
             LEFT JOIN md_collection_plans p ON p.account_id=q.account_id AND p.broker_symbol=q.broker_symbol AND p.status <> 'ARCHIVED'
             LEFT JOIN cfg_instruments i ON i.id=p.instrument_id
@@ -238,7 +238,7 @@ def events(limit: int = 200, kind: str | None = None) -> list[dict]:
 
 def collectors() -> list[dict]:
     with store.transaction('read') as db:
-        rows = db.execute('''SELECT s.*, a.code AS account_code, extract(epoch FROM now() - s.heartbeat_at) AS heartbeat_age_seconds,
+        rows = db.execute('''SELECT s.*, a.code AS account_code, extract(epoch FROM now() - s.heartbeat_at)::float8 AS heartbeat_age_seconds,
                 (SELECT count(*) FROM md_collection_plans p WHERE p.account_id=s.account_id AND p.status='ACTIVE') AS active_plans
             FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id ORDER BY a.code''').fetchall()
     return [store.clean(r) for r in rows]

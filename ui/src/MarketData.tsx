@@ -24,9 +24,9 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
 const FRAMES = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']] as const;
 const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';
-const ago = (s?: number | null) => s == null ? '—' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
-const num = (v: any, d = 5) => v == null ? '—' : Number(v).toFixed(d);
-const scoreClass = (s?: number | null) => s == null ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad';
+const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Number(v); return s == null || !Number.isFinite(s) ? '—' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
+const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(Number(d) || 0);
+const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
 
 export default function MarketData() {
   const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useState<Tab>('live');
@@ -72,18 +72,18 @@ function Live() {
     <div className="md-collectors">{(collectors?.items ?? []).map((c: Row) => <div key={c.account_id} className={`md-collector ${c.state}`}>
       <span className={`infra-dot ${c.state === 'CONNECTED' ? 'OK' : c.state === 'RECONNECTING' ? 'WARN' : c.state === 'FAILED' ? 'FAIL' : ''}`} />
       <strong>{c.account_code}</strong><span>{c.state.toLowerCase()}</span>
-      <small>{c.host ? `${c.host}:${c.port}` : ''}{c.lag_ms != null ? ` · lag ${Math.round(c.lag_ms)} ms` : ''} · {c.subscribed} symbols · {Number(c.ticks_total).toLocaleString()} prices
+      <small>{c.host ? `${c.host}:${c.port}` : ''}{c.lag_ms != null ? ` · lag ${Math.round(Number(c.lag_ms))} ms` : ''} · {c.subscribed} symbols · {Number(c.ticks_total).toLocaleString()} prices
         {c.backlog ? ` · ${c.backlog} waiting` : ''} · heartbeat {ago(c.heartbeat_age_seconds)} ago</small>
       {c.last_error && <small className="md-error">{c.last_error}</small>}</div>)}
       {collectors && !collectors.items.length && <p className="cfg-note">No collector has reported yet. Start a collection plan; the collector service picks it up within a few seconds.</p>}</div>
     <table className="cfg-table compact md-live"><thead><tr><th>Symbol</th><th>Account</th><th>Role</th><th className="num">Bid</th><th className="num">Ask</th>
       <th className="num">Spread</th><th className="num">Age</th><th className="num">Score</th></tr></thead>
       <tbody>{(latest?.items ?? []).map((l: Row) => { const p = byKey[`${l.account_id}|${l.broker_symbol}`] ?? {};
-        const stale = l.age_seconds > (p.stale_seconds ?? 10);
+        const stale = Number(l.age_seconds) > (p.stale_seconds ?? 10);
         return <tr key={`${l.account_id}${l.broker_symbol}`}><td><strong>{l.broker_symbol}</strong>{p.instrument_symbol && p.instrument_symbol !== l.broker_symbol ? <small> · {p.instrument_symbol}</small> : null}</td>
           <td>{l.account_code}</td><td>{p.feed_role ? <span className={`cfg-pill ${p.active_feed ? 'ok' : ''}`}>{p.feed_role.toLowerCase()}{p.active_feed ? ' · active' : ''}</span> : '—'}</td>
           <td className="num">{num(l.bid, l.digits)}</td><td className="num">{num(l.ask, l.digits)}</td>
-          <td className="num">{l.bid && l.ask ? ((l.ask - l.bid) * 10 ** l.digits).toFixed(1) : '—'}</td>
+          <td className="num">{l.bid && l.ask ? ((Number(l.ask) - Number(l.bid)) * 10 ** Number(l.digits ?? 5)).toFixed(1) : '—'}</td>
           <td className={`num ${stale ? 'md-bad' : ''}`}>{ago(l.age_seconds)}</td>
           <td className="num"><span className={`md-score ${scoreClass(l.score)}`}>{l.score ?? '—'}</span></td></tr>; })}
         {latest && !latest.items.length && <tr><td colSpan={8} className="infra-placeholder">No prices yet.</td></tr>}</tbody></table>
