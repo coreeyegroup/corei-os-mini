@@ -70,7 +70,7 @@ class PlanIn(BaseModel):
         if self.schedule == 'WINDOW' and (self.window_start is None or self.window_end is None):
             raise ValueError('A time window needs a start and an end (UTC).')
         if self.purpose == 'TRADING_FEED' and self.feed_role != 'REFERENCE' and self.instrument_id is None:
-            raise ValueError('A trading feed names the instrument it feeds.')
+            raise ValueError('A trading feed must name its instrument (Setup › Instruments). To just collect this symbol, set purpose to Research.')
         if self.on_breach == 'SWITCH' and self.feed_role != 'PRIMARY':
             raise ValueError('Only a primary feed switches to its backup.')
         return self

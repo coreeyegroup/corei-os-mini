@@ -149,7 +149,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
  assert.match($('.cfg-health').textContent,/Next: Add a provider/);
  console.log('PASS: operator sign-in, forced password change, roles shown, section navigation.');
- nav('Providers').click();await tick();await tick();
+ nav('Brokers').click();await tick();await tick();
 
  // Provider: create, duplicate rejected with backend message
  button('New provider').click();await tick();
@@ -166,7 +166,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: provider create, upper-case code, duplicate shows backend message.');
 
  // Connection: MT5 entered manually, with ordered addresses
- nav('Connections').click();await tick();await tick();
+ nav('Servers and APIs').click();await tick();await tick();
  button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
@@ -278,7 +278,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: broker directory search opens the same server picker.');
 
  // Account: readiness shown; password saved write-only
- nav('Accounts').click();await tick();await tick();
+ nav('Broker accounts').click();await tick();await tick();
  button('New account (advanced)').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
  assert.match($('.cfg-detail').textContent,/Environment DEMO · server ICMarketsSC-Demo/);
@@ -320,8 +320,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  db.accounts[0].version=5;fill(byLabel('Account name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/Changed by someone else/);
  // Unsaved changes guard section switches
- w.confirm=()=>false;nav('Providers').click();await tick();
- assert.match($('.cfg-head h1').textContent,/Accounts/);w.confirm=()=>true;
+ w.confirm=()=>false;nav('Brokers').click();await tick();
+ assert.match($('.cfg-head h1').textContent,/Broker accounts/);w.confirm=()=>true;
  console.log('PASS: version conflict surfaced; unsaved changes block navigation until discarded.');
 
  // Add MT5 account in one step: login, password, server; existing connection reused.
@@ -367,7 +367,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: Add Upstox account sends client ID, app key and secret in one step.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
- nav('Accounts').click();await tick();await tick();
+ nav('Broker accounts').click();await tick();await tick();
  [...w.document.querySelectorAll('.cfg-table tbody tr')].find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
  needReauth=true;fill(byLabel('New password'),'rotated-secret');await tick();
  $('.cfg-credential').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
@@ -382,10 +382,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  // Links between records and sortable lists.
  $('[aria-label="Close window"]').click();await tick();
  const chip=[...w.document.querySelectorAll('.cfg-table [data-nav^="connections:"]')][0];chip.click();await tick();await tick();await tick();
- assert.match($('.cfg-head h1').textContent,/Connections/);
+ assert.match($('.cfg-head h1').textContent,/Servers and APIs/);
  assert.match($('.fw-title').textContent,/Connection · ICM_MT5_DEMO/);
  $('[aria-label="Close window"]').click();await tick();
- nav('Accounts').click();await tick();await tick();
+ nav('Broker accounts').click();await tick();await tick();
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
@@ -402,7 +402,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: CSV import checks first and applies all-or-nothing.');
 
  // Four-eyes: a LIVE connection goes to Approvals; another person approves it.
- nav('Connections').click();await tick();await tick();
+ nav('Servers and APIs').click();await tick();await tick();
  button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'LIVE');await tick();
  button('Enter server and addresses manually').click();await tick();
@@ -451,7 +451,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...w.document.querySelectorAll('.cfg-user .link')].find(b=>b.textContent==='Sign out').click();await tick();
  const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
  assert.ok(![...w.document.querySelectorAll('.cfg-nav button')].some(b=>b.textContent.includes('Users')));
- nav('Providers').click();await tick();await tick();
+ nav('Brokers').click();await tick();await tick();
  assert.equal(button('New provider'),undefined);
  $('.cfg-table tbody tr').click();await tick();
  assert.ok($('.fw fieldset.cfg-plain').disabled);assert.equal(button('Save changes'),undefined);

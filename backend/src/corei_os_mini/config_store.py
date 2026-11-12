@@ -297,9 +297,11 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     for field, code in (('expires_on', 'ACCOUNT_EXPIRING'), ('mandate_expires_on', 'MANDATE_EXPIRING')):
         if row.get(field) and today <= row[field] <= today + timedelta(days=warn_days):
             warnings.append(code)
-    if row['platform'] == 'REST_API' and row['environment'] == 'LIVE' and not row.get('registered_egress_ip'):
+    # Order-only concerns are warnings only for accounts that may trade.
+    trades = row.get('trading_permission') == 'TRADING'
+    if trades and row['platform'] == 'REST_API' and row['environment'] == 'LIVE' and not row.get('registered_egress_ip'):
         warnings.append('STATIC_IP_NOT_RECORDED')
-    if row.get('max_orders_per_second') is None:
+    if trades and row.get('max_orders_per_second') is None:
         warnings.append('RATE_LIMIT_NOT_SET')
     if row.get('margin_mode_source') == 'MANUAL':
         warnings.append('MARGIN_MODE_NOT_CONFIRMED_BY_BROKER')

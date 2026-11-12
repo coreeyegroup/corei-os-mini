@@ -195,7 +195,7 @@ class MarketData(unittest.TestCase):
     def test_plans_estimate_controls_and_jobs(self):
         _, (a, b, _c), instrument = self.setup_accounts('LIVE')
         bad = self.ok(self.alice.post('/api/md/plans', json={'code': 'X1', 'account_id': a['id'], 'broker_symbol': 'EURUSD'}), 422)
-        self.assertIn('names the instrument', json.dumps(bad))
+        self.assertIn('must name its instrument', json.dumps(bad))
         p = self.plan(a, instrument, 'EU_A')
         self.assertEqual((p['status'], p['instrument_symbol'], p['environment']), ('DRAFT', 'EURUSD', 'LIVE'))
         dup = self.ok(self.alice.post('/api/md/plans', json={'code': 'EU_A2', 'account_id': b['id'], 'broker_symbol': 'EURUSD',

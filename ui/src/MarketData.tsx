@@ -102,7 +102,7 @@ function Live() {
 
 /* ---------- plans ---------- */
 
-const BLANK: Row = { code: '', account_id: '', broker_symbol: '', instrument_id: '', purpose: 'TRADING_FEED', feed_role: 'PRIMARY', data_types: ['QUOTES', 'BARS'],
+const BLANK: Row = { code: '', account_id: '', broker_symbol: '', instrument_id: '', purpose: 'RESEARCH', feed_role: 'PRIMARY', data_types: ['QUOTES', 'BARS'],
   bar_timeframes: ['M1'], depth_levels: 0, schedule: 'ALWAYS', window_start: '', window_end: '', window_days: [1, 2, 3, 4, 5], conflate_ms: 0, hot_days: 14,
   bars_hot_days: 365, archive: true, backfill_from: '', backfill_per_minute: 30, max_latency_ms: 1500, max_gap_seconds: 60, max_spread_points: '',
   stale_seconds: 10, on_breach: 'ALERT' };
@@ -155,7 +155,10 @@ function PlanWindow({ plan, canEdit, accounts, instruments, close, saved }: { pl
   const [est, setEst] = useState<Row | null>(null), [estError, setEstError] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [statusTo, setStatusTo] = useState<string | null>(null), [reason, setReason] = useState('');
   const isNew = !plan.id, locked = !canEdit || plan.status === 'ARCHIVED';
-  const set = (k: string, v: unknown) => setF({ ...f, [k]: v });
+  // A trading feed needs an instrument; without one the plan just collects (Research). Picking an
+  // instrument on a new plan makes it the trading feed, clearing it makes it Research again.
+  const set = (k: string, v: unknown) => setF(k === 'instrument_id' && isNew
+    ? { ...f, instrument_id: v, purpose: v ? 'TRADING_FEED' : (f.purpose === 'TRADING_FEED' ? 'RESEARCH' : f.purpose) } : { ...f, [k]: v });
   const toggle = (k: string, v: any) => set(k, f[k].includes(v) ? f[k].filter((x: any) => x !== v) : [...f[k], v]);
   useEffect(() => {
     if (!f.account_id || !f.broker_symbol || !f.code) { setEst(null); return; }
@@ -194,7 +197,7 @@ function PlanWindow({ plan, canEdit, accounts, instruments, close, saved }: { pl
             <select aria-label="Plan instrument" value={f.instrument_id} onChange={e => set('instrument_id', e.target.value)}><option value="">None</option>
               {instruments.map(i => <option key={i.id} value={i.id}>{i.symbol}</option>)}</select></Field></div>
         <div className="cfg-pair"><Field label="Purpose"><select aria-label="Plan purpose" value={f.purpose} onChange={e => set('purpose', e.target.value)}>
-            {[['TRADING_FEED', 'Trading feed'], ['REFERENCE', 'Reference (comparison)'], ['RESEARCH', 'Research only'], ['MONITORING', 'Quality monitoring']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+            {[['RESEARCH', 'Collect (research)'], ['TRADING_FEED', 'Trading feed (needs an instrument)'], ['REFERENCE', 'Reference (comparison)'], ['MONITORING', 'Quality monitoring']].map(([v, l]) => <option key={v} value={v} disabled={v === 'TRADING_FEED' && !f.instrument_id}>{l}</option>)}</select></Field>
           <Field label="Feed role"><select aria-label="Plan role" value={f.feed_role} onChange={e => set('feed_role', e.target.value)}>
             {[['PRIMARY', 'Primary'], ['BACKUP', 'Backup'], ['REFERENCE', 'Reference']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
         {account && account.platform !== 'MT5' && <p className="cfg-note">The collector for {account.platform} accounts is not built yet; the plan is kept and starts when it is.</p>}

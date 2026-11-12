@@ -23,9 +23,9 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Health', hint: 'Can each account trade right now, and if not, why' },
-  { id: 'providers', label: 'Providers', hint: 'Brokers (created for you by Add Upstox account; add MT5 brokers here first)' },
-  { id: 'connections', label: 'Connections', hint: 'One per broker server or API, created with the first account; edit clock, limits, addresses' },
-  { id: 'accounts', label: 'Accounts', hint: 'Start here: Add MT5 account / Add Upstox account (each creates its connection)' },
+  { id: 'accounts', label: 'Broker accounts', hint: 'Start here: Add MT5 account / Add Upstox account (each creates its connection)' },
+  { id: 'providers', label: 'Brokers', hint: 'Brokers (created for you by Add Upstox account; add MT5 brokers here first)' },
+  { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API, created with the first account; edit clock, limits, addresses' },
   { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
@@ -39,7 +39,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
 ];
 
 /* Headings in the section list, so 14 sections read as five groups. */
-const GROUP_START: Partial<Record<Section, string>> = { health: 'Status', providers: 'Brokers & accounts', connections: 'Brokers & accounts', accounts: 'Brokers & accounts',
+const GROUP_START: Partial<Record<Section, string>> = { health: 'Status', accounts: 'Brokers & accounts', providers: 'Brokers & accounts', connections: 'Brokers & accounts',
   groups: 'Brokers & accounts', instruments: 'Instruments', mappings: 'Instruments', strategies: 'Strategies', deployments: 'Strategies',
   approvals: 'Controls', controls: 'Controls', alerts: 'Controls', users: 'Administration', audit: 'Administration' };
 
@@ -120,6 +120,12 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
 }
 
 /* ---------- small building blocks ---------- */
+
+/** Daily OAuth login (Upstox): the broker's page, then back to COREI. */
+async function brokerLogin(accountId: string) {
+  try { const { authorize_url } = await api(`config/accounts/${accountId}/broker-login/start`, 'POST'); window.location.assign(authorize_url); }
+  catch (e) { window.alert((e as Error).message); }
+}
 
 /** A change that needs a second person comes back as {change_request}. */
 export function pendingMessage(result: Row | null): string | null {
@@ -1188,11 +1194,16 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {entity === 'connections' && selected.account_count > 0 && <> · <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button></>}</p>}
       {selected?.pending_changes > 0 && <p className="cfg-note cfg-reuse">A change to this {SINGULAR[entity]} is waiting for approval. <button type="button" className="cfg-link" onClick={() => navigate('approvals')}>Open Approvals</button></p>}
       {entity === 'accounts' && selected && <div className="cfg-blockers rd">
-        {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => <div key={k} className="rd-group"><span className="rd-head">{k === 'data_blockers' ? 'Market data' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}
+        {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => k === 'trading_blockers' && selected.trading_permission !== 'TRADING'
+          ? <div key={k} className="rd-group"><span className="rd-head">Order sending<span className="rd-state off">not used</span></span>
+              <span className="rd-same">this account is {selected.trading_permission === 'READ_ONLY' ? 'read only' : 'disabled'}: market data and account reads only</span></div>
+          : <div key={k} className="rd-group"><span className="rd-head">{k === 'data_blockers' ? 'Market data' : k === 'trading_blockers' ? 'Order sending' : 'Warnings'}
             <span className={`rd-state ${selected[k]?.length ? (k === 'warnings' ? 'warn' : 'bad') : 'ok'}`}>{selected[k]?.length ? `${selected[k].length} ${k === 'warnings' ? 'warning' : 'blocker'}${selected[k].length > 1 ? 's' : ''}` : k === 'warnings' ? 'none' : 'ready'}</span></span>
           {k === 'trading_blockers' && (selected.data_blockers ?? []).some((b: string) => selected[k]?.includes(b)) && <span className="rd-same">includes the market-data blockers above</span>}
           {selected[k]?.length > 0 && <ul>{selected[k].filter((b: string) => k !== 'trading_blockers' || !(selected.data_blockers ?? []).includes(b)).map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
             ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}
+            {b === 'BROKER_LOGIN_NEEDED_TODAY' && <> <button type="button" className="primary rd-act" onClick={() => void brokerLogin(selected.id)}>Log in at Upstox now</button>
+              <small className="cfg-note"> One login a day; it lasts until 03:30 IST.</small></>}
             {b === 'CONNECTION_FAILED' && selected.connection_problem && <div className="rd-reason"><b>{selected.connection_problem.title}.</b> {selected.connection_problem.detail}
               <code>{selected.connection_problem.raw}</code></div>}</li>)}</ul>}</div>)}
       </div>}

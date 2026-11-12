@@ -638,6 +638,13 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+### Simpler set-up (0.20.1)
+
+- Setup lists **Broker accounts → Brokers → Servers and APIs**, in the order you use them.
+- An account that needs today's Upstox login shows **Log in at Upstox now** right in its readiness list.
+- Read-only accounts no longer list order-sending blockers or order warnings (static IP, rate limit): "Order sending · not used".
+- New collection plans default to **Collect (research)**; choosing an instrument makes it a trading feed. The error for a trading feed without an instrument now says what to do.
+
 ## One way in for every account; approvals that cannot deadlock — release 0.20.0
 
 DEC-51. No migration.
