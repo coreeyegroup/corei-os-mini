@@ -123,7 +123,8 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
 
 /** A change that needs a second person comes back as {change_request}. */
 export function pendingMessage(result: Row | null): string | null {
-  return result?.change_request ? `Sent for approval: ${result.change_request.summary}. A second person must approve it under Approvals.` : null;
+  return result?.change_request ? `Sent for approval: ${result.change_request.summary}. This is a LIVE change, so a second person with the Risk approver role must approve it under Approvals (four-eyes). `
+    + 'Working alone? Add a second user (Setup › Users) or turn four-eyes off (Setup › Order sending / Controls). For a demo account, choose the broker\'s demo server instead: DEMO needs no approval.' : null;
 }
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {

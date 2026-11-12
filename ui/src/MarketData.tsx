@@ -189,7 +189,7 @@ function PlanWindow({ plan, canEdit, accounts, instruments, close, saved }: { pl
         <div className="cfg-pair"><Field label="Plan code"><input aria-label="Plan code" required value={f.code} onChange={e => set('code', e.target.value.toUpperCase())} /></Field>
           <Field label="Account (source)"><select aria-label="Plan account" required disabled={!isNew} value={f.account_id} onChange={e => set('account_id', e.target.value)}>
             <option value="">Choose…</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.provider_code} {a.environment}</option>)}</select></Field></div>
-        <div className="cfg-pair"><Field label="Broker symbol" hint="Exactly as the broker names it (e.g. XAUUSD.r)."><input aria-label="Broker symbol" required disabled={!isNew} value={f.broker_symbol} onChange={e => set('broker_symbol', e.target.value)} /></Field>
+        <div className="cfg-pair"><Field label="Broker symbol" hint="Exactly as the broker names it: MT5 e.g. XAUUSD.r; Upstox the instrument key, e.g. NSE_INDEX|Nifty 50 or NSE_EQ|INE002A01018."><input aria-label="Broker symbol" required disabled={!isNew} value={f.broker_symbol} onChange={e => set('broker_symbol', e.target.value)} /></Field>
           <Field label="Instrument" hint="Needed for a trading feed; links sources of the same instrument for comparison and switching.">
             <select aria-label="Plan instrument" value={f.instrument_id} onChange={e => set('instrument_id', e.target.value)}><option value="">None</option>
               {instruments.map(i => <option key={i.id} value={i.id}>{i.symbol}</option>)}</select></Field></div>

@@ -4,6 +4,7 @@
  * daily broker login, symbol specifications and the credential-use log.
  * Rules live in the backend; these screens show its answers.
  */
+import { goto } from './nav';
 import { useEffect, useState, type FormEvent } from 'react';
 import FloatingWindow from './FloatingWindow';
 import { api, BLOCKERS, Choice, Env, Field, Status, type Navigate, type Row } from './Configuration';
@@ -52,7 +53,7 @@ export function HealthBoard({ navigate }: { navigate: Navigate }) {
       <section className="cfg-panel">
         <h3>Set-up checklist</h3>
         <ol className="cfg-checklist-steps">{data.checklist.map((c: Row) => <li key={c.step} className={c.done ? 'done' : ''}>
-          <span aria-hidden>{c.done ? '✓' : '○'}</span><button type="button" className="cfg-link" onClick={() => navigate(c.section)}>{c.step}</button></li>)}</ol>
+          <span aria-hidden>{c.done ? '✓' : '○'}</span><button type="button" className="cfg-link" onClick={() => c.section === 'plans' ? goto('Market data', 'plans') : navigate(c.section)}>{c.step}</button></li>)}</ol>
         {next ? <p className="cfg-note">Next: {next.step}.</p> : <p className="cfg-ok">All set-up steps are done.</p>}
       </section>
     </div>

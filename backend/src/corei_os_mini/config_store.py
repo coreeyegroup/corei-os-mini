@@ -37,7 +37,7 @@ from .persistence import PersistenceNotConfigured, _connect
 # What COREI can actually do per platform. Market data and account reads exist for MT5
 # (read-only, through the MT5 SDK); sending orders is built per platform later. An
 # account on a platform not listed reports the blocker instead of implying it works.
-DATA_ADAPTERS: set[str] = {'MT5'}
+DATA_ADAPTERS: set[str] = {'MT5', 'REST_API'}  # REST_API: Upstox market data only (md/upstox_reader.py)
 ORDER_ADAPTERS: set[str] = set()
 AVAILABLE_ADAPTERS = DATA_ADAPTERS
 
@@ -255,8 +255,14 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if row['platform'] == 'REST_API' and row.get('registered_egress_ip') and context.get('egress_ip') \
             and str(row['registered_egress_ip']) != context['egress_ip']:
         data.append('STATIC_IP_MISMATCH')
-    if row['platform'] not in DATA_ADAPTERS:
+    api_base = str((row.get('connection_settings') or {}).get('api_base_url') or '')
+    if row['platform'] not in DATA_ADAPTERS or (row['platform'] == 'REST_API' and 'upstox' not in api_base):
         data.append('ADAPTER_NOT_AVAILABLE')
+    # An OAuth broker (Upstox) issues a token valid until 03:30 IST: data stops without today's login.
+    oauth_login_needed = row['platform'] == 'REST_API' and row.get('auth_method') == 'OAUTH2' and (
+        not row.get('session_token_expires_at') or row['session_token_expires_at'] <= _now())
+    if oauth_login_needed:
+        data.append('BROKER_LOGIN_NEEDED_TODAY')
     trading = list(data)
     if row['platform'] not in ORDER_ADAPTERS:
         trading.append('ORDER_ADAPTER_NOT_AVAILABLE')
@@ -273,10 +279,6 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if row['platform'] == 'MT5' and row['trading_permission'] == 'TRADING' and not row.get('master_credential_kind') \
             and row.get('credential_kind'):
         trading.append('MASTER_PASSWORD_MISSING')
-    if row['platform'] == 'REST_API' and row.get('auth_method') == 'OAUTH2':
-        expires = row.get('session_token_expires_at')
-        if not expires or expires <= _now():
-            trading.append('BROKER_LOGIN_NEEDED_TODAY')
     if row['purpose'] == 'MARKET_DATA':
         trading.append('CONNECTION_DATA_ONLY')
     if row['trading_permission'] != 'TRADING':

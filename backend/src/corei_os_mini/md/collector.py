@@ -25,6 +25,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -232,7 +233,7 @@ class SourceWorker(threading.Thread):
 
     # ----- main loop -----
     def run(self) -> None:
-        if self.platform != 'MT5':
+        if self.platform not in cfg.DATA_ADAPTERS:
             self.state, self.error = 'UNSUPPORTED', f'The collector for {self.platform} accounts is not built yet; plans are kept.'
             return
         attempt = 0
@@ -260,22 +261,50 @@ class SourceWorker(threading.Thread):
         self.flush_journal()
         self.journal.close()
 
-    def _session(self) -> bool:
-        with cfg.transaction('read') as db:
-            account = cfg.get_record(db, 'accounts', UUID(self.account_id))
+    def _command(self, account: dict) -> tuple[list[str], dict] | None:
+        """The reader to run and its first stdin line, per platform; None when it cannot start (error set)."""
+        if self.platform == 'REST_API':
+            settings = account.get('connection_settings') or {}
+            if 'upstox' not in (settings.get('api_base_url') or ''):
+                self.state, self.error = 'FAILED', 'Only the Upstox API is supported for market data on API connections.'
+                return None
+            from .. import broker_login
+            try:
+                token = broker_login.session_token(UUID(self.account_id), 'collector', 'Stream market data (read-only)')
+            except Exception as exc:  # noqa: BLE001 - HTTPException with the reason
+                self.state, self.error = 'FAILED', 'BROKER_LOGIN_EXPIRED: ' + str(getattr(exc, 'detail', exc))
+                return None
+            return ([sys.executable, '-m', 'corei_os_mini.md.upstox_reader'],
+                    {'token': token, 'api_base': settings.get('api_base_url'), 'symbols': sorted(self.wanted()),
+                     'heartbeat_seconds': 5, 'poll_ms': 1000})
         addresses = ((account or {}).get('routing') or {}).get('addresses') or []
-        if not account or not addresses:
+        if not addresses:
             self.state, self.error = 'FAILED', 'No address to connect to (check the account routing).'
-            return False
+            return None
         level = 'READ_ONLY' if account.get('investor_credential_kind') else 'FULL'
         secret = cfg.use_credential('accounts', UUID(self.account_id), 'collector', 'Stream market data (read-only)', level)
         request = {'login': int(account['external_account_id']), 'password': secret['password'],
                    'hosts': [{'host': a['host'], 'port': a['port']} for a in addresses[:12]],
                    'symbols': sorted(self.wanted()), 'timeout_seconds': 20, 'heartbeat_seconds': 5}
-        self.proc = subprocess.Popen([reader_path(), '--stream'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        secret.clear()
+        return [reader_path(), '--stream'], request
+
+    def _session(self) -> bool:
+        with cfg.transaction('read') as db:
+            account = cfg.get_record(db, 'accounts', UUID(self.account_id))
+            conn = db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (self.connection_id,)).fetchone()
+        if account:
+            account['connection_settings'] = (conn or {}).get('settings') or {}
+        if not account:
+            self.state, self.error = 'FAILED', 'The account no longer exists.'
+            return False
+        started = self._command(account)
+        if started is None:
+            return False
+        command, request = started
+        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      env={**os.environ, 'DOTNET_GCHeapHardLimit': '0x40000000', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1'})
         self._send(request)
-        secret.clear()
         request.clear()
         connected = False
         assert self.proc.stdout is not None

@@ -638,6 +638,14 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Upstox market data and a clear set-up order — release 0.19.0
+
+DEC-50. No migration.
+
+- **Upstox market data.** The collector now streams Upstox accounts too (`md/upstox_reader.py`, same line protocol as the MT5 reader): best bid/ask, last price and volume once a second for up to 500 instrument keys, history bars from Upstox's candle API, journal → PostgreSQL → Parquet as for MT5. It needs today's broker login (valid until 03:30 IST). A plan's broker symbol is the Upstox instrument key, e.g. `NSE_INDEX|Nifty 50` or `NSE_EQ|INE002A01018`.
+- **Set-up order** on Setup › Account readiness: 1 broker → 2 account (MT5: Add MT5 account; Upstox: connection with API key + secret, then account) → 3 credentials → 4 first login → 5 plan → 6 instruments → 7 strategy → 8 alerts.
+- **Approvals explained.** A LIVE change (new LIVE server, LIVE address, LIVE password) needs a second person with the Risk approver role. When you are the only user the checklist says so: add a second user or turn four-eyes off. Demo servers need no approval.
+
 ## Audit fixes — release 0.18.0
 
 DEC-49; gap register section E lists every finding and its status. No migration.

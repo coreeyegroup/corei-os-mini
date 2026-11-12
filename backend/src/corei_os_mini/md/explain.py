@@ -41,6 +41,9 @@ def _login_code(error: str) -> dict | None:
 
 
 RULES = [
+    (r'BROKER_LOGIN_EXPIRED|daily login expired|Upstox refused the session', True, 'Broker login needed today',
+     'Upstox issues one login per day, valid until 03:30 IST. Open Setup › Accounts › this account › Log in at broker '
+     '(or TOTP login). The collector picks the new login up within 5 minutes.'),
     (r'ServerException: \d+.*with client build \d+', True, 'Broker refused the login (unlisted code)',
      'The newer MT5 build got past the version check, then the server refused the login with a code this MT5 SDK does not name '
      '(the number is shown below). Usually the SDK is older than the server protocol and must be updated; it can also be a '

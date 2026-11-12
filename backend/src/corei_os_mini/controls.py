@@ -347,16 +347,28 @@ def health() -> dict:
             ('deployments', 'cfg_deployments'), ('alert_channels', 'cfg_alert_channels'))}
         credentials_saved = db.execute('SELECT count(DISTINCT account_id) AS n FROM cfg_credentials WHERE account_id IS NOT NULL').fetchone()['n']
         failed_alerts = db.execute("SELECT count(*) AS n FROM cfg_alert_outbox WHERE status='FAILED'").fetchone()['n']
+        logged_in = db.execute("SELECT count(*) AS n FROM cfg_accounts WHERE last_login_at IS NOT NULL OR broker_facts_read_at IS NOT NULL OR id IN "
+                               "(SELECT account_id FROM cfg_session_tokens)").fetchone()['n']
+        plans = db.execute("SELECT count(*) AS n FROM md_collection_plans WHERE status <> 'ARCHIVED'").fetchone()['n']
+        db_counts = {'users': db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE'").fetchone()['n']}
+    # The order a person sets things up in. MT5: the broker, then Add MT5 account (it creates the
+    # server's connection). API brokers (Upstox): the broker, the connection with the app's key and
+    # secret, the account, then a daily broker login. Then data, then trading.
+    users = db_counts.get('users', 1)
     checklist = [
-        {'step': 'Add a provider (broker)', 'done': counts['providers'] > 0, 'section': 'providers'},
-        {'step': 'Add an account (MT5: login, password and server)', 'done': counts['accounts'] > 0, 'section': 'accounts'},
-        {'step': 'Save the account passwords', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
-        {'step': 'Add instruments', 'done': counts['instruments'] > 0, 'section': 'instruments'},
-        {'step': 'Map broker symbols to instruments', 'done': counts['mappings'] > 0, 'section': 'mappings'},
-        {'step': 'Register a strategy and approve a version', 'done': counts['strategies'] > 0, 'section': 'strategies'},
-        {'step': 'Deploy strategy × instrument × account', 'done': counts['deployments'] > 0, 'section': 'deployments'},
-        {'step': 'Set up an alert channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
+        {'step': '1 Broker: Providers › New (who the broker is)', 'done': counts['providers'] > 0, 'section': 'providers'},
+        {'step': '2 Account: MT5 → Accounts › Add MT5 account (creates the connection) · Upstox → Connections › New (API key + secret), then Accounts › New',
+         'done': counts['accounts'] > 0, 'section': 'accounts'},
+        {'step': '3 Credentials: MT5 master or investor password; API connection key + secret', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
+        {'step': '4 First login: MT5 → Log in and read now · Upstox → Log in at broker (every day)', 'done': logged_in > 0, 'section': 'accounts'},
+        {'step': '5 Market data: Market data › Plans › New (account + symbol)', 'done': plans > 0, 'section': 'plans'},
+        {'step': '6 Instruments and symbol mappings', 'done': counts['instruments'] > 0 and counts['mappings'] > 0, 'section': 'instruments'},
+        {'step': '7 Strategy: register, approve a version, deploy', 'done': counts['deployments'] > 0, 'section': 'deployments'},
+        {'step': '8 Alert channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
     ]
+    if four_eyes and users < 2:
+        checklist.append({'step': 'LIVE changes need a second person (four-eyes) and you are the only user: add a user with the Risk approver role, '
+                                  'or turn four-eyes off in Controls', 'done': False, 'section': 'users'})
     return {'generated_at': datetime.now(timezone.utc).isoformat(), 'network': network.status(), 'controls': list(controls.values()),
             'four_eyes_live_changes': four_eyes, 'pending_approvals': pending, 'failed_alerts': failed_alerts,
             'checklist': checklist, 'connections': connections, 'accounts': accounts,
