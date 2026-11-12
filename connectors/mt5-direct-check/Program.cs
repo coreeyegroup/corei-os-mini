@@ -994,7 +994,7 @@ partial class Program
     static readonly Type[] NumericTypes = { typeof(int), typeof(uint), typeof(short), typeof(ushort), typeof(long) };
     // Recent MT5 terminal builds, newest first (6230 was current in November 2026;
     // MetaQuotes' own demo servers accept only the latest). COREI_MT5_CLIENT_BUILD pins one.
-    static readonly int[] RecentBuilds = { 6230, 6180, 6140, 6060, 5830, 5640, 5430, 5370 };
+    static readonly int[] RecentBuilds = { 6241, 6238, 6230, 6180, 6140, 6060, 5830, 5640, 5430, 5370 };
     static int? BuildOverride;
     static int? BuildUsed;
     static long StreamSeq;

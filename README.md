@@ -683,4 +683,4 @@ DEC-46. No migration.
 
 ### MT5 "OLD_VERSION" (broker refuses the connector's MT5 version)
 
-The reader retries a refused login automatically with current MT5 client builds (6230 down to 5370) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.
+The reader retries a refused login automatically with current MT5 client builds (6241 down to 5370) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.

@@ -33,7 +33,7 @@ def _login_code(error: str) -> dict | None:
     if code > SDK_LAST_CODE and code < 2000:
         return {'title': f'Server uses a login step newer than the MT5 SDK (code {code})',
                 'detail': f'The server answered login code {code}; the installed MT5 SDK only knows codes up to {SDK_LAST_CODE}, so the server '
-                          'expects a newer login protocol than the SDK speaks (presenting build 6230 is not enough). Update the MT5 SDK '
+                          'expects a newer login protocol than the SDK speaks (presenting a newer build number is not enough). Update the MT5 SDK '
                           '(mt5api.dll) to the vendor\'s current release and run scripts/setup-broker-accounts.sh. MetaQuotes-Demo is the '
                           'strictest server; a broker\'s own demo server (VT Markets, IC Markets) usually still accepts the current SDK.',
                 'permanent': True, 'raw': error}
@@ -55,7 +55,7 @@ RULES = [
      'The SDK must be updated to a newer release from its vendor, then run scripts/setup-broker-accounts.sh.'),
     (r'OLD_VERSION', True, 'Broker refused the connector version',
      "The broker requires a newer MT5 version than the connector presented. COREI retries automatically with current MT5 client builds "
-     '(6230 down to 5370) when the SDK allows it. MetaQuotes\' own demo servers (MetaQuotes-Demo) accept only the newest build. If it is still refused, set COREI_MT5_CLIENT_BUILD to the build the broker\'s own '
+     '(6241 down to 5370) when the SDK allows it. MetaQuotes\' own demo servers (MetaQuotes-Demo) accept only the newest build. If it is still refused, set COREI_MT5_CLIENT_BUILD to the build the broker\'s own '
      'MT5 terminal shows (Help › About) in /etc/corei-os-mini/workstation.env and redeploy, or update the MT5 SDK.'),
     (r'INVALID_ACCOUNT|Invalid account|INVALID_PASSWORD|Authorization|AUTH', True, 'Login or password rejected',
      'The broker rejected the login. Check the MT5 login number and save the investor (read-only) password again on the account.'),
