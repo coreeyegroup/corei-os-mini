@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
-from .operator_auth import admin_router, router as operator_router
+from .operator_auth import admin_router, current_user, require_operator, router as operator_router
 from .config_api import router as config_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
@@ -87,7 +87,7 @@ def health(response: Response) -> dict[str, str | bool]:
     }
 
 
-@app.post("/api/demo/paper-runs", response_model=PaperRunResult, status_code=201)
+@app.post("/api/demo/paper-runs", response_model=PaperRunResult, status_code=201, dependencies=[Depends(require_operator)])
 def create_paper_run(payload: PaperRunRequest) -> PaperRunResult:
     if not settings.enable_demo:
         raise HTTPException(status_code=404, detail="Demo workflow is disabled")
@@ -112,6 +112,7 @@ def create_paper_run(payload: PaperRunRequest) -> PaperRunResult:
 @app.post(
     "/api/demo/market-data/assess",
     response_model=MarketDataAssessmentResult,
+    dependencies=[Depends(require_operator)],
 )
 def assess_demo_market_data(
     payload: MarketDataAssessmentRequest,
@@ -134,7 +135,7 @@ def assess_demo_market_data(
     return output
 
 
-@app.get("/api/market-data/assessments/{assessment_id}")
+@app.get("/api/market-data/assessments/{assessment_id}", dependencies=[Depends(current_user)])
 def read_market_data_assessment(assessment_id: UUID) -> dict[str, object]:
     try:
         row = get_market_data_assessment(settings.database_url, assessment_id)
@@ -147,7 +148,7 @@ def read_market_data_assessment(assessment_id: UUID) -> dict[str, object]:
     return row
 
 
-@app.get("/api/paper-runs/{run_id}")
+@app.get("/api/paper-runs/{run_id}", dependencies=[Depends(current_user)])
 def read_paper_run(run_id: UUID) -> dict[str, object]:
     try:
         row = get_run(settings.database_url, run_id)
@@ -167,7 +168,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.17.1-login-codes",
+        "release": "0.18.0-audit",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,
@@ -183,11 +184,12 @@ def workstation(response: Response) -> dict[str, object]:
              "reason": "Broker directory search, servers.dat analysis, latency test and per-account address choice. Requires migration 013."},
             {"id": "credential_storage", "label": "Credential encryption", "available": credential_storage_ready(),
              "reason": "Requires the server key file created by scripts/setup-broker-accounts.sh."},
-            {"id": "providers", "label": "Provider connectivity", "available": bool(config_store.AVAILABLE_ADAPTERS),
-             "reason": "No provider adapter (MT5 or REST API) is implemented yet."},
-            {"id": "assessment", "label": "Market-data assessment", "available": True,
-             "reason": "Validation and feed selection on supplied observations; no live feed yet."},
-            {"id": "execution", "label": "Order execution", "available": False,
+            {"id": "providers", "label": "Provider connectivity", "available": bool(config_store.DATA_ADAPTERS),
+             "reason": "Market data and account reads: " + (", ".join(sorted(config_store.DATA_ADAPTERS)) or "none")
+                       + ". Order sending: " + (", ".join(sorted(config_store.ORDER_ADAPTERS)) or "no adapter yet") + "."},
+            {"id": "assessment", "label": "Market-data collection", "available": True,
+             "reason": "Collection plans, live price stream (MT5), quality scoring, feed switching, journal, Parquet history."},
+            {"id": "execution", "label": "Order execution", "available": bool(config_store.ORDER_ADAPTERS),
              "reason": "Order lifecycle and provider submission are not implemented yet."},
             {"id": "portfolio", "label": "Portfolio and reconciliation", "available": False,
              "reason": "No position ledger or provider reconciliation exists yet."},

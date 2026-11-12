@@ -1,7 +1,7 @@
 # COREI-OS-MINI — Gap Register
 
 **Baseline compared:** Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3, as amended by `DECISIONS.md` (DEC-18 … DEC-22)
-**Last updated:** 10 Nov 2026 — release 0.9.0 (users and roles, strategies and deployments)
+**Last updated:** 12 Nov 2026 — release 0.18.0 (full audit; see section E)
 **Status values:** OPEN, DONE, PARTIAL, SUPERSEDED, BLOCKED (needs an owner decision)
 
 ## Position
@@ -11,7 +11,7 @@
 | Configuration | Providers, connections (MT5 with full server description and selectable access points, REST API), accounts, instruments, symbol mappings, encrypted credentials, order-sending switch, audit log, readiness | DONE |
 | Users and roles | Database users, four roles, server-side sessions, lockout, forced password change | DONE |
 | Strategies and deployments | Versioned strategies with approval; deployment matrix with data source and readiness; four-eyes on LIVE | DONE |
-| 1. Connections and market data | Feed-quality assessment and deterministic feed selection on supplied observations | No adapter, no live feed |
+| 1. Connections and market data | MT5 read-only adapter, live price stream, collection plans, journal → PostgreSQL → Parquet, quality, feed switching, backups | ~70% — live login blocked by SDK (A-01) |
 | 2. Strategies and signals | Strategy registry and deployments done; signal generation from live data not yet | ~35% |
 | 3. Risk and allocation | Four dispatch modes; per-child risk using request-supplied state | ~15% |
 | 4. Execution and reconciliation | Nothing operational | ~0% |
@@ -39,7 +39,7 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-X-01 | Audit trail | PARTIAL — configuration, order-sending, user, sign-in, strategy and deployment changes audited; order and execution events come with Phase 4 |
 | G-X-02 | Users and roles with separation of duties | DONE (0.9.0) — DEC-23, DEC-24 |
 | G-X-03 | Trading screens (market data, signals, risk, orders, positions, reconciliation) | OPEN |
-| G-X-04 | Documented backup/restore and operator runbook | OPEN |
+| G-X-04 | Documented backup/restore and operator runbook | OPEN — backups fixed (A-04); restore drill still untested |
 | G-X-05 | Live site stuck on 8 Nov build; duplicate `n8n.coreeye.in` in server Caddyfile | OPEN — server-side |
 | G-X-06 | Demo paper-run route and synthetic strategy still in code (disabled by default) | OPEN — replace with the real Phase 2–4 pipeline |
 
@@ -96,6 +96,34 @@ No order can be sent: no provider adapter or order lifecycle exists yet.
 | G-P4-03 | UNKNOWN-outcome handling | OPEN |
 | G-P4-04 | Fill/fee ledger, positions, P&L | OPEN |
 | G-P4-05 | Reconciliation and break workflow | OPEN |
+
+## E. Audit 12 Nov 2026 (release 0.18.0)
+
+Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Status here is authoritative.
+
+| ID | Sev | Finding | Status |
+|---|---|---|---|
+| A-01 | Critical | Live MT5 login refused: SDK default build → OLD_VERSION; build 6230 → ServerException 1035, a code newer than the SDK (names codes to 1030) | OPEN — owner: update mt5api.dll or use a broker's own demo server |
+| A-02 | Critical | Login storm: up to 12 addresses × 9 builds per attempt, retried within seconds (lockout risk) | DONE 0.17.0 |
+| A-03 | Critical | Order sending ON for DEMO and LIVE with no order adapter, risk limits or reconciliation; LIVE account permission TRADING | PARTIAL — warning + chip 0.18.0; owner to switch off |
+| A-04 | High | Backups failing (pg_dump 14 vs PostgreSQL 18) | DONE 0.17.0; restore drill OPEN |
+| A-05 | High | Connection marked LIVE on a demo server; nothing stopped it | DONE 0.16/0.17 (warning, environment from server name) |
+| A-06 | High | Collector raised TimeoutExpired: reader lingered after a failed login | DONE 0.17.0 |
+| A-07 | High | Stored paper runs / assessments readable without sign-in; demo POSTs without session | DONE 0.18.0 |
+| A-08 | High | Unnamed refusal codes treated as transient and retried fast; not explained | DONE 0.17.1 |
+| A-09 | High | CI red on every push since 10 Nov (ran unittest; setup lives in pytest conftest) | DONE 0.18.0 |
+| A-10 | High | Single price source per instrument; feed switching has nothing to switch to | OPEN |
+| A-11 | High | Credential key on the same host as the data (G-C-08) | OPEN |
+| A-12 | Medium | /api/workstation capability text stale ("no provider adapter", "no live feed") | DONE 0.18.0 |
+| A-13 | Medium | Gap register last updated at 0.9.0 | DONE 0.18.0 |
+| A-14 | Medium | Backup location on the same disk / not off-site | OPEN — owner: COREI_BACKUP_DIR on another disk or host |
+| A-15 | Medium | Readiness screen used large tiles; detail window not movable; blockers listed twice | DONE 0.17–0.18 |
+| A-16 | Medium | Connection clock, DST rule and order rate limit unset | OPEN — owner data; clock measured at login when it succeeds |
+| A-17 | Medium | Data model: platform "Meta Trader" stored as a broker; "UPSTOK" typo; empty Upstox connection | OPEN — owner data |
+| A-18 | Medium | Demo paper-run route and synthetic strategy still in code (G-X-06) | OPEN — remove when Phase 2 lands |
+| A-19 | Medium | No dependency audit for Python | PARTIAL — pip-audit in CI (report only) |
+| A-20 | Low | Wide tables hide columns on narrow windows | OPEN |
+| A-21 | Low | No end-to-end test against a real broker (stub SDK only) | OPEN — needs a working demo login |
 
 ## C. Owner decisions
 

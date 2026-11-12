@@ -638,6 +638,16 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Audit fixes — release 0.18.0
+
+DEC-49; gap register section E lists every finding and its status. No migration.
+
+- CI fixed: backend tests run with pytest (they had been failing in CI since 10 Nov); npm audit and pip-audit added.
+- Stored paper runs and assessments need a session; demo routes need sign-in.
+- Home and the top bar warn when order sending is ON but no order adapter exists ("Orders ON · … · no adapter").
+- `/api/workstation` reports adapters truthfully (MT5 data yes, orders none).
+- Account readiness counters are one dense strip.
+
 ### MT5 login codes (0.17.1)
 
 Login refusals are explained by number (1001 wrong login/password, 1012 IP not allowed, 1020 unknown account, 1026 password must change, 1027/1028 OTP on, …). A code above 1030 means the server uses a login step newer than the installed MT5 SDK (the SDK names codes up to 1030): update mt5api.dll, or use a broker's own demo server, which is less strict than MetaQuotes-Demo.

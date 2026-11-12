@@ -297,9 +297,16 @@ def overview(response: Response, user: Principal = Depends(current_user)):
                           'detail': (backup or {}).get('error') or 'Set COREI_BACKUP_DIR on the server; the nightly job makes them.',
                           'goto': {'view': 'Market data', 'section': 'archive'}})
     order = store.list_execution_controls()
+    if any(o['trading_enabled'] for o in order) and not store.ORDER_ADAPTERS:
+        on = ', '.join(o['environment'] for o in order if o['trading_enabled'])
+        attention.append({'severity': 'WARNING', 'area': 'Order sending',
+                          'title': f'Order sending is ON for {on}, but no order adapter is built',
+                          'detail': 'Nothing can be sent yet. Turn it off until the order adapter, risk limits and reconciliation exist (pre-LIVE gate).',
+                          'goto': {'view': 'Configuration', 'section': 'controls'}})
     return {'user': {'username': user.username, 'roles': sorted(user.roles)},
             'feeds': {'active_plans': active_plans, 'collectors': len(collectors), 'live': live,
                       'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
+            'order_adapter': bool(store.ORDER_ADAPTERS),
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}

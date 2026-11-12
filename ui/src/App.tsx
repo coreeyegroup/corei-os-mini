@@ -442,8 +442,8 @@ export default function App() {
           {signedOut ? <button className="chip" onClick={()=>go('Overview')}>Sign in</button> : overview && <>
             <button className={`chip ${overview.feeds.problems?'bad':overview.feeds.live?'ok':''}`} title="Market-data feeds" onClick={()=>{goto('Market data','live');go('Market data');}}>
               <span className="chip-dot"/>Feeds {overview.feeds.live}/{overview.feeds.collectors}{overview.feeds.problems?` · ${overview.feeds.problems} problem${overview.feeds.problems>1?'s':''}`:''}</button>
-            <button className={`chip ${live.includes('LIVE')?'live':''}`} title="Order sending (firm-wide switch)" onClick={()=>{goto('Configuration','controls');go('Configuration');}}>
-              Orders {live.length?`ON · ${live.join(', ')}`:'OFF'}</button>
+            <button className={`chip ${live.includes('LIVE')?'live':''}`} title={overview.order_adapter===false&&live.length?'Order sending is switched ON, but no order adapter is built: nothing can be sent yet':'Order sending (firm-wide switch)'} onClick={()=>{goto('Configuration','controls');go('Configuration');}}>
+              Orders {live.length?`ON · ${live.join(', ')}${overview.order_adapter===false?' · no adapter':''}`:'OFF'}</button>
             {overview.approvals>0 && <button className="chip warn" onClick={()=>{goto('Configuration','approvals');go('Configuration');}}>Approvals {overview.approvals}</button>}
           </>}
         </div>

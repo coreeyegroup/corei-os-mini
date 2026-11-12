@@ -83,6 +83,7 @@ export type Overview = {
   user: { username: string; roles: string[] };
   feeds: { active_plans: number; collectors: number; live: number; problems: number; paused: boolean };
   order_sending: { environment: string; enabled: boolean }[];
+  order_adapter?: boolean;
   approvals: number;
   attention: { severity: 'CRITICAL' | 'WARNING' | 'INFO'; area: string; title: string; detail: string; goto: { view: View; section?: string } }[];
 };
