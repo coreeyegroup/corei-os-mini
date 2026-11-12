@@ -111,7 +111,8 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-06 | High | Collector raised TimeoutExpired: reader lingered after a failed login | DONE 0.17.0 |
 | A-07 | High | Stored paper runs / assessments readable without sign-in; demo POSTs without session | DONE 0.18.0 |
 | A-08 | High | Unnamed refusal codes treated as transient and retried fast; not explained | DONE 0.17.1 |
-| A-09 | High | CI red on every push since 10 Nov (ran unittest; setup lives in pytest conftest) | DONE 0.18.0 |
+| A-09 | High | CI red on every push since 10 Nov (ran unittest; setup lives in pytest conftest) | DONE 0.18.0 — run 43127003373 green |
+| A-22 | High | On PostgreSQL 18 a blocked delete (23001 restrict) returned 503 "database unavailable" instead of 409 | DONE 0.18.0 |
 | A-10 | High | Single price source per instrument; feed switching has nothing to switch to | OPEN |
 | A-11 | High | Credential key on the same host as the data (G-C-08) | OPEN |
 | A-12 | Medium | /api/workstation capability text stale ("no provider adapter", "no live feed") | DONE 0.18.0 |
