@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      # pg_dump must be at least the server's version (PostgreSQL 18) for the backup test.
+      - run: (sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && sudo apt-get install -y postgresql-client-18) || echo "pg_dump 18 not installed; backup test will skip"
       - run: python -m pip install -e ./backend httpx pytest pip-audit
       # pytest, not unittest: backend/tests/conftest.py sets the step-up re-authentication
       # override and test environment that every test relies on (CI was red since 0.11.0 without it).

@@ -20,6 +20,7 @@ from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
+import logging
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
@@ -74,6 +75,9 @@ UNIQUE_MESSAGES = {
 
 # ---------- transaction and error handling ----------
 
+_log = logging.getLogger(__name__)
+
+
 @contextmanager
 def transaction(operation: str = 'write') -> Iterator[psycopg.Connection]:
     try:
@@ -84,7 +88,8 @@ def transaction(operation: str = 'write') -> Iterator[psycopg.Connection]:
     except psycopg.errors.UniqueViolation as exc:
         message = UNIQUE_MESSAGES.get(exc.diag.constraint_name or '', 'A record with these identifiers already exists.')
         raise HTTPException(409, message) from None
-    except psycopg.errors.ForeignKeyViolation:
+    except (psycopg.errors.ForeignKeyViolation, psycopg.errors.RestrictViolation):
+        # PostgreSQL reports a blocked delete as 23503 (NO ACTION) or 23001 (RESTRICT, as PostgreSQL 18 does here).
         if operation == 'delete':
             raise HTTPException(409, 'This record is used by other records. Remove or deactivate those first.') from None
         raise HTTPException(422, 'A referenced record does not exist.') from None
@@ -92,7 +97,11 @@ def transaction(operation: str = 'write') -> Iterator[psycopg.Connection]:
         raise HTTPException(422, 'A value is outside its allowed range.') from None
     except credentials.CredentialStorageUnavailable as exc:
         raise HTTPException(503, f'Credential storage is not configured: {exc}. Run scripts/setup-broker-accounts.sh.') from None
-    except (psycopg.Error, PersistenceNotConfigured):
+    except psycopg.IntegrityError as exc:
+        _log.warning('Integrity error during %s: %s %s', operation, type(exc).__name__, exc.diag.constraint_name)
+        raise HTTPException(409 if operation == 'delete' else 422, 'The change conflicts with other records.') from None
+    except (psycopg.Error, PersistenceNotConfigured) as exc:
+        _log.error('Database error during %s: %s', operation, type(exc).__name__)
         raise HTTPException(503, 'Configuration database unavailable. Check the database and apply migrations.') from None
 
 
