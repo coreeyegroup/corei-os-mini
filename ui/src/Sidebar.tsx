@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
-import { current, digitsOf, DESTINATIONS, goto, gotoTable, type Overview } from './nav';
+import { current, digitsOf, DESTINATIONS, goto, gotoTable, SETUP_GROUPS, setupRowOf, type Overview } from './nav';
 import { FlowList } from './Pipeline';
 import { stageOf } from './flow';
 
@@ -94,20 +94,15 @@ function Problems({ overview }: { overview: Overview | null }) {
 
 function SetupTree() {
   const summary = usePoll<Row>('config/summary', 15000);
-  const section = useCurrent('Configuration');
+  const section = setupRowOf(useCurrent('Configuration') ?? 'health');
   const counts = summary?.counts ?? {};
-  const groups: [string, [string, string][]][] = [
-    ['Brokers & accounts', [['providers', 'Providers'], ['connections', 'Connections'], ['accounts', 'Accounts'], ['groups', 'Account groups']]],
-    ['Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
-    ['Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
-    ['Controls', [['approvals', 'Approvals'], ['controls', 'Order sending'], ['alerts', 'Alerts']]],
-    ['Administration', [['users', 'Users'], ['audit', 'Audit log']]],
-  ];
+  const countOf = (id: string) => id === 'brokers' ? counts.accounts : counts[id];
   return <>
-    <button className={`sb-row ${section === 'health' ? 'selected' : ''}`} onClick={() => goto('Configuration', 'health')}>Account readiness</button>
-    {groups.map(([g, items]) => <div key={g}><div className="sb-group">{g}</div>
+    <button className={`sb-row ${section === 'health' ? 'selected' : ''}`} onClick={() => goto('Configuration', 'health')}><span className="sb-grow">Overview</span>
+      {summary && <span className="sb-meta">{summary.counts?.accounts ?? 0} acct</span>}</button>
+    {SETUP_GROUPS.map(([g, items]) => <div key={g}><div className="sb-group">{g}</div>
       {items.map(([id, label]) => <button key={id} className={`sb-row sb-indent ${section === id ? 'selected' : ''}`} onClick={() => goto('Configuration', id)}>
-        <span className="sb-grow">{label}</span>{counts[id] != null && <span className={`sb-meta ${id === 'approvals' && counts[id] ? 'warn' : ''}`}>{counts[id]}</span>}
+        <span className="sb-grow">{label}</span>{countOf(id) != null && <span className={`sb-meta ${id === 'approvals' && countOf(id) ? 'warn' : ''}`}>{countOf(id)}</span>}
         {id === 'controls' && summary && <span className="sb-meta">{(summary.execution_controls ?? []).map((c: Row) => `${c.environment} ${c.trading_enabled ? 'ON' : 'off'}`).join(' · ')}</span>}
       </button>)}</div>)}
   </>;

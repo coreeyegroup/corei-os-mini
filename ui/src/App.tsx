@@ -556,6 +556,11 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
       <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}` : 'server ?'}` : 'Loading…'}</span>
       <span className="push" /><button onClick={refresh}>Refresh</button></div>
     {error && <div role="alert" className="dense-error">{error}</div>}
+    {overview?.setup && overview.setup.next && <div className="dense-next" role="status">
+      <span className="muted">Set-up {overview.setup.done}/{overview.setup.total}</span>
+      <span className="dense-steps" aria-hidden="true">{overview.setup.steps.map((st, i) => <i key={i} className={st.done ? 'on' : ''} title={st.step} />)}</span>
+      <b>Next:</b> <span>{overview.setup.next.step}</span>
+      <button onClick={() => goto(overview.setup!.next!.goto.view, overview.setup!.next!.goto.section)}>Open →</button></div>}
     <div className="dense-grid">
       <section className="dense-box wide"><header>Problems <span className="muted">{problems.length}</span></header>
         <table className="dense-table"><tbody>{problems.map((a, n) => <tr key={n} title={`${a.title}\n${a.detail}`} onClick={() => goto(a.goto.view, a.goto.section)}>

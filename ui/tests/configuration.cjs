@@ -44,7 +44,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.endsWith('/operator/reauth')){reauthCalls++;needReauth=false;return ok({reauthenticated:true,minutes:5});}
    if(url.endsWith('/config/health'))return ok({generated_at:new Date().toISOString(),network:{egress_ip:'203.0.113.200',clock_synchronised:true,server_time_utc:'2026-11-11T10:00:00Z'},
      controls:Object.values(controls),four_eyes_live_changes:true,pending_approvals:approvals.length,failed_alerts:0,
-     checklist:[{step:'Add a provider (broker)',done:db.providers.length>0,section:'providers'},{step:'Add an account (MT5: login, password and server)',done:db.accounts.length>0,section:'accounts'}],
+     checklist:[{step:'1 Broker',how:'Add a provider (broker)',done:db.providers.length>0,section:'brokers'},{step:'2 Account',how:'Add an account (MT5: login, password and server)',done:db.accounts.length>0,section:'brokers'}],
      connections:db.connections.map(r=>enrich('connections',r)),accounts:db.accounts.map(r=>enrich('accounts',r)),
      summary:{accounts:db.accounts.length,data_ready:0,trading_ready:0,with_warnings:0}});
    if(url.includes('/config/approvals/')&&url.endsWith('/decision')){const id=url.split('/approvals/')[1].split('/')[0];const r=approvals.find(a=>a.id===id);
@@ -128,6 +128,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const byLabel=l=>$(`.cfg-detail [aria-label="${l}"]`)||$(`[aria-label="${l}"]`);
  const nav=label=>[...w.document.querySelectorAll('.cfg-nav button')].find(b=>b.querySelector('span').textContent===label);
+ const tab=label=>[...w.document.querySelectorAll('.cfg-views button')].find(b=>b.querySelector('span').textContent===label);
+ // The three record lists are tabs of the Connect screen (Brokers & accounts): open it, then the tab.
+ const open2=async label=>{nav('Brokers & accounts').click();await tick();await tick();tab(label).click();await tick();await tick();};
  const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();};
 
@@ -145,11 +148,11 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-user').textContent,/risk-ops/);
  assert.match($('.cfg-nav').textContent,/Order sending/);
  assert.match($('.cfg-user').textContent,/Administrator, Observer, Risk approver, Trading operations/);
- assert.match($('.cfg-head h1').textContent,/Health/);  // opens on the health board
+ assert.match($('.cfg-head h1').textContent,/Overview/);  // opens on the overview board
  assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
- assert.match($('.cfg-health').textContent,/Next: Add a provider/);
+ assert.match($('.cfg-health').textContent,/Next: 1 Broker/);
  console.log('PASS: operator sign-in, forced password change, roles shown, section navigation.');
- nav('Brokers').click();await tick();await tick();
+ await open2('Brokers');
 
  // Provider: create, duplicate rejected with backend message
  button('New provider').click();await tick();
@@ -166,7 +169,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: provider create, upper-case code, duplicate shows backend message.');
 
  // Connection: MT5 entered manually, with ordered addresses
- nav('Servers and APIs').click();await tick();await tick();
+ await open2('Servers & APIs');
  button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
@@ -278,7 +281,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: broker directory search opens the same server picker.');
 
  // Account: readiness shown; password saved write-only
- nav('Broker accounts').click();await tick();await tick();
+ await open2('Accounts');
  button('New account (advanced)').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
  assert.match($('.cfg-detail').textContent,/Environment DEMO · server ICMarketsSC-Demo/);
@@ -320,7 +323,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  db.accounts[0].version=5;fill(byLabel('Account name'),'Renamed');await tick();await submit($('.cfg-detail .cfg-form'));
  assert.match($('.cfg-detail').textContent,/Changed by someone else/);
  // Unsaved changes guard section switches
- w.confirm=()=>false;nav('Brokers').click();await tick();
+ w.confirm=()=>false;nav('Instruments').click();await tick();
  assert.match($('.cfg-head h1').textContent,/Broker accounts/);w.confirm=()=>true;
  console.log('PASS: version conflict surfaced; unsaved changes block navigation until discarded.');
 
@@ -367,7 +370,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: Add Upstox account sends client ID, app key and secret in one step.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
- nav('Broker accounts').click();await tick();await tick();
+ await open2('Accounts');
  [...w.document.querySelectorAll('.cfg-table tbody tr')].find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
  needReauth=true;fill(byLabel('New password'),'rotated-secret');await tick();
  $('.cfg-credential').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
@@ -385,7 +388,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-head h1').textContent,/Servers and APIs/);
  assert.match($('.fw-title').textContent,/Connection · ICM_MT5_DEMO/);
  $('[aria-label="Close window"]').click();await tick();
- nav('Broker accounts').click();await tick();await tick();
+ await open2('Accounts');
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
@@ -402,7 +405,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: CSV import checks first and applies all-or-nothing.');
 
  // Four-eyes: a LIVE connection goes to Approvals; another person approves it.
- nav('Servers and APIs').click();await tick();await tick();
+ await open2('Servers & APIs');
  button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'LIVE');await tick();
  button('Enter server and addresses manually').click();await tick();
@@ -451,7 +454,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...w.document.querySelectorAll('.cfg-user .link')].find(b=>b.textContent==='Sign out').click();await tick();
  const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
  assert.ok(![...w.document.querySelectorAll('.cfg-nav button')].some(b=>b.textContent.includes('Users')));
- nav('Brokers').click();await tick();await tick();
+ await open2('Brokers');
  assert.equal(button('New provider'),undefined);
  $('.cfg-table tbody tr').click();await tick();
  assert.ok($('.fw fieldset.cfg-plain').disabled);assert.equal(button('Save changes'),undefined);

@@ -48,10 +48,11 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Market data', section: 'backfill', label: 'Backfill history', group: 'Market data', keywords: 'history bars download' },
   { view: 'Market data', section: 'controls', label: 'Collection controls', group: 'Market data', keywords: 'pause resume stop' },
   { view: 'Market data', section: 'archive', label: 'Archive & backups', group: 'Market data', keywords: 'parquet fingerprint backup' },
-  { view: 'Configuration', section: 'health', label: 'Account readiness', group: 'Setup', keywords: 'can trade blockers health' },
-  { view: 'Configuration', section: 'providers', label: 'Providers', group: 'Setup', keywords: 'broker vendor' },
-  { view: 'Configuration', section: 'connections', label: 'Connections', group: 'Setup', keywords: 'servers addresses mt5 server' },
-  { view: 'Configuration', section: 'accounts', label: 'Accounts', group: 'Setup', keywords: 'login password mt5 account' },
+  { view: 'Configuration', section: 'health', label: 'Overview (readiness)', group: 'Setup', keywords: 'can trade blockers health checklist' },
+  { view: 'Configuration', section: 'brokers', label: 'Brokers & accounts', group: 'Setup', keywords: 'broker server api account login tree add mt5 upstox' },
+  { view: 'Configuration', section: 'providers', label: 'Brokers (list)', group: 'Setup', keywords: 'broker vendor provider' },
+  { view: 'Configuration', section: 'connections', label: 'Servers & APIs (list)', group: 'Setup', keywords: 'servers addresses mt5 server connection' },
+  { view: 'Configuration', section: 'accounts', label: 'Broker accounts (list)', group: 'Setup', keywords: 'login password mt5 account' },
   { view: 'Configuration', section: 'groups', label: 'Account groups', group: 'Setup' },
   { view: 'Configuration', section: 'instruments', label: 'Instruments', group: 'Setup', keywords: 'symbols contracts' },
   { view: 'Configuration', section: 'mappings', label: 'Symbol mappings', group: 'Setup' },
@@ -84,6 +85,7 @@ export type Overview = {
   feeds: { active_plans: number; collectors: number; live: number; problems: number; paused: boolean };
   order_sending: { environment: string; enabled: boolean }[];
   order_adapter?: boolean;
+  setup?: { done: number; total: number; next: { step: string; goto: { view: View; section?: string } } | null; steps: { step: string; done: boolean; section: string }[] };
   approvals: number;
   attention: { severity: 'CRITICAL' | 'WARNING' | 'INFO'; area: string; title: string; detail: string; goto: { view: View; section?: string } }[];
 };
@@ -106,3 +108,16 @@ export function digitsOf(row: { digits?: number | null; bid?: number | string | 
 }
 export const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Number(v);
   return s == null || !Number.isFinite(s) ? '—' : s < 1 ? 'now' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
+
+/* Setup, in the order a firm sets itself up. One tree, used by the side bar and the Setup screen;
+ * the three record lists behind "Brokers & accounts" are views of that one screen. */
+export const SETUP_GROUPS: [string, [string, string][]][] = [
+  ['1 · Connect', [['brokers', 'Brokers & accounts'], ['groups', 'Account groups']]],
+  ['2 · Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
+  ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
+  ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],
+  ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log']]],
+];
+export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
+/** The side-bar row a Setup section belongs to (the record lists highlight "Brokers & accounts"). */
+export const setupRowOf = (section: string) => (BROKER_VIEWS as readonly string[]).includes(section) ? 'brokers' : section;

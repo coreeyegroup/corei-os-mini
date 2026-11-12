@@ -53,36 +53,62 @@ export function HealthBoard({ navigate }: { navigate: Navigate }) {
       <section className="cfg-panel">
         <h3>Set-up checklist</h3>
         <ol className="cfg-checklist-steps">{data.checklist.map((c: Row) => <li key={c.step} className={c.done ? 'done' : ''}>
-          <span aria-hidden>{c.done ? '✓' : '○'}</span><button type="button" className="cfg-link" onClick={() => c.section === 'plans' ? goto('Market data', 'plans') : navigate(c.section)}>{c.step}</button></li>)}</ol>
+          <span aria-hidden>{c.done ? '✓' : '○'}</span><button type="button" className="cfg-link" onClick={() => c.section === 'plans' ? goto('Market data', 'plans') : navigate(c.section)}>{c.step}</button>{c.how && <small className="cfg-note"> {c.how}</small>}</li>)}</ol>
         {next ? <p className="cfg-note">Next: {next.step}.</p> : <p className="cfg-ok">All set-up steps are done.</p>}
       </section>
     </div>
-    <section className="cfg-panel">
-      <h3>Brokers, connections and accounts</h3>
-      {byProvider.size === 0 && <p className="cfg-note">Nothing configured yet. Start with Add MT5 account under Accounts.</p>}
-      {[...byProvider.values()].map(p => <div key={p.id} className="cfg-tree">
-        <button type="button" className="cfg-chip strong" onClick={() => navigate('providers', p.id)}>{p.code}</button>
-        {p.connections.map(c => <div key={c.id} className="cfg-tree-conn">
-          <div className="cfg-tree-head">
-            <button type="button" className="cfg-chip" onClick={() => navigate('connections', c.id)}>{c.code}</button>
-            <Env value={c.environment} /> <span className="cfg-note">{c.platform === 'MT5' ? c.settings?.server_name : c.settings?.api_base_url}</span>
-            {c.live_status?.state ? <span className={`cfg-pill ${c.live_status.state === 'CONNECTED' ? 'ok' : c.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{c.live_status.state}</span> : <span className="cfg-pill off">Not connected</span>}
-            {c.server_utc_offset_minutes == null && <span className="cfg-pill warn">Clock not set</span>}
-            {c.max_orders_per_second == null && <span className="cfg-pill">No rate limit</span>}
-            {c.pending_changes > 0 && <span className="cfg-pill warn">Awaiting approval</span>}
-            {c.status !== 'ACTIVE' && <Status value={c.status} />}
-          </div>
-          <table className="cfg-table compact"><tbody>{accountsOf(c.id).map((a: Row) => <tr key={a.id} onClick={() => navigate('accounts', a.id)} tabIndex={0}>
-            <td><strong>{a.code}</strong><small className="cfg-note"> {a.holder_name}</small></td>
-            <td>{a.trading_blockers.length === 0 ? <span className="cfg-pill ok">Ready to trade</span>
-              : a.data_blockers.length === 0 ? <span className="cfg-pill">Data ready</span> : <span className="cfg-pill warn">Not ready</span>}</td>
-            <td className="cfg-reasons">{[...new Set([...a.data_blockers, ...a.trading_blockers])].slice(0, 3).map(label).join(' · ')}
-              {a.data_blockers.length + a.trading_blockers.length > 3 ? ' …' : ''}{a.warnings?.length ? <small className="cfg-note"> · {a.warnings.length} warning(s)</small> : null}</td>
-          </tr>)}
-          {accountsOf(c.id).length === 0 && <tr><td className="cfg-note">No accounts.</td></tr>}</tbody></table>
-        </div>)}
-      </div>)}
+    <section className="cfg-panel cfg-next">
+      <button type="button" className="primary" onClick={() => navigate('brokers')}>Open Brokers &amp; accounts →</button>
+      <span className="cfg-note">{data.accounts.length} account(s) · {data.connections.length} server/API record(s). Add, log in and check readiness there.</span>
     </section>
+  </div>;
+}
+
+/* ---------- the Connect screen: broker › server or API › accounts, one tree ---------- */
+
+export function BrokerTree({ navigate, canEdit }: { navigate: Navigate; canEdit: boolean }) {
+  const [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
+  const load = async () => { try { setData(await api('config/health')); setError(''); } catch (e) { setError((e as Error).message); } };
+  useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, []);
+  if (error) return <p role="alert" className="cfg-error">{error}</p>;
+  if (!data) return <p className="cfg-note">Loading…</p>;
+  type Entry = { code: string; id: string; connections: Row[] };
+  const byProvider = new Map<string, Entry>();
+  for (const c of data.connections) {
+    const entry: Entry = byProvider.get(c.provider_id) ?? { code: c.provider_code, id: c.provider_id, connections: [] };
+    entry.connections.push(c as Row); byProvider.set(c.provider_id, entry);
+  }
+  const accountsOf = (cid: string) => data.accounts.filter((a: Row) => a.connection_id === cid);
+  return <div className="cfg-connect">
+    <div className="cfg-toolbar">
+      {canEdit && <><button className="primary" onClick={() => navigate('accounts', 'new:MT5')} title="Login, password and server; the broker's server record is created with it">Add MT5 account</button>
+        <button className="primary" onClick={() => navigate('accounts', 'new:UPSTOX')} title="Client ID, app key and secret; broker and API record are created with it">Add Upstox account</button>
+        <button onClick={() => navigate('providers', 'new')}>New broker (MT5 brokers first)</button></>}
+      <span className="cfg-toolbar-gap" />
+      <span className="cfg-note">Click a broker, server or account to open it. Readiness per account: data, then orders.</span>
+    </div>
+    {byProvider.size === 0 && <p className="cfg-empty">No broker yet. Start with Add MT5 account or Add Upstox account.</p>}
+    <table className="cfg-table cfg-tree-table"><thead><tr><th>Broker › server / API › account</th><th>Env</th><th>State</th><th>Readiness</th><th>Why not</th></tr></thead>
+      <tbody>{[...byProvider.values()].flatMap(p => [
+        <tr key={p.id} className="cfg-tree-broker" onClick={() => navigate('providers', p.id)} tabIndex={0}><td colSpan={5}><strong>{p.code}</strong> <small className="cfg-note">broker · {p.connections.length} server/API record(s)</small></td></tr>,
+        ...p.connections.flatMap(c => [
+          <tr key={c.id} className="cfg-tree-conn-row" onClick={() => navigate('connections', c.id)} tabIndex={0}>
+            <td className="cfg-indent1">{c.code} <small className="cfg-note">{c.platform === 'MT5' ? c.settings?.server_name : c.settings?.api_base_url}</small></td>
+            <td><Env value={c.environment} /></td>
+            <td>{c.live_status?.state ? <span className={`cfg-pill ${c.live_status.state === 'CONNECTED' ? 'ok' : c.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{c.live_status.state}</span> : <span className="cfg-pill off">Never connected</span>}
+              {c.pending_changes > 0 && <span className="cfg-pill warn">Awaiting approval</span>}{c.status !== 'ACTIVE' && <Status value={c.status} />}</td>
+            <td className="cfg-note">{c.server_utc_offset_minutes == null ? 'clock not set' : `UTC${c.server_utc_offset_minutes >= 0 ? '+' : ''}${c.server_utc_offset_minutes / 60}`}{c.max_orders_per_second == null ? ' · no rate limit' : ` · ${c.max_orders_per_second}/s`}</td>
+            <td className="cfg-note">{accountsOf(c.id).length} account(s)</td></tr>,
+          ...accountsOf(c.id).map((a: Row) => <tr key={a.id} className="cfg-tree-acct" onClick={() => navigate('accounts', a.id)} tabIndex={0}>
+            <td className="cfg-indent2">{a.code} <small className="cfg-note">{a.holder_name}{a.trading_permission === 'READ_ONLY' ? ' · read only' : a.trading_permission === 'DISABLED' ? ' · disabled' : ''}</small></td>
+            <td><Env value={a.environment} /></td>
+            <td>{a.data_blockers.length === 0 ? <span className="cfg-pill ok">Data ready</span> : <span className="cfg-pill warn">Not ready</span>}</td>
+            <td>{a.trading_permission !== 'TRADING' ? <span className="cfg-note">orders: not used</span> : a.trading_blockers.length === 0 ? <span className="cfg-pill ok">Ready to trade</span> : <span className="cfg-pill">orders: {a.trading_blockers.length} blocker(s)</span>}</td>
+            <td className="cfg-reasons">{(a.data_blockers.length ? a.data_blockers : a.trading_permission === 'TRADING' ? a.trading_blockers : []).slice(0, 2).map(label).join(' · ')}
+              {a.warnings?.length ? <small className="cfg-note"> · {a.warnings.length} warning(s)</small> : null}</td></tr>),
+          ...(accountsOf(c.id).length === 0 ? [<tr key={c.id + 'none'} className="cfg-tree-acct"><td className="cfg-indent2 cfg-note" colSpan={5}>No account on this server yet.</td></tr>] : []),
+        ]),
+      ])}</tbody></table>
   </div>;
 }
 

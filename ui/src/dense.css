@@ -350,3 +350,51 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .rd-act { height: 20px; padding: 0 8px; margin-left: 6px; font-size: 11px; }
 .rd-state.off { color: var(--muted); border-color: var(--line); }
 .rd-check { margin-top: 3px; }
+
+/* ---- Setup: one navigation (side bar), numbered groups; Connect screen tree ---- */
+.cfg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.cfg-head .cfg-user { font-size: 11px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+.cfg-nav.cfg-views { border-bottom: 1px solid var(--line); margin: 0 0 6px; }
+.cfg-nav.cfg-views > button { padding: 4px 10px; font-size: 12px; }
+.cfg-next { display: flex; align-items: center; gap: 10px; }
+.cfg-tree-table td { vertical-align: middle; }
+.cfg-tree-table tbody tr { cursor: pointer; }
+.cfg-tree-table tbody tr:hover { background: var(--hover); }
+.cfg-tree-broker td { background: var(--surface); border-top: 1px solid var(--line); padding-top: 5px; }
+.cfg-indent1 { padding-left: 18px !important; }
+.cfg-indent2 { padding-left: 36px !important; position: relative; }
+.cfg-indent2::before { content: '└'; position: absolute; left: 22px; color: var(--muted); }
+.cfg-tree-conn-row td { color: var(--text); }
+.sb-group { margin-top: 6px; }
+
+/* Home: where the firm is on the set-up path, one line */
+.dense-next { display: flex; align-items: center; gap: 10px; padding: 3px 8px; margin: 0 0 6px; border: 1px solid var(--line); border-left: 3px solid var(--accent); font-size: 12px; }
+.dense-next b { font-weight: 600; }
+.dense-next button { margin-left: auto; height: 20px; padding: 0 8px; font-size: 11px; }
+.dense-steps { display: inline-flex; gap: 2px; }
+.dense-steps i { display: inline-block; width: 14px; height: 5px; border-radius: 1px; background: var(--line); }
+.dense-steps i.on { background: #2e9d5b; }
+/* Setup: one compact section line; the Connect screen's views as a tab row under the heading */
+.cfg > .cfg-nav { display: flex; align-items: center; gap: 0; height: 26px; padding: 0 6px; border-bottom: 1px solid var(--line); background: var(--chrome); overflow-x: auto; }
+.cfg > .cfg-nav > button { padding: 0 8px; height: 26px; font-size: 11.5px; border-bottom-width: 2px; }
+.cfg > .cfg-nav .cfg-nav-group { margin: 0 2px 0 12px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
+.cfg > .cfg-nav .cfg-nav-group:first-of-type { margin-left: 8px; }
+.cfg-views { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin: 0 0 6px; }
+.cfg-views > button { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.cfg-views > button[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.cfg-views > button small { font-variant-numeric: tabular-nums; opacity: .8; }
+/* The Setup section line is a horizontal strip at every width; it is hidden while the side bar shows the same list. */
+.cfg { flex-direction: column !important; }
+.cfg > .cfg-nav { flex-direction: row !important; flex-wrap: nowrap !important; overflow-x: auto !important; flex: none; }
+.cfg > .cfg-nav > button { justify-content: flex-start; border-left: 0; border-bottom: 2px solid transparent; }
+.cfg > .cfg-nav > button[aria-current="page"] { border-left: 0; border-bottom-color: var(--accent); background: none; }
+.cfg > .cfg-nav .cfg-nav-group { display: inline; padding: 0; }
+.app.with-sidebar .cfg > .cfg-nav { display: none; }
+.cfg-user { margin: 0; padding: 0; border: 0; white-space: nowrap; font-size: 11px; }
+.cfg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cfg-head h1 { margin: 0; }
+.cfg-head p { margin: 0; }
+.cfg-checklist-steps li { display: flex; align-items: baseline; gap: 6px; line-height: 20px; white-space: nowrap; overflow: hidden; }
+.cfg-checklist-steps li .cfg-link { flex: none; }
+.cfg-checklist-steps li small { overflow: hidden; text-overflow: ellipsis; }
+.cfg-checklist-steps li.done small { text-decoration: none; opacity: .7; }

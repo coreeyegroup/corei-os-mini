@@ -374,19 +374,19 @@ def health() -> dict:
     # secret, the account, then a daily broker login. Then data, then trading.
     users = db_counts.get('users', 1)
     checklist = [
-        {'step': '1 Broker: MT5 → Providers › New (who the broker is) · Upstox → created for you in step 2', 'done': counts['providers'] > 0, 'section': 'providers'},
-        {'step': '2 Account: Accounts › Add MT5 account or Add Upstox account (each creates its connection and saves the password / app key)',
-         'done': counts['accounts'] > 0, 'section': 'accounts'},
-        {'step': '3 Credentials saved for every account', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
-        {'step': '4 First login: MT5 → Log in and read now · Upstox → Log in at broker (every day)', 'done': logged_in > 0, 'section': 'accounts'},
-        {'step': '5 Market data: Market data › Plans › New (account + symbol)', 'done': plans > 0, 'section': 'plans'},
-        {'step': '6 Instruments and symbol mappings', 'done': counts['instruments'] > 0 and counts['mappings'] > 0, 'section': 'instruments'},
-        {'step': '7 Strategy: register, approve a version, deploy', 'done': counts['deployments'] > 0, 'section': 'deployments'},
-        {'step': '8 Alert channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
+        {'step': '1 Broker', 'how': 'MT5: Brokers & accounts › New broker. Upstox: created for you in step 2', 'done': counts['providers'] > 0, 'section': 'brokers'},
+        {'step': '2 Account', 'how': 'Brokers & accounts › Add MT5 account or Add Upstox account (creates its server/API record)',
+         'done': counts['accounts'] > 0, 'section': 'brokers'},
+        {'step': '3 Credentials', 'how': 'MT5 password, or the Upstox app key and secret, saved for every account', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'brokers'},
+        {'step': '4 First login', 'how': 'MT5: Log in and read now. Upstox: Log in at broker (every trading day)', 'done': logged_in > 0, 'section': 'brokers'},
+        {'step': '5 Market data', 'how': 'Market data › Plans › New: account + symbol', 'done': plans > 0, 'section': 'plans'},
+        {'step': '6 Instruments', 'how': 'Instruments, then the broker symbol for each (Symbol mappings)', 'done': counts['instruments'] > 0 and counts['mappings'] > 0, 'section': 'instruments'},
+        {'step': '7 Strategy', 'how': 'Register, approve a version, deploy on instrument × account', 'done': counts['deployments'] > 0, 'section': 'deployments'},
+        {'step': '8 Alerts', 'how': 'An e-mail, Telegram or webhook channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
     ]
     if four_eyes and users < 2:
-        checklist.append({'step': 'LIVE changes need a second person (four-eyes) and you are the only user: add a user with the Risk approver role, '
-                                  'or turn four-eyes off in Controls', 'done': False, 'section': 'users'})
+        checklist.append({'step': 'Second approver', 'how': 'Four-eyes is on and you are the only user: add a user with the Risk approver role, '
+                                  'or approve your own LIVE changes with a reason under Approvals', 'done': False, 'section': 'users'})
     return {'generated_at': datetime.now(timezone.utc).isoformat(), 'network': network.status(), 'controls': list(controls.values()),
             'four_eyes_live_changes': four_eyes, 'pending_approvals': pending, 'failed_alerts': failed_alerts,
             'checklist': checklist, 'connections': connections, 'accounts': accounts,

@@ -296,6 +296,13 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         attention.append({'severity': 'WARNING', 'area': 'Backups', 'title': 'No working database backup',
                           'detail': (backup or {}).get('error') or 'Set COREI_BACKUP_DIR on the server; the nightly job makes them.',
                           'goto': {'view': 'Market data', 'section': 'archive'}})
+    # The set-up path: where the firm is and what comes next (same checklist as Setup › Overview).
+    checklist = controls.health()['checklist']
+    done = sum(1 for c in checklist if c['done'])
+    nxt = next((c for c in checklist if not c['done']), None)
+    setup = {'done': done, 'total': len(checklist), 'next': None if nxt is None else {
+        'step': nxt['step'], 'goto': {'view': 'Market data', 'section': 'plans'} if nxt['section'] == 'plans' else {'view': 'Configuration', 'section': nxt['section']}},
+        'steps': [{'step': c['step'], 'done': c['done'], 'section': c['section']} for c in checklist]}
     order = store.list_execution_controls()
     if any(o['trading_enabled'] for o in order) and not store.ORDER_ADAPTERS:
         on = ', '.join(o['environment'] for o in order if o['trading_enabled'])
@@ -308,5 +315,6 @@ def overview(response: Response, user: Principal = Depends(current_user)):
                       'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
+            'setup': setup,
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}

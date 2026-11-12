@@ -638,6 +638,14 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## One set-up path — release 0.22.0
+
+DEC-53. No migration. Nothing removed: every record list, form, control and option is still there, reached in a fixed order.
+
+- **Setup reads top to bottom in the order you do it:** Overview → **1 Connect** (Brokers & accounts, Account groups) → **2 Instruments** (Instruments, Symbol mappings) → **3 Strategies** (Strategies, Deployments) → **4 Controls** (Order sending, Approvals, Alerts) → **5 Administration** (Users, Audit log). The same list is in the side bar and, when the side bar is hidden, as one strip above the screen.
+- **Brokers & accounts is one screen:** a tree *broker › server or API › account* with environment, connection state, readiness and the reason it is not ready, plus *Add MT5 account*, *Add Upstox account*, *New broker*. The three record lists (Brokers, Servers & APIs, Accounts) are tabs of that screen for editing details; clicking a tree row opens the record.
+- **Overview** keeps the counters, controls and the 8-step checklist; each step now says in one line how to do it. **Home** shows the set-up progress bar and the next step with an *Open →* link until all steps are done.
+
 ## The broker's answer, verbatim — release 0.21.0
 
 Migration `017_broker_login_errors.sql` (two nullable columns; applied by `configure-workstation-database`).

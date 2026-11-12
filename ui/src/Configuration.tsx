@@ -8,13 +8,13 @@
  */
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
-import { useSection } from './nav';
+import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
 import FloatingWindow from './FloatingWindow';
-import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import { Alerts, Approvals, BrokerLogin, BrokerRead, BrokerTree, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
-type Section = 'health' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
-type Entity = Exclude<Section, 'health' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts'>;
+type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
+type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -22,10 +22,11 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
   RISK_APPROVER: 'Turn order sending on or off', OBSERVER: 'Read configuration and audit log' };
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
-  { id: 'health', label: 'Health', hint: 'Can each account trade right now, and if not, why' },
-  { id: 'accounts', label: 'Broker accounts', hint: 'Start here: Add MT5 account / Add Upstox account (each creates its connection)' },
-  { id: 'providers', label: 'Brokers', hint: 'Brokers (created for you by Add Upstox account; add MT5 brokers here first)' },
-  { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API, created with the first account; edit clock, limits, addresses' },
+  { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
+  { id: 'brokers', label: 'Brokers & accounts', hint: 'Broker › server or API › account. Add an account; its broker and server records are created with it' },
+  { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
+  { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
+  { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
   { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
@@ -39,9 +40,8 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
 ];
 
 /* Headings in the section list, so 14 sections read as five groups. */
-const GROUP_START: Partial<Record<Section, string>> = { health: 'Status', accounts: 'Brokers & accounts', providers: 'Brokers & accounts', connections: 'Brokers & accounts',
-  groups: 'Brokers & accounts', instruments: 'Instruments', mappings: 'Instruments', strategies: 'Strategies', deployments: 'Strategies',
-  approvals: 'Controls', controls: 'Controls', alerts: 'Controls', users: 'Administration', audit: 'Administration' };
+/* The four views of the Connect screen: the tree, then the three record lists behind it. */
+const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Brokers'], ['connections', 'Servers & APIs'], ['accounts', 'Accounts']];
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The broker connection failed — reason below',
@@ -1086,7 +1086,11 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     } catch (e) { setLoadError((e as Error).message); return []; }
   }
   useEffect(() => { const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent, view.archived]);
-  useEffect(() => { if (!openId) return; void (async () => {
+  useEffect(() => { if (!openId) return;
+    // From the Connect screen: 'new' opens a blank record, 'new:MT5' / 'new:UPSTOX' the one-step account forms.
+    if (openId === 'new') { open(null); return; }
+    if (openId === 'new:MT5' || openId === 'new:UPSTOX') { setAdding(openId.slice(4) as 'MT5' | 'UPSTOX'); return; }
+    void (async () => {
     let row = rows?.find(r => r.id === openId);
     if (!row) row = (await load()).find(r => r.id === openId) ?? (await api(`config/${entity}/${openId}`).catch(() => null));
     if (row) { setSelected(row); setDraft({ ...row, settings: row.settings ? JSON.parse(JSON.stringify(row.settings)) : undefined }); }
@@ -1619,24 +1623,31 @@ export default function Configuration() {
   const canEdit = user.roles.includes('TRADING_OPS');
   const current = sections.find(s => s.id === section) ?? sections[0];
   const live = summary?.execution_controls?.find((c: Row) => c.environment === 'LIVE');
+  const row = setupRowOf(current.id);
   return <div className="cfg">
-    <div className="cfg-topbar"><span className="eyebrow">SETUP</span>
-    <nav className="cfg-nav" aria-label="Configuration sections">
-      {sections.map((s, i) => [GROUP_START[s.id] && (i === 0 || GROUP_START[s.id] !== GROUP_START[sections[i - 1].id]) ? <span key={'g' + s.id} className="cfg-nav-group">{GROUP_START[s.id]}</span> : null, <button key={s.id} aria-current={current.id === s.id ? 'page' : undefined} onClick={() => {
-        if (window.dispatchEvent(new Event('corei-before-layout-change', { cancelable: true }))) { setSection(s.id); setOpenId(o => ({ n: o.n + 1 })); }
-      }}><span>{s.label}</span>{summary && s.id in (summary.counts ?? {}) && <small className={s.id === 'approvals' && summary.counts.approvals > 0 ? 'cfg-live-on' : ''}>{summary.counts[s.id]}</small>}
-        {s.id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>])}
+    {/* One compact line: the set-up path in order (also in the side bar; this stays when the side bar is hidden). */}
+    <nav className="cfg-nav" aria-label="Setup sections">
+      <button aria-current={row === 'health' ? 'page' : undefined} onClick={() => navigate('health')}><span>Overview</span></button>
+      {SETUP_GROUPS.map(([g, items]) => <Fragment key={g}><span className="cfg-nav-group">{g}</span>
+        {items.filter(([id]) => id !== 'users' || user.roles.includes('ADMIN')).map(([id, label]) => <button key={id} aria-current={row === id ? 'page' : undefined} onClick={() => navigate(id)}>
+          <span>{label}</span>
+          {summary && (id === 'brokers' ? summary.counts?.accounts : summary.counts?.[id]) != null && <small className={id === 'approvals' && summary.counts.approvals > 0 ? 'cfg-live-on' : ''}>{id === 'brokers' ? summary.counts.accounts : summary.counts[id]}</small>}
+          {id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}</Fragment>)}
     </nav>
-    <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
-      <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></div>
     <section className="cfg-main">
-      <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
+      <header className="cfg-head"><div><h1>{current.label}</h1><p>{current.hint}</p></div>
+        <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
+          <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></header>
+      {BROKER_TABS.some(([id]) => id === current.id) && <nav className="cfg-views" aria-label="Brokers and accounts views">
+        {BROKER_TABS.map(([id, label]) => <button key={id} aria-current={current.id === id ? 'page' : undefined} onClick={() => navigate(id)}><span>{label}</span>
+          {summary && id !== 'brokers' && <small>{summary.counts?.[id]}</small>}</button>)}</nav>}
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
       {brokerLogin && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
         : `Broker login failed${new URLSearchParams(window.location.search).get('reason') ? ': ' + new URLSearchParams(window.location.search).get('reason') : '.'}`}</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
+        : current.id === 'brokers' ? <div className="cfg-pane"><BrokerTree navigate={navigate} canEdit={canEdit} /></div>
         : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
         : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
