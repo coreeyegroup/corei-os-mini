@@ -5,6 +5,41 @@ from __future__ import annotations
 
 import re
 
+# MT5 login refusals by number (MT5 server return codes, as the mtapi SDK's Msg enumeration names them).
+# The SDK release in use names codes up to 1030; a higher number is a code added to MT5 after that release.
+LOGIN_CODES = {
+    1001: ('Login or password rejected', 'INVALID_ACCOUNT: check the login number and the password.'),
+    1002: ('Account disabled at the broker', 'ACCOUNT_DISABLED: contact the broker.'),
+    1003: ('Broker requires advanced authorisation', 'ADVANCED_AUTHORIZATION: the account needs certificate or OTP login, which the SDK does not do.'),
+    1012: ("COREI's IP is not allowed", "UNALLOWED_IP_ADDRESS: ask the broker to allow the server's outbound IP (Setup › Account readiness)."),
+    1018: ('Broker server busy', 'SERVER_BUSY: retried later.'),
+    1020: ('Account unknown on this server', 'UNKNOWN_ACCOUNT: the login belongs to another server of the broker (or a demo account expired).'),
+    1025: ('Demo logins disabled', 'DEMO_DISABLED: the server does not accept demo accounts.'),
+    1026: ('Password must be changed', 'PASSWORD_MUST_CHANGED: log in once with the MT5 terminal, change the password, save the new one in COREI.'),
+    1027: ('One-time password required', 'INVALID_ONETIME_PASSWORD: the account has OTP / two-factor login on; turn it off for API access.'),
+    1028: ('Secret key required', 'SECRET_KEY_REQUIRED: the account has OTP / two-factor login on; turn it off for API access.'),
+}
+SDK_LAST_CODE = 1030
+
+
+def _login_code(error: str) -> dict | None:
+    m = re.search(r'ServerException: (\d{4})\b', error)
+    if not m:
+        return None
+    code = int(m.group(1))
+    if code in LOGIN_CODES:
+        title, detail = LOGIN_CODES[code]
+        return {'title': title, 'detail': detail, 'permanent': code != 1018, 'raw': error}
+    if code > SDK_LAST_CODE and code < 2000:
+        return {'title': f'Server uses a login step newer than the MT5 SDK (code {code})',
+                'detail': f'The server answered login code {code}; the installed MT5 SDK only knows codes up to {SDK_LAST_CODE}, so the server '
+                          'expects a newer login protocol than the SDK speaks (presenting build 6230 is not enough). Update the MT5 SDK '
+                          '(mt5api.dll) to the vendor\'s current release and run scripts/setup-broker-accounts.sh. MetaQuotes-Demo is the '
+                          'strictest server; a broker\'s own demo server (VT Markets, IC Markets) usually still accepts the current SDK.',
+                'permanent': True, 'raw': error}
+    return None
+
+
 RULES = [
     (r'ServerException: \d+.*with client build \d+', True, 'Broker refused the login (unlisted code)',
      'The newer MT5 build got past the version check, then the server refused the login with a code this MT5 SDK does not name '
@@ -38,6 +73,9 @@ RULES = [
 def explain(error: str | None) -> dict | None:
     if not error:
         return None
+    coded = _login_code(error)
+    if coded:
+        return coded
     for pattern, permanent, title, detail in RULES:
         if re.search(pattern, error, re.I):
             return {'title': title, 'detail': detail, 'permanent': permanent, 'raw': error}

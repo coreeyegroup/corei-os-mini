@@ -360,7 +360,9 @@ class Explain(unittest.TestCase):
         self.assertIsNone(explain(None))
         # An unnamed refusal code (seen live: 1035) is permanent: back off, do not hammer the broker.
         code = explain('ServerException: 1035 [Code=1035 (1035)] (with client build 6230; the SDK default build was refused as OLD_VERSION)')
-        self.assertEqual((code['title'], code['permanent']), ('Broker refused the login (unlisted code)', True))
+        self.assertTrue(code['title'].startswith('Server uses a login step newer than the MT5 SDK (code 1035)'))
+        self.assertTrue(code['permanent'])
+        self.assertEqual(explain('ServerException: 1027')['title'], 'One-time password required')
         self.assertTrue(explain('ServerException: 1035')['permanent'])
 
 

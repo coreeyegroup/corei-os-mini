@@ -617,11 +617,18 @@ static string Reason(Exception e)
     while (e is TargetInvocationException or AggregateException && e.InnerException is not null) e = e.InnerException!;
     var text = e.GetType().Name + ": " + e.Message;
     // Broker refusals carry a code (an SDK enum); show its name and number so an unknown code is still identifiable.
-    foreach (var p in e.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.DeclaringType != typeof(Exception) && p.GetIndexParameters().Length == 0))
+    const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+    var members = e.GetType().GetProperties(all).Where(p => p.DeclaringType != typeof(Exception) && p.GetIndexParameters().Length == 0)
+        .Select(p => (p.Name, get: (Func<object?>)(() => p.GetValue(e))))
+        .Concat(e.GetType().GetFields(all).Where(f => f.DeclaringType != typeof(Exception)).Select(f => (f.Name, get: (Func<object?>)(() => f.GetValue(e)))));
+    var seen = new HashSet<string>();
+    foreach (var (name, get) in members)
     {
-        object? v; try { v = p.GetValue(e); } catch (Exception) { continue; }
-        if (v is Enum en) text += $" [{p.Name}={en} ({Convert.ToInt64(en)})]";
-        else if (v is int or long or short) text += $" [{p.Name}={v}]";
+        object? v; try { v = get(); } catch (Exception) { continue; }
+        var label = name.TrimStart('_', '<').Split('>')[0];
+        if (!seen.Add(label.ToLowerInvariant())) continue;
+        if (v is Enum en) text += $" [{label}={en} ({Convert.ToInt64(en)})]";
+        else if (v is int or long or short) text += $" [{label}={v}]";
     }
     return Truncate(text, 300);
 }
