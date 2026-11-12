@@ -52,20 +52,68 @@ def _api_base(settings: dict) -> str:
     return base if base.endswith('/v2') else base + '/v2'
 
 
+class BrokerRefused(HTTPException):
+    """The broker answered the login with an error. Carries what it said, for the audit log and the operator."""
+
+    def __init__(self, status: int, message: str, blocked: bool = False):
+        self.broker_status, self.broker_message, self.blocked = status, message, blocked
+        super().__init__(502, message)
+
+
+def _explain_http_error(exc: urllib.error.HTTPError) -> BrokerRefused:
+    raw = b''
+    try:
+        raw = exc.read(100_000)
+    except OSError:
+        pass
+    text = raw.decode('utf-8', 'replace')
+    content_type = exc.headers.get('Content-Type', '') if exc.headers else ''
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        parts = [f"{e.get('errorCode') or e.get('error_code') or ''} {e.get('message', '')}".strip() for e in body.get('errors') or [] if isinstance(e, dict)]
+        message = '; '.join(p for p in parts if p) or body.get('message') or body.get('error_description') or body.get('error') or ''
+        return BrokerRefused(exc.code, f'The broker refused the login (HTTP {exc.code}){": " + str(message)[:300] if message else ""}.')
+    lower = text.lower()
+    if exc.code in (403, 503) and ('cloudflare' in lower or 'you have been blocked' in lower or 'cf-ray' in lower or 'attention required' in lower):
+        from . import network
+        ip = network.egress_ip(cached_only=True) or 'this server'
+        return BrokerRefused(exc.code, f"Upstox's edge network (Cloudflare) blocked the request from {ip} (HTTP {exc.code}) before it reached the "
+                             "broker. Upstox serves its API only to networks it allows; a foreign data-centre IP is usually refused. "
+                             "Run COREI (or its outbound traffic) from an Indian server or egress, or ask Upstox support to allow this IP.", blocked=True)
+    snippet = ' '.join(text.split())[:160]
+    return BrokerRefused(exc.code, f"The broker refused the login (HTTP {exc.code}, {content_type.split(';')[0] or 'no content type'}): {snippet or 'empty reply'}.")
+
+
 def _http(url: str, data: bytes, headers: dict) -> dict:
     request = urllib.request.Request(url, data=data, headers={'accept': 'application/json', **headers}, method='POST')
     try:
         with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310 - https enforced on the connection
             return json.loads(response.read(1_000_000))
     except urllib.error.HTTPError as exc:
-        try:
-            body = json.loads(exc.read(100_000))
-            message = '; '.join(e.get('message', '') for e in body.get('errors', [])) or body.get('message') or ''
-        except (ValueError, AttributeError):
-            message = ''
-        raise HTTPException(502, f'The broker refused the login{": " + message[:200] if message else ""}.') from None
-    except (OSError, ValueError):
-        raise HTTPException(502, 'The broker could not be reached for login.') from None
+        raise _explain_http_error(exc) from None
+    except (OSError, ValueError) as exc:
+        raise BrokerRefused(0, f'The broker could not be reached for login ({type(exc).__name__}: {str(exc)[:120]}).') from None
+
+
+def api_check(settings: dict) -> dict:
+    """Can this server reach the broker's API at all? An unauthenticated call to a protected endpoint should
+    answer 401 as JSON; an HTML 403 means an edge block (Cloudflare) of this server's IP, a network error means
+    no route. Nothing secret is sent."""
+    url = f"{_api_base(settings)}/user/profile"
+    request = urllib.request.Request(url, headers={'accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            return {'reachable': True, 'status': response.status, 'detail': 'The broker API answered.'}
+    except urllib.error.HTTPError as exc:
+        refused = _explain_http_error(exc)
+        if exc.code == 401 or (exc.code in (400, 403) and not refused.blocked):
+            return {'reachable': True, 'status': exc.code, 'detail': 'The broker API answered (it asked for a login, as expected).'}
+        return {'reachable': False, 'status': exc.code, 'blocked': refused.blocked, 'detail': refused.broker_message}
+    except (OSError, ValueError) as exc:
+        return {'reachable': False, 'status': 0, 'detail': f'No route to the broker API ({type(exc).__name__}: {str(exc)[:120]}).'}
 
 
 def _account(db, account_id: UUID) -> dict:
@@ -109,7 +157,7 @@ def _store_token(db, account: dict, token: dict, user: str, how: str) -> dict:
         VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (account_id) DO UPDATE SET ciphertext=EXCLUDED.ciphertext, key_id=EXCLUDED.key_id,
         obtained_at=EXCLUDED.obtained_at, expires_at=EXCLUDED.expires_at, obtained_by=EXCLUDED.obtained_by''',
                (account['id'], ciphertext, credentials.key_id(), issued, expires, user))
-    db.execute('UPDATE cfg_accounts SET last_login_at=now() WHERE id=%s', (account['id'],))
+    db.execute('UPDATE cfg_accounts SET last_login_at=now(), last_login_error=NULL, last_login_error_at=NULL WHERE id=%s', (account['id'],))
     store.audit(db, user, 'BROKER_LOGIN', 'account', account['id'], None, {'method': how, 'expires_at': expires.isoformat()})
     return {'account_id': str(account['id']), 'expires_at': expires.isoformat()}
 
@@ -122,20 +170,36 @@ def finish(code: str, state: str) -> dict:
             raise HTTPException(400, 'This login link has expired or was already used. Start the broker login again.')
         account = _account(db, row['account_id'])
     client = store.use_credential('connections', account['cid'], f'broker-login:{row["username"]}', f'Exchange login code for {account["code"]}')
-    token = _http(f"{_api_base(account['settings'])}/login/authorization/token", urllib.parse.urlencode({
-        'code': code, 'client_id': client['client_id'], 'client_secret': client['client_secret'],
-        'redirect_uri': account['settings']['oauth_redirect_url'], 'grant_type': 'authorization_code'}).encode(),
-        {'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        token = _http(f"{_api_base(account['settings'])}/login/authorization/token", urllib.parse.urlencode({
+            'code': code, 'client_id': client['client_id'], 'client_secret': client['client_secret'],
+            'redirect_uri': account['settings']['oauth_redirect_url'], 'grant_type': 'authorization_code'}).encode(),
+            {'Content-Type': 'application/x-www-form-urlencoded'})
+    except BrokerRefused as exc:
+        _record_failure(account, row['username'], 'OAUTH_REDIRECT', exc)
+        raise
     with store.transaction('update') as db:
         return _store_token(db, account, token, row['username'], 'OAUTH_REDIRECT')
+
+
+def _record_failure(account: dict, user: str, how: str, exc: BrokerRefused) -> None:
+    """A refused login is audited (status and the broker's words, never a secret) and shown on the account."""
+    with store.transaction('update') as db:
+        store.audit(db, user, 'BROKER_LOGIN_FAILED', 'account', account['id'], None,
+                    {'method': how, 'http_status': exc.broker_status, 'blocked': exc.blocked, 'message': exc.broker_message[:400]})
+        db.execute('UPDATE cfg_accounts SET last_login_error=%s, last_login_error_at=now() WHERE id=%s', (exc.broker_message[:400], account['id']))
 
 
 def totp_login(account_id: UUID, totp: str, pin: str, user: str) -> dict:
     with store.transaction('read') as db:
         account = _account(db, account_id)
     client = store.use_credential('connections', account['cid'], f'broker-login:{user}', f'TOTP login for {account["code"]}')
-    token = _http(f"{_api_base(account['settings'])}/totp-login/authorization/token", json.dumps({'totp': totp, 'pin': pin}).encode(),
-                  {'Content-Type': 'application/json', 'x-api-key': client['client_id']})
+    try:
+        token = _http(f"{_api_base(account['settings'])}/totp-login/authorization/token", json.dumps({'totp': totp, 'pin': pin}).encode(),
+                      {'Content-Type': 'application/json', 'x-api-key': client['client_id']})
+    except BrokerRefused as exc:
+        _record_failure(account, user, 'TOTP', exc)
+        raise
     with store.transaction('update') as db:
         return _store_token(db, account, token, user, 'TOTP')
 
@@ -173,6 +237,17 @@ def totp_route(account_id: UUID, payload: dict, response: Response, user: Princi
     except ValueError:
         raise HTTPException(422, 'Enter the 6-digit code from the authenticator app and the 6-digit PIN.') from None
     return totp_login(account_id, data.totp, data.pin, user.username)
+
+
+@router.post('/connections/{connection_id}/api-check')
+def api_check_route(connection_id: UUID, response: Response, _: Principal = Depends(_ops)):
+    """Is the broker's API reachable from this server (no secret sent)?"""
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        row = db.execute('SELECT platform, settings FROM cfg_connections WHERE id=%s', (connection_id,)).fetchone()
+    if not row or row['platform'] != 'REST_API':
+        raise HTTPException(422, 'The API check applies to broker API connections.')
+    return api_check(row['settings'])
 
 
 @oauth_router.get('/upstox/callback')

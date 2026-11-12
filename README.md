@@ -638,6 +638,14 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## The broker's answer, verbatim — release 0.21.0
+
+Migration `017_broker_login_errors.sql` (two nullable columns; applied by `configure-workstation-database`).
+
+- A refused Upstox login now shows **what the broker said**: the Upstox error code and message (e.g. `UDAPI100069 Check your client_id and client_secret`), or — when Upstox's edge network (Cloudflare) blocks the server's IP before the request reaches the broker — exactly that, with the outbound IP. The refusal is audited (`BROKER_LOGIN_FAILED`) and kept on the account (*Last login refused …*).
+- **Check broker API from this server**: a button under the login blocker (and `POST /api/config/connections/{id}/api-check`) sends an unauthenticated request to the broker API and reports *reachable* (the API asked for a login), *blocked* (edge block of this IP) or *no route*. No secret is sent.
+- Collector status no longer lists archived accounts or day-old stopped workers.
+
 ### Simpler set-up (0.20.1)
 
 - Setup lists **Broker accounts → Brokers → Servers and APIs**, in the order you use them.

@@ -240,7 +240,9 @@ def collectors() -> list[dict]:
     with store.transaction('read') as db:
         rows = db.execute('''SELECT s.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - s.heartbeat_at)::float8 AS heartbeat_age_seconds,
                 (SELECT count(*) FROM md_collection_plans p WHERE p.account_id=s.account_id AND p.status='ACTIVE') AS active_plans
-            FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id ORDER BY a.code''').fetchall()
+            FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id
+            WHERE a.status <> 'ARCHIVED' AND (s.state <> 'STOPPED' OR s.heartbeat_at > now() - interval '1 day')
+            ORDER BY a.code''').fetchall()
     from .explain import explain
     return [{**store.clean(r), 'problem': explain(r['last_error']) if r['state'] not in ('CONNECTED', 'STOPPED', 'PAUSED') else None} for r in rows]
 

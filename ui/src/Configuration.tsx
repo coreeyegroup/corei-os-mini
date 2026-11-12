@@ -121,6 +121,16 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
 
 /* ---------- small building blocks ---------- */
 
+/** Can this server reach the broker API at all (no secret sent)? Tells an edge block from a wrong key. */
+function ApiCheck({ connectionId }: { connectionId: string }) {
+  const [r, setR] = useState<Row | null>(null), [busy, setBusy] = useState(false);
+  return <div className="rd-check">
+    <button type="button" className="rd-act" disabled={busy} onClick={async () => { setBusy(true); try { setR(await api(`config/connections/${connectionId}/api-check`, 'POST')); } catch (e) { setR({ detail: (e as Error).message }); } finally { setBusy(false); } }}>
+      {busy ? 'Checking…' : 'Check broker API from this server'}</button>
+    {r && <span className={r.reachable ? 'cfg-ok' : 'cfg-error'}> {r.reachable ? 'Reachable' : 'Not reachable'}{r.status ? ` (HTTP ${r.status})` : ''}: {r.detail}</span>}
+  </div>;
+}
+
 /** Daily OAuth login (Upstox): the broker's page, then back to COREI. */
 async function brokerLogin(accountId: string) {
   try { const { authorize_url } = await api(`config/accounts/${accountId}/broker-login/start`, 'POST'); window.location.assign(authorize_url); }
@@ -1203,7 +1213,9 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
           {selected[k]?.length > 0 && <ul>{selected[k].filter((b: string) => k !== 'trading_blockers' || !(selected.data_blockers ?? []).includes(b)).map((b: string) => <li key={b}>{BLOCKER_FIELD[b]
             ? <button type="button" className="cfg-link" onClick={() => focusField(b)}>{BLOCKERS[b] ?? b}</button> : BLOCKERS[b] ?? b}
             {b === 'BROKER_LOGIN_NEEDED_TODAY' && <> <button type="button" className="primary rd-act" onClick={() => void brokerLogin(selected.id)}>Log in at Upstox now</button>
-              <small className="cfg-note"> One login a day; it lasts until 03:30 IST.</small></>}
+              <small className="cfg-note"> One login a day; it lasts until 03:30 IST.</small>
+              {selected.last_login_error && <div className="rd-reason"><b>Last login refused{selected.last_login_error_at ? ' ' + new Date(selected.last_login_error_at).toLocaleString() : ''}.</b> {selected.last_login_error}
+                <ApiCheck connectionId={selected.connection_id} /></div>}</>}
             {b === 'CONNECTION_FAILED' && selected.connection_problem && <div className="rd-reason"><b>{selected.connection_problem.title}.</b> {selected.connection_problem.detail}
               <code>{selected.connection_problem.raw}</code></div>}</li>)}</ul>}</div>)}
       </div>}
