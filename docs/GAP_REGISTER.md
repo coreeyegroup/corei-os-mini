@@ -1,7 +1,7 @@
 # COREI-OS-MINI — Gap Register
 
 **Baseline compared:** Blueprint v1.2, Process Flow v1.4, Technology Inventory v1.3, as amended by `DECISIONS.md` (DEC-18 … DEC-22)
-**Last updated:** 12 Nov 2026 — release 0.18.0 (full audit; see section E)
+**Last updated:** 12 Nov 2026 — release 0.21.0 (audit second pass; see section E)
 **Status values:** OPEN, DONE, PARTIAL, SUPERSEDED, BLOCKED (needs an owner decision)
 
 ## Position
@@ -125,6 +125,13 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-19 | Medium | No dependency audit for Python | PARTIAL — pip-audit in CI (report only) |
 | A-20 | Low | Wide tables hide columns on narrow windows | OPEN |
 | A-21 | Low | No end-to-end test against a real broker (stub SDK only) | OPEN — needs a working demo login |
+| A-23 | High | Refused broker login shown without the broker's reason; not audited | DONE 0.21.0 |
+| A-24 | High | Collector supported MT5 only; Upstox data could not flow | DONE 0.19.0 |
+| A-25 | High | Four-eyes deadlock for a single-user firm | DONE 0.20.0 (sole approver self-approves with reason) |
+| A-26 | Medium | Three set-up entry points, no stated order; plans demanded an instrument | DONE 0.20.0–0.20.1 |
+| A-27 | High | VT Markets LIVE account TRADING, never logged in; LIVE order sending ON | OPEN — owner: log in and read now; Read only; LIVE orders OFF |
+| A-28 | Medium | Server egress IP not Indian: Upstox edge may block; SEBI static IP | OPEN — owner: API check; Indian egress if blocked |
+| A-29 | Low | Collector list kept stale rows of archived accounts | DONE 0.21.0 |
 
 ## C. Owner decisions
 
