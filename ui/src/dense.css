@@ -346,3 +346,4 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .cfg-health .cfg-tile strong { font-size: 13px; font-weight: 600; }
 .cfg-health .cfg-tile.warn { box-shadow: inset 0 -2px 0 #d29922; }
 .cfg-health .cfg-tile.ok { box-shadow: inset 0 -2px 0 #2e9d5b; }
+.cfg-warn { color: var(--cfg-warn); border-left: 2px solid var(--cfg-warn); padding: 3px 8px; margin: 4px 0; font-size: 12px; }

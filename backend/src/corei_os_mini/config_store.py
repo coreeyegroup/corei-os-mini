@@ -757,13 +757,64 @@ def _server_key(name: str) -> str:
     return ' '.join(name.split()).lower()
 
 
-def _connection_code(db, provider_code: str, environment: str) -> str:
-    base = f'{provider_code}_MT5_{environment}'[:29].rstrip('_')
+def _connection_code(db, provider_code: str, environment: str, tag: str = 'MT5') -> str:
+    base = f'{provider_code}_{tag}_{environment}'[:29].rstrip('_')
     taken = {r['code'] for r in db.execute('SELECT code FROM cfg_connections WHERE code LIKE %s', (base + '%',)).fetchall()}
     code, n = base, 2
     while code in taken:
         code, n = f'{base}_{n}', n + 1
     return code
+
+
+UPSTOX_API = 'https://api.upstox.com'
+
+
+def setup_upstox_account(actor: str, data: dict, credential: BaseModel | None, base_url: str) -> dict:
+    """Upstox in one step: the broker (created if missing), its API connection (reused when it exists),
+    the app's key and secret (saved on the connection when it has none), then the account. Upstox has no
+    demo environment for market data, so the connection is LIVE; nothing here can send an order."""
+    redirect = base_url.rstrip('/') + '/api/oauth/upstox/callback'
+    with transaction('create') as db:
+        provider = db.execute("SELECT * FROM cfg_providers WHERE upper(code) IN ('UPSTOX','UPSTOK') AND status <> 'ARCHIVED' "
+                              "ORDER BY code='UPSTOX' DESC LIMIT 1").fetchone()
+        provider_action = 'REUSED'
+        if not provider:
+            pid = _insert(db, actor, 'providers', ProviderIn.model_validate({
+                'code': 'UPSTOX', 'name': 'Upstox', 'kind': 'BROKER', 'legal_entity': 'RKSV Securities India Pvt. Ltd.',
+                'regulator': 'SEBI', 'jurisdiction': 'India', 'execution_model': 'EXCHANGE', 'website': 'https://upstox.com'}),
+                'Created while adding an Upstox account')
+            provider = db.execute('SELECT * FROM cfg_providers WHERE id=%s', (pid,)).fetchone()
+            provider_action = 'CREATED'
+        connection = db.execute("SELECT * FROM cfg_connections WHERE provider_id=%s AND platform='REST_API' AND status <> 'ARCHIVED' "
+                                "AND settings->>'api_base_url' LIKE '%%upstox%%' ORDER BY created_at LIMIT 1 FOR UPDATE",
+                                (provider['id'],)).fetchone()
+        connection_action = 'REUSED'
+        if not connection:
+            cid = _insert(db, actor, 'connections', ConnectionIn.model_validate({
+                'provider_id': provider['id'], 'code': _connection_code(db, provider['code'], 'LIVE', 'API'),
+                'name': 'Upstox API', 'platform': 'REST_API', 'environment': 'LIVE', 'purpose': 'BOTH', 'adapter': 'NATIVE',
+                'settings': {'api_base_url': UPSTOX_API, 'stream_url': 'wss://api.upstox.com/v3/feed/market-data-feed',
+                             'auth_method': 'OAUTH2', 'oauth_redirect_url': redirect},
+                'server_utc_offset_minutes': 330, 'dst_rule': 'NONE', 'clock_source': 'MANUAL',
+                'max_orders_per_second': 10, 'max_order_burst': 10}), 'Created while adding an Upstox account')
+            connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s', (cid,)).fetchone()
+            connection_action = 'CREATED'
+        elif connection['settings'].get('auth_method') != 'OAUTH2':
+            raise HTTPException(409, f"Connection {connection['code']} uses API keys, not the Upstox login. Archive it or edit it first.")
+        has_key = db.execute('SELECT 1 FROM cfg_credentials WHERE connection_id=%s', (connection['id'],)).fetchone()
+        if not has_key and credential is None:
+            raise HTTPException(422, [{'field': 'credential', 'message': 'Enter the API key and API secret of your Upstox app.'}])
+        try:
+            account = AccountIn.model_validate({**data, 'connection_id': str(connection['id'])})
+        except ValidationError as exc:
+            raise HTTPException(422, [{'field': 'account.' + '.'.join(str(p) for p in e['loc']),
+                                       'message': e['msg'].removeprefix('Value error, ')} for e in exc.errors()]) from None
+        account_id = _insert(db, actor, 'accounts', account, 'Upstox account')
+        if credential is not None and not has_key:
+            _save_credential(db, actor, 'connections', connection['id'], credential, approved=True)
+        return {'provider_action': provider_action, 'connection_action': connection_action,
+                'redirect_url': connection['settings'].get('oauth_redirect_url'),
+                'connection': get_record(db, 'connections', connection['id']), 'account': get_record(db, 'accounts', account_id)}
 
 
 def setup_mt5_account(actor: str, data: Mt5AccountSetupIn, approved: bool = False, reason: str = '') -> dict:

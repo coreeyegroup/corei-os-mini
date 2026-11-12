@@ -96,21 +96,38 @@ def _secret(row: dict) -> dict:
     return credentials.decrypt(row['id'], bytes(row['secret'])) if row['secret'] is not None else {}
 
 
+def approver_count() -> int:
+    """Active users who may approve LIVE changes (one = four-eyes cannot work; the only approver self-approves with a reason)."""
+    with store.transaction('read') as db:
+        return db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE' AND roles && ARRAY['RISK_APPROVER']::text[]").fetchone()['n']
+
+
 def decide(actor: str, request_id: UUID, approve: bool, note: str) -> dict:
     """Approve (apply) or reject a pending change. The approver must be a different person."""
     with store.transaction('update') as db:
         row = db.execute('SELECT * FROM cfg_change_requests WHERE id=%s FOR UPDATE', (request_id,)).fetchone()
         if not row or row['status'] != 'PENDING':
             raise HTTPException(404, 'No pending change request with this id.')
+        sole = False
         if row['requested_by'] == actor:
-            raise HTTPException(403, 'A change must be approved by a different person from the one who asked for it.')
+            # Four-eyes needs a second person. A firm with a single approver would be stuck forever, so the
+            # only approver may approve their own request: with a written reason, re-authenticated (route),
+            # marked as such in the audit log and alerted as CRITICAL. A second approver ends this at once.
+            others = db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE' AND username <> %s "
+                                "AND roles && ARRAY['RISK_APPROVER']::text[]", (actor,)).fetchone()['n']
+            if others:
+                raise HTTPException(403, 'A change must be approved by a different person from the one who asked for it.')
+            if approve and len(note.strip()) < 8:
+                raise HTTPException(422, 'You are the only approver: write why you approve your own LIVE change (at least 8 characters).')
+            sole = True
         if not approve:
             db.execute("UPDATE cfg_change_requests SET status='REJECTED', decided_by=%s, decided_at=now(), decision_note=%s, secret=NULL WHERE id=%s",
                        (actor, note, request_id))
             store.audit(db, actor, 'REJECT_CHANGE', 'change request', request_id, None, {'note': note})
             return {'id': str(request_id), 'status': 'REJECTED'}
         secret = _secret(row)
-    reason = f"Approved by {actor} (request {request_id} from {row['requested_by']}){': ' + note if note else ''}"
+    reason = (f"Self-approved by {actor}, the only approver (request {request_id}){': ' + note if note else ''}" if sole else
+              f"Approved by {actor} (request {request_id} from {row['requested_by']}){': ' + note if note else ''}")
     try:
         result = _apply(row, secret, actor, reason)
         status, error = 'APPLIED', ''
@@ -120,10 +137,10 @@ def decide(actor: str, request_id: UUID, approve: bool, note: str) -> dict:
         db.execute('UPDATE cfg_change_requests SET status=%s, decided_by=%s, decided_at=now(), decision_note=%s, secret=NULL WHERE id=%s',
                    (status, actor, (note + (' · ' if note and error else '') + error)[:500], request_id))
         store.audit(db, actor, 'APPLY_CHANGE' if status == 'APPLIED' else 'APPLY_CHANGE_FAILED', 'change request', request_id, None,
-                    {'status': status, 'error': error or None})
+                    {'status': status, 'error': error or None, 'self_approved_only_approver': sole})
         from .alerts import enqueue
-        enqueue(db, 'LIVE_CHANGE', 'WARNING' if status == 'APPLIED' else 'CRITICAL', f'LIVE change {status.lower()}: {row["action"].replace("_", " ").lower()}',
-                f"{row['summary']}\nRequested by {row['requested_by']}, decided by {actor}.{' Error: ' + error if error else ''}")
+        enqueue(db, 'LIVE_CHANGE', 'CRITICAL' if sole or status != 'APPLIED' else 'WARNING', f'LIVE change {status.lower()}: {row["action"].replace("_", " ").lower()}',
+                f"{row['summary']}\nRequested by {row['requested_by']}, decided by {actor}{' (self-approved: only approver)' if sole else ''}.{' Error: ' + error if error else ''}")
     if status == 'FAILED':
         raise HTTPException(409, f'The change could not be applied and was marked failed: {error}')
     return {'id': str(request_id), 'status': status, 'result': result}
@@ -345,7 +362,8 @@ def health() -> dict:
             ('providers', 'cfg_providers'), ('connections', 'cfg_connections'), ('accounts', 'cfg_accounts'),
             ('instruments', 'cfg_instruments'), ('mappings', 'cfg_symbol_mappings'), ('strategies', 'cfg_strategies'),
             ('deployments', 'cfg_deployments'), ('alert_channels', 'cfg_alert_channels'))}
-        credentials_saved = db.execute('SELECT count(DISTINCT account_id) AS n FROM cfg_credentials WHERE account_id IS NOT NULL').fetchone()['n']
+        credentials_saved = db.execute('SELECT count(*) AS n FROM cfg_accounts a WHERE EXISTS (SELECT 1 FROM cfg_credentials c '
+                                       'WHERE c.account_id=a.id OR c.connection_id=a.connection_id)').fetchone()['n']
         failed_alerts = db.execute("SELECT count(*) AS n FROM cfg_alert_outbox WHERE status='FAILED'").fetchone()['n']
         logged_in = db.execute("SELECT count(*) AS n FROM cfg_accounts WHERE last_login_at IS NOT NULL OR broker_facts_read_at IS NOT NULL OR id IN "
                                "(SELECT account_id FROM cfg_session_tokens)").fetchone()['n']
@@ -356,10 +374,10 @@ def health() -> dict:
     # secret, the account, then a daily broker login. Then data, then trading.
     users = db_counts.get('users', 1)
     checklist = [
-        {'step': '1 Broker: Providers › New (who the broker is)', 'done': counts['providers'] > 0, 'section': 'providers'},
-        {'step': '2 Account: MT5 → Accounts › Add MT5 account (creates the connection) · Upstox → Connections › New (API key + secret), then Accounts › New',
+        {'step': '1 Broker: MT5 → Providers › New (who the broker is) · Upstox → created for you in step 2', 'done': counts['providers'] > 0, 'section': 'providers'},
+        {'step': '2 Account: Accounts › Add MT5 account or Add Upstox account (each creates its connection and saves the password / app key)',
          'done': counts['accounts'] > 0, 'section': 'accounts'},
-        {'step': '3 Credentials: MT5 master or investor password; API connection key + secret', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
+        {'step': '3 Credentials saved for every account', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
         {'step': '4 First login: MT5 → Log in and read now · Upstox → Log in at broker (every day)', 'done': logged_in > 0, 'section': 'accounts'},
         {'step': '5 Market data: Market data › Plans › New (account + symbol)', 'done': plans > 0, 'section': 'plans'},
         {'step': '6 Instruments and symbol mappings', 'done': counts['instruments'] > 0 and counts['mappings'] > 0, 'section': 'instruments'},

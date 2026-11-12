@@ -184,6 +184,19 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
     return _pending(response, store.setup_mt5_account(actor, data))
 
 
+@router.post('/upstox/account-setup', status_code=201)
+def setup_upstox_account(payload: dict, request: Request, response: Response, actor: str = Depends(editor)):
+    """Add an Upstox account in one step: broker, API connection, app key and secret, account."""
+    _no_store(response)
+    credential = payload.get('credential')
+    secret = None
+    if credential:
+        secret = parse(CredentialEnvelope, {'credential': {'kind': 'OAUTH_CLIENT', **credential}}, secret=True).credential
+    account = payload.get('account') if isinstance(payload.get('account'), dict) else {}
+    base = request.headers.get('origin') or f"https://{request.headers.get('host', 'localhost')}"
+    return store.setup_upstox_account(actor, account, secret, base)
+
+
 def _pending(response: Response, result: dict) -> dict:
     """A change that needs a second person returns 202 with the change request."""
     if 'change_request' in result:

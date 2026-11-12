@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -175,6 +176,39 @@ class Controls(unittest.TestCase):
         audit = [a['action'] for a in self.ok(self.alice.get('/api/config/audit'))['items']]
         for action in ('REQUEST_CHANGE', 'APPLY_CHANGE', 'REJECT_CHANGE', 'SET_POLICY'):
             self.assertIn(action, audit)
+
+    def test_upstox_account_in_one_step(self):
+        no_key = self.alice.post('/api/config/upstox/account-setup', json={'account': {'code': 'UPSTOX_7AB123', 'name': 'Upstox',
+                                 'external_account_id': '7AB123', 'base_currency': 'INR', 'trading_permission': 'READ_ONLY'}})
+        self.assertEqual(no_key.status_code, 422, no_key.text)
+        first = self.ok(self.alice.post('/api/config/upstox/account-setup', json={
+            'account': {'code': 'UPSTOX_7AB123', 'name': 'Upstox', 'external_account_id': '7AB123', 'base_currency': 'INR', 'trading_permission': 'READ_ONLY'},
+            'credential': {'client_id': 'app-key', 'client_secret': 'app-secret'}}), 201)
+        self.assertEqual((first['provider_action'], first['connection_action']), ('CREATED', 'CREATED'))
+        conn = first['connection']
+        self.assertEqual((conn['platform'], conn['environment'], conn['settings']['auth_method']), ('REST_API', 'LIVE', 'OAUTH2'))
+        self.assertTrue(conn['settings']['oauth_redirect_url'].endswith('/api/oauth/upstox/callback'))
+        self.assertEqual(first['account']['data_blockers'], ['BROKER_LOGIN_NEEDED_TODAY'], 'only the daily login is missing for market data')
+        second = self.ok(self.alice.post('/api/config/upstox/account-setup', json={'account': {
+            'code': 'UPSTOX_8CD456', 'name': 'Upstox 2', 'external_account_id': '8CD456', 'base_currency': 'INR'}}), 201)
+        self.assertEqual((second['provider_action'], second['connection_action']), ('REUSED', 'REUSED'), 'key already saved: not asked again')
+        self.assertNotIn('app-secret', json.dumps([first, second]))
+
+    def test_only_approver_may_self_approve_with_a_reason(self):
+        pending = self.ok(self.connection(self.alice), 202)['change_request']
+        self.assertEqual(self.ok(self.alice.get('/api/config/approvals'))['approvers'] >= 2, True)
+        self.ok(self.alice.post(f"/api/config/approvals/{pending['id']}/decision", json={'approve': True, 'note': 'Need it now'}), 403)
+        # Every other approver gone: the only approver self-approves, with a written reason.
+        with self.connect() as db:
+            db.execute("UPDATE cfg_users SET status='DISABLED' WHERE username <> 'alice' AND roles && ARRAY['RISK_APPROVER']::text[]")
+            db.commit()
+        self.assertEqual(self.ok(self.alice.get('/api/config/approvals'))['approvers'], 1)
+        self.ok(self.alice.post(f"/api/config/approvals/{pending['id']}/decision", json={'approve': True, 'note': 'x'}), 422)
+        done = self.ok(self.alice.post(f"/api/config/approvals/{pending['id']}/decision", json={'approve': True, 'note': 'Single-operator firm; checked'}))
+        self.assertEqual(done['status'], 'APPLIED')
+        with self.connect() as db:
+            row = db.execute("SELECT after_state AS after FROM cfg_audit_log WHERE action='APPLY_CHANGE' ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertTrue(row['after']['self_approved_only_approver'], 'recorded as self-approved in the audit log')
 
     def test_reauthentication_for_sensitive_actions(self):
         app.dependency_overrides.pop(require_reauth, None)

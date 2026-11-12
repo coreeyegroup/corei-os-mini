@@ -638,6 +638,14 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## One way in for every account; approvals that cannot deadlock — release 0.20.0
+
+DEC-51. No migration.
+
+- **Setup starts at Accounts.** *Add MT5 account* (login, password, server) and *Add Upstox account* (client ID, app key and secret) each create the broker connection for you; Upstox also creates the broker. *New connection / New account* are marked advanced; Connections is where you adjust clock, limits and addresses afterwards.
+- **Approvals (four-eyes).** A LIVE change — a new LIVE server or account, a LIVE address, a LIVE password, re-activating a LIVE record — waits for a second person with the Risk approver role. DEMO never waits. If you are the only Risk approver, you can approve your own request with a written reason; it is marked self-approved in the audit log and alerted as critical. A second approver ends this automatically.
+- `POST /api/config/upstox/account-setup`: broker (created if missing), Upstox API connection (reused), app key and secret (saved once, encrypted), account — all or nothing.
+
 ## Upstox market data and a clear set-up order — release 0.19.0
 
 DEC-50. No migration.

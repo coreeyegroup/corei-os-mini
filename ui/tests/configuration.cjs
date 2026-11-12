@@ -22,7 +22,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[],groups:[]};const prefs={};const approvals=[];const importCalls=[];let needReauth=false,reauthCalls=0;
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
- const searched=[],latencyCalls=[],setups=[];
+ const searched=[],latencyCalls=[],setups=[],upstoxSetups=[];
  const requests=[];let n=0;
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
@@ -69,6 +69,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      if(body.trading_enabled&&body.confirm_environment!==parts[1])return fail(422,'confirm');
      Object.assign(c,{trading_enabled:body.trading_enabled,reason:body.reason,version:c.version+1,updated_by:'risk-ops'});return ok(c);}
    if(parts[0]==='audit')return ok({items:[]});
+   if(parts[0]==='upstox'&&parts[1]==='account-setup'){const body=JSON.parse(options.body);upstoxSetups.push(body);
+     const c=db.connections[0];const row={...body.account,id:`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`,connection_id:c.id,version:1,updated_at:new Date().toISOString(),routing:null};
+     return ok({provider_action:'CREATED',connection_action:'CREATED',connection:{...enrich('connections',c),code:'UPSTOX_API_LIVE'},account:enrich('accounts',row)},201);}
    if(parts[0]==='mt5'){
      const servers=[
        {server_name:'ICMarketsSC-Demo',company_name:'Raw Trading Ltd',details:{CompanyName:'Raw Trading Ltd',TimeZone:120},access_points:[{name:'Access Point 1',host:'203.0.113.10',port:443},{name:'Access Point 2',host:'10.30.210.41',port:443}]},
@@ -164,7 +167,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Connection: MT5 entered manually, with ordered addresses
  nav('Connections').click();await tick();await tick();
- button('New connection').click();await tick();
+ button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
  assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
@@ -196,7 +199,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: MT5 connection entered manually with ordered addresses; floating window moves, resizes, maximises; platform fixed after creation.');
 
  // servers.dat: choose a server on the left, its addresses on the right.
- button('New connection').click();await tick();
+ button('New connection (advanced)').click();await tick();
  const fileInput=$('.cfg-finder input[type="file"]');Object.defineProperty(fileInput,'files',{value:[new w.File(['x'],'servers.dat')]});
  fileInput.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();await new Promise(r=>setTimeout(r,300));
  assert.match($('.cfg-picker').textContent,/servers\.dat4 servers · 57 addresses/);
@@ -263,7 +266,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();assert.equal($('.fw'),null);
  console.log('PASS: 50 addresses accepted; closing the window with confirmation.');
  // Online broker directory: same picker, live results.
- button('New connection').click();await tick();
+ button('New connection (advanced)').click();await tick();
  assert.equal(button('Find servers').disabled,true);
  fill(byLabel('Find broker'),'VTMarkets');await tick();
  button('Find servers').click();await tick();await tick();await new Promise(r=>setTimeout(r,300));
@@ -276,7 +279,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Account: readiness shown; password saved write-only
  nav('Accounts').click();await tick();await tick();
- button('New account').click();await tick();
+ button('New account (advanced)').click();await tick();
  fill(byLabel('Connection'),conn.id);await tick();
  assert.match($('.cfg-detail').textContent,/Environment DEMO · server ICMarketsSC-Demo/);
  fill(byLabel('Broker login (MT5 account number)'),'51234567');await tick();
@@ -350,6 +353,19 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
 
+ // Add Upstox account in one step: client ID, app key and secret; redirect URL shown to copy.
+ button('Add Upstox account').click();await tick();
+ const upWin=$('.fw');assert.match(upWin.textContent,/Add Upstox account/);
+ assert.match(byLabel('Redirect URL').value,/\/api\/oauth\/upstox\/callback$/);
+ fill(byLabel('Upstox client ID'),'7ab123');fill(byLabel('API key'),'app-key');fill(byLabel('API secret'),'app-secret');await tick();
+ assert.equal(byLabel('Account ID').value,'UPSTOX_7AB123');
+ await submit($('#cfg-add-upstox'));await tick();
+ const up=upstoxSetups.at(-1);assert.equal(up.account.external_account_id,'7AB123');assert.equal(up.account.trading_permission,'READ_ONLY');
+ assert.deepEqual(up.credential,{client_id:'app-key',client_secret:'app-secret'});
+ assert.ok(!w.document.body.textContent.includes('app-secret'));
+ $('[aria-label="Close window"]').click();await tick();
+ console.log('PASS: Add Upstox account sends client ID, app key and secret in one step.');
+
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
  nav('Accounts').click();await tick();await tick();
  [...w.document.querySelectorAll('.cfg-table tbody tr')].find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
@@ -387,7 +403,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Four-eyes: a LIVE connection goes to Approvals; another person approves it.
  nav('Connections').click();await tick();await tick();
- button('New connection').click();await tick();
+ button('New connection (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'LIVE');await tick();
  button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Broker server name'),'ICMarketsSC-Live');fill(byLabel('Access point 1 host'),'198.51.100.7');await tick();

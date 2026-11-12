@@ -23,9 +23,9 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Health', hint: 'Can each account trade right now, and if not, why' },
-  { id: 'providers', label: 'Providers', hint: 'Brokers, exchanges and data vendors' },
-  { id: 'connections', label: 'Connections', hint: 'Platform, environment and endpoints per provider' },
-  { id: 'accounts', label: 'Accounts', hint: 'Broker accounts, login and trading permission' },
+  { id: 'providers', label: 'Providers', hint: 'Brokers (created for you by Add Upstox account; add MT5 brokers here first)' },
+  { id: 'connections', label: 'Connections', hint: 'One per broker server or API, created with the first account; edit clock, limits, addresses' },
+  { id: 'accounts', label: 'Accounts', hint: 'Start here: Add MT5 account / Add Upstox account (each creates its connection)' },
   { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
@@ -849,6 +849,65 @@ const serverKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase
 
 /** Login, password and server together, the way MT5 does it. The server's connection is
  *  reused when one exists for this provider, environment and server (or created). */
+/** Upstox in one step: the broker and its API connection are created when missing (LIVE: Upstox has no
+ * demo for market data; nothing here can send an order), the app's key and secret are saved on the
+ * connection, then the account. Next: Log in at broker (daily). */
+function AddUpstoxAccount({ close, created }: { close: () => void; created: (account: Row, note: string) => void }) {
+  const [f, setF] = useState<Row>({ external_account_id: '', holder_name: '', name: 'Upstox', code: '', base_currency: 'INR',
+    trading_permission: 'READ_ONLY', client_id: '', client_secret: '' });
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const redirect = `${window.location.origin}/api/oauth/upstox/callback`;
+  const set = (patch: Row) => setF(old => { const next = { ...old, ...patch };
+    if (!next._codeEdited && next.external_account_id) next.code = `UPSTOX_${idPart(next.external_account_id)}`.slice(0, 32); return next; });
+  const ready = f.external_account_id && f.name && f.code;
+  async function save(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      const result = await api('config/upstox/account-setup', 'POST', {
+        account: { code: f.code, name: f.name, external_account_id: f.external_account_id, holder_name: f.holder_name, base_currency: f.base_currency,
+          trading_permission: f.trading_permission },
+        ...(f.client_id || f.client_secret ? { credential: { client_id: f.client_id, client_secret: f.client_secret } } : {}) });
+      setF(old => ({ ...old, client_id: '', client_secret: '' }));
+      created(result.account, `Upstox account added${result.connection_action === 'CREATED' ? ` with connection ${result.connection.code}` : ` to ${result.connection.code}`}. `
+        + 'Next: Log in at broker (below), then Market data › Plans › New.');
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  return <FloatingWindow storageKey="corei-os-mini.add-upstox-account.v1" width={680} title="Add Upstox account" subtitle="Broker, connection, app key and account in one step"
+    onClose={close}
+    footer={<div className="cfg-actions"><button className="primary" form="cfg-add-upstox" disabled={busy || !ready}>{busy ? 'Adding…' : 'Add account'}</button>
+      {!ready && <span className="cfg-note">Enter the Upstox client ID.</span>}</div>}>
+    <form className="cfg-form" id="cfg-add-upstox" onSubmit={save} autoComplete="off">
+      <Section n={1} title="Your Upstox app">
+        <p className="cfg-note">In the Upstox developer console (account.upstox.com/developer/apps) create an app, set its <b>Redirect URL</b> to exactly:</p>
+        <Field label="Redirect URL"><input aria-label="Redirect URL" readOnly value={redirect} onFocus={e => e.currentTarget.select()} /></Field>
+        <div className="cfg-pair">
+          <Field label="API key" hint="Saved encrypted on the connection; leave empty if already saved"><input aria-label="API key" autoComplete="off" value={f.client_id} onChange={e => set({ client_id: e.target.value })} /></Field>
+          <Field label="API secret"><input aria-label="API secret" type="password" autoComplete="new-password" value={f.client_secret} onChange={e => set({ client_secret: e.target.value })} /></Field>
+        </div>
+      </Section>
+      <Section n={2} title="Account">
+        <div className="cfg-pair">
+          <Field label="Upstox client ID" hint="Your UCC, shown in the Upstox app under Profile (e.g. 7AB123)"><input aria-label="Upstox client ID" required maxLength={64} value={f.external_account_id} onChange={e => set({ external_account_id: e.target.value.trim().toUpperCase() })} /></Field>
+          <Field label="Holder name"><input aria-label="Holder name" maxLength={120} value={f.holder_name} onChange={e => set({ holder_name: e.target.value })} /></Field>
+        </div>
+        <div className="cfg-pair">
+          <Field label="Account name"><input aria-label="Account name" required maxLength={120} value={f.name} onChange={e => set({ name: e.target.value })} /></Field>
+          <Field label="Account ID" hint="Suggested; fixed after saving"><input aria-label="Account ID" required maxLength={32} pattern="[A-Za-z][A-Za-z0-9_]{1,31}" value={f.code} onChange={e => set({ code: e.target.value, _codeEdited: e.target.value !== '' })} /></Field>
+        </div>
+        <div className="cfg-pair">
+          <Field label="Currency"><input aria-label="Currency" required maxLength={10} value={f.base_currency} onChange={e => set({ base_currency: e.target.value })} /></Field>
+          <Field label="Trading permission" hint="Read only: market data and account reads; order sending is not built"><Choice label="Trading permission" value={f.trading_permission}
+            options={[['READ_ONLY', 'Read only'], ['DISABLED', 'Disabled']]} onChange={v => set({ trading_permission: v })} /></Field>
+        </div>
+      </Section>
+      <Section n={3} title="After saving">
+        <p className="cfg-note">Open the account and click <b>Log in at broker</b> (or TOTP login). Upstox logins last until 03:30 IST, so this is a daily step. Then add a plan under Market data › Plans with an instrument key such as NSE_INDEX|Nifty 50.</p>
+      </Section>
+      {error && <p role="alert" className="cfg-error">{error}</p>}
+    </form>
+  </FloatingWindow>;
+}
+
 function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void }) {
   const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
     base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
@@ -994,7 +1053,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
-  const [adding, setAdding] = useState(false), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
+  const [adding, setAdding] = useState<'' | 'MT5' | 'UPSTOX'>(''), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
   const prefKey = `corei-os-mini.list.${entity}`;
   const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
   const setViewPref = (patch: Row) => { const next = { ...view, ...patch }; setView(next); try { localStorage.setItem(prefKey, JSON.stringify(next)); } catch { /* preference only */ } };
@@ -1084,8 +1143,10 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         <span className="cfg-toolbar-gap" />
         {exportable && <a className="cfg-button" href={`/api/config/export/${entity}.csv`} download>Export CSV</a>}
         {canEdit && entity === 'accounts' && <button onClick={() => setImporting(true)}>Import CSV</button>}
-        {canEdit && entity === 'accounts' && <button className="primary" onClick={() => setAdding(true)}>Add MT5 account</button>}
-        {canEdit ? <button className={entity === 'accounts' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
+        {canEdit && entity === 'accounts' && <><button className="primary" onClick={() => setAdding('MT5')} title="Login, password and server: creates the broker's connection too">Add MT5 account</button>
+          <button className="primary" onClick={() => setAdding('UPSTOX')} title="Client ID and your Upstox app's key and secret: creates the broker and connection too">Add Upstox account</button></>}
+        {canEdit && entity === 'connections' && <span className="cfg-note">New accounts create their connection: use Accounts › Add MT5 / Upstox account. Open a connection here to change its clock, limits or addresses.</span>}
+        {canEdit ? <button className={entity === 'accounts' || entity === 'connections' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}{entity === 'accounts' || entity === 'connections' ? ' (advanced)' : ''}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
       {!draft && notice && <p role="status" className="cfg-ok">{notice}</p>}
@@ -1102,8 +1163,11 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         </tbody></table></div>}
     </div>
     {importing && <ImportAccounts close={() => setImporting(false)} done={() => { setImporting(false); void load(); reloadRefs(); }} />}
-    {adding && <AddMt5Account refs={refs} close={() => setAdding(false)} created={(account, note) => {
-      setAdding(false); reloadRefs();
+    {adding === 'UPSTOX' && <AddUpstoxAccount close={() => setAdding('')} created={(account, note) => {
+      setAdding(''); reloadRefs();
+      void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
+    {adding === 'MT5' && <AddMt5Account refs={refs} close={() => setAdding('')} created={(account, note) => {
+      setAdding(''); reloadRefs();
       if (!account) { setNotice(note); void load(); return; }
       void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
     {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : entity === 'accounts' ? 'corei-os-mini.account-window.v1' : 'corei-os-mini.config-window.v1'}

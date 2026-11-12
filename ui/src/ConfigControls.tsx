@@ -90,9 +90,10 @@ export function HealthBoard({ navigate }: { navigate: Navigate }) {
 
 export function Approvals({ me, roles, changed }: { me: string; roles: string[]; changed: () => void }) {
   const [items, setItems] = useState<Row[] | null>(null), [status, setStatus] = useState('PENDING'), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(''), [note, setNote] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(''), [note, setNote] = useState<Record<string, string>>({}), [approvers, setApprovers] = useState(2);
   const canDecide = roles.includes('TRADING_OPS') || roles.includes('RISK_APPROVER');
-  const load = async () => { try { setItems((await api(`config/approvals${status ? '?status=' + status : ''}`)).items); setError(''); } catch (e) { setError((e as Error).message); } };
+  const load = async () => { try { const r = await api(`config/approvals${status ? '?status=' + status : ''}`); setItems(r.items); setApprovers(r.approvers ?? 2); setError(''); } catch (e) { setError((e as Error).message); } };
+  const sole = approvers <= 1 && roles.includes('RISK_APPROVER');
   useEffect(() => { void load(); }, [status]);
   async function act(id: string, path: string, body?: Row) {
     setBusy(id); setError(''); setNotice('');
@@ -100,7 +101,8 @@ export function Approvals({ me, roles, changed }: { me: string; roles: string[];
     catch (e) { setError((e as Error).message); await load(); } finally { setBusy(''); }
   }
   return <div className="cfg-approvals">
-    <p className="cfg-note">LIVE address additions, LIVE reactivation, LIVE password replacement and LIVE account set-up wait here until a different person approves them. Passwords inside a request are encrypted and erased once it is decided.</p>
+    <p className="cfg-note"><b>Why approvals exist:</b> anything that can put money at risk on a LIVE account — a new LIVE server or account, a LIVE address, a LIVE password, turning a LIVE account back on — waits here until a second person with the Risk approver role approves it (four-eyes). It stops one person, or one stolen login, from pointing real money somewhere new. DEMO changes never wait. Passwords inside a request are encrypted and erased once it is decided.</p>
+    {sole && <p className="cfg-warn">You are the only Risk approver, so nobody else can approve. Add a second user with the Risk approver role (Setup › Users) — or approve your own request below with a written reason: it is recorded as self-approved in the audit log and sent as a critical alert.</p>}
     <div className="cfg-toolbar"><Choice label="Show" value={status} options={[['PENDING', 'Waiting'], ['APPLIED', 'Applied'], ['REJECTED', 'Rejected'], ['FAILED', 'Failed'], ['WITHDRAWN', 'Withdrawn'], ['', 'All']]} onChange={setStatus} /></div>
     {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
     {!items ? <p className="cfg-note">Loading…</p> : items.length === 0 ? <p className="cfg-empty">{status === 'PENDING' ? 'Nothing is waiting for approval.' : 'No requests.'}</p> :
@@ -110,7 +112,10 @@ export function Approvals({ me, roles, changed }: { me: string; roles: string[];
         <small className="cfg-note">Asked by {r.requested_by} · {when(r.requested_at)}{r.reason ? ` · ${r.reason}` : ''}
           {r.decided_by ? ` · decided by ${r.decided_by} ${when(r.decided_at)}${r.decision_note ? ': ' + r.decision_note : ''}` : ''}</small>
         {r.status === 'PENDING' && <div className="cfg-actions">
-          {r.requested_by === me ? <><span className="cfg-note">Waiting for someone else.</span>
+          {r.requested_by === me && sole ? <><input aria-label={`Reason for ${r.id}`} placeholder="Why you approve your own LIVE change (required)" value={note[r.id] ?? ''} onChange={e => setNote({ ...note, [r.id]: e.target.value })} />
+            <button type="button" className="primary" disabled={busy === r.id || (note[r.id] ?? '').trim().length < 8} onClick={() => void act(r.id, 'decision', { approve: true, note: note[r.id] ?? '' })}>Approve as the only approver</button>
+            <button type="button" disabled={busy === r.id} onClick={() => void act(r.id, 'withdraw')}>Withdraw</button></>
+            : r.requested_by === me ? <><span className="cfg-note">Waiting for a second person with the Risk approver role.</span>
             <button type="button" disabled={busy === r.id} onClick={() => void act(r.id, 'withdraw')}>Withdraw</button></>
             : canDecide ? <><input aria-label={`Note for ${r.id}`} placeholder="Note (optional)" value={note[r.id] ?? ''} onChange={e => setNote({ ...note, [r.id]: e.target.value })} />
               <button type="button" className="primary" disabled={busy === r.id} onClick={() => void act(r.id, 'decision', { approve: true, note: note[r.id] ?? '' })}>Approve and apply</button>

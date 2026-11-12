@@ -54,7 +54,7 @@ async def network_status(response: Response, _: str = Depends(require_operator))
 def list_approvals(response: Response, status: Literal['PENDING', 'APPLIED', 'REJECTED', 'WITHDRAWN', 'FAILED'] | None = None,
                    _: str = Depends(require_operator)):
     _no_store(response)
-    return {'items': controls.list_requests(status)}
+    return {'items': controls.list_requests(status), 'approvers': controls.approver_count()}
 
 
 @router.post('/approvals/{request_id}/decision')
