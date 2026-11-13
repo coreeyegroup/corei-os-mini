@@ -74,6 +74,8 @@ export const BLOCKERS: Record<string, string> = {
   ORDER_SENDING_OFF_DEMO: 'Order sending is off for DEMO',
   ORDER_SENDING_OFF_LIVE: 'Order sending is off for LIVE',
   NO_ADDRESS_AVAILABLE: 'No server address is selected for this account',
+  BRIDGE_NOT_CONFIGURED: 'The connection uses the MT5 terminal bridge but has no bridge host and certificate fingerprint — open the connection',
+  BRIDGE_TOKEN_MISSING: 'The terminal bridge token is not saved on the connection (Credential)',
   ACCOUNT_ADDRESSES_REMOVED_BY_SERVER: 'Some addresses chosen for this account are no longer listed by the server; they are skipped',
   ACCOUNT_ADDRESSES_FALLBACK_TO_SERVER: 'None of the addresses chosen for this account are listed by the server any more; using the server\'s addresses',
   NO_LATENCY_MEASURED: 'Fastest first has no latency test yet; using the server\'s order until one is run',
@@ -238,7 +240,9 @@ function toPayload(entity: Entity, draft: Row): Row {
   if (entity === 'connections' && draft.platform === 'MT5')
     out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
       access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
-        source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })) };
+        source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })),
+      bridge: draft.adapter === 'TERMINAL_BRIDGE' && draft.settings.bridge?.host
+        ? { host: draft.settings.bridge.host, port: Number(draft.settings.bridge.port || 9443), fingerprint: draft.settings.bridge.fingerprint } : null };
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
@@ -707,8 +711,8 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
       <Section n={4} title="Method, clock and limits">
         <div className="cfg-pair">
           {pick('adapter', 'Connection method', draft.platform === 'MT5'
-            ? [['DEFAULT', 'Default (decided at go-live)'], ['MTAPI_DIRECT', 'Direct (mtapi SDK, no terminal)'], ['TERMINAL_BRIDGE', 'Terminal bridge (MT5 terminal + EA)']]
-            : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']], 'Both MT5 methods stay available')}
+            ? [['TERMINAL_BRIDGE', 'MT5 terminal bridge (official, recommended)'], ['MTAPI_DIRECT', 'Direct (mtapi SDK, no terminal)'], ['DEFAULT', 'Default (direct)']]
+            : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']], draft.platform === 'MT5' ? 'The terminal bridge uses the real MT5 terminal, which keeps itself up to date; the direct SDK breaks when the broker updates' : undefined)}
           {pick('clock_source', 'Clock set from', [['UNKNOWN', 'Not set'], ['MANUAL', 'Entered by hand'], ['SERVER_FILE', 'servers.dat'], ['BROKER_LOGIN', 'Broker at login']])}
         </div>
         <div className="cfg-pair">
@@ -716,6 +720,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
             'Most MT5 brokers: 120 in winter (GMT+2), 180 in summer')}
           {pick('dst_rule', 'Daylight saving', [['UNKNOWN', 'Not known'], ['NONE', 'None'], ['US', 'US rule (2nd Sun Mar – 1st Sun Nov)'], ['EU', 'EU rule (last Sun Mar – last Sun Oct)']])}
         </div>
+        {draft.platform === 'MT5' && draft.adapter === 'TERMINAL_BRIDGE' && <BridgeFields settings={draft.settings} change={s => set('settings', s)} />}
         {draft.platform === 'MT5' && draft.settings?.server_details?.TimeZone != null && draft.server_utc_offset_minutes === '' &&
           <p className="cfg-note">servers.dat states TimeZone {String(draft.settings.server_details.TimeZone)}. <button type="button" className="cfg-link"
             onClick={() => setDraft({ ...draft, server_utc_offset_minutes: String(Number(draft.settings.server_details.TimeZone) * (Math.abs(Number(draft.settings.server_details.TimeZone)) <= 14 ? 60 : 1)), clock_source: 'SERVER_FILE' })}>Use it</button> — confirm against the broker's server time.</p>}
@@ -818,18 +823,34 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
 /* ---------- credentials (write-only) ---------- */
 
+/** Where the COREI MT5 terminal bridge runs (connectors/mt5-bridge): host, port and the certificate fingerprint it prints. */
+function BridgeFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const b = settings.bridge ?? { host: '', port: 9443, fingerprint: '' };
+  const set = (patch: Row) => change({ ...settings, bridge: { ...b, ...patch } });
+  return <div className="cfg-bridge">
+    <p className="cfg-note">Run <code>corei_mt5_bridge.py</code> on the machine with the MT5 terminal (Windows VPS or Wine). It prints its certificate fingerprint and makes a token file; enter them here and save the token under Credential.</p>
+    <div className="cfg-pair">
+      <Field label="Bridge host" hint="DNS name or IP of the machine running the terminal"><input aria-label="Bridge host" maxLength={253} value={b.host} onChange={e => set({ host: e.target.value.trim() })} /></Field>
+      <Field label="Bridge port"><input aria-label="Bridge port" type="number" min={1} max={65535} value={b.port} onChange={e => set({ port: e.target.value })} /></Field>
+    </div>
+    <Field label="Certificate fingerprint (SHA-256)" hint="As the bridge prints it: 32 pairs separated by colons"><input aria-label="Certificate fingerprint" maxLength={95} value={b.fingerprint}
+      onChange={e => set({ fingerprint: e.target.value.trim().toUpperCase() })} placeholder="AB:CD:…" /></Field>
+  </div>;
+}
+
 function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connections'; row: Row; reload: () => void }) {
-  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
-  const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '' };
+  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.platform === 'MT5' ? 'BRIDGE_TOKEN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
+  const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '', token: '' };
   const [secret, setSecret] = useState(empty), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const levels = owner === 'accounts'
     ? [['FULL', 'Master password', row.master_credential_kind, row.master_credential_updated_at], ['READ_ONLY', 'Investor password', row.investor_credential_kind, row.investor_credential_updated_at]] as const
-    : [['FULL', kind === 'API_KEY' ? 'API key and secret' : 'OAuth client', row.credential_kind, row.credential_updated_at]] as const;
+    : [['FULL', kind === 'API_KEY' ? 'API key and secret' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : 'OAuth client', row.credential_kind, row.credential_updated_at]] as const;
   const savedLevel = (level: string) => levels.find(l => l[0] === level)?.[2];
   async function save(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setMessage('');
     const credential = kind === 'MT5_LOGIN' ? { kind, password: secret.password, access_level: secret.access_level }
-      : kind === 'API_KEY' ? { kind, api_key: secret.api_key, api_secret: secret.api_secret } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
+      : kind === 'API_KEY' ? { kind, api_key: secret.api_key, api_secret: secret.api_secret }
+      : kind === 'BRIDGE_TOKEN' ? { kind, token: secret.token } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
     try { const result = await api(`config/${owner}/${row.id}/credential`, 'PUT', { credential }); setSecret(empty);
       setMessage(pendingMessage(result) ?? 'Saved and encrypted. It cannot be viewed, only replaced.'); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
@@ -843,7 +864,8 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
   const input = (k: keyof typeof empty, label: string) => <Field label={label}><input aria-label={label} required type="password" autoComplete="new-password" maxLength={4096}
     value={secret[k]} onChange={e => setSecret({ ...secret, [k]: e.target.value })} /></Field>;
   return <form className="cfg-credential" onSubmit={save}>
-    <h3>{owner === 'accounts' ? 'MT5 login' : kind === 'API_KEY' ? 'API key' : 'OAuth client'}</h3>
+    <h3>{owner === 'accounts' ? 'MT5 login' : kind === 'API_KEY' ? 'API key' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : 'OAuth client'}</h3>
+    {kind === 'BRIDGE_TOKEN' && row.adapter !== 'TERMINAL_BRIDGE' && <p className="cfg-note">Set the connection method to MT5 terminal bridge first.</p>}
     <ul className="cfg-cred-status">{levels.map(([level, label, saved, updated]) => <li key={level}>
       <span>{label}</span>{saved ? <span className="cfg-pill ok">Saved · {new Date(updated).toLocaleDateString()}</span> : <span className="cfg-pill off">Not saved</span>}
       {saved && <button type="button" className="cfg-link" disabled={busy} onClick={() => void remove(level, label)}>Remove</button>}</li>)}</ul>
@@ -852,6 +874,7 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
         onChange={v => setSecret({ ...secret, access_level: v })} /></Field>
       {input('password', savedLevel(secret.access_level) ? 'New password' : 'Password')}</>}
     {kind === 'API_KEY' && <>{input('api_key', 'API key')}{input('api_secret', 'API secret')}</>}
+    {kind === 'BRIDGE_TOKEN' && input('token', 'Bridge token (contents of corei-bridge.token)')}
     {kind === 'OAUTH_CLIENT' && <>{input('client_id', 'Client ID')}{input('client_secret', 'Client secret')}</>}
     {error && <p role="alert" className="cfg-error">{error}</p>}{message && <p role="status" className="cfg-ok">{message}</p>}
     <div className="cfg-actions"><button className="primary" disabled={busy}>{savedLevel(secret.access_level) ? 'Replace' : 'Save'}</button>
@@ -927,7 +950,7 @@ function AddUpstoxAccount({ close, created }: { close: () => void; created: (acc
 function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void }) {
   const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
     base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
-    server: { server_name: '', access_points: [] as Row[] } });
+    server: { server_name: '', access_points: [] as Row[] }, adapter: 'TERMINAL_BRIDGE', bridge_token: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const provider = refs.providers.find(p => p.id === f.provider_id);
   const set = (patch: Row) => setF(old => {
@@ -943,23 +966,27 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
   const newOnServer = match ? picked.filter(p => !(match.settings.access_points ?? []).some((q: Row) => key(q) === key(p))) : [];
   // Addresses the account may choose from: the server's (existing connection) plus any picked here.
   const serverPoints: Row[] = match ? [...match.settings.access_points, ...newOnServer.map(p => ({ ...p, enabled: false }))] : picked;
+  const bridgeNew = !match && f.adapter === 'TERMINAL_BRIDGE';
+  const bridgeOk = !bridgeNew || (f.server.bridge?.host && /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f.server.bridge?.fingerprint ?? '') && f.bridge_token);
   const ready = f.provider_id && f.external_account_id && f.name && f.code && f.server.server_name && picked.length > 0
-    && (f.access_mode !== 'ACCOUNT' || f.access_points.length > 0);
+    && (f.access_mode !== 'ACCOUNT' || f.access_points.length > 0) && bridgeOk;
   async function save(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
     try {
       const server = { server_name: f.server.server_name, company_name: f.server.company_name || null, server_details: f.server.server_details ?? {},
         access_points: picked.map((p: Row) => ({ name: p.name || f.server.server_name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
-          source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })) };
+          source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })),
+        ...(bridgeNew ? { bridge: { host: f.server.bridge.host, port: Number(f.server.bridge.port || 9443), fingerprint: f.server.bridge.fingerprint } } : {}) };
       const result = await api('config/mt5/account-setup', 'POST', {
         provider_id: f.provider_id, environment: f.environment, server, ...(match ? { connection_id: match.id } : {}),
+        ...(bridgeNew ? { adapter: 'TERMINAL_BRIDGE', bridge_token: f.bridge_token } : match ? {} : { adapter: f.adapter }),
         account: { code: f.code, name: f.name, external_account_id: f.external_account_id, holder_name: f.holder_name, base_currency: f.base_currency,
           trading_permission: f.trading_permission, access_mode: f.access_mode, access_points: f.access_points.map((p: Row) => ({ host: p.host, port: Number(p.port) })) },
         ...(f.password ? { credential: { kind: 'MT5_LOGIN', password: f.password, access_level: f.access_level } } : {}) });
-      setF(old => ({ ...old, password: '' }));
+      setF(old => ({ ...old, password: '', bridge_token: '' }));
       const pending = pendingMessage(result);
       if (pending) { created(null, pending); return; }
-      const note = result.connection_action === 'CREATED' ? `Account added. Connection ${result.connection.code} was created for ${server.server_name}.`
+      const note = result.connection_action === 'CREATED' ? `Account added. Connection ${result.connection.code} was created for ${server.server_name}${bridgeNew ? ' through the MT5 terminal bridge' : ''}.`
         : result.connection_action === 'ADDRESSES_ADDED' ? `Account added to ${result.connection.code}. New addresses were added to the server unticked; other accounts are unchanged.`
         : `Account added to ${result.connection.code}.`;
       created(result.account, note);
@@ -998,6 +1025,15 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
           {newOnServer.length > 0 && <> {newOnServer.length} address{newOnServer.length === 1 ? '' : 'es'} of this server that it does not have yet will be added to it unticked, so other accounts are not affected.</>}</p>}
         {existing.length > 1 && <p className="cfg-error">{existing.length} connections use this server ({existing.map(c => c.code).join(', ')}). Add the account from the account form and choose one.</p>}
         {!match && f.server.server_name && f.provider_id && <p className="cfg-note">A new connection will be created for this server.</p>}
+        {!match && <div className="cfg-method">
+          <Field label="How COREI reaches it" hint={f.adapter === 'TERMINAL_BRIDGE' ? 'The official MT5 terminal logs in and keeps itself up to date; COREI reads from it through the bridge program' : 'The licensed mtapi SDK talks to the server itself; it breaks whenever the broker moves to a newer MT5 protocol'}>
+            <Choice label="Connection method" value={f.adapter} options={[['TERMINAL_BRIDGE', 'MT5 terminal bridge (recommended)'], ['MTAPI_DIRECT', 'Direct SDK']]} onChange={v => set({ adapter: v })} /></Field>
+          {f.adapter === 'TERMINAL_BRIDGE' && <>
+            <BridgeFields settings={f.server} change={server => set({ server })} />
+            <Field label="Bridge token" hint="Contents of corei-bridge.token on the bridge machine; stored encrypted on the connection"><input aria-label="Bridge token" type="password" autoComplete="new-password" maxLength={200}
+              value={f.bridge_token} onChange={e => set({ bridge_token: e.target.value.trim() })} /></Field></>}
+        </div>}
+        {match && <p className="cfg-note">Reached through {match.adapter === 'TERMINAL_BRIDGE' ? 'the MT5 terminal bridge' : 'the direct SDK'} (set on the connection).</p>}
       </Section>
       <Section n={4} title="Addresses for this account">
         {serverPoints.length ? <AccountAddresses mode={f.access_mode} own={f.access_points} serverPoints={serverPoints} connectionId={match?.id}

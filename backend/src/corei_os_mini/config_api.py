@@ -178,9 +178,11 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
     """Add an MT5 account in one step (login, password, server and addresses)."""
     _no_store(response)
     credential = payload.get('credential')
-    data = parse(Mt5AccountSetupIn, {**payload, 'credential': None})
+    data = parse(Mt5AccountSetupIn, {**payload, 'credential': None, 'bridge_token': None})
     if credential is not None:
         data.credential = parse(CredentialEnvelope, {'credential': credential}, secret=True).credential
+    if payload.get('bridge_token'):
+        data.bridge_token = parse(CredentialEnvelope, {'credential': {'kind': 'BRIDGE_TOKEN', 'token': payload['bridge_token']}}, secret=True).credential.token
     return _pending(response, store.setup_mt5_account(actor, data))
 
 

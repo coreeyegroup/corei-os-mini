@@ -103,7 +103,7 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 
 | ID | Sev | Finding | Status |
 |---|---|---|---|
-| A-01 | Critical | Live MT5 login refused: SDK default build → OLD_VERSION; build 6230 → ServerException 1035, a code newer than the SDK (names codes to 1030) | OPEN — owner: update mt5api.dll or use a broker's own demo server |
+| A-01 | Critical | Live MT5 login refused (OLD_VERSION / 1035), then on VT Markets accepted but unreadable: the direct SDK is behind the protocol | RESOLVED BY DESIGN 0.23.0 — terminal bridge (DEC-54); owner: set up the bridge per docs/MT5_TERMINAL_BRIDGE.md |
 | A-02 | Critical | Login storm: up to 12 addresses × 9 builds per attempt, retried within seconds (lockout risk) | DONE 0.17.0 |
 | A-03 | Critical | Order sending ON for DEMO and LIVE with no order adapter, risk limits or reconciliation; LIVE account permission TRADING | PARTIAL — warning + chip 0.18.0; owner to switch off |
 | A-04 | High | Backups failing (pg_dump 14 vs PostgreSQL 18) | DONE 0.17.0; restore drill OPEN |

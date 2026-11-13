@@ -29,7 +29,7 @@ from pydantic import BaseModel, ValidationError
 from . import credentials
 from .config import get_settings
 from .config_models import (AccountGroupIn, AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn,
-                            ApiKeyCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
+                            ApiKeyCredential, BridgeTokenCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
                             Mt5Settings)
 from .mt5_routing import effective_access_points
 from .persistence import PersistenceNotConfigured, _connect
@@ -93,8 +93,9 @@ def transaction(operation: str = 'write') -> Iterator[psycopg.Connection]:
         if operation == 'delete':
             raise HTTPException(409, 'This record is used by other records. Remove or deactivate those first.') from None
         raise HTTPException(422, 'A referenced record does not exist.') from None
-    except psycopg.errors.CheckViolation:
-        raise HTTPException(422, 'A value is outside its allowed range.') from None
+    except psycopg.errors.CheckViolation as exc:
+        _log.warning('Check violation during %s: %s', operation, exc.diag.message_primary)
+        raise HTTPException(422, f'A value is outside its allowed range ({exc.diag.message_primary}).') from None
     except credentials.CredentialStorageUnavailable as exc:
         raise HTTPException(503, f'Credential storage is not configured: {exc}. Run scripts/setup-broker-accounts.sh.') from None
     except psycopg.IntegrityError as exc:
@@ -245,7 +246,14 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if row['platform'] == 'REST_API' and not row.get('connection_credential_kind'):
         data.append('CONNECTION_CREDENTIAL_MISSING')
     routing = row.get('routing')
-    if routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings']:
+    uses_bridge = row['platform'] == 'MT5' and row.get('adapter') == 'TERMINAL_BRIDGE'
+    if uses_bridge:
+        # The terminal logs in; COREI needs the bridge's address, certificate fingerprint and token, not server addresses.
+        if not ((row.get('connection_settings') or {}).get('bridge') or {}).get('fingerprint'):
+            data.append('BRIDGE_NOT_CONFIGURED')
+        elif row.get('connection_credential_kind') != 'BRIDGE_TOKEN':
+            data.append('BRIDGE_TOKEN_MISSING')
+    elif routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings']:
         data.append('NO_ADDRESS_AVAILABLE')
     if row.get('connection_state') == 'FAILED':
         data.append('CONNECTION_FAILED')
@@ -613,6 +621,11 @@ def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> 
     connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
     if not connection:
         raise HTTPException(404, 'Connection not found.')
+    if connection['platform'] == 'MT5':
+        if connection['adapter'] != 'TERMINAL_BRIDGE' or not isinstance(credential, BridgeTokenCredential):
+            raise HTTPException(422, 'An MT5 connection takes only the terminal bridge token (when its method is Terminal bridge). '
+                                     'MT5 logins are saved on each account.')
+        return 'connection_id', connection
     expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(connection['settings'].get('auth_method'))
     if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):
         raise HTTPException(422, 'This connection does not take this kind of credential. MT5 logins are saved on each account.')
@@ -851,18 +864,23 @@ def setup_mt5_account(actor: str, data: Mt5AccountSetupIn, approved: bool = Fals
                         else f'adds {len(extra)} address(es) to LIVE connection {connection["code"]}')
                 return request_change(db, actor, 'accounts', uuid4(), 'ACCOUNT_SETUP',
                                       f"Add MT5 account {data.account.get('code')} (login {data.account.get('external_account_id')}): {what}",
-                                      {'setup': data.model_dump(mode='json', exclude={'credential'}),
+                                      {'setup': data.model_dump(mode='json', exclude={'credential', 'bridge_token'}),
                                        'credential': {'kind': 'MT5_LOGIN', 'access_level': data.credential.access_level} if data.credential else None},
-                                      secret_fields=_secret_fields(data.credential) if data.credential else None, reason=reason)
+                                      secret_fields={**(_secret_fields(data.credential) if data.credential else {}),
+                                                     **({'bridge_token': data.bridge_token.get_secret_value()} if data.bridge_token else {})} or None,
+                                      reason=reason)
         connection_action = 'REUSED'
         if connection is None:
             new = ConnectionIn.model_validate({
                 'provider_id': data.provider_id, 'code': _connection_code(db, provider['code'], data.environment),
                 'name': f"{provider['name']} MT5 {data.environment.lower()} · {data.server.server_name}"[:120],
-                'platform': 'MT5', 'environment': data.environment, 'purpose': 'BOTH',
+                'platform': 'MT5', 'environment': data.environment, 'purpose': 'BOTH', 'adapter': data.adapter,
                 'settings': data.server.model_dump(mode='json')})
             connection_id = _insert(db, actor, 'connections', new, reason or 'Created while adding an MT5 account')
             connection_action = 'CREATED'
+            if data.adapter == 'TERMINAL_BRIDGE' and data.bridge_token:
+                _save_credential(db, actor, 'connections', connection_id, BridgeTokenCredential(kind='BRIDGE_TOKEN', token=data.bridge_token),
+                                 approved=True, reason=reason)
         else:
             connection_id = connection['id']
             have = {(p['host'], int(p['port'])) for p in connection['settings'].get('access_points', [])}

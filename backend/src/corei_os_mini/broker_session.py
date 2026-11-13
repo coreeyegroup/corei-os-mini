@@ -30,6 +30,7 @@ from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
 from . import config_store as store
+from .md.bridge_client import BridgeError, BridgeTransport, bridge_of
 from .broker_catalog import _parser
 from .order_checks import SymbolSpec, filling_modes_from_flags
 
@@ -114,7 +115,9 @@ def _offset_minutes(server_time: str | None, utc_now: str | None) -> int | None:
     if not server_time or not utc_now:
         return None
     delta = datetime.fromisoformat(server_time) - datetime.fromisoformat(utc_now)
-    return int(round(delta.total_seconds() / 60 / 15) * 15)
+    minutes = int(round(delta.total_seconds() / 60 / 15) * 15)
+    # Broker clocks sit within a day of UTC; anything else is a stale timestamp, not a clock.
+    return minutes if abs(minutes) <= 24 * 60 else None
 
 
 def _run_session(request: dict, timeout: int) -> dict:
@@ -129,6 +132,34 @@ def _run_session(request: dict, timeout: int) -> dict:
     return json.loads(result.stdout)
 
 
+def _run_bridge_session(bridge: dict, request: dict) -> dict:
+    """One session reply from the terminal bridge (same shape as the reader's --session)."""
+    try:
+        transport = BridgeTransport(bridge['host'], int(bridge['port']), bridge['fingerprint'])
+    except BridgeError as exc:
+        return {'connected': False, 'attempts': [{'host': bridge['host'], 'port': bridge['port'], 'ok': False, 'error': str(exc)}], 'error': str(exc)}
+    try:
+        transport.send(request)
+        transport.sock.settimeout(120)
+        line = next(transport.lines(), b'')
+    except (OSError, ValueError) as exc:
+        return {'connected': False, 'attempts': [], 'error': f'Bridge connection lost: {exc}'[:300]}
+    finally:
+        transport.close()
+    try:
+        reply = json.loads(line) if line.strip() else {}
+    except ValueError:
+        reply = {}
+    if reply.get('t') == 'failed':
+        reply = {'connected': False, 'attempts': reply.get('attempts') or []}
+    if reply.get('connected'):
+        # Connected through the bridge: record where the bridge is, not the terminal's placeholder.
+        reply['host'], reply['port'] = bridge['host'], int(bridge['port'])
+        for attempt in reply.get('attempts') or []:
+            attempt['host'], attempt['port'] = bridge['host'], int(bridge['port'])
+    return reply or {'connected': False, 'attempts': [], 'error': 'The bridge closed without answering.'}
+
+
 def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None, max_symbols: int = 2000) -> dict:
     with store.transaction('read') as db:
         account = store.get_record(db, 'accounts', account_id)
@@ -141,7 +172,14 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
     if account.get('credential_kind') != 'MT5_LOGIN':
         raise HTTPException(409, 'Save the investor (read-only) or master password first.')
     addresses = (account.get('routing') or {}).get('addresses') or []
-    if not addresses:
+    if account.get('adapter') == 'TERMINAL_BRIDGE':
+        with store.transaction('read') as db:
+            settings = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}).get('settings') or {}
+        if not bridge_of(settings):
+            raise HTTPException(409, 'This connection uses the MT5 terminal bridge: set the bridge host, port and certificate fingerprint on it first.')
+        account['connection_settings'] = settings
+        addresses = [{'host': settings['bridge']['host'], 'port': settings['bridge']['port']}]
+    elif not addresses:
         raise HTTPException(409, 'This account has no address to connect to. Add addresses on its connection.')
     key = str(account_id)
     with _lock:
@@ -159,10 +197,18 @@ def _read(actor: str, account: dict, addresses: list[dict], symbols: list[str] |
     level = 'READ_ONLY' if account.get('investor_credential_kind') else 'FULL'
     secret = store.use_credential('accounts', account['id'], actor, 'Read account facts and symbol rules from the broker', level)
     timeout = 20
-    request = {'login': int(account['external_account_id']), 'password': secret['password'],
-               'hosts': [{'host': a['host'], 'port': a['port']} for a in addresses[:12]],
-               'symbols': symbols or None, 'max_symbols': max_symbols, 'timeout_seconds': timeout}
-    result = _run_session(request, timeout * min(len(addresses), 12) + 60)
+    if account.get('adapter') == 'TERMINAL_BRIDGE':
+        bridge = account['connection_settings']['bridge']
+        token = store.use_credential('connections', account['connection_id'], actor, 'Open the MT5 terminal bridge')
+        request = {'token': token['token'], 'mode': 'session', 'login': int(account['external_account_id']), 'password': secret['password'],
+                   'server': account['connection_settings'].get('server_name'), 'symbols': symbols or None, 'max_symbols': max_symbols}
+        result = _run_bridge_session(bridge, request)
+        token.clear()
+    else:
+        request = {'login': int(account['external_account_id']), 'password': secret['password'],
+                   'hosts': [{'host': a['host'], 'port': a['port']} for a in addresses[:12]],
+                   'symbols': symbols or None, 'max_symbols': max_symbols, 'timeout_seconds': timeout}
+        result = _run_session(request, timeout * min(len(addresses), 12) + 60)
     secret.clear()
     request.clear()
     from . import controls

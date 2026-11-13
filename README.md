@@ -638,6 +638,16 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## MT5 through the official terminal — release 0.23.0
+
+DEC-54. Migration `018_terminal_bridge.sql` (bridge token credential kind, CLOCK_MEASURED event). Guide: `docs/MT5_TERMINAL_BRIDGE.md`.
+
+- **The direct SDK route is a dead end for live brokers.** Both MetaQuotes-Demo and VTMarkets-Live 3 now accept the login and then answer in a protocol the licensed mtapi SDK cannot read; only the SDK vendor can fix that, and every MT5 release will reopen it.
+- **The terminal bridge** (`connectors/mt5-bridge/corei_mt5_bridge.py`) runs next to the official MT5 terminal (Windows VPS, or Wine) and uses MetaQuotes' own MetaTrader5 Python package. COREI connects over TLS (certificate pinned by fingerprint, shared token), sends the login once per session, and streams the same line protocol as the direct reader: *Log in and read now*, plans, journal, quality, bars, backfill and archive are unchanged.
+- **Add MT5 account** offers *How COREI reaches it*: terminal bridge (default) with host, port, fingerprint and token, or the direct SDK. Existing connections switch under *Connection method*.
+- The broker clock is measured from the first live tick when the source cannot state it (CLOCK_MEASURED event); stale tick times are never taken as the clock.
+- Partitions are ensured on every write (a cached list went stale when a partition was dropped).
+
 ### MT5 build ladder (0.22.1)
 
 Rebuild the reader: `bash scripts/setup-broker-accounts.sh`.

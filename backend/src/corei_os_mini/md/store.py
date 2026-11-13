@@ -6,6 +6,7 @@ WARNING/CRITICAL severity also queue alerts (MARKET_DATA or DATA_INTEGRITY).
 """
 from __future__ import annotations
 
+
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from uuid import UUID
@@ -16,7 +17,6 @@ from .. import config_store as store
 
 ALERT_KINDS = {'DISCONNECTED', 'FEED_SWITCH', 'FEED_RESTORED', 'STALE', 'GAP', 'DEVIATION', 'BACKLOG', 'ERROR'}
 INTEGRITY_KINDS = {'VERIFY', 'BACKUP', 'DISK', 'ARCHIVE'}
-_partitions: set[date] = set()
 
 
 def active_plans() -> list[dict]:
@@ -42,9 +42,10 @@ def policy(key: str, default: Any) -> Any:
 
 
 def ensure_partitions(db, days: Iterable[date]) -> None:
-    for day in sorted(set(days) - _partitions):
+    """One cheap call per day per batch, never cached: a cache went stale when a partition was dropped
+    (archive, operator) or the schema changed, and the write then failed until restart."""
+    for day in sorted(set(days)):
         db.execute('SELECT md_ensure_partition(%s)', (day,))
-        _partitions.add(day)
 
 
 def write(batch: dict) -> None:

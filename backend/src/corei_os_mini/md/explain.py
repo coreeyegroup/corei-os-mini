@@ -41,6 +41,19 @@ def _login_code(error: str) -> dict | None:
 
 
 RULES = [
+    (r'BRIDGE_UNREACHABLE', False, 'MT5 terminal bridge not reachable',
+     'COREI could not open the bridge at the host and port on the connection. On the machine with the MT5 terminal, check that '
+     'corei_mt5_bridge.py is running, that its port is open in the firewall, and that the host name resolves from this server.'),
+    (r'BRIDGE_FINGERPRINT_MISMATCH', True, 'MT5 terminal bridge certificate changed',
+     'The bridge answered with a certificate other than the one pinned on the connection. If you reinstalled the bridge, copy the '
+     'new fingerprint it prints into the connection; otherwise someone else is answering on that address.'),
+    (r'BRIDGE_TOKEN_REJECTED', True, 'MT5 terminal bridge token refused',
+     'The token saved on the connection is not the one in corei-bridge.token on the bridge machine. Save the current token.'),
+    (r'BRIDGE_NOT_CONFIGURED', True, 'MT5 terminal bridge not set up',
+     'The connection method is Terminal bridge but the bridge host, fingerprint or token is missing on the connection.'),
+    (r'Terminal did not start|Terminal login failed', True, 'MT5 terminal could not log in',
+     'The MT5 terminal on the bridge machine refused the login. Open the terminal there and log in by hand once with the same '
+     'login, password and server; the terminal shows the broker\'s own message.'),
     (r'PROTOCOL_AFTER_LOGIN', True, 'MT5 SDK too old for this server (login accepted)',
      'The broker accepted the account and password, then the MT5 SDK could not read the server\'s reply. COREI already '
      'tried the oldest client build the server accepts. The SDK (mt5api.dll) must be updated to a release that speaks '

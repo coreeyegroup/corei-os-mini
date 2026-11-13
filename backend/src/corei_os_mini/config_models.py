@@ -99,8 +99,18 @@ class Mt5AccessPoint(_Strict):
 MAX_ACCESS_POINTS = 256
 
 
+class BridgeSettings(_Strict):
+    """Where the COREI MT5 terminal bridge listens (connectors/mt5-bridge). Its self-signed certificate is pinned
+    by fingerprint; the token is a write-only credential (BRIDGE_TOKEN) on the connection."""
+    host: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=253, pattern=r'^[A-Za-z0-9.\-:\[\]]+$')]
+    port: Annotated[int, Field(ge=1, le=65535)] = 9443
+    fingerprint: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r'^([0-9A-F]{2}:){31}[0-9A-F]{2}$')]
+
+
 class Mt5Settings(_Strict):
     server_name: Name
+    # Set when the connection method is TERMINAL_BRIDGE: the official MT5 terminal logs in; COREI reads from it.
+    bridge: BridgeSettings | None = None
     # Company and every other field the broker's servers.dat states for this server,
     # kept as read so operators can confirm they picked the right server.
     company_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
@@ -340,6 +350,11 @@ class OAuthClientCredential(_Strict):
     client_secret: Secret
 
 
+class BridgeTokenCredential(_Strict):
+    kind: Literal['BRIDGE_TOKEN']
+    token: Secret
+
+
 class Mt5LoginCredential(_Strict):
     kind: Literal['MT5_LOGIN']
     password: Secret
@@ -347,7 +362,7 @@ class Mt5LoginCredential(_Strict):
     access_level: Literal['FULL', 'READ_ONLY'] = 'FULL'
 
 
-CredentialIn = Annotated[Union[ApiKeyCredential, OAuthClientCredential, Mt5LoginCredential], Field(discriminator='kind')]
+CredentialIn = Annotated[Union[ApiKeyCredential, OAuthClientCredential, Mt5LoginCredential, BridgeTokenCredential], Field(discriminator='kind')]
 
 
 class CredentialEnvelope(_Strict):
@@ -384,6 +399,16 @@ class Mt5AccountSetupIn(_Strict):
     add_missing_addresses: bool = True
     account: dict
     credential: Mt5LoginCredential | None = None
+    # How COREI reaches the server: through the official MT5 terminal (server.bridge set, bridge_token given)
+    # or the direct SDK. Applies when the connection is created; an existing connection keeps its method.
+    adapter: Literal['TERMINAL_BRIDGE', 'MTAPI_DIRECT', 'DEFAULT'] = 'DEFAULT'
+    bridge_token: Secret | None = None
+
+    @model_validator(mode='after')
+    def bridge_complete(self) -> 'Mt5AccountSetupIn':
+        if self.adapter == 'TERMINAL_BRIDGE' and self.server.bridge is None:
+            raise ValueError('bridge: the terminal bridge needs its host, port and certificate fingerprint')
+        return self
 
 
 class LatencyIn(_Strict):

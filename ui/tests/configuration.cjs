@@ -351,10 +351,31 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual(sent.account.access_points,[{host:'192.0.2.11',port:444},{host:'192.0.2.10',port:443},{host:'203.0.113.10',port:443}]);
  assert.deepEqual(sent.server.access_points.map(p=>[p.host,p.enabled]),[['203.0.113.10',true],['10.30.210.41',false]]);
  assert.equal(sent.credential.password,'setup-secret');assert.equal(sent.server.server_name,'ICMarketsSC-Demo');
+ assert.equal(sent.adapter,undefined,'an existing connection keeps its method');assert.equal(sent.server.bridge,undefined);
  assert.match($('.cfg-detail').textContent,/New addresses were added to the server unticked/);
  assert.ok(!w.document.body.textContent.includes('setup-secret'));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
+
+ // A new server: the terminal bridge is the default method and needs host, fingerprint and token before Add is enabled.
+ button('Add MT5 account').click();await tick();
+ const addWin2=$('.fw');
+ fill(byLabel('Provider'),db.providers[0].id);await tick();
+ fill(byLabel('Broker login'),'777002');fill(byLabel('Account name'),'Bridge test');await tick();
+ button('Enter server and addresses manually').click();await tick();
+ fill(byLabel('Broker server name'),'VTMarkets-Live 3');fill(byLabel('Access point 1 host'),'198.51.100.7');await tick();
+ assert.match(addWin2.textContent,/A new connection will be created/);
+ assert.equal(byLabel('Connection method').value||$('.fw .cfg-method input:checked')?.value,'TERMINAL_BRIDGE');
+ assert.ok($('.fw button.primary[form="cfg-add-mt5"]').disabled,'bridge details missing: cannot add yet');
+ fill(byLabel('Bridge host'),'mt5-vps.example.net');fill(byLabel('Certificate fingerprint'),Array(32).fill('AB').join(':'));fill(byLabel('Bridge token'),'tok-123');await tick();
+ assert.ok(!$('.fw button.primary[form="cfg-add-mt5"]').disabled);
+ await submit($('#cfg-add-mt5'));await tick();
+ const sent2=setups.at(-1);
+ assert.equal(sent2.adapter,'TERMINAL_BRIDGE');assert.equal(sent2.bridge_token,'tok-123');
+ assert.deepEqual(sent2.server.bridge,{host:'mt5-vps.example.net',port:9443,fingerprint:Array(32).fill('AB').join(':')});
+ assert.ok(!w.document.body.textContent.includes('tok-123'));
+ $('[aria-label="Close window"]').click();await tick();
+ console.log('PASS: a new MT5 server defaults to the terminal bridge; host, fingerprint and token travel with the one-step set-up.');
 
  // Add Upstox account in one step: client ID, app key and secret; redirect URL shown to copy.
  button('Add Upstox account').click();await tick();

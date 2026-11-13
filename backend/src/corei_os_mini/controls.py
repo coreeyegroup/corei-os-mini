@@ -162,9 +162,9 @@ def _apply(row: dict, secret: dict, actor: str, reason: str) -> Any:
         return plans.set_status(actor, row['entity_id'], plans.StatusIn(status='ACTIVE', version=payload['version'], reason=payload['reason']),
                                 approved=True)
     if action == 'ACCOUNT_SETUP':
-        data = Mt5AccountSetupIn.model_validate({**payload['setup'], 'credential': None})
+        data = Mt5AccountSetupIn.model_validate({**payload['setup'], 'credential': None, 'bridge_token': secret.get('bridge_token')})
         if payload.get('credential'):
-            data.credential = CredentialEnvelope.model_validate({'credential': {**payload['credential'], **secret}}).credential
+            data.credential = CredentialEnvelope.model_validate({'credential': {**payload['credential'], **{k: v for k, v in secret.items() if k != 'bridge_token'}}}).credential
         return store.setup_mt5_account(actor, data, approved=True, reason=reason)
     raise HTTPException(422, f'Unknown change action {action}.')
 

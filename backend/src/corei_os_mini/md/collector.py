@@ -37,6 +37,7 @@ from uuid import UUID
 from .. import config_store as cfg
 from . import store
 from .bars import BarBuilder, FRAMES, floor
+from .bridge_client import BridgeError, BridgeTransport, bridge_of
 from .explain import explain
 from .journal import Journal
 from .quality import Limits, SymbolQuality, consensus_deviation, server_offset
@@ -147,6 +148,7 @@ class SourceWorker(threading.Thread):
     """One account: login, stream, reconnect, backfill."""
 
     def __init__(self, account_id: str, plans: dict[str, dict], sink: Sink, root: Path, clock=store.utcnow):
+        self.offset_known = False
         self.client_build: int | None = None
         super().__init__(name=f'md-{account_id[:8]}', daemon=True)
         self.account_id, self.sink, self.clock = account_id, sink, clock
@@ -158,6 +160,7 @@ class SourceWorker(threading.Thread):
         self.pending_journal: list[bytes] = []
         self.stopping = threading.Event()
         self.proc: subprocess.Popen | None = None
+        self.bridge = None  # BridgeTransport while a terminal-bridge session is open
         self.write_lock = threading.Lock()
         self.subscribed: set[str] = set()
         self.offset = timedelta(0)
@@ -208,6 +211,12 @@ class SourceWorker(threading.Thread):
 
     def _send(self, message: dict) -> None:
         with self.write_lock:
+            if self.bridge is not None:
+                try:
+                    self.bridge.send(message)
+                except OSError:
+                    pass
+                return
             if self.proc and self.proc.stdin and self.proc.poll() is None:
                 try:
                     self.proc.stdin.write((json.dumps(message) + '\n').encode())
@@ -226,6 +235,8 @@ class SourceWorker(threading.Thread):
     def stop(self) -> None:
         self.stopping.set()
         self._send({'cmd': 'stop'})
+        if self.bridge is not None:
+            self.bridge.close()
         if self.proc:
             try:
                 self.proc.wait(timeout=10)
@@ -278,6 +289,24 @@ class SourceWorker(threading.Thread):
             return ([sys.executable, '-m', 'corei_os_mini.md.upstox_reader'],
                     {'token': token, 'api_base': settings.get('api_base_url'), 'symbols': sorted(self.wanted()),
                      'heartbeat_seconds': 5, 'poll_ms': 1000})
+        bridge = bridge_of(account.get('connection_settings')) if account.get('adapter') == 'TERMINAL_BRIDGE' else None
+        if account.get('adapter') == 'TERMINAL_BRIDGE' and bridge is None:
+            self.state, self.error = 'FAILED', 'BRIDGE_NOT_CONFIGURED: the connection uses the MT5 terminal bridge but has no bridge host and fingerprint.'
+            return None
+        if bridge:
+            try:
+                token = cfg.use_credential('connections', UUID(str(self.connection_id)), 'collector', 'Open the MT5 terminal bridge')
+            except Exception as exc:  # noqa: BLE001 - HTTPException: no token saved
+                self.state, self.error = 'FAILED', 'BRIDGE_NOT_CONFIGURED: no bridge token saved on the connection (' + str(getattr(exc, 'detail', exc)) + ').'
+                return None
+            level = 'READ_ONLY' if account.get('investor_credential_kind') else 'FULL'
+            secret = cfg.use_credential('accounts', UUID(self.account_id), 'collector', 'Stream market data through the terminal bridge', level)
+            request = {'token': token['token'], 'mode': 'stream', 'login': int(account['external_account_id']), 'password': secret['password'],
+                       'server': (account.get('connection_settings') or {}).get('server_name'),
+                       'symbols': sorted(self.wanted()), 'heartbeat_seconds': 5}
+            secret.clear()
+            token.clear()
+            return (['bridge', bridge['host'], str(bridge['port']), bridge['fingerprint']], request)
         addresses = ((account or {}).get('routing') or {}).get('addresses') or []
         if not addresses:
             self.state, self.error = 'FAILED', 'No address to connect to (check the account routing).'
@@ -306,6 +335,8 @@ class SourceWorker(threading.Thread):
         if started is None:
             return False
         command, request = started
+        if command[0] == 'bridge':
+            return self._bridge_session(command, request)
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      env={**os.environ, 'DOTNET_GCHeapHardLimit': '0x40000000', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1'})
         self._send(request)
@@ -326,6 +357,41 @@ class SourceWorker(threading.Thread):
             # The reader has answered; a process that lingers is killed rather than reported as an error.
             self.proc.kill()
             self.proc.wait(timeout=5)
+        return connected
+
+    def _bridge_session(self, command: list[str], request: dict) -> bool:
+        """The same loop over the terminal bridge's TLS stream instead of a child process."""
+        _, host, port, fingerprint = command
+        try:
+            transport = BridgeTransport(host, int(port), fingerprint)
+        except BridgeError as exc:
+            request.clear()
+            self._on_line(json.dumps({'t': 'failed', 'attempts': [{'host': host, 'port': int(port), 'ok': False, 'error': str(exc)}]}).encode())
+            return False
+        with self.write_lock:
+            self.bridge = transport
+        connected = False
+        try:
+            transport.send(request)
+            request.clear()
+            for raw in transport.lines():
+                if self.stopping.is_set():
+                    break
+                if raw.startswith(b'{"t":"connected"'):
+                    m = json.loads(raw)
+                    m['host'], m['port'] = host, int(port)
+                    raw = json.dumps(m).encode()
+                message = self._on_line(raw)
+                if message == 'connected':
+                    connected = True
+                elif message == 'end':
+                    break
+        except OSError as exc:
+            self._on_line(json.dumps({'t': 'error', 'msg': f'Bridge connection lost: {exc}'[:200]}).encode())
+        finally:
+            with self.write_lock:
+                self.bridge = None
+            transport.close()
         return connected
 
     def _on_line(self, raw: bytes) -> str | None:
@@ -381,6 +447,9 @@ class SourceWorker(threading.Thread):
         self.state, self.host, self.port, self.error = 'CONNECTED', m.get('host'), m.get('port'), None
         self.reported_error, self.failures = None, 0
         self.offset = server_offset(m.get('server_time'), m.get('utc_now'))
+        # A source that cannot state its clock (the terminal bridge on a closed market) sends no server_time:
+        # the offset is then measured from the first live tick instead (see _quote).
+        self.offset_known = bool(m.get('server_time') and m.get('utc_now'))
         now = self.clock()
         outage = self.outage_since
         self._event('CONNECTED', 'INFO', host=self.host, port=self.port, client_build=m.get('client_build'), server_offset_minutes=int(self.offset.total_seconds() // 60),
@@ -402,6 +471,14 @@ class SourceWorker(threading.Thread):
         if st is None:
             return
         source = parse_time(m.get('st'))
+        if source and not self.offset_known:
+            # First live tick: broker time minus receipt time, rounded to 15 minutes, is the broker clock offset.
+            self.offset = timedelta(minutes=round((source - rx).total_seconds() / 60 / 15) * 15)
+            self.offset_known = True
+            self._event('CLOCK_MEASURED', 'INFO', server_offset_minutes=int(self.offset.total_seconds() // 60), symbol=symbol)
+            from .. import controls
+            controls.set_connection_status(self.connection_id, 'CONNECTED', host=self.host, port=self.port, logged_in=True, heartbeat=True,
+                                           server_time_offset_ms=int(self.offset.total_seconds() * 1000))
         source_utc = source - self.offset if source else None
         bid, ask, last, volume = m.get('b') or None, m.get('a') or None, m.get('l') or None, m.get('v')
         plan = st.plan
