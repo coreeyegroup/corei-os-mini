@@ -369,6 +369,11 @@ class Explain(unittest.TestCase):
         self.assertTrue(code['permanent'])
         self.assertEqual(explain('ServerException: 1027')['title'], 'One-time password required')
         self.assertTrue(explain('ServerException: 1035')['permanent'])
+        # Login accepted, SDK cannot read the reply (VTMarkets-Live 3, 13 Nov): named, permanent, says the login is right.
+        proto = explain('SdkProtocolException: PROTOCOL_AFTER_LOGIN: login accepted (client build 5000), then the MT5 SDK could not read')
+        self.assertEqual(proto['title'], 'MT5 SDK too old for this server (login accepted)')
+        self.assertTrue(proto['permanent'])
+        self.assertIn('login details are correct', proto['detail'])
 
 
 @unittest.skipUnless(os.getenv('COREI_TEST_DATABASE_URL'), 'Set COREI_TEST_DATABASE_URL for PostgreSQL integration tests')

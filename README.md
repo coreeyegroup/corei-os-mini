@@ -638,6 +638,13 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+### MT5 build ladder (0.22.1)
+
+Rebuild the reader: `bash scripts/setup-broker-accounts.sh`.
+
+- When the broker refuses the SDK's own MT5 build (OLD_VERSION), the reader now climbs from the **oldest** client build (4000, 4500, 5000, 5370 … 6241) instead of jumping to the newest. Claiming 6241 got VTMarkets-Live 3 to accept the login and then answer in a protocol the SDK cannot read (`accept authorized, get login id` → IndexOutOfRangeException); the lowest accepted build is the closest to the SDK's own protocol.
+- If even that build fails after the login was accepted, the error is **MT5 SDK too old for this server (login accepted)**: the password is right, the SDK must be updated. COREI stops at the first address (no repeated logins) and retries every 5 minutes with the build that was accepted, so each retry is one login.
+
 ## One set-up path — release 0.22.0
 
 DEC-53. No migration. Nothing removed: every record list, form, control and option is still there, reached in a fixed order.

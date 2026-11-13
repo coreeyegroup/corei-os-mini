@@ -147,6 +147,7 @@ class SourceWorker(threading.Thread):
     """One account: login, stream, reconnect, backfill."""
 
     def __init__(self, account_id: str, plans: dict[str, dict], sink: Sink, root: Path, clock=store.utcnow):
+        self.client_build: int | None = None
         super().__init__(name=f'md-{account_id[:8]}', daemon=True)
         self.account_id, self.sink, self.clock = account_id, sink, clock
         self.plans: dict[str, PlanState] = {s: PlanState(p) for s, p in plans.items()}
@@ -286,6 +287,9 @@ class SourceWorker(threading.Thread):
         request = {'login': int(account['external_account_id']), 'password': secret['password'],
                    'hosts': [{'host': a['host'], 'port': a['port']} for a in addresses[:12]],
                    'symbols': sorted(self.wanted()), 'timeout_seconds': 20, 'heartbeat_seconds': 5}
+        if self.client_build:
+            # The build this server accepted last time: one login instead of climbing the ladder again.
+            request['client_build'] = self.client_build
         secret.clear()
         return [reader_path(), '--stream'], request
 
@@ -338,6 +342,7 @@ class SourceWorker(threading.Thread):
         elif kind == 'hb':
             pass
         elif kind == 'connected':
+            self.client_build = m.get('client_build') or self.client_build
             self._connected(m)
             return 'connected'
         elif kind == 'subscribed':
@@ -348,6 +353,7 @@ class SourceWorker(threading.Thread):
             self._job_failed(m.get('msg') or 'History request failed')
         elif kind == 'failed':
             attempts = m.get('attempts') or []
+            self.client_build = m.get('client_build_accepted') or self.client_build
             self.error = next((a.get('error') for a in reversed(attempts) if a.get('error')), 'Login failed')
             self.state = 'FAILED'
             self.failures += 1

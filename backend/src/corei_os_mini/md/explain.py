@@ -41,6 +41,10 @@ def _login_code(error: str) -> dict | None:
 
 
 RULES = [
+    (r'PROTOCOL_AFTER_LOGIN', True, 'MT5 SDK too old for this server (login accepted)',
+     'The broker accepted the account and password, then the MT5 SDK could not read the server\'s reply. COREI already '
+     'tried the oldest client build the server accepts. The SDK (mt5api.dll) must be updated to a release that speaks '
+     'this server\'s protocol, then run scripts/setup-broker-accounts.sh. Your login details are correct.'),
     (r'BROKER_LOGIN_EXPIRED|daily login expired|Upstox refused the session', True, 'Broker login needed today',
      'Upstox issues one login per day, valid until 03:30 IST. Open Setup › Accounts › this account › Log in at broker '
      '(or TOTP login). The collector picks the new login up within 5 minutes.'),

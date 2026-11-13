@@ -539,14 +539,19 @@ static bool BuildInConstructor() => typeof(MT5API).GetConstructors().Any(c => c.
 
 static int? ConfiguredBuild() => int.TryParse(Environment.GetEnvironmentVariable("COREI_MT5_CLIENT_BUILD"), out var b) && b is > 1000 and < 100000 ? b : null;
 
-// Connect as the SDK is. If the broker answers OLD_VERSION and the SDK lets us state the
-// client build, try recent builds (or exactly COREI_MT5_CLIENT_BUILD when set).
+// Connect as the SDK is. If the broker answers OLD_VERSION and the SDK lets us state the client
+// build, climb the build ladder from the oldest: the server accepts any build at or above its
+// minimum, and the closer the stated build is to the SDK's own protocol, the better the SDK can read
+// the replies. Stating the newest build (6241) to an older SDK gets past the version check and the
+// password, then the server talks a protocol the SDK cannot parse (seen on VTMarkets-Live 3:
+// "accept authorized, get login id" → IndexOutOfRangeException). COREI_MT5_CLIENT_BUILD or the
+// request's client_build pins one build.
 static object ConnectWithBuild(SessionRequest r, SessionHost h, int timeout, bool quotes)
 {
     var members = BuildMembers();
     var settable = members.Count > 0 || BuildInConstructor();
-    var configured = ConfiguredBuild();
-    var plan = configured is int c ? new int?[] { c } : new int?[] { null }.Concat(settable ? RecentBuilds.Select(b => (int?)b) : Array.Empty<int?>()).ToArray();
+    var pinned = ConfiguredBuild() ?? (r.client_build is > 1000 and < 100000 ? r.client_build : null);
+    var plan = pinned is int c ? new int?[] { c } : new int?[] { null }.Concat(settable ? BuildLadder.Select(b => (int?)b) : Array.Empty<int?>()).ToArray();
     Exception? first = null;
     var tried = new List<int>();
     foreach (var build in plan)
@@ -566,19 +571,31 @@ static object ConnectWithBuild(SessionRequest r, SessionHost h, int timeout, boo
         {
             first ??= e;
             if (build is int tb) tried.Add(tb);
-            if (!Reason(e).Contains("OLD_VERSION", StringComparison.OrdinalIgnoreCase))
-            {
-                if (build is null) throw;
-                // A newer build got past the version check and was refused for another reason: report both.
-                throw new InvalidOperationException(Reason(e) + " (with client build " + build + "; the SDK default build was refused as OLD_VERSION)", e);
-            }
+            if (Reason(e).Contains("OLD_VERSION", StringComparison.OrdinalIgnoreCase)) continue;
+            if (build is null) throw;
+            BuildAccepted = build;
+            var refusedAs = tried.Count > 1 ? $"builds {string.Join(", ", tried.Take(tried.Count - 1))} and the SDK default were refused as OLD_VERSION"
+                                            : "the SDK default build was refused as OLD_VERSION";
+            if (AfterLogin(e))
+                throw new SdkProtocolException($"PROTOCOL_AFTER_LOGIN: login accepted (client build {build}), then the MT5 SDK could not read the "
+                    + $"server's reply: the SDK is older than this server's protocol, update mt5api.dll. [{refusedAs}] {Reason(e)}", e);
+            throw new InvalidOperationException(Reason(e) + $" (with client build {build}; {refusedAs})", e);
         }
     }
-    var note = configured is not null ? $" (COREI_MT5_CLIENT_BUILD={configured} was also refused)"
+    var note = pinned is not null ? $" (client build {pinned} was also refused)"
         : settable ? $" (also refused with client builds {string.Join(", ", tried)})"
         : " (this SDK has no client-build setting; it must be updated to a newer release)";
     throw new InvalidOperationException(Reason(first!) + note);
 }
+
+// The SDK's own trace shows how far the login went; past "accept authorized" the broker has accepted
+// the account and the failure is the SDK reading the server's protocol (no point trying other addresses).
+static bool AfterLogin(Exception e)
+{
+    var text = e.ToString();
+    return text.Contains("accept authorized", StringComparison.OrdinalIgnoreCase) && !text.Contains("ServerException", StringComparison.Ordinal);
+}
+
 
 
 static object Construct(SessionRequest r, SessionHost h)
@@ -638,6 +655,7 @@ static string Reason(Exception e)
 static bool BrokerAnswered(Exception e)
 {
     while (e is TargetInvocationException or AggregateException && e.InnerException is not null) e = e.InnerException!;
+    if (e is SdkProtocolException) return true;
     if (e is TimeoutException or System.Net.Sockets.SocketException or System.IO.IOException or OperationCanceledException) return false;
     return e.GetType().Name.Contains("ServerException") || (e is InvalidOperationException && e.Message.Contains("ServerException"));
 }
@@ -930,7 +948,7 @@ static int Stream()
             if (BrokerAnswered(e)) break;
         }
     }
-    if (api is null || used is null) { Emit(new { t = "failed", attempts }); return 3; }
+    if (api is null || used is null) { Emit(new { t = "failed", attempts, client_build_accepted = BuildAccepted }); return 3; }
     var lost = new ManualResetEventSlim(false);
     AttachDisconnect(api, () => lost.Set());
     string? serverTime = null;
@@ -994,7 +1012,9 @@ partial class Program
     static readonly Type[] NumericTypes = { typeof(int), typeof(uint), typeof(short), typeof(ushort), typeof(long) };
     // Recent MT5 terminal builds, newest first (6230 was current in November 2026;
     // MetaQuotes' own demo servers accept only the latest). COREI_MT5_CLIENT_BUILD pins one.
-    static readonly int[] RecentBuilds = { 6241, 6238, 6230, 6180, 6140, 6060, 5830, 5640, 5430, 5370 };
+    // Oldest first: the first build the server accepts is the closest to the SDK's own protocol.
+    static readonly int[] BuildLadder = { 4000, 4500, 5000, 5370, 5640, 5830, 6060, 6140, 6230, 6241 };
+    static int? BuildAccepted;
     static int? BuildOverride;
     static int? BuildUsed;
     static long StreamSeq;
@@ -1014,4 +1034,6 @@ partial class Program
 }
 
 sealed record SessionHost(string host, int port);
-sealed record SessionRequest(ulong login, string password, SessionHost[] hosts, string[]? symbols, int max_symbols = 2000, int timeout_seconds = 20, int heartbeat_seconds = 5);
+sealed record SessionRequest(ulong login, string password, SessionHost[] hosts, string[]? symbols, int max_symbols = 2000, int timeout_seconds = 20, int heartbeat_seconds = 5, int? client_build = null);
+
+sealed class SdkProtocolException(string message, Exception inner) : Exception(message, inner);
