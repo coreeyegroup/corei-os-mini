@@ -150,7 +150,10 @@ class TerminalBridge(unittest.TestCase):
         t.close()
 
 
-from tests import test_market_data  # noqa: E402 - reuse the fixture (database, key, signed-in users)
+import importlib  # noqa: E402
+# The fixture (database, key, signed-in users) lives in test_market_data; pytest imports it by file, not package.
+test_market_data = importlib.import_module('test_market_data') if 'test_market_data' in sys.modules or importlib.util.find_spec('test_market_data') \
+    else importlib.import_module('tests.test_market_data')
 from corei_os_mini.md.collector import Collector  # noqa: E402
 from uuid import UUID  # noqa: E402
 
