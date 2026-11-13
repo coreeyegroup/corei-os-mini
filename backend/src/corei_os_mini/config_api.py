@@ -194,6 +194,15 @@ def adapter_catalogue(response: Response, _: Principal = Depends(current_user)):
     return catalogue()
 
 
+@router.post('/venues', status_code=201)
+def setup_venue(payload: dict, response: Response, actor: str = Depends(editor)):
+    """Add a "who" under a technology in one step: the provider (existing, or new) and its server,
+    FIX session or API connection. LIVE connections with new addresses go to approval as usual."""
+    _no_store(response)
+    from .config_models import VenueSetupIn
+    return _pending(response, store.setup_venue(actor, parse(VenueSetupIn, payload)))
+
+
 @router.post('/upstox/account-setup', status_code=201)
 def setup_upstox_account(payload: dict, request: Request, response: Response, actor: str = Depends(editor)):
     """Add an Upstox account in one step: broker, API connection, app key and secret, account."""

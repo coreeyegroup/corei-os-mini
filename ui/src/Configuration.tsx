@@ -10,7 +10,8 @@ import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode 
 import './configuration.css';
 import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
 import FloatingWindow from './FloatingWindow';
-import { Alerts, Approvals, BrokerLogin, BrokerRead, BrokerTree, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import ConnectTree from './ConnectTree';
+import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
 type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
@@ -23,7 +24,7 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
-  { id: 'brokers', label: 'Brokers & accounts', hint: 'Broker › server or API › account. Add an account; its broker and server records are created with it' },
+  { id: 'brokers', label: 'Connectivity', hint: 'Technology › who › server or session › accounts. Select a level to see it and add the next one' },
   { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
   { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
   { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
@@ -41,7 +42,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
 
 /* Headings in the section list, so 14 sections read as five groups. */
 /* The four views of the Connect screen: the tree, then the three record lists behind it. */
-const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Brokers'], ['connections', 'Servers & APIs'], ['accounts', 'Accounts']];
+const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Who (providers)'], ['connections', 'Servers & sessions'], ['accounts', 'Accounts']];
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The broker connection failed — reason below',
@@ -658,7 +659,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     <Section n={1} title="Provider">
       {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand, e.g. IC Markets, VT Markets, Upstox')}
       <div className="cfg-pair">{code('Provider ID', 'ICMARKETS, EXNESS, UPSTOX')}
-        {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['DATA_VENDOR', 'Data vendor']])}</div>
+        {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['ECN', 'ECN'], ['PRIME_BROKER', 'Prime broker'], ['LIQUIDITY_PROVIDER', 'Liquidity provider'], ['FAST_FEED', 'Fast feed'], ['DATA_VENDOR', 'Data vendor'], ['DATA_CENTRE', 'Data centre']])}</div>
     </Section>
     <Section n={2} title="Legal entity and regulation">
       {text('legal_entity', 'Legal entity', { maxLength: 200 }, 'The firm that holds the accounts, e.g. VT Markets (Pty) Ltd. One brand can have several.')}
@@ -754,7 +755,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     const mt5 = connection?.platform === 'MT5';
     return <>
       <Section n={1} title="Connection">
-        {ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform === 'MT5' ? r.settings?.server_name ?? 'MT5' : 'API'} · ${r.environment}`)}
+        {ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform === 'MT5' ? r.settings?.server_name ?? 'MT5' : r.platform === 'FIX' ? `FIX ${r.settings?.host ?? ''}` : 'API'} · ${r.environment}`)}
         {connection && <p className="cfg-note">Environment <Env value={connection.environment} />{mt5 ? <> · server <strong>{connection.settings?.server_name}</strong></> : null}</p>}
       </Section>
       <Section n={2} title="Account">
@@ -833,11 +834,11 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
 export const ROLE_OPTIONS: [string, string][] = [['MARKET_DATA', 'Data source'], ['TRADING', 'Execution'], ['BOTH', 'Data source and execution']];
 export const PURPOSE_LABEL: Record<string, string> = Object.fromEntries(ROLE_OPTIONS);
-const FIX_BLANK = { host: '', port: 443, tls: true, tls_verify: true, begin_string: 'FIX.4.4', sender_comp_id: '', target_comp_id: '', sender_sub_id: '',
+export const FIX_BLANK = { host: '', port: 443, tls: true, tls_verify: true, begin_string: 'FIX.4.4', sender_comp_id: '', target_comp_id: '', sender_sub_id: '',
   target_sub_id: '', heartbeat_seconds: 30, reset_seq_on_logon: true, md_depth: 1, md_snapshots_only: false };
 
 /** A FIX 4.4 / 4.2 session: where it is and who we are on it (the venue sends these in its onboarding sheet). */
-function FixFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+export function FixFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
   const s: Row = { ...FIX_BLANK, ...settings };
   const set = (patch: Row) => change({ ...s, ...patch });
   const box = (k: string, label: string) => <label className="cfg-check"><input type="checkbox" aria-label={label} checked={!!s[k]} onChange={e => set({ [k]: e.target.checked })} /> {label}</label>;
@@ -866,7 +867,7 @@ function FixFields({ settings, change }: { settings: Row; change: (s: Row) => vo
 }
 
 /** Where the COREI MT5 terminal bridge runs (connectors/mt5-bridge): host, port and the certificate fingerprint it prints. */
-function BridgeFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+export function BridgeFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
   const b = settings.bridge ?? { host: '', port: 9443, fingerprint: '' };
   const set = (patch: Row) => change({ ...settings, bridge: { ...b, ...patch } });
   return <div className="cfg-bridge">
@@ -991,10 +992,12 @@ function AddUpstoxAccount({ close, created }: { close: () => void; created: (acc
   </FloatingWindow>;
 }
 
-function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void }) {
-  const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
+function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void; preset?: Row | null }) {
+  // Opened on a server in the Connectivity tree: broker, environment, server and its addresses come from that connection.
+  const [f, setF] = useState<Row>({ provider_id: preset?.provider_id ?? '', environment: preset?.environment ?? 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
     base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
-    server: { server_name: '', access_points: [] as Row[] }, adapter: 'MTAPI_DIRECT', bridge_token: '' });
+    server: preset ? { server_name: preset.settings?.server_name ?? '', access_points: (preset.settings?.access_points ?? []).map((p: Row) => ({ ...p })) }
+      : { server_name: '', access_points: [] as Row[] }, adapter: preset?.adapter === 'TERMINAL_BRIDGE' ? 'TERMINAL_BRIDGE' : 'MTAPI_DIRECT', bridge_token: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const provider = refs.providers.find(p => p.id === f.provider_id);
   const set = (patch: Row) => setF(old => {
@@ -1149,6 +1152,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   const [rows, setRows] = useState<Row[] | null>(null), [q, setQ] = useState(''), [parent, setParent] = useState('');
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
+  const [mt5Preset, setMt5Preset] = useState<Row | null>(null);
   const [adding, setAdding] = useState<'' | 'MT5' | 'UPSTOX'>(''), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
   const prefKey = `corei-os-mini.list.${entity}`;
   const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
@@ -1170,6 +1174,10 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     // From the Connect screen: 'new' opens a blank record, 'new:MT5' / 'new:UPSTOX' the one-step account forms.
     if (openId === 'new') { open(null); return; }
     if (openId === 'new:MT5' || openId === 'new:UPSTOX') { setAdding(openId.slice(4) as 'MT5' | 'UPSTOX'); return; }
+    // From the Connectivity tree: an account on a chosen server ('new:MT5:<connection>', 'new:ACCOUNT:<connection>').
+    if (openId.startsWith('new:MT5:')) { void (async () => { const id = openId.slice(8);
+      setMt5Preset(refs.connections.find(c => c.id === id) ?? await api(`config/connections/${id}`).catch(() => null)); setAdding('MT5'); })(); return; }
+    if (openId.startsWith('new:ACCOUNT:')) { open(null); setDraft(d => ({ ...(d ?? blank[entity]), connection_id: openId.slice(12) })); return; }
     void (async () => {
     let row = rows?.find(r => r.id === openId);
     if (!row) row = (await load()).find(r => r.id === openId) ?? (await api(`config/${entity}/${openId}`).catch(() => null));
@@ -1266,8 +1274,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     {adding === 'UPSTOX' && <AddUpstoxAccount close={() => setAdding('')} created={(account, note) => {
       setAdding(''); reloadRefs();
       void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
-    {adding === 'MT5' && <AddMt5Account refs={refs} close={() => setAdding('')} created={(account, note) => {
-      setAdding(''); reloadRefs();
+    {adding === 'MT5' && <AddMt5Account refs={refs} preset={mt5Preset} close={() => { setAdding(''); setMt5Preset(null); }} created={(account, note) => {
+      setAdding(''); setMt5Preset(null); reloadRefs();
       if (!account) { setNotice(note); void load(); return; }
       void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
     {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : entity === 'accounts' ? 'corei-os-mini.account-window.v1' : 'corei-os-mini.config-window.v1'}
@@ -1313,7 +1321,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
-      {selected && entity === 'accounts' && selected.platform === 'MT5' && <BrokerRead account={selected} canEdit={canEdit} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
+      {selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'FIX') && <BrokerRead account={selected} canEdit={canEdit} platform={selected.platform} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
       {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}
       {selected && (entity === 'accounts' || entity === 'connections') && <CredentialUse owner={entity} id={selected.id} />}
       </div>
@@ -1727,7 +1735,7 @@ export default function Configuration() {
         : `Broker login failed${new URLSearchParams(window.location.search).get('reason') ? ': ' + new URLSearchParams(window.location.search).get('reason') : '.'}`}</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
-        : current.id === 'brokers' ? <div className="cfg-pane"><BrokerTree navigate={navigate} canEdit={canEdit} /></div>
+        : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} /></div>
         : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
         : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />

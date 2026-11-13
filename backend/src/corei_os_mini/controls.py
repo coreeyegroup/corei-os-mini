@@ -349,6 +349,14 @@ def _safe_cell(value: Any) -> str:
 
 # ---------- health ----------
 
+def tree() -> dict:
+    """Technology › who › server/session/API › accounts (see adapters.tree)."""
+    from .adapters import tree as build
+    data = health()
+    return {**build(store.list_records('providers', {}, ''), data['connections'], data['accounts']),
+            'summary': data['summary'], 'generated_at': data['generated_at']}
+
+
 def health() -> dict:
     """Everything needed to answer: can each account trade right now, and if not, why?"""
     from . import network
@@ -374,8 +382,8 @@ def health() -> dict:
     # secret, the account, then a daily broker login. Then data, then trading.
     users = db_counts.get('users', 1)
     checklist = [
-        {'step': '1 Broker', 'how': 'MT5: Brokers & accounts › New broker. Upstox: created for you in step 2', 'done': counts['providers'] > 0, 'section': 'brokers'},
-        {'step': '2 Account', 'how': 'Brokers & accounts › Add MT5 account or Add Upstox account (creates its server/API record)',
+        {'step': '1 Broker', 'how': 'Connectivity › pick the technology (MT5, FIX, API …) › Add who: the broker, venue or feed and its server', 'done': counts['providers'] > 0, 'section': 'brokers'},
+        {'step': '2 Account', 'how': 'Connectivity › select the server › Add account (MT5 and Upstox also in one step)',
          'done': counts['accounts'] > 0, 'section': 'brokers'},
         {'step': '3 Credentials', 'how': 'MT5 password, or the Upstox app key and secret, saved for every account', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'brokers'},
         {'step': '4 First login', 'how': 'MT5: Log in and read now. Upstox: Log in at broker (every trading day)', 'done': logged_in > 0, 'section': 'brokers'},

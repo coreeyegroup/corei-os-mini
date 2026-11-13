@@ -49,7 +49,7 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Market data', section: 'controls', label: 'Collection controls', group: 'Market data', keywords: 'pause resume stop' },
   { view: 'Market data', section: 'archive', label: 'Archive & backups', group: 'Market data', keywords: 'parquet fingerprint backup' },
   { view: 'Configuration', section: 'health', label: 'Overview (readiness)', group: 'Setup', keywords: 'can trade blockers health checklist' },
-  { view: 'Configuration', section: 'brokers', label: 'Brokers & accounts', group: 'Setup', keywords: 'broker server api account login tree add mt5 upstox' },
+  { view: 'Configuration', section: 'brokers', label: 'Connectivity', group: 'Setup', keywords: 'technology provider who broker exchange ecn feed data centre server session fix api account login tree add mt5 mt4 ctrader upstox' },
   { view: 'Configuration', section: 'providers', label: 'Brokers (list)', group: 'Setup', keywords: 'broker vendor provider' },
   { view: 'Configuration', section: 'connections', label: 'Servers & APIs (list)', group: 'Setup', keywords: 'servers addresses mt5 server connection' },
   { view: 'Configuration', section: 'accounts', label: 'Broker accounts (list)', group: 'Setup', keywords: 'login password mt5 account' },
@@ -110,14 +110,14 @@ export const ago = (v?: number | string | null) => { const s = v == null || v ==
   return s == null || !Number.isFinite(s) ? '—' : s < 1 ? 'now' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
 
 /* Setup, in the order a firm sets itself up. One tree, used by the side bar and the Setup screen;
- * the three record lists behind "Brokers & accounts" are views of that one screen. */
+ * the three record lists behind "Connectivity" are views of that one screen. */
 export const SETUP_GROUPS: [string, [string, string][]][] = [
-  ['1 · Connect', [['brokers', 'Brokers & accounts'], ['groups', 'Account groups']]],
+  ['1 · Connect', [['brokers', 'Connectivity'], ['groups', 'Account groups']]],
   ['2 · Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
   ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
   ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],
   ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log']]],
 ];
 export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
-/** The side-bar row a Setup section belongs to (the record lists highlight "Brokers & accounts"). */
+/** The side-bar row a Setup section belongs to (the record lists highlight "Connectivity"). */
 export const setupRowOf = (section: string) => (BROKER_VIEWS as readonly string[]).includes(section) ? 'brokers' : section;

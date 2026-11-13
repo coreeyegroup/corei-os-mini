@@ -399,7 +399,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .cfg-checklist-steps li small { overflow: hidden; text-overflow: ellipsis; }
 .cfg-checklist-steps li.done small { text-decoration: none; opacity: .7; }
 
-/* Connection roles and the adapter catalogue (Brokers & accounts) */
+/* Connection roles (Connectivity) */
 .cfg-role { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; line-height: 15px; border: 1px solid var(--line); color: var(--muted); }
 .cfg-role.MARKET_DATA { color: #3b82f6; border-color: rgba(59,130,246,.45); }
 .cfg-role.TRADING { color: #b8860b; border-color: rgba(184,134,11,.45); }
@@ -408,3 +408,49 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .cfg-catalogue td { vertical-align: top; }
 .cfg-catalogue td:nth-child(5) { max-width: 420px; white-space: normal; }
 .cfg-fix .cfg-check { margin-right: 10px; font-size: 11.5px; white-space: nowrap; }
+
+/* Connectivity: technology › who › server/session › account. Tree left (resizable), selected item right. */
+.cfg-pane.ct-pane { padding: 0; }
+.ct { display: flex; min-height: 0; height: calc(100vh - 150px); border-top: 1px solid var(--line); }
+.ct-tree { display: flex; flex-direction: column; width: 340px; min-width: 240px; max-width: 60%; resize: horizontal; overflow: hidden;
+  border-right: 1px solid var(--line); background: var(--canvas); }
+.ct-tools { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--line); background: var(--chrome); }
+.ct-tools input { flex: 1; min-width: 0; height: 20px; font-size: 11.5px; }
+.ct-tools > button { width: 20px; height: 20px; padding: 0; line-height: 18px; }
+.ct-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; flex: none; }
+.ct-seg button { border: 0; border-radius: 0; height: 20px; padding: 0 7px; font-size: 11px; background: none; color: var(--muted); }
+.ct-seg button[aria-pressed=true] { background: var(--accent); color: #fff; }
+.ct-head { height: 20px; padding: 0 8px; font: 600 10.5px/20px inherit; font-family: inherit; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.ct-list { list-style: none; margin: 0; padding: 2px 0; overflow: auto; flex: 1; outline: none; }
+.ct-row { display: flex; align-items: center; gap: 5px; height: 22px; padding-right: 8px; cursor: default; white-space: nowrap; font-size: 12px; }
+.ct-row:hover { background: var(--hover); }
+.ct-row.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.ct-list:focus .ct-row.sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+.ct-caret { width: 12px; flex: none; text-align: center; color: var(--muted); font-size: 10px; cursor: pointer; }
+.ct-label { overflow: hidden; text-overflow: ellipsis; }
+.ct-tech > .ct-label, .ct-type > .ct-label, .ct-none > .ct-label { font-weight: 600; }
+.ct-row.planned > .ct-label { color: var(--muted); font-weight: 400; }
+.ct-meta { margin-left: auto; padding-left: 8px; color: var(--muted); font-size: 11px; flex: none; }
+.ct-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); vertical-align: middle; }
+.ct-dot.ok { background: #2e9d5b; } .ct-dot.warn { background: #d29922; } .ct-dot.bad { background: #f85149; }
+.ct-dot.idle { background: transparent; border: 1px solid var(--muted); width: 5px; height: 5px; } .ct-dot.off { background: color-mix(in srgb, var(--muted) 40%, transparent); }
+.ct-legend { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 3px 8px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--muted); }
+.ct-legend .ct-dot { margin-right: 2px; }
+.ct-detail { flex: 1; min-width: 0; overflow: auto; padding: 6px 12px 12px; }
+.ct-dhead { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding-bottom: 5px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.ct-dhead small { width: 100%; font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.ct-dhead h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.ct-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.ct-actions button, .ct-actions select { height: 22px; font-size: 11.5px; }
+.ct-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 0 14px; margin: 0 0 8px; font-size: 12px; }
+.ct-facts > div { display: flex; gap: 8px; min-height: 20px; align-items: baseline; border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent); }
+.ct-facts dt { width: 104px; flex: none; color: var(--muted); }
+.ct-facts dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+.ct-sub { margin: 10px 0 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.ct-click { cursor: pointer; } .ct-click:hover { background: var(--hover); }
+.ct-add { margin: 6px 0 4px; padding: 6px 10px 8px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--surface); }
+.ct-add .ct-sub { margin-top: 0; color: var(--text); }
+.ct-planned { border-left: 3px solid var(--line); padding-left: 8px; }
+.ct-ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
+.ct-ready ul { margin: 0; padding-left: 16px; font-size: 12px; }
+@media (max-width: 760px) { .ct { flex-direction: column; height: auto; } .ct-tree { width: auto; max-width: none; resize: none; max-height: 50vh; } }

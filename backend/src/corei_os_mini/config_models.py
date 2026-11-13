@@ -46,7 +46,7 @@ class Holiday(_Strict):
 class ProviderIn(_Strict):
     code: Code
     name: Name
-    kind: Literal['BROKER', 'EXCHANGE', 'DATA_VENDOR']
+    kind: Literal['BROKER', 'EXCHANGE', 'ECN', 'PRIME_BROKER', 'LIQUIDITY_PROVIDER', 'FAST_FEED', 'DATA_VENDOR', 'DATA_CENTRE']
     status: RecordStatus = 'ACTIVE'
     # The firm behind the brand: the same brand often has several legal entities.
     legal_entity: Text(200) = ''
@@ -489,4 +489,17 @@ class AlertChannelIn(_Strict):
             raise ValueError('TELEGRAM target must be a chat id or @channel')
         if self.kind == 'WEBHOOK':
             self.target = _url(self.target, ('https',))
+        return self
+
+
+class VenueSetupIn(_Strict):
+    """One step: who (an existing provider, or a new one) plus its server / session / API connection."""
+    provider_id: UUID | None = None
+    provider: ProviderIn | None = None
+    connection: dict
+
+    @model_validator(mode='after')
+    def one_provider(self) -> 'VenueSetupIn':
+        if (self.provider_id is None) == (self.provider is None):
+            raise ValueError('Choose an existing provider or describe a new one (not both).')
         return self

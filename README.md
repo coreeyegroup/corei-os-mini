@@ -638,11 +638,30 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Connectivity: technology › who › accounts — release 0.25.0
+
+DEC-56. Migration `020_provider_types.sql` (provider types). No reader rebuild needed.
+
+Setup › **Connectivity** is one tree, in the order a firm thinks about its sources and accounts:
+
+| Level | What | Examples |
+| --- | --- | --- |
+| 1 Technology | how COREI reaches the provider | MetaTrader 5, MetaTrader 4, cTrader, FIX 4.4/4.2, Broker & exchange APIs, Fast feeds & data vendors, Exchange direct & data centre |
+| 2 Who | the provider and its server, session or API | MT5 › VT Markets › VTMarkets-Live 3; FIX › LMAX Global › price session and order session; API › Upstox |
+| 3 Accounts | the logins on that server | MT5 logins 1298617, 5056977914; LMAX execution accounts |
+
+- **Left: the tree** (expand, collapse, filter, arrow keys; status dot per item: ready, needs action, failed, not connected, off/planned). **Right: the selected item** with its facts and the next action: a technology has *Add who*, a who has *Add server / session*, a server has *Add account*, an account shows its readiness and *Log in and read now*.
+- **Group by Technology or by Provider type** (broker, exchange, ECN, prime broker, liquidity provider, fast feed, data vendor, data centre). Providers not yet connected are listed under *Not connected yet*.
+- **Add who in one step** (`POST /api/config/venues`): an existing provider or a new one, plus its MT5 server (addresses, direct SDK or terminal bridge), FIX session (CompIDs, host, port, TLS) or API, with environment and role. LIVE connections with new addresses still go to approval.
+- Planned technologies (MT4, cTrader, fast-feed native protocols, exchange native protocols) are shown greyed with their adapters, so the whole map is visible; nothing can be added to them until built.
+- The record lists stay as tabs: *Who (providers)*, *Servers & sessions*, *Accounts*. Nothing was removed.
+- `GET /api/config/tree` returns the whole tree with readiness.
+
 ## Any provider, through any adapter — release 0.24.0
 
 DEC-55. Migration `019_adapter_catalogue.sql` (platform FIX, credential FIX_LOGIN). No reader rebuild needed.
 
-- **Providers are anybody**: a broker directly, a broker through MT5/MT4/cTrader, an ECN or prime broker over FIX, a fast feed or data vendor. Each is reached through an **adapter**; Setup › Brokers & accounts › *Adapters* lists every adapter with what it does for prices and orders and its build state (built: MT5 direct, MT5 terminal bridge, FIX 4.4/4.2, Upstox; planned: MT4, cTrader, LMAX, Rithmic, crypto exchanges, vendor feeds). API: `GET /api/config/adapters`.
+- **Providers are anybody**: a broker directly, a broker through MT5/MT4/cTrader, an ECN or prime broker over FIX, a fast feed or data vendor. Each is reached through an **adapter**; Setup › Connectivity (each technology) lists every adapter with what it does for prices and orders and its build state (built: MT5 direct, MT5 terminal bridge, FIX 4.4/4.2, Upstox; planned: MT4, cTrader, LMAX, Rithmic, crypto exchanges, vendor feeds). API: `GET /api/config/adapters`.
 - **Every connection has a role**: *Data source* (a few chosen, high-quality price feeds), *Execution* (trading accounts) or both. Collection plans take prices only from data sources; an execution-only connection is refused with an explanation. The tree shows each connection's role.
 - **FIX 4.4 / 4.2 data adapter** (`md/fix_reader.py`): logon (CompIDs, sub-IDs, optional username/password, TLS), MarketDataRequest for top of book, snapshots and incremental refreshes, heartbeats and TestRequest, sequence-reset handling, rejects shown verbatim. *Log in and read now* checks the session. Usable today for broker FIX APIs, LMAX, ECNs, prime brokers and vendor FIX feeds.
 - **MT5: the direct SDK is the recommended method again** (as institutional bridges such as Westernpips use it), on condition that the mtapi licence includes its update subscription; the terminal bridge stays as the fallback.

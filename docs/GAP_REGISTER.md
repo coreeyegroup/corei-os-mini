@@ -135,6 +135,7 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-30 | High | Data model narrowed to MT5 and Upstox; no provider-agnostic adapter list, no data/execution split | DONE 0.24.0 (adapter catalogue, connection roles, FIX 4.4) |
 | A-31 | High | mtapi SDK behind the MT5 servers (1035; IndexOutOfRange after login) | OPEN — owner: current mtapi licence with update subscription; compare mt5api.dll versions |
 | A-32 | Medium | Order adapters (MT5, FIX, Upstox) not built | OPEN — next stage (OMS) |
+| A-33 | High | Set-up organised by record type, not by how a firm thinks (technology › who › accounts) | DONE 0.25.0 (Connectivity tree) |
 
 ## C. Owner decisions
 

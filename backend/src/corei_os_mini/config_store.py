@@ -785,6 +785,52 @@ def _connection_code(db, provider_code: str, environment: str, tag: str = 'MT5')
     return code
 
 
+def setup_venue(actor: str, data, approved: bool = False) -> dict:
+    """Who + server in one transaction: create the provider when new, then the connection. The connection's
+    code and name are filled in when left empty. A LIVE connection that adds addresses needs approval
+    (four-eyes); the new provider is kept and the connection waits as a change request."""
+    with transaction('create') as db:
+        provider_action = 'REUSED'
+        if data.provider is not None:
+            provider_id = _insert(db, actor, 'providers', data.provider, 'Created with its first connection')
+            provider_action = 'CREATED'
+        else:
+            provider_id = data.provider_id
+        provider = db.execute('SELECT * FROM cfg_providers WHERE id=%s', (provider_id,)).fetchone()
+        if not provider:
+            raise HTTPException(422, 'Provider does not exist.')
+        if provider['status'] == 'ARCHIVED':
+            raise HTTPException(409, f"Provider {provider['code']} is archived. Restore it first.")
+        raw = dict(data.connection)
+        platform, env = raw.get('platform'), raw.get('environment', 'DEMO')
+        tag = {'MT5': 'MT5', 'FIX': 'FIX', 'REST_API': 'API'}.get(platform, 'CONN')
+        if not raw.get('code'):
+            raw['code'] = _connection_code(db, provider['code'], env, tag)
+        if not raw.get('name'):
+            where = (raw.get('settings') or {})
+            label = where.get('server_name') or (f"{where.get('host')}:{where.get('port')}" if where.get('host') else where.get('api_base_url', ''))
+            raw['name'] = f"{provider['name']} {tag} {str(env).lower()} · {label}"[:120]
+        try:
+            connection = ConnectionIn.model_validate({**raw, 'provider_id': str(provider_id)})
+        except ValidationError as exc:
+            def where(loc):  # settings are checked inside the connection model; name them as settings fields
+                path = '.'.join(str(p) for p in loc)
+                return 'connection.' + (path if not loc or loc[0] in ConnectionIn.model_fields else 'settings.' + path)
+            raise HTTPException(422, [{'field': where(e['loc']), 'message': e['msg'].removeprefix('Value error, ')}
+                                      for e in exc.errors()]) from None
+        values = connection.model_dump(mode='json')
+        if not approved and four_eyes_on(db):
+            reasons = _connection_needs_approval(None, values)
+            if reasons:
+                _rules(db, 'connections', connection.model_dump(mode='python'), None)
+                pending = request_change(db, actor, 'connections', uuid4(), 'CREATE_CONNECTION',
+                                         f"New LIVE connection {values['code']} for {provider['code']} {' and '.join(reasons)}", {'record': values})
+                return {**pending, 'provider_action': provider_action, 'provider': clean(provider)}
+        connection_id = _insert(db, actor, 'connections', connection, 'Added under Connectivity')
+        return {'provider_action': provider_action, 'provider': clean(provider),
+                'connection': get_record(db, 'connections', connection_id)}
+
+
 UPSTOX_API = 'https://api.upstox.com'
 
 

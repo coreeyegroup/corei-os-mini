@@ -58,75 +58,10 @@ export function HealthBoard({ navigate }: { navigate: Navigate }) {
       </section>
     </div>
     <section className="cfg-panel cfg-next">
-      <button type="button" className="primary" onClick={() => navigate('brokers')}>Open Brokers &amp; accounts →</button>
+      <button type="button" className="primary" onClick={() => navigate('brokers')}>Open Connectivity →</button>
       <span className="cfg-note">{data.accounts.length} account(s) · {data.connections.length} server/API record(s). Add, log in and check readiness there.</span>
     </section>
   </div>;
-}
-
-/* ---------- the Connect screen: broker › server or API › accounts, one tree ---------- */
-
-export function BrokerTree({ navigate, canEdit }: { navigate: Navigate; canEdit: boolean }) {
-  const [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
-  const load = async () => { try { setData(await api('config/health')); setError(''); } catch (e) { setError((e as Error).message); } };
-  useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, []);
-  if (error) return <p role="alert" className="cfg-error">{error}</p>;
-  if (!data) return <p className="cfg-note">Loading…</p>;
-  type Entry = { code: string; id: string; connections: Row[] };
-  const byProvider = new Map<string, Entry>();
-  for (const c of data.connections) {
-    const entry: Entry = byProvider.get(c.provider_id) ?? { code: c.provider_code, id: c.provider_id, connections: [] };
-    entry.connections.push(c as Row); byProvider.set(c.provider_id, entry);
-  }
-  const accountsOf = (cid: string) => data.accounts.filter((a: Row) => a.connection_id === cid);
-  return <div className="cfg-connect">
-    <div className="cfg-toolbar">
-      {canEdit && <><button className="primary" onClick={() => navigate('accounts', 'new:MT5')} title="Login, password and server; the broker's server record is created with it">Add MT5 account</button>
-        <button className="primary" onClick={() => navigate('accounts', 'new:UPSTOX')} title="Client ID, app key and secret; broker and API record are created with it">Add Upstox account</button>
-        <button onClick={() => navigate('providers', 'new')}>New provider</button>
-        <button onClick={() => navigate('connections', 'new')} title="FIX session, MT5 server or broker API for a provider">New connection</button></>}
-      <span className="cfg-toolbar-gap" />
-      <span className="cfg-note">Click a broker, server or account to open it. Readiness per account: data, then orders.</span>
-    </div>
-    {byProvider.size === 0 && <p className="cfg-empty">No broker yet. Start with Add MT5 account or Add Upstox account.</p>}
-    <table className="cfg-table cfg-tree-table"><thead><tr><th>Broker › server / API › account</th><th>Env</th><th>State</th><th>Readiness</th><th>Why not</th></tr></thead>
-      <tbody>{[...byProvider.values()].flatMap(p => [
-        <tr key={p.id} className="cfg-tree-broker" onClick={() => navigate('providers', p.id)} tabIndex={0}><td colSpan={5}><strong>{p.code}</strong> <small className="cfg-note">broker · {p.connections.length} server/API record(s)</small></td></tr>,
-        ...p.connections.flatMap(c => [
-          <tr key={c.id} className="cfg-tree-conn-row" onClick={() => navigate('connections', c.id)} tabIndex={0}>
-            <td className="cfg-indent1">{c.code} <span className={`cfg-role ${c.purpose}`}>{c.purpose === 'MARKET_DATA' ? 'data source' : c.purpose === 'TRADING' ? 'execution' : 'data + execution'}</span>
-              <small className="cfg-note"> {c.platform === 'MT5' ? `MT5 · ${c.settings?.server_name ?? ''}` : c.platform === 'FIX' ? `FIX · ${c.settings?.host}:${c.settings?.port}` : c.settings?.api_base_url}</small></td>
-            <td><Env value={c.environment} /></td>
-            <td>{c.live_status?.state ? <span className={`cfg-pill ${c.live_status.state === 'CONNECTED' ? 'ok' : c.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{c.live_status.state}</span> : <span className="cfg-pill off">Never connected</span>}
-              {c.pending_changes > 0 && <span className="cfg-pill warn">Awaiting approval</span>}{c.status !== 'ACTIVE' && <Status value={c.status} />}</td>
-            <td className="cfg-note">{c.server_utc_offset_minutes == null ? 'clock not set' : `UTC${c.server_utc_offset_minutes >= 0 ? '+' : ''}${c.server_utc_offset_minutes / 60}`}{c.max_orders_per_second == null ? ' · no rate limit' : ` · ${c.max_orders_per_second}/s`}</td>
-            <td className="cfg-note">{accountsOf(c.id).length} account(s)</td></tr>,
-          ...accountsOf(c.id).map((a: Row) => <tr key={a.id} className="cfg-tree-acct" onClick={() => navigate('accounts', a.id)} tabIndex={0}>
-            <td className="cfg-indent2">{a.code} <small className="cfg-note">{a.holder_name}{a.trading_permission === 'READ_ONLY' ? ' · read only' : a.trading_permission === 'DISABLED' ? ' · disabled' : ''}</small></td>
-            <td><Env value={a.environment} /></td>
-            <td>{a.data_blockers.length === 0 ? <span className="cfg-pill ok">Data ready</span> : <span className="cfg-pill warn">Not ready</span>}</td>
-            <td>{a.trading_permission !== 'TRADING' ? <span className="cfg-note">orders: not used</span> : a.trading_blockers.length === 0 ? <span className="cfg-pill ok">Ready to trade</span> : <span className="cfg-pill">orders: {a.trading_blockers.length} blocker(s)</span>}</td>
-            <td className="cfg-reasons">{(a.data_blockers.length ? a.data_blockers : a.trading_permission === 'TRADING' ? a.trading_blockers : []).slice(0, 2).map(label).join(' · ')}
-              {a.warnings?.length ? <small className="cfg-note"> · {a.warnings.length} warning(s)</small> : null}</td></tr>),
-          ...(accountsOf(c.id).length === 0 ? [<tr key={c.id + 'none'} className="cfg-tree-acct"><td className="cfg-indent2 cfg-note" colSpan={5}>No account on this server yet.</td></tr>] : []),
-        ]),
-      ])}</tbody></table>
-    <AdapterCatalogue />
-  </div>;
-}
-
-/** Every access technology COREI connects through (provider-agnostic), with build state. */
-function AdapterCatalogue() {
-  const [data, setData] = useState<Row | null>(null);
-  useEffect(() => { void api('config/adapters').then(setData).catch(() => setData(null)); }, []);
-  if (!data) return null;
-  const pill = (v: string | null) => v == null ? <span className="cfg-note">—</span> : <span className={`cfg-pill ${v === 'BUILT' ? 'ok' : v === 'PARTIAL' ? 'warn' : 'off'}`}>{v.toLowerCase()}</span>;
-  return <details className="cfg-catalogue" open>
-    <summary>Adapters <small className="cfg-note">· how COREI reaches any provider: broker, ECN, fast feed, data vendor, exchange</small></summary>
-    <table className="cfg-table"><thead><tr><th>Adapter</th><th>Family</th><th>Prices</th><th>Orders</th><th>How</th><th>Examples</th></tr></thead>
-      <tbody>{data.adapters.map((a: Row) => <tr key={a.id}><td>{a.label}</td><td className="cfg-note">{a.family}</td><td>{pill(a.data)}</td><td>{pill(a.orders)}</td>
-        <td className="cfg-note">{a.how}</td><td className="cfg-note">{a.examples}</td></tr>)}</tbody></table>
-  </details>;
 }
 
 /* ---------- approvals ---------- */
@@ -385,7 +320,7 @@ export function SymbolSpecs({ account, canEdit, refresh = 0 }: { account: Row; c
 
 /* ---------- read real data from the broker (MT5) ---------- */
 
-export function BrokerRead({ account, canEdit, onRead }: { account: Row; canEdit: boolean; onRead: () => void }) {
+export function BrokerRead({ account, canEdit, onRead, platform = 'MT5', inTree = false }: { account: Row; canEdit: boolean; onRead: () => void; platform?: string; inTree?: boolean }) {
   const [reads, setReads] = useState<Row[] | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const load = async () => { try { setReads((await api(`config/accounts/${account.id}/broker-reads`)).items); } catch (e) { setError((e as Error).message); } };
   useEffect(() => { void load(); }, [account.id]);
@@ -395,13 +330,15 @@ export function BrokerRead({ account, canEdit, onRead }: { account: Row; canEdit
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   const last = reads?.[0];
-  const hasPassword = Boolean(account.investor_credential_kind || account.master_credential_kind);
+  // FIX: the session login is optional and kept on the connection, so the check can always run.
+  const hasPassword = platform === 'FIX' || Boolean(account.investor_credential_kind || account.master_credential_kind);
   return <section className="cfg-panel cfg-broker-read" aria-label="Read from broker">
     <header><strong>Real data from the broker</strong>
       {canEdit && <button type="button" className="primary" disabled={busy || !hasPassword} onClick={() => void read()}>{busy ? 'Logging in…' : 'Log in and read now'}</button>}</header>
-    <p className="cfg-note">One read-only login {account.investor_credential_kind ? 'with the investor password' : 'with the master password (save an investor password to read without trading rights)'}.
-      COREI stores the margin mode, leverage, group and stop-out, the server clock offset, the address that answered, and every symbol's broker limits. Nothing is traded.</p>
-    {!hasPassword && <p className="cfg-note">Save a password above first.</p>}
+    {platform === 'FIX' ? <p className="cfg-note">Logs on to the FIX session with its CompIDs (and session login, if saved on the connection), measures the venue's clock, then logs out. Nothing is traded.</p>
+    : <p className="cfg-note">One read-only login {account.investor_credential_kind ? 'with the investor password' : 'with the master password (save an investor password to read without trading rights)'}.
+      COREI stores the margin mode, leverage, group and stop-out, the server clock offset, the address that answered, and every symbol's broker limits. Nothing is traded.</p>}
+    {!hasPassword && <p className="cfg-note">{inTree ? 'Save the account\'s password first: Open record › Credential.' : 'Save a password above first.'}</p>}
     {last && (last.connected
       ? <dl className="cfg-facts">
           <div><dt>Last read</dt><dd>{when(last.read_at)} by {last.requested_by}</dd></div>

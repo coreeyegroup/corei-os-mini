@@ -72,7 +72,7 @@ Bridge host in COREI is then `127.0.0.1`. The terminal needs an X session (Xvfb 
 
 ## C. In COREI
 
-**New account:** Setup › Brokers & accounts › **Add MT5 account**. Fill in broker, login, password, server as
+**New account:** Setup › Connectivity › MetaTrader 5 › the broker’s server › **Add account** (or Accounts › **Add MT5 account**). Fill in broker, login, password, server as
 usual. Under *How COREI reaches it* choose **MT5 terminal bridge (fallback)** and enter:
 
 | Field | Value |
@@ -82,7 +82,7 @@ usual. Under *How COREI reaches it* choose **MT5 terminal bridge (fallback)** an
 | Certificate fingerprint | as printed by the bridge (32 pairs, colon-separated) |
 | Bridge token | contents of `corei-bridge.token` |
 
-**Existing connection:** open it (Setup › Brokers & accounts › the server), set *Connection method* to
+**Existing connection:** open it (Setup › Connectivity › the server › Open record), set *Connection method* to
 **MT5 terminal bridge**, fill in host, port and fingerprint, save; then *Credential* › **Terminal bridge token**.
 
 Then open the account and click **Log in and read now**. Margin mode, leverage, group, symbol specifications

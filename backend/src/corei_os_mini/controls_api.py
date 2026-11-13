@@ -42,6 +42,13 @@ async def health(response: Response, _: str = Depends(require_operator)):
     return await run_in_threadpool(controls.health)
 
 
+@router.get('/tree')
+async def connectivity_tree(response: Response, _: str = Depends(require_operator)):
+    """Connectivity tree: technology › who › server/session/API › accounts, with readiness."""
+    _no_store(response)
+    return await run_in_threadpool(controls.tree)
+
+
 @router.get('/network')
 async def network_status(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
