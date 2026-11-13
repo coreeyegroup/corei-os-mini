@@ -243,6 +243,13 @@ function toPayload(entity: Entity, draft: Row): Row {
         source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })),
       bridge: draft.adapter === 'TERMINAL_BRIDGE' && draft.settings.bridge?.host
         ? { host: draft.settings.bridge.host, port: Number(draft.settings.bridge.port || 9443), fingerprint: draft.settings.bridge.fingerprint } : null };
+  if (entity === 'connections' && draft.platform === 'FIX') {
+    const s = draft.settings;
+    out.settings = { host: s.host, port: Number(s.port), tls: s.tls !== false, tls_verify: s.tls_verify !== false, begin_string: s.begin_string || 'FIX.4.4',
+      sender_comp_id: s.sender_comp_id, target_comp_id: s.target_comp_id, sender_sub_id: s.sender_sub_id || '', target_sub_id: s.target_sub_id || '',
+      heartbeat_seconds: Number(s.heartbeat_seconds || 30), reset_seq_on_logon: s.reset_seq_on_logon !== false, md_depth: Number(s.md_depth || 1),
+      md_snapshots_only: !!s.md_snapshots_only };
+  }
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
@@ -679,17 +686,19 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     {editing && <p className="cfg-note">{draft.account_count ?? 0} account(s). Add accounts to a group from each account's window.</p>}</>;
 
   if (entity === 'connections') {
-    const platform = (v: string) => setDraft({ ...draft, platform: v, settings: v === 'MT5' ? blank.connections.settings : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
+    const platform = (v: string) => setDraft({ ...draft, platform: v, adapter: v === 'FIX' ? 'NATIVE' : 'DEFAULT',
+      settings: v === 'MT5' ? blank.connections.settings : v === 'FIX' ? { ...FIX_BLANK } : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
     return <>
       <Section n={1} title="Broker">
         {ref('provider_id', 'Provider', refs.providers, r => `${r.name} (${r.code})`)}
         <div className="cfg-pair">
-          <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['REST_API', 'Broker API']]} onChange={platform} /></Field>
+          <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['FIX', 'FIX 4.4 / 4.2'], ['REST_API', 'Broker API']]} onChange={platform} /></Field>
           {pick('environment', 'Environment', [['DEMO', 'Demo'], ['LIVE', 'Live']])}
         </div>
       </Section>
-      <Section n={2} title={draft.platform === 'MT5' ? 'Server and addresses' : 'API app'}>
-        {draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} connectionId={draft.id} change={s => {
+      <Section n={2} title={draft.platform === 'MT5' ? 'Server and addresses' : draft.platform === 'FIX' ? 'FIX session' : 'API app'}>
+        {draft.platform === 'FIX' ? <FixFields settings={draft.settings} change={s => set('settings', s)} />
+          : draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} connectionId={draft.id} change={s => {
             // The server name decides the environment on a new connection (MetaQuotes-Demo is a demo server).
             const env = envOfServer(s.server_name);
             set(!draft.id && env && env !== draft.environment ? { settings: s, environment: env } : { settings: s });
@@ -701,18 +710,17 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
           {text('name', 'Connection name', { required: true, maxLength: 120 })}
           {code('Connection ID', 'VTMARKETS_MT5_LIVE')}
         </div>
-        <details className="cfg-more"><summary>More options</summary>
-          <div className="cfg-pair">
-            {pick('purpose', 'Used for', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
-            {status}
-          </div>
-        </details>
+        <div className="cfg-pair">
+          {pick('purpose', 'Role', ROLE_OPTIONS, 'Data source: one of the few feeds prices are taken from. Execution: trading accounts, watched for orders and fills.')}
+          {status}
+        </div>
       </Section>
       <Section n={4} title="Method, clock and limits">
         <div className="cfg-pair">
           {pick('adapter', 'Connection method', draft.platform === 'MT5'
-            ? [['TERMINAL_BRIDGE', 'MT5 terminal bridge (official, recommended)'], ['MTAPI_DIRECT', 'Direct (mtapi SDK, no terminal)'], ['DEFAULT', 'Default (direct)']]
-            : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']], draft.platform === 'MT5' ? 'The terminal bridge uses the real MT5 terminal, which keeps itself up to date; the direct SDK breaks when the broker updates' : undefined)}
+            ? [['MTAPI_DIRECT', 'Direct (mtapi SDK)'], ['DEFAULT', 'Default (direct)'], ['TERMINAL_BRIDGE', 'Terminal bridge (fallback)']]
+            : draft.platform === 'FIX' ? [['NATIVE', 'FIX session']] : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']],
+            draft.platform === 'MT5' ? 'Direct speaks the MT5 protocol through the licensed SDK (keep it on its update subscription); the terminal bridge is a fallback for one account per terminal' : undefined)}
           {pick('clock_source', 'Clock set from', [['UNKNOWN', 'Not set'], ['MANUAL', 'Entered by hand'], ['SERVER_FILE', 'servers.dat'], ['BROKER_LOGIN', 'Broker at login']])}
         </div>
         <div className="cfg-pair">
@@ -810,18 +818,52 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     {text('trading_session', 'Trading session', { maxLength: 200 }, 'Optional description, e.g. Sun 23:00 – Fri 22:00 UTC')}{status}</>;
 
   const accountsHere = (refs.accounts ?? []).filter((a: Row) => a.connection_id === draft.connection_id);
-  return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.purpose}`)}
+  return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${PURPOSE_LABEL[r.purpose] ?? r.purpose}`)}
     <Field label="Applies to" hint={locked('account_id') ? 'Fixed after creation' : 'An account-specific symbol overrides the connection-wide one for that account (e.g. XAUUSD.r on a raw account)'}>
       <select aria-label="Applies to" value={draft.account_id ?? ''} disabled={locked('account_id')} onChange={e => set('account_id', e.target.value)}>
         <option value="">Every account on this connection</option>{accountsHere.map((a: Row) => <option key={a.id} value={a.id}>Only {a.code}</option>)}</select></Field>
     {ref('instrument_id', 'Instrument', refs.instruments, r => `${r.symbol} · ${r.name}`)}
     {text('broker_symbol', 'Broker symbol', { required: true, maxLength: 64 }, 'As shown in the broker platform, e.g. XAUUSD.r')}
-    {pick('usage', 'Used for', [['BOTH', 'Market data and trading'], ['MARKET_DATA', 'Market data only'], ['TRADING', 'Trading only']])}
+    {pick('usage', 'Used for', ROLE_OPTIONS)}
     <div className="cfg-pair">{text('broker_contract_size', 'Broker contract size', { inputMode: 'decimal' }, 'Only if it differs from the instrument')}
       {text('broker_price_digits', 'Broker price digits', { type: 'number', min: 0, max: 12 }, 'Optional')}</div>{status}</>;
 }
 
 /* ---------- credentials (write-only) ---------- */
+
+export const ROLE_OPTIONS: [string, string][] = [['MARKET_DATA', 'Data source'], ['TRADING', 'Execution'], ['BOTH', 'Data source and execution']];
+export const PURPOSE_LABEL: Record<string, string> = Object.fromEntries(ROLE_OPTIONS);
+const FIX_BLANK = { host: '', port: 443, tls: true, tls_verify: true, begin_string: 'FIX.4.4', sender_comp_id: '', target_comp_id: '', sender_sub_id: '',
+  target_sub_id: '', heartbeat_seconds: 30, reset_seq_on_logon: true, md_depth: 1, md_snapshots_only: false };
+
+/** A FIX 4.4 / 4.2 session: where it is and who we are on it (the venue sends these in its onboarding sheet). */
+function FixFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const s: Row = { ...FIX_BLANK, ...settings };
+  const set = (patch: Row) => change({ ...s, ...patch });
+  const box = (k: string, label: string) => <label className="cfg-check"><input type="checkbox" aria-label={label} checked={!!s[k]} onChange={e => set({ [k]: e.target.checked })} /> {label}</label>;
+  return <div className="cfg-fix">
+    <div className="cfg-pair">
+      <Field label="Host"><input aria-label="FIX host" required maxLength={253} value={s.host} onChange={e => set({ host: e.target.value.trim() })} /></Field>
+      <Field label="Port"><input aria-label="FIX port" required type="number" min={1} max={65535} value={s.port} onChange={e => set({ port: e.target.value })} /></Field>
+    </div>
+    <div className="cfg-pair">
+      <Field label="SenderCompID (49)" hint="Your ID on the session"><input aria-label="SenderCompID" required maxLength={64} value={s.sender_comp_id} onChange={e => set({ sender_comp_id: e.target.value.trim() })} /></Field>
+      <Field label="TargetCompID (56)" hint="The venue's ID"><input aria-label="TargetCompID" required maxLength={64} value={s.target_comp_id} onChange={e => set({ target_comp_id: e.target.value.trim() })} /></Field>
+    </div>
+    <div className="cfg-pair">
+      <Field label="SenderSubID (50)"><input aria-label="SenderSubID" maxLength={64} value={s.sender_sub_id} onChange={e => set({ sender_sub_id: e.target.value.trim() })} /></Field>
+      <Field label="TargetSubID (57)" hint="Often QUOTE or TRADE"><input aria-label="TargetSubID" maxLength={64} value={s.target_sub_id} onChange={e => set({ target_sub_id: e.target.value.trim() })} /></Field>
+    </div>
+    <div className="cfg-pair">
+      <Field label="Version"><Choice label="FIX version" value={s.begin_string} options={[['FIX.4.4', 'FIX 4.4'], ['FIX.4.2', 'FIX 4.2']]} onChange={v => set({ begin_string: v })} /></Field>
+      <Field label="Heartbeat (s)"><input aria-label="Heartbeat seconds" type="number" min={5} max={120} value={s.heartbeat_seconds} onChange={e => set({ heartbeat_seconds: e.target.value })} /></Field>
+    </div>
+    <div className="cfg-pair">
+      <Field label="Book depth" hint="1 = top of book"><input aria-label="Book depth" type="number" min={1} max={10} value={s.md_depth} onChange={e => set({ md_depth: e.target.value })} /></Field>
+      <Field label="Session">{box('tls', 'TLS')} {box('tls_verify', 'Verify certificate')} {box('reset_seq_on_logon', 'Reset sequence on logon')} {box('md_snapshots_only', 'Snapshots only')}</Field>
+    </div>
+  </div>;
+}
 
 /** Where the COREI MT5 terminal bridge runs (connectors/mt5-bridge): host, port and the certificate fingerprint it prints. */
 function BridgeFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
@@ -839,18 +881,19 @@ function BridgeFields({ settings, change }: { settings: Row; change: (s: Row) =>
 }
 
 function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connections'; row: Row; reload: () => void }) {
-  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.platform === 'MT5' ? 'BRIDGE_TOKEN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
-  const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '', token: '' };
+  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.platform === 'FIX' ? 'FIX_LOGIN' : row.platform === 'MT5' ? 'BRIDGE_TOKEN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
+  const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '', token: '', username: '' };
   const [secret, setSecret] = useState(empty), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const levels = owner === 'accounts'
     ? [['FULL', 'Master password', row.master_credential_kind, row.master_credential_updated_at], ['READ_ONLY', 'Investor password', row.investor_credential_kind, row.investor_credential_updated_at]] as const
-    : [['FULL', kind === 'API_KEY' ? 'API key and secret' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : 'OAuth client', row.credential_kind, row.credential_updated_at]] as const;
+    : [['FULL', kind === 'API_KEY' ? 'API key and secret' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : kind === 'FIX_LOGIN' ? 'FIX session login' : 'OAuth client', row.credential_kind, row.credential_updated_at]] as const;
   const savedLevel = (level: string) => levels.find(l => l[0] === level)?.[2];
   async function save(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setMessage('');
     const credential = kind === 'MT5_LOGIN' ? { kind, password: secret.password, access_level: secret.access_level }
       : kind === 'API_KEY' ? { kind, api_key: secret.api_key, api_secret: secret.api_secret }
-      : kind === 'BRIDGE_TOKEN' ? { kind, token: secret.token } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
+      : kind === 'BRIDGE_TOKEN' ? { kind, token: secret.token }
+      : kind === 'FIX_LOGIN' ? { kind, username: secret.username, password: secret.password } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
     try { const result = await api(`config/${owner}/${row.id}/credential`, 'PUT', { credential }); setSecret(empty);
       setMessage(pendingMessage(result) ?? 'Saved and encrypted. It cannot be viewed, only replaced.'); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
@@ -864,7 +907,8 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
   const input = (k: keyof typeof empty, label: string) => <Field label={label}><input aria-label={label} required type="password" autoComplete="new-password" maxLength={4096}
     value={secret[k]} onChange={e => setSecret({ ...secret, [k]: e.target.value })} /></Field>;
   return <form className="cfg-credential" onSubmit={save}>
-    <h3>{owner === 'accounts' ? 'MT5 login' : kind === 'API_KEY' ? 'API key' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : 'OAuth client'}</h3>
+    <h3>{owner === 'accounts' ? 'MT5 login' : kind === 'API_KEY' ? 'API key' : kind === 'BRIDGE_TOKEN' ? 'Terminal bridge token' : kind === 'FIX_LOGIN' ? 'FIX session login' : 'OAuth client'}</h3>
+    {kind === 'FIX_LOGIN' && <>{input('username', 'Username (tag 553)')}{input('password', 'Password (tag 554)')}<p className="cfg-note">Leave unsaved if the venue authenticates by IP and CompIDs only.</p></>}
     {kind === 'BRIDGE_TOKEN' && row.adapter !== 'TERMINAL_BRIDGE' && <p className="cfg-note">Set the connection method to MT5 terminal bridge first.</p>}
     <ul className="cfg-cred-status">{levels.map(([level, label, saved, updated]) => <li key={level}>
       <span>{label}</span>{saved ? <span className="cfg-pill ok">Saved · {new Date(updated).toLocaleDateString()}</span> : <span className="cfg-pill off">Not saved</span>}
@@ -950,7 +994,7 @@ function AddUpstoxAccount({ close, created }: { close: () => void; created: (acc
 function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void }) {
   const [f, setF] = useState<Row>({ provider_id: '', environment: 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
     base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
-    server: { server_name: '', access_points: [] as Row[] }, adapter: 'TERMINAL_BRIDGE', bridge_token: '' });
+    server: { server_name: '', access_points: [] as Row[] }, adapter: 'MTAPI_DIRECT', bridge_token: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const provider = refs.providers.find(p => p.id === f.provider_id);
   const set = (patch: Row) => setF(old => {
@@ -1026,8 +1070,8 @@ function AddMt5Account({ refs, close, created }: { refs: Record<string, Row[]>; 
         {existing.length > 1 && <p className="cfg-error">{existing.length} connections use this server ({existing.map(c => c.code).join(', ')}). Add the account from the account form and choose one.</p>}
         {!match && f.server.server_name && f.provider_id && <p className="cfg-note">A new connection will be created for this server.</p>}
         {!match && <div className="cfg-method">
-          <Field label="How COREI reaches it" hint={f.adapter === 'TERMINAL_BRIDGE' ? 'The official MT5 terminal logs in and keeps itself up to date; COREI reads from it through the bridge program' : 'The licensed mtapi SDK talks to the server itself; it breaks whenever the broker moves to a newer MT5 protocol'}>
-            <Choice label="Connection method" value={f.adapter} options={[['TERMINAL_BRIDGE', 'MT5 terminal bridge (recommended)'], ['MTAPI_DIRECT', 'Direct SDK']]} onChange={v => set({ adapter: v })} /></Field>
+          <Field label="How COREI reaches it" hint={f.adapter === 'TERMINAL_BRIDGE' ? 'Fallback when the SDK is behind a broker: the official MT5 terminal logs in and COREI reads from it through the bridge program' : 'The licensed mtapi SDK talks to the broker server itself, as institutional platforms do; keep its update subscription current'}>
+            <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK (recommended)'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (fallback)']]} onChange={v => set({ adapter: v })} /></Field>
           {f.adapter === 'TERMINAL_BRIDGE' && <>
             <BridgeFields settings={f.server} change={server => set({ server })} />
             <Field label="Bridge token" hint="Contents of corei-bridge.token on the bridge machine; stored encrypted on the connection"><input aria-label="Bridge token" type="password" autoComplete="new-password" maxLength={200}
@@ -1069,8 +1113,8 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
   groups: [['Group ID', r => r.code], ['Name', r => r.name], ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
   connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => <Link to="providers" id={r.provider_id}>{r.provider_code}</Link>],
-    ['Platform', r => r.platform === 'MT5' ? 'MT5' : 'API'], ['Env', r => <Env value={r.environment} />],
-    ['Server', r => r.platform === 'MT5' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
+    ['Platform', r => r.platform === 'MT5' ? 'MT5' : r.platform === 'FIX' ? 'FIX' : 'API'], ['Role', r => PURPOSE_LABEL[r.purpose] ?? r.purpose], ['Env', r => <Env value={r.environment} />],
+    ['Server', r => r.platform === 'FIX' ? `${r.settings.host}:${r.settings.port} · ${r.settings.sender_comp_id} → ${r.settings.target_comp_id}` : r.platform === 'MT5' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
     ['Clock', r => r.server_utc_offset_minutes == null ? <span className="cfg-pill warn">Not set</span> : `UTC${r.server_utc_offset_minutes >= 0 ? '+' : ''}${r.server_utc_offset_minutes / 60}${r.dst_rule && r.dst_rule !== 'NONE' && r.dst_rule !== 'UNKNOWN' ? ' ' + r.dst_rule + ' DST' : ''}`],
     ['Live', r => r.live_status?.state ? <span className={`cfg-pill ${r.live_status.state === 'CONNECTED' ? 'ok' : r.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{r.live_status.state}</span> : <span className="cfg-note">—</span>],
     ['Accounts', r => r.account_count],
@@ -1267,7 +1311,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
       </form>
       {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
-      {canEdit && selected && entity === 'connections' && selected.platform === 'REST_API' && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
+      {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'MT5' && <BrokerRead account={selected} canEdit={canEdit} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
       {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}

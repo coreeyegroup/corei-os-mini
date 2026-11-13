@@ -132,12 +132,15 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-27 | High | VT Markets LIVE account TRADING, never logged in; LIVE order sending ON | OPEN — owner: log in and read now; Read only; LIVE orders OFF |
 | A-28 | Medium | Server egress IP not Indian: Upstox edge may block; SEBI static IP | OPEN — owner: API check; Indian egress if blocked |
 | A-29 | Low | Collector list kept stale rows of archived accounts | DONE 0.21.0 |
+| A-30 | High | Data model narrowed to MT5 and Upstox; no provider-agnostic adapter list, no data/execution split | DONE 0.24.0 (adapter catalogue, connection roles, FIX 4.4) |
+| A-31 | High | mtapi SDK behind the MT5 servers (1035; IndexOutOfRange after login) | OPEN — owner: current mtapi licence with update subscription; compare mt5api.dll versions |
+| A-32 | Medium | Order adapters (MT5, FIX, Upstox) not built | OPEN — next stage (OMS) |
 
 ## C. Owner decisions
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | MT5 connection method: licensed mtapi direct connection or terminal bridge; plus which REST broker first | OPEN |
+| 1 | MT5 connection method: licensed mtapi direct connection or terminal bridge; plus which REST broker first | DECIDED DEC-55: direct SDK with updates, bridge fallback; Upstox first |
 | 2 | First instrument and session | OPEN (XAUUSD used as example) |
 | 3 | First real strategy rules | OPEN |
 | 4 | Pre-live test method: broker demo accounts, own simulator, or both | OPEN |

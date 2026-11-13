@@ -357,7 +357,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
 
- // A new server: the terminal bridge is the default method and needs host, fingerprint and token before Add is enabled.
+ // A new server: the direct SDK is the default; choosing the terminal bridge (fallback) needs host, fingerprint and token before Add is enabled.
  button('Add MT5 account').click();await tick();
  const addWin2=$('.fw');
  fill(byLabel('Provider'),db.providers[0].id);await tick();
@@ -365,7 +365,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Broker server name'),'VTMarkets-Live 3');fill(byLabel('Access point 1 host'),'198.51.100.7');await tick();
  assert.match(addWin2.textContent,/A new connection will be created/);
- assert.equal(byLabel('Connection method').value||$('.fw .cfg-method input:checked')?.value,'TERMINAL_BRIDGE');
+ assert.equal(byLabel('Connection method').value||$('.fw .cfg-method input:checked')?.value,'MTAPI_DIRECT');
+ fill(byLabel('Connection method'),'TERMINAL_BRIDGE');await tick();
  assert.ok($('.fw button.primary[form="cfg-add-mt5"]').disabled,'bridge details missing: cannot add yet');
  fill(byLabel('Bridge host'),'mt5-vps.example.net');fill(byLabel('Certificate fingerprint'),Array(32).fill('AB').join(':'));fill(byLabel('Bridge token'),'tok-123');await tick();
  assert.ok(!$('.fw button.primary[form="cfg-add-mt5"]').disabled);
@@ -375,7 +376,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual(sent2.server.bridge,{host:'mt5-vps.example.net',port:9443,fingerprint:Array(32).fill('AB').join(':')});
  assert.ok(!w.document.body.textContent.includes('tok-123'));
  $('[aria-label="Close window"]').click();await tick();
- console.log('PASS: a new MT5 server defaults to the terminal bridge; host, fingerprint and token travel with the one-step set-up.');
+ console.log("PASS: a new MT5 server defaults to the direct SDK; the terminal bridge fallback's host, fingerprint and token travel with the one-step set-up.");
 
  // Add Upstox account in one step: client ID, app key and secret; redirect URL shown to copy.
  button('Add Upstox account').click();await tick();
@@ -389,6 +390,24 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(!w.document.body.textContent.includes('app-secret'));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add Upstox account sends client ID, app key and secret in one step.');
+
+ // A FIX data source: platform FIX, session settings, role Data source; the record lists show the role.
+ await open2('Servers & APIs');
+ button('New connection (advanced)').click();await tick();
+ fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Platform'),'FIX');await tick();
+ assert.deepEqual([...w.document.querySelectorAll('.fw .cfg-section h4')].map(h=>h.textContent).slice(0,2),['1Broker','2FIX session']);
+ fill(byLabel('Environment'),'DEMO');fill(byLabel('FIX host'),'fix.example.net');fill(byLabel('FIX port'),'5201');
+ fill(byLabel('SenderCompID'),'COREI');fill(byLabel('TargetCompID'),'FASTFEED');fill(byLabel('TargetSubID'),'QUOTE');
+ fill(byLabel('Role'),'MARKET_DATA');fill(byLabel('Connection name'),'Fast feed FIX');fill(byLabel('Connection ID'),'FAST_FIX_DEMO');await tick();
+ await submit($('.fw form'));await tick();
+ const fixRow=db.connections.find(c=>c.code==='FAST_FIX_DEMO');
+ assert.equal(fixRow.platform,'FIX');assert.equal(fixRow.purpose,'MARKET_DATA');assert.equal(fixRow.adapter,'NATIVE');
+ assert.deepEqual([fixRow.settings.host,fixRow.settings.port,fixRow.settings.sender_comp_id,fixRow.settings.target_comp_id,fixRow.settings.target_sub_id,fixRow.settings.begin_string],
+   ['fix.example.net',5201,'COREI','FASTFEED','QUOTE','FIX.4.4']);
+ assert.match($('.cfg-detail').textContent,/FIX session login/,'the FIX login is saved on the connection');
+ assert.ok([...w.document.querySelectorAll('.cfg-table tbody tr')].some(r=>r.textContent.includes('FAST_FIX_DEMO')&&r.textContent.includes('Data source')));
+ $('[aria-label="Close window"]')?.click();await tick();
+ console.log('PASS: a FIX connection is created with its session settings and the Data source role.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
  await open2('Accounts');

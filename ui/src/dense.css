@@ -398,3 +398,13 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .cfg-checklist-steps li .cfg-link { flex: none; }
 .cfg-checklist-steps li small { overflow: hidden; text-overflow: ellipsis; }
 .cfg-checklist-steps li.done small { text-decoration: none; opacity: .7; }
+
+/* Connection roles and the adapter catalogue (Brokers & accounts) */
+.cfg-role { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; line-height: 15px; border: 1px solid var(--line); color: var(--muted); }
+.cfg-role.MARKET_DATA { color: #3b82f6; border-color: rgba(59,130,246,.45); }
+.cfg-role.TRADING { color: #b8860b; border-color: rgba(184,134,11,.45); }
+.cfg-catalogue { margin-top: 10px; }
+.cfg-catalogue > summary { cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 0; }
+.cfg-catalogue td { vertical-align: top; }
+.cfg-catalogue td:nth-child(5) { max-width: 420px; white-space: normal; }
+.cfg-fix .cfg-check { margin-right: 10px; font-size: 11.5px; white-space: nowrap; }

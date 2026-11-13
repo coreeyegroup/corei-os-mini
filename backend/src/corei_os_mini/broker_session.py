@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from decimal import Decimal
@@ -165,8 +166,10 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
         account = store.get_record(db, 'accounts', account_id)
     if not account:
         raise HTTPException(404, 'Account not found.')
+    if account.get('platform') == 'FIX':
+        return _read_fix(actor, account)
     if account.get('platform') != 'MT5':
-        raise HTTPException(409, 'Reading from the broker is available for MT5 accounts; other platforms use their own login.')
+        raise HTTPException(409, 'Reading from the broker is available for MT5 and FIX accounts; other platforms use their own login.')
     if not str(account['external_account_id']).isdigit():
         raise HTTPException(409, 'The MT5 login must be a number.')
     if account.get('credential_kind') != 'MT5_LOGIN':
@@ -191,6 +194,34 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
     finally:
         with _lock:
             _busy.discard(key)
+
+
+def _read_fix(actor: str, account: dict) -> dict:
+    """FIX: log on, read the venue's clock from the Logon reply, log out. Symbols come from the venue's own list (plans)."""
+    from . import controls
+    from .md.collector import fix_request
+    with store.transaction('read') as db:
+        settings = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}).get('settings') or {}
+    request = fix_request(settings, account['connection_id'], actor, f"FIX logon check for {account['code']}")
+    request['timeout_seconds'] = 15
+    proc = subprocess.run([sys.executable, '-m', 'corei_os_mini.md.fix_reader', '--session'], input=json.dumps(request) + '\n',
+                          capture_output=True, text=True, timeout=60)
+    request.clear()
+    try:
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        result = {'connected': False, 'attempts': [], 'error': 'The FIX reader gave no answer.'}
+    if not result.get('connected'):
+        error = result.get('error') or next((a.get('error') for a in result.get('attempts') or [] if a.get('error')), 'Logon failed')
+        controls.set_connection_status(account['connection_id'], 'FAILED', error=error)
+        return {'connected': False, 'attempts': result.get('attempts') or [], 'error': error}
+    offset = _offset_minutes(result.get('server_time'), result.get('utc_now'))
+    controls.set_connection_status(account['connection_id'], 'CONNECTED', host=result['host'], port=result['port'], logged_in=True,
+                                   heartbeat=True, server_time_offset_ms=offset * 60_000 if offset is not None else None)
+    with store.transaction('update') as db:
+        store.audit(db, actor, 'READ_FROM_BROKER', 'account', account['id'], None, {'platform': 'FIX', 'connected': True})
+    return {'connected': True, 'host': result['host'], 'port': result['port'], 'connect_ms': result.get('connect_ms'),
+            'server_time_offset_minutes': offset, 'symbols_stored': 0}
 
 
 def _read(actor: str, account: dict, addresses: list[dict], symbols: list[str] | None, max_symbols: int) -> dict:

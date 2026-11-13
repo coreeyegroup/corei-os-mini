@@ -638,6 +638,15 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Any provider, through any adapter — release 0.24.0
+
+DEC-55. Migration `019_adapter_catalogue.sql` (platform FIX, credential FIX_LOGIN). No reader rebuild needed.
+
+- **Providers are anybody**: a broker directly, a broker through MT5/MT4/cTrader, an ECN or prime broker over FIX, a fast feed or data vendor. Each is reached through an **adapter**; Setup › Brokers & accounts › *Adapters* lists every adapter with what it does for prices and orders and its build state (built: MT5 direct, MT5 terminal bridge, FIX 4.4/4.2, Upstox; planned: MT4, cTrader, LMAX, Rithmic, crypto exchanges, vendor feeds). API: `GET /api/config/adapters`.
+- **Every connection has a role**: *Data source* (a few chosen, high-quality price feeds), *Execution* (trading accounts) or both. Collection plans take prices only from data sources; an execution-only connection is refused with an explanation. The tree shows each connection's role.
+- **FIX 4.4 / 4.2 data adapter** (`md/fix_reader.py`): logon (CompIDs, sub-IDs, optional username/password, TLS), MarketDataRequest for top of book, snapshots and incremental refreshes, heartbeats and TestRequest, sequence-reset handling, rejects shown verbatim. *Log in and read now* checks the session. Usable today for broker FIX APIs, LMAX, ECNs, prime brokers and vendor FIX feeds.
+- **MT5: the direct SDK is the recommended method again** (as institutional bridges such as Westernpips use it), on condition that the mtapi licence includes its update subscription; the terminal bridge stays as the fallback.
+
 ## MT5 through the official terminal — release 0.23.0
 
 DEC-54. Migration `018_terminal_bridge.sql` (bridge token credential kind, CLOCK_MEASURED event). Guide: `docs/MT5_TERMINAL_BRIDGE.md`.

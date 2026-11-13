@@ -144,6 +144,20 @@ class PlanState:
         self.quality.limits = self.limits(plan, deviation_bp)
 
 
+def fix_request(settings: dict, connection_id, used_by: str, purpose: str) -> dict:
+    """The FIX session settings for the reader, with the session login when one is saved (logged as a credential use)."""
+    request = {k: settings.get(k) for k in ('host', 'port', 'tls', 'tls_verify', 'begin_string', 'sender_comp_id', 'target_comp_id',
+                                            'sender_sub_id', 'target_sub_id', 'heartbeat_seconds', 'reset_seq_on_logon', 'md_depth',
+                                            'md_snapshots_only')}
+    with cfg.transaction('read') as db:
+        has_login = db.execute("SELECT 1 FROM cfg_credentials WHERE connection_id=%s AND kind='FIX_LOGIN'", (connection_id,)).fetchone()
+    if has_login:
+        secret = cfg.use_credential('connections', UUID(str(connection_id)), used_by, purpose)
+        request['username'], request['password'] = secret['username'], secret['password']
+        secret.clear()
+    return request
+
+
 class SourceWorker(threading.Thread):
     """One account: login, stream, reconnect, backfill."""
 
@@ -275,6 +289,10 @@ class SourceWorker(threading.Thread):
 
     def _command(self, account: dict) -> tuple[list[str], dict] | None:
         """The reader to run and its first stdin line, per platform; None when it cannot start (error set)."""
+        if self.platform == 'FIX':
+            request = fix_request(account.get('connection_settings') or {}, account['connection_id'], 'collector', 'Stream market data (FIX session)')
+            request.update({'symbols': sorted(self.wanted()), 'timeout_seconds': 15})
+            return [sys.executable, '-m', 'corei_os_mini.md.fix_reader'], request
         if self.platform == 'REST_API':
             settings = account.get('connection_settings') or {}
             if 'upstox' not in (settings.get('api_base_url') or ''):

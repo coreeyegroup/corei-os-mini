@@ -83,7 +83,8 @@ export function BrokerTree({ navigate, canEdit }: { navigate: Navigate; canEdit:
     <div className="cfg-toolbar">
       {canEdit && <><button className="primary" onClick={() => navigate('accounts', 'new:MT5')} title="Login, password and server; the broker's server record is created with it">Add MT5 account</button>
         <button className="primary" onClick={() => navigate('accounts', 'new:UPSTOX')} title="Client ID, app key and secret; broker and API record are created with it">Add Upstox account</button>
-        <button onClick={() => navigate('providers', 'new')}>New broker (MT5 brokers first)</button></>}
+        <button onClick={() => navigate('providers', 'new')}>New provider</button>
+        <button onClick={() => navigate('connections', 'new')} title="FIX session, MT5 server or broker API for a provider">New connection</button></>}
       <span className="cfg-toolbar-gap" />
       <span className="cfg-note">Click a broker, server or account to open it. Readiness per account: data, then orders.</span>
     </div>
@@ -93,7 +94,8 @@ export function BrokerTree({ navigate, canEdit }: { navigate: Navigate; canEdit:
         <tr key={p.id} className="cfg-tree-broker" onClick={() => navigate('providers', p.id)} tabIndex={0}><td colSpan={5}><strong>{p.code}</strong> <small className="cfg-note">broker · {p.connections.length} server/API record(s)</small></td></tr>,
         ...p.connections.flatMap(c => [
           <tr key={c.id} className="cfg-tree-conn-row" onClick={() => navigate('connections', c.id)} tabIndex={0}>
-            <td className="cfg-indent1">{c.code} <small className="cfg-note">{c.platform === 'MT5' ? c.settings?.server_name : c.settings?.api_base_url}</small></td>
+            <td className="cfg-indent1">{c.code} <span className={`cfg-role ${c.purpose}`}>{c.purpose === 'MARKET_DATA' ? 'data source' : c.purpose === 'TRADING' ? 'execution' : 'data + execution'}</span>
+              <small className="cfg-note"> {c.platform === 'MT5' ? `MT5 · ${c.settings?.server_name ?? ''}` : c.platform === 'FIX' ? `FIX · ${c.settings?.host}:${c.settings?.port}` : c.settings?.api_base_url}</small></td>
             <td><Env value={c.environment} /></td>
             <td>{c.live_status?.state ? <span className={`cfg-pill ${c.live_status.state === 'CONNECTED' ? 'ok' : c.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{c.live_status.state}</span> : <span className="cfg-pill off">Never connected</span>}
               {c.pending_changes > 0 && <span className="cfg-pill warn">Awaiting approval</span>}{c.status !== 'ACTIVE' && <Status value={c.status} />}</td>
@@ -109,7 +111,22 @@ export function BrokerTree({ navigate, canEdit }: { navigate: Navigate; canEdit:
           ...(accountsOf(c.id).length === 0 ? [<tr key={c.id + 'none'} className="cfg-tree-acct"><td className="cfg-indent2 cfg-note" colSpan={5}>No account on this server yet.</td></tr>] : []),
         ]),
       ])}</tbody></table>
+    <AdapterCatalogue />
   </div>;
+}
+
+/** Every access technology COREI connects through (provider-agnostic), with build state. */
+function AdapterCatalogue() {
+  const [data, setData] = useState<Row | null>(null);
+  useEffect(() => { void api('config/adapters').then(setData).catch(() => setData(null)); }, []);
+  if (!data) return null;
+  const pill = (v: string | null) => v == null ? <span className="cfg-note">—</span> : <span className={`cfg-pill ${v === 'BUILT' ? 'ok' : v === 'PARTIAL' ? 'warn' : 'off'}`}>{v.toLowerCase()}</span>;
+  return <details className="cfg-catalogue" open>
+    <summary>Adapters <small className="cfg-note">· how COREI reaches any provider: broker, ECN, fast feed, data vendor, exchange</small></summary>
+    <table className="cfg-table"><thead><tr><th>Adapter</th><th>Family</th><th>Prices</th><th>Orders</th><th>How</th><th>Examples</th></tr></thead>
+      <tbody>{data.adapters.map((a: Row) => <tr key={a.id}><td>{a.label}</td><td className="cfg-note">{a.family}</td><td>{pill(a.data)}</td><td>{pill(a.orders)}</td>
+        <td className="cfg-note">{a.how}</td><td className="cfg-note">{a.examples}</td></tr>)}</tbody></table>
+  </details>;
 }
 
 /* ---------- approvals ---------- */

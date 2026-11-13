@@ -29,7 +29,7 @@ from pydantic import BaseModel, ValidationError
 from . import credentials
 from .config import get_settings
 from .config_models import (AccountGroupIn, AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn,
-                            ApiKeyCredential, BridgeTokenCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
+                            ApiKeyCredential, BridgeTokenCredential, FixLoginCredential, OAuthClientCredential, Mt5AccountSetupIn, Mt5LoginCredential,
                             Mt5Settings)
 from .mt5_routing import effective_access_points
 from .persistence import PersistenceNotConfigured, _connect
@@ -37,7 +37,7 @@ from .persistence import PersistenceNotConfigured, _connect
 # What COREI can actually do per platform. Market data and account reads exist for MT5
 # (read-only, through the MT5 SDK); sending orders is built per platform later. An
 # account on a platform not listed reports the blocker instead of implying it works.
-DATA_ADAPTERS: set[str] = {'MT5', 'REST_API'}  # REST_API: Upstox market data only (md/upstox_reader.py)
+DATA_ADAPTERS: set[str] = {'MT5', 'REST_API', 'FIX'}  # REST_API: Upstox market data only (md/upstox_reader.py)
 ORDER_ADAPTERS: set[str] = set()
 AVAILABLE_ADAPTERS = DATA_ADAPTERS
 
@@ -621,6 +621,10 @@ def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> 
     connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s FOR UPDATE', (owner_id,)).fetchone()
     if not connection:
         raise HTTPException(404, 'Connection not found.')
+    if connection['platform'] == 'FIX':
+        if not isinstance(credential, FixLoginCredential):
+            raise HTTPException(422, 'A FIX connection takes the session login (username and password).')
+        return 'connection_id', connection
     if connection['platform'] == 'MT5':
         if connection['adapter'] != 'TERMINAL_BRIDGE' or not isinstance(credential, BridgeTokenCredential):
             raise HTTPException(422, 'An MT5 connection takes only the terminal bridge token (when its method is Terminal bridge). '

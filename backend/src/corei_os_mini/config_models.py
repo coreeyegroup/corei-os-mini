@@ -180,7 +180,30 @@ class RestApiSettings(_Strict):
         return self
 
 
-SETTINGS_BY_PLATFORM = {'MT5': Mt5Settings, 'REST_API': RestApiSettings}
+class FixSettings(_Strict):
+    """A FIX 4.4 session (broker, prime broker, ECN, fast feed): where it is and who we are on it."""
+    host: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=253)]
+    port: Annotated[int, Field(ge=1, le=65535)]
+    tls: bool = True
+    tls_verify: bool = True
+    begin_string: Literal['FIX.4.4', 'FIX.4.2'] = 'FIX.4.4'
+    sender_comp_id: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[!-~]{1,64}$')]
+    target_comp_id: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[!-~]{1,64}$')]
+    sender_sub_id: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[!-~]{0,64}$')] = ''
+    target_sub_id: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[!-~]{0,64}$')] = ''
+    heartbeat_seconds: Annotated[int, Field(ge=5, le=120)] = 30
+    reset_seq_on_logon: bool = True
+    # Market data: how deep to subscribe (1 = top of book) and whether updates come as full snapshots.
+    md_depth: Annotated[int, Field(ge=1, le=10)] = 1
+    md_snapshots_only: bool = False
+
+    @field_validator('host')
+    @classmethod
+    def valid_host(cls, value: str) -> str:
+        return Mt5AccessPoint.valid_host(value)
+
+
+SETTINGS_BY_PLATFORM = {'MT5': Mt5Settings, 'REST_API': RestApiSettings, 'FIX': FixSettings}
 
 
 class MaintenanceWindow(_Strict):
@@ -191,14 +214,14 @@ class MaintenanceWindow(_Strict):
     note: Text(120) = ''
 
 
-ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'REST_API': {'DEFAULT', 'NATIVE'}}
+ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'REST_API': {'DEFAULT', 'NATIVE'}, 'FIX': {'DEFAULT', 'NATIVE'}}
 
 
 class ConnectionIn(_Strict):
     provider_id: UUID
     code: Code
     name: Name
-    platform: Literal['MT5', 'REST_API']
+    platform: Literal['MT5', 'REST_API', 'FIX']
     environment: Literal['DEMO', 'LIVE']
     purpose: Purpose
     settings: dict
@@ -355,6 +378,13 @@ class BridgeTokenCredential(_Strict):
     token: Secret
 
 
+class FixLoginCredential(_Strict):
+    """FIX session login (Logon tags 553/554). Some venues authenticate by IP and CompIDs only: then none is saved."""
+    kind: Literal['FIX_LOGIN']
+    username: Secret
+    password: Secret
+
+
 class Mt5LoginCredential(_Strict):
     kind: Literal['MT5_LOGIN']
     password: Secret
@@ -362,7 +392,7 @@ class Mt5LoginCredential(_Strict):
     access_level: Literal['FULL', 'READ_ONLY'] = 'FULL'
 
 
-CredentialIn = Annotated[Union[ApiKeyCredential, OAuthClientCredential, Mt5LoginCredential, BridgeTokenCredential], Field(discriminator='kind')]
+CredentialIn = Annotated[Union[ApiKeyCredential, OAuthClientCredential, Mt5LoginCredential, BridgeTokenCredential, FixLoginCredential], Field(discriminator='kind')]
 
 
 class CredentialEnvelope(_Strict):

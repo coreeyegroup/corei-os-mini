@@ -154,10 +154,14 @@ def get_plan(db, plan_id: UUID) -> dict:
 
 
 def _check(db, data: PlanIn, plan_id: UUID | None) -> dict:
-    account = db.execute('SELECT a.id, a.status, c.environment, c.platform FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
-                         'WHERE a.id=%s', (data.account_id,)).fetchone()
+    account = db.execute('SELECT a.id, a.status, c.environment, c.platform, c.purpose, c.code AS connection_code FROM cfg_accounts a '
+                         'JOIN cfg_connections c ON c.id=a.connection_id WHERE a.id=%s', (data.account_id,)).fetchone()
     if not account:
         raise HTTPException(422, 'The account does not exist.')
+    if account['purpose'] == 'TRADING':
+        # Prices come from data sources; an execution-only connection is watched for orders and fills, not collected.
+        raise HTTPException(422, f"Connection {account['connection_code']} is an execution connection. Collect prices from a data source, "
+                                 'or set the connection\'s role to "Data source and execution".')
     if account['status'] == 'ARCHIVED':
         raise HTTPException(409, 'The account is archived.')
     if data.instrument_id and not db.execute('SELECT 1 FROM cfg_instruments WHERE id=%s', (data.instrument_id,)).fetchone():

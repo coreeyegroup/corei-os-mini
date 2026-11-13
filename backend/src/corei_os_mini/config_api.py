@@ -186,6 +186,14 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
     return _pending(response, store.setup_mt5_account(actor, data))
 
 
+@router.get('/adapters')
+def adapter_catalogue(response: Response, _: Principal = Depends(current_user)):
+    """Every access technology COREI connects through, its role and build state."""
+    from .adapters import catalogue
+    response.headers['Cache-Control'] = 'no-store'
+    return catalogue()
+
+
 @router.post('/upstox/account-setup', status_code=201)
 def setup_upstox_account(payload: dict, request: Request, response: Response, actor: str = Depends(editor)):
     """Add an Upstox account in one step: broker, API connection, app key and secret, account."""

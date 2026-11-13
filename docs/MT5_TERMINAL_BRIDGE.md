@@ -1,4 +1,6 @@
-# MT5 terminal bridge — the stable way to reach MetaTrader 5
+# MT5 terminal bridge — fallback route to MetaTrader 5
+
+> Since 0.24.0 (DEC-55) the direct SDK, kept current on its update subscription, is the primary MT5 method; use this bridge for a broker the SDK has not caught up with.
 
 **Why.** COREI's first MT5 route (`connectors/mt5-direct-check`, the licensed mtapi SDK) speaks MetaQuotes'
 private server protocol itself. MetaQuotes changes that protocol with every MT5 build, and brokers move to
@@ -71,7 +73,7 @@ Bridge host in COREI is then `127.0.0.1`. The terminal needs an X session (Xvfb 
 ## C. In COREI
 
 **New account:** Setup › Brokers & accounts › **Add MT5 account**. Fill in broker, login, password, server as
-usual. Under *How COREI reaches it* keep **MT5 terminal bridge (recommended)** and enter:
+usual. Under *How COREI reaches it* choose **MT5 terminal bridge (fallback)** and enter:
 
 | Field | Value |
 | --- | --- |
