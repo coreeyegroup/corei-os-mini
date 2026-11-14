@@ -5,7 +5,8 @@
 #
 #   sudo bash scripts/setup-mt5-terminal.sh <instance> <port> [broker-installer-url]
 #   e.g. sudo bash scripts/setup-mt5-terminal.sh metaquotes-demo 9443
-#        sudo bash scripts/setup-mt5-terminal.sh vt-live 9444 https://download.mql5.com/cdn/web/vt.markets.pty.ltd/mt5/vtmarkets5setup.exe
+#        sudo bash scripts/setup-mt5-terminal.sh vt-live 9444 <the MT5 installer link from the broker's download page>
+# A broker's own installer already knows its servers; the MetaQuotes installer (the default) knows MetaQuotes-Demo.
 #
 # Then point the COREI account at it (dry run first, then --apply):
 #   sudo bash scripts/apply-test-setup.sh --bridge <ACCOUNT_CODE> --port <port> --state /var/lib/corei-mt5/<instance>/state
