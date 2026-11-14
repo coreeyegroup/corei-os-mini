@@ -44,8 +44,27 @@ install -d -m 755 /etc/apt/keyrings
   curl -fsSL -o "/etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources" "https://dl.winehq.org/wine-builds/ubuntu/dists/$VERSION_CODENAME/winehq-$VERSION_CODENAME.sources"
 apt-get update -qq
 APTLOG=/var/log/corei-mt5-apt.log
-wine_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends winehq-stable >>"$APTLOG" 2>&1; }
-wine_ok() { dpkg-query -W -f='${db:Status-Status}' winehq-stable 2>/dev/null | grep -q '^installed$'; }
+# Only what Wine needs (no "recommends": those pull dozens of optional 32-bit libraries that often conflict on
+# servers, and MT5 needs none of them). Newest stable first, then older stable releases, then the devel branch.
+wine_chain() {  # <branch> <version>: the WineHQ packages of that version, named explicitly so apt resolves them together
+  local b=$1 v=$2 pkgs="winehq-$b=$v wine-$b=$v"
+  for part in amd64 i386; do apt-cache madison "wine-$b-$part" 2>/dev/null | awk '{print $3}' | grep -qx "$v" && pkgs="$pkgs wine-$b-$part=$v"; done
+  echo "$pkgs"
+}
+wine_install() {
+  local b v chain
+  for b in stable devel; do
+    for v in $(apt-cache madison "winehq-$b" 2>/dev/null | awk '{print $3}' | head -6); do
+      chain=$(wine_chain "$b" "$v")
+      if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $chain >>"$APTLOG" 2>&1; then
+        echo "Installed WineHQ $b $v."; return 0
+      fi
+      echo "  WineHQ $b $v refused (apt's reason is in $APTLOG); trying the next one."
+    done
+  done
+  return 1
+}
+wine_ok() { { dpkg-query -W -f='${db:Status-Status}\n' winehq-stable winehq-devel 2>/dev/null || true; } | grep -qx 'installed'; }
 if ! wine_ok && ! wine_install; then
   echo "WineHQ's Wine was refused by apt; repairing and retrying (details: $APTLOG)."
   # 1. Finish any interrupted package work.
@@ -68,7 +87,11 @@ if ! wine_ok && ! wine_install; then
   if ! wine_install; then
     echo
     echo "apt still refuses WineHQ's Wine. Its reason:"
-    { apt-get install -s --install-recommends winehq-stable 2>&1 || true; } | sed -n '/following packages have unmet dependencies/,/^E:/p' | head -40 || true
+    V=$(apt-cache madison winehq-stable 2>/dev/null | awk 'NR==1{print $3}')
+    # Name the whole chain so apt shows the real missing piece, not just the first link.
+    { apt-get install -s --no-install-recommends $(wine_chain stable "$V") 2>&1 || true; } | sed -n '/following packages have unmet dependencies/,/^E:/p' | head -40 || true
+    echo "Architectures: $(dpkg --print-architecture) + $(dpkg --print-foreign-architectures | tr '\n' ' ')"
+    echo "WineHQ versions apt can see: $(apt-cache madison winehq-stable 2>/dev/null | awk '{print $3}' | head -6 | tr '\n' ' ')"
     HELD=$(apt-mark showhold); [[ -n "$HELD" ]] && echo "Packages on hold (apt will not change them): $(echo $HELD)"
     echo
     echo "Most often: installed libraries are older than the 32-bit ones WineHQ needs. Run the same command again with"
@@ -78,7 +101,7 @@ if ! wine_ok && ! wine_install; then
   fi
 fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb xauth openssl curl unzip ca-certificates >/dev/null
-wine --version
+wine --version || /opt/wine-stable/bin/wine --version || /opt/wine-devel/bin/wine --version
 
 step "2/7 Service user and folders"
 id "$SVC_USER" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/corei-mt5 --shell /usr/sbin/nologin "$SVC_USER"
