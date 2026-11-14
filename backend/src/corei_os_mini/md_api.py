@@ -86,6 +86,13 @@ def latest(response: Response, account_id: UUID | None = None, _: str = Depends(
     return {'items': store.latest(account_id)}
 
 
+@router.get('/ticks/{account_id}/{broker_symbol}')
+def ticks(account_id: UUID, broker_symbol: str, response: Response, seconds: int = Query(300, ge=5, le=3600),
+          limit: int = Query(2000, ge=1, le=10000), _: str = Depends(require_operator)):
+    _no_store(response)
+    return {'items': store.ticks(account_id, broker_symbol, seconds, limit)}
+
+
 @router.get('/quality')
 def quality(response: Response, hours: int = Query(24, ge=1, le=24 * 30), _: str = Depends(require_operator)):
     _no_store(response)

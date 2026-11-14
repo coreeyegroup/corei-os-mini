@@ -638,6 +638,15 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Market dashboard with workspaces — release 0.27.0
+
+DEC-58. No migration, no reader rebuild. How prices are collected, stored and used: `docs/MARKET_DATA_FLOW.md`.
+
+- **Market data › Dashboard** (opens first): workspaces as tabs — *All sources*, one per account (automatic), and your own (any accounts and symbols; they follow you to other devices). Each workspace: health strip (feeds live, symbols, stale, quality, prices collected, events), **quote board** (bid/ask with change flashes, spread, day change, day range, age, quality, 5-minute trend), **chart** of the selected symbol (candles S1…D1 or ticks, crosshair readout, last price), **time & sales** with latency, **sources** (the same instrument from every account, difference in points, which feed is used) and **feeds & events** of the workspace's accounts. The previous table stays as *Table*.
+- API: `GET /api/md/ticks/{account}/{symbol}`; `GET /api/md/latest` now includes the day's open, high and low.
+- Database errors now say what failed (schema out of date, permission, unreachable, or the SQL error code) instead of one generic message; the Upstox login retries saving its token when the database is briefly unreachable.
+- MT5: when the SDK is older than the server, the collector retries once an hour instead of every 5 minutes (each try is a real login).
+
 ## MT5: broker › accounts, fastest address per account — release 0.26.0
 
 DEC-57. No migration, no reader rebuild. Audit: `docs/AUDIT_2026-11-14.md`.

@@ -27,7 +27,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    data_types:['QUOTES','BARS'],bar_timeframes:['M1'],schedule:'ALWAYS',window_days:[1,2,3,4,5],hot_days:14,bars_hot_days:365,archive:true,status:'ACTIVE',status_reason:'Start',version:3,
    environment:'LIVE',active_feed:true,score:96,stale_seconds:10,max_latency_ms:1500,max_gap_seconds:60,conflate_ms:0,depth_levels:0,backfill_per_minute:30,on_breach:'SWITCH',pending_changes:0}];
  const controls=[{scope:'ALL',paused:false,reason:'Initial state',version:1,updated_by:'system',updated_at:now}];
- const created=[],statusCalls=[],switches=[],estimates=[];
+ const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
@@ -37,6 +37,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31',problem:null},
      {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',state:'FAILED',host:null,port:null,lag_ms:null,subscribed:0,ticks_total:0,backlog:0,heartbeat_age_seconds:3,last_error:'ServerException: OLD_VERSION',
       problem:{title:'Broker refused the connector version',detail:'The broker requires a newer MT5 version.',permanent:true,raw:'ServerException: OLD_VERSION'}}]});
+   if(url.includes('/md/bars/'))return ok({items:Array.from({length:30},(_,i)=>({bar_time:new Date(Date.parse(now)-i*60000).toISOString(),open:2400+i%5,high:2403+i%5,low:2398+i%5,close:2401+(i%3),ticks:40,source:'BUILT'}))});
+   if(url.includes('/md/ticks/')){tickCalls.push(url);return ok({items:[{received_at:now,source_time:now,bid:2401.15,ask:2401.4},{received_at:now,source_time:now,bid:2401.2,ask:2401.45}]});}
+   if(url.endsWith('/operator/prefs')&&method==='GET')return ok({});
+   if(url.includes('/operator/prefs/')){prefPuts.push(body);return ok({saved:true});}
    if(url.startsWith('/api/md/plans')&&method==='GET')return ok({items:plans});
    if(url.endsWith('/md/plans')&&method==='POST'){created.push(body);const p={...body,id:'p2',status:'DRAFT',version:1,account_code:'ICM_B',environment:'LIVE',instrument_symbol:'XAUUSD',status_reason:''};plans.push(p);return ok(p,201);}
    if(url.endsWith('/md/plans/p2/status')){statusCalls.push(body);return ok({change_request:{id:'r1',summary:'Start LIVE trading feed GOLD_B (XAUUSD)'}},202);}
@@ -60,6 +64,27 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const nav=label=>$$('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle(3);};
+
+ // Dashboard (default): workspaces All sources + one per account; quote board, chart, time & sales, sources, feeds.
+ const tabs=()=>$$('.mb-tabs [role=tab]').map(b=>b.textContent);
+ assert.deepEqual(tabs(),['All sources2','IC Markets B1','VT Markets gold1']);
+ assert.equal($$('.mb-board tbody tr').length,2);
+ assert.match($('.mb-kpis').textContent,/Feeds live1\/2/);
+ assert.match($('.mb-problem').textContent,/IC Markets B: Broker refused the connector version/);
+ assert.ok($$('.mb-board tbody tr')[0].querySelector('td:nth-child(10) svg'),'trend column');
+ assert.equal($$('.mb-svg g.up, .mb-svg g.down').length,30,'candles drawn for the selected symbol');
+ assert.ok(tickCalls.some(u=>u.includes('seconds=120')),'time & sales loads recent ticks');
+ assert.match($('[aria-label=Sources]').textContent,/XAUUSD · 2 sources/,'same instrument from both accounts');
+ $$('.mb-tabs [role=tab]')[2].click();await settle();
+ assert.equal($$('.mb-board tbody tr').length,1,'account workspace shows only that account');
+ button('+ Workspace').click();await settle();
+ fill($('[aria-label="Workspace name"]'),'Gold desk');
+ $$('.mb-wsform .mb-chip input')[0].click();await settle();
+ await submit($('.mb-wsform'));
+ assert.ok(tabs().includes('★ Gold desk2'),'own workspace saved and shown');
+ assert.equal(prefPuts.at(-1).value[0].name,'Gold desk','workspaces follow the user (saved as a preference)');
+ console.log('PASS: dashboard workspaces (all, per account, own), quote board, candles, time & sales, sources comparison and feeds.');
+ nav('Table').click();await settle();
 
  // Live: collector card and prices; a 42 s old price is flagged.
  assert.ok($('.md-collector').textContent.includes('VT Markets gold'));assert.ok($('.md-collector').textContent.includes('live'));

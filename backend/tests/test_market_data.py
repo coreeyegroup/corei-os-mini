@@ -261,7 +261,14 @@ class MarketData(unittest.TestCase):
         plans = {p['code']: p for p in self.ok(self.alice.get('/api/md/plans'))['items']}
         self.assertIsNotNone(plans['EU_A']['bid'])
         self.assertTrue(plans['EU_A']['active_feed'])
-        self.assertEqual(len(self.ok(self.alice.get('/api/md/latest'))['items']), 3)
+        latest = self.ok(self.alice.get('/api/md/latest'))['items']
+        self.assertEqual(len(latest), 3)
+        self.assertTrue({'day_open', 'day_high', 'day_low'} <= set(latest[0]), 'the dashboard shows the day range')
+        # Dashboard chart and time & sales: the latest prices of one symbol, oldest first.
+        ticks = self.ok(self.alice.get(f"/api/md/ticks/{a['id']}/EURUSD?seconds=3600&limit=50"))['items']
+        self.assertTrue(ticks)
+        self.assertEqual([t['received_at'] for t in ticks], sorted(t['received_at'] for t in ticks))
+        self.assertEqual(self.alice.get(f"/api/md/ticks/{a['id']}/EURUSD?seconds=1").status_code, 422)
         self.assertTrue(self.ok(self.alice.get('/api/md/collectors'))['items'])
 
         # Price check before an order: fresh price passes; a silent feed blocks.

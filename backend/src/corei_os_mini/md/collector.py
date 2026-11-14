@@ -277,8 +277,10 @@ class SourceWorker(threading.Thread):
             reason = explain(self.error)
             if reason and reason['permanent']:
                 # Retrying every few seconds cannot fix a refused version or password; check every 5 minutes.
+                # An SDK older than the server cannot fix itself either: each try is a real login at the broker,
+                # so wait an hour (a deploy with a new mt5api.dll restarts the collector at once).
                 self.state = 'FAILED'
-                delay = 300
+                delay = 3600 if any(k in (self.error or '') for k in ('PROTOCOL_AFTER_LOGIN', 'SdkProtocolException')) else 300
             else:
                 self.state = 'RECONNECTING'
                 delay = RECONNECT_STEPS[min(attempt, len(RECONNECT_STEPS) - 1)]

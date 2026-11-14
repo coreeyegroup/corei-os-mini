@@ -101,9 +101,23 @@ def transaction(operation: str = 'write') -> Iterator[psycopg.Connection]:
     except psycopg.IntegrityError as exc:
         _log.warning('Integrity error during %s: %s %s', operation, type(exc).__name__, exc.diag.constraint_name)
         raise HTTPException(409 if operation == 'delete' else 422, 'The change conflicts with other records.') from None
-    except (psycopg.Error, PersistenceNotConfigured) as exc:
-        _log.error('Database error during %s: %s', operation, type(exc).__name__)
-        raise HTTPException(503, 'Configuration database unavailable. Check the database and apply migrations.') from None
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedFunction) as exc:
+        _log.error('Database schema out of date during %s: %s %s', operation, exc.sqlstate, exc.diag.message_primary)
+        raise HTTPException(503, f'Database schema out of date ({exc.diag.message_primary}). Run scripts/deploy-workstation.sh to apply migrations.') from None
+    except psycopg.errors.InsufficientPrivilege as exc:
+        _log.error('Database permission denied during %s: %s', operation, exc.diag.message_primary)
+        raise HTTPException(503, f'Database permission denied ({exc.diag.message_primary}). Run scripts/deploy-workstation.sh to repair grants.') from None
+    except PersistenceNotConfigured:
+        raise HTTPException(503, 'Configuration database is not configured (COREI_DATABASE_URL).') from None
+    except psycopg.OperationalError as exc:
+        _log.error('Database unreachable during %s: %s', operation, str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__)
+        raise HTTPException(503, 'Database unreachable (it may be restarting). Try again in a moment.') from None
+    except psycopg.Error as exc:
+        # Anything else: say which error it was, so the log line and the screen point at the cause.
+        state = getattr(exc, 'sqlstate', None) or type(exc).__name__
+        primary = (getattr(getattr(exc, 'diag', None), 'message_primary', None) or '')[:160]
+        _log.error('Database error during %s: %s %s %s', operation, type(exc).__name__, state, primary)
+        raise HTTPException(503, f'Database error {state} during {operation}{": " + primary if primary else ""}.') from None
 
 
 def _plain(value: Any) -> Any:

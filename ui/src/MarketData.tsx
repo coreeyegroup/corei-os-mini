@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import FloatingWindow from './FloatingWindow';
+import MarketBoard from './MarketBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
 import './configuration.css';
@@ -12,9 +13,10 @@ import './infrastructure.css';
 import './marketdata.css';
 
 type Row = Record<string, any>;
-type Tab = 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
+type Tab = 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
 const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: 'live', label: 'Live', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
+  { id: 'dashboard', label: 'Dashboard', hint: 'Live prices in workspaces: one per account, all sources, or your own selection. Click a symbol for its chart, time & sales and every source.' },
+  { id: 'live', label: 'Table', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
   { id: 'plans', label: 'Collection plans', hint: 'What is collected, from which account, when, and how long it is kept.' },
   { id: 'quality', label: 'Quality', hint: 'Latency, gaps, frozen prices, spreads, spikes and deviation from other sources — compare brokers.' },
   { id: 'events', label: 'Events', hint: 'Outages, gaps, feed switches, backfills, archive, fingerprint checks, backups and disk.' },
@@ -30,7 +32,7 @@ const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Nu
 const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
 
 export default function MarketData() {
-  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'live', TABS.map(t => t.id));
+  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'dashboard', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
@@ -51,7 +53,7 @@ export default function MarketData() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       <div className="cfg-pane">
-        {tab === 'live' ? <Live /> : tab === 'plans' ? <Plans canEdit={canEdit} /> : tab === 'quality' ? <Quality /> : tab === 'events' ? <Events />
+        {tab === 'dashboard' ? <MarketBoard /> : tab === 'live' ? <Live /> : tab === 'plans' ? <Plans canEdit={canEdit} /> : tab === 'quality' ? <Quality /> : tab === 'events' ? <Events />
           : tab === 'backfill' ? <Backfill canEdit={canEdit} /> : tab === 'controls' ? <Controls canEdit={canEdit} /> : <Archive />}
       </div>
     </section>
@@ -281,7 +283,7 @@ function Quality() {
 
 /* ---------- events ---------- */
 
-function eventSummary(e: Row): string {
+export function eventSummary(e: Row): string {
   const d = e.detail ?? {};
   const first = d.message ?? d.reason ?? d.error ?? d.warning;
   if (e.kind === 'CONNECTED') return `${d.host ?? ''}${d.outage_seconds ? ` after ${Math.round(d.outage_seconds)} s outage` : ''}`;

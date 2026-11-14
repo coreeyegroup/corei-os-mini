@@ -21,6 +21,7 @@ import hashlib
 import json
 import secrets
 import urllib.error
+import time
 import urllib.parse
 import urllib.request
 from uuid import UUID
@@ -178,8 +179,17 @@ def finish(code: str, state: str) -> dict:
     except BrokerRefused as exc:
         _record_failure(account, row['username'], 'OAUTH_REDIRECT', exc)
         raise
-    with store.transaction('update') as db:
-        return _store_token(db, account, token, row['username'], 'OAUTH_REDIRECT')
+    # The broker's code is single-use: once exchanged, a failed save would cost the operator a new login.
+    # Retry the save briefly when the database is only momentarily unreachable.
+    for attempt in range(4):
+        try:
+            with store.transaction('update') as db:
+                return _store_token(db, account, token, row['username'], 'OAUTH_REDIRECT')
+        except HTTPException as exc:
+            if exc.status_code != 503 or 'unreachable' not in str(exc.detail) or attempt == 3:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    raise HTTPException(503, 'Database unreachable.')
 
 
 def _record_failure(account: dict, user: str, how: str, exc: BrokerRefused) -> None:

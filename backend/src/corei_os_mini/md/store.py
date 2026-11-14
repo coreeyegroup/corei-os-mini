@@ -197,10 +197,22 @@ def latest(account_id: UUID | None = None) -> list[dict]:
         rows = db.execute('''SELECT l.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
                 (SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
                           ORDER BY s.read_at DESC LIMIT 1) AS digits,
-                (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score
-            FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id''' + (' WHERE l.account_id=%s' if account_id else '') +
+                (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score,
+                d.day_open, d.day_high, d.day_low, d.day_time
+            FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id
+            LEFT JOIN LATERAL (SELECT b.open AS day_open, b.high AS day_high, b.low AS day_low, b.bar_time AS day_time FROM md_bars b
+                WHERE b.account_id=l.account_id AND b.broker_symbol=l.broker_symbol AND b.timeframe='D1' ORDER BY b.bar_time DESC LIMIT 1) d ON true''' + (' WHERE l.account_id=%s' if account_id else '') +
                           ' ORDER BY l.broker_symbol, a.code', (account_id,) if account_id else ()).fetchall()
     return [store.clean(r) for r in rows]
+
+
+def ticks(account_id: UUID, broker_symbol: str, seconds: int = 300, limit: int = 3000) -> list[dict]:
+    """The latest prices of one symbol from one account, oldest first (chart and time & sales)."""
+    with store.transaction('read') as db:
+        rows = db.execute('SELECT received_at, source_time, bid, ask, last, volume FROM md_ticks WHERE account_id=%s AND broker_symbol=%s '
+                          'AND received_at > now() - make_interval(secs => %s) ORDER BY received_at DESC, seq DESC LIMIT %s',
+                          (account_id, broker_symbol, seconds, limit)).fetchall()
+    return [store.clean(r) for r in reversed(rows)]
 
 
 def quality(account_id: UUID, broker_symbol: str, minutes: int = 60) -> list[dict]:
