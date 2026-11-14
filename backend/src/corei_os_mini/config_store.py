@@ -579,11 +579,31 @@ HISTORY = {
 }
 
 
+# What keeps an account from being deleted, in words: each is history that must stay on record (audit trail).
+ACCOUNT_HISTORY = [
+    ("SELECT count(*) AS n FROM cfg_credential_use WHERE owner_id=%s", 'login(s) in the audit trail'),
+    ("SELECT count(*) AS n FROM cfg_deployments WHERE account_id=%s", 'strategy deployment(s)'),
+    ("SELECT count(*) AS n FROM cfg_symbol_specs WHERE account_id=%s", 'symbol specification(s) read from the broker'),
+    ("SELECT count(*) AS n FROM (SELECT 1 FROM md_ticks WHERE account_id=%s LIMIT 100000) t", 'collected price(s)'),
+    ("SELECT count(*) AS n FROM (SELECT 1 FROM md_bars WHERE account_id=%s LIMIT 100000) t", 'collected bar(s)'),
+]
+
+
 def delete(actor: str, entity: str, record_id: UUID, version: int) -> None:
     spec = SPECS[entity]
     with transaction('delete') as db:
         before = _locked(db, spec, record_id, version)
-        if any(db.execute(q, (record_id,)).fetchone() for q in HISTORY.get(entity, [])):
+        if entity == 'accounts':
+            found = [f"{row['n']:,} {what}" for q, what in ACCOUNT_HISTORY if (row := db.execute(q, (record_id,)).fetchone())['n']]
+            if found:
+                raise HTTPException(409, f"{before['code']} cannot be deleted: it has {', '.join(found)}, which stay on record. "
+                                         'Archive it instead: it leaves every list, its collection stops, and it can be restored.')
+            # Nothing collected yet: its collection plans (set-up only) go with it.
+            plans = db.execute('DELETE FROM md_collection_plans WHERE account_id=%s RETURNING id', (record_id,)).fetchall()
+            db.execute('DELETE FROM md_controls WHERE scope=%s', (f'account:{record_id}',))
+            if plans:
+                audit(db, actor, 'DELETE', 'collection plans', record_id, {'count': len(plans)}, None, 'deleted with their account (nothing collected)')
+        elif any(db.execute(q, (record_id,)).fetchone() for q in HISTORY.get(entity, [])):
             raise HTTPException(409, f'This {spec.label} has history (activity, measurements or deployments). Archive it instead; it stays on record.')
         db.execute(sql.SQL('DELETE FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,))
         audit(db, actor, 'DELETE', spec.label, record_id, before, None)
@@ -601,6 +621,9 @@ def archive(actor: str, entity: str, record_id: UUID, version: int, reason: str)
             raise HTTPException(409, 'Archive the connections of this provider first.')
         if entity == 'accounts':
             db.execute("UPDATE cfg_deployments SET status='ENDED', version=version+1, updated_at=now() WHERE account_id=%s AND status<>'ENDED'", (record_id,))
+            # An archived account stops collecting: its plans are archived too (they stay on record with their data).
+            db.execute("UPDATE md_collection_plans SET status='ARCHIVED', status_reason=%s, version=version+1, updated_at=now() "
+                       "WHERE account_id=%s AND status<>'ARCHIVED'", (f'Account archived: {reason}'[:500], record_id))
         after = db.execute(sql.SQL("UPDATE {} SET status='ARCHIVED', version=version+1, updated_at=now() WHERE id=%s RETURNING *").format(
             sql.Identifier(spec.table)), (record_id,)).fetchone()
         audit(db, actor, 'ARCHIVE', spec.label, record_id, before, after, reason)

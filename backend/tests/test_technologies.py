@@ -6,6 +6,7 @@ import importlib.util
 test_configuration = importlib.import_module('test_configuration') if importlib.util.find_spec('test_configuration') \
     else importlib.import_module('tests.test_configuration')
 Base = test_configuration.ConfigurationPostgresTests
+ARCHIVE_URL = '/api/config/accounts/{id}/archive'
 
 
 class Technologies(Base):
@@ -34,3 +35,33 @@ class Technologies(Base):
         techs = {t['id']: t for t in tree['technologies']}
         self.assertEqual((techs['MT4']['counts']['accounts'], techs['CTRADER']['counts']['accounts']), (1, 1))
         self.assertIn('ANGELONE', [p['id'] for p in tree['api_presets']])
+
+
+class DeleteOrArchive(Base):
+    """An account with nothing collected is deleted with its collection plans; one with history says exactly what
+    keeps it, and archiving stops its collection."""
+    def _account(self, code, login):
+        p = self.post('providers', {'code': 'P' + code[:8], 'name': 'P ' + code, 'kind': 'BROKER'})
+        c = self.post('connections', {'provider_id': p['id'], 'code': code + '_SRV', 'name': code, 'platform': 'MT5', 'environment': 'DEMO', 'purpose': 'BOTH',
+                                      'settings': {'server_name': 'X-Demo', 'access_points': [{'name': 'X-Demo', 'host': '198.51.100.9', 'port': 443}]}})
+        a = self.post('accounts', {'connection_id': c['id'], 'code': code, 'name': code, 'external_account_id': login, 'base_currency': 'USD'})
+        with self.connect() as db:
+            db.execute("INSERT INTO md_collection_plans(id, code, account_id, broker_symbol, purpose, created_by, updated_by) VALUES (gen_random_uuid(), %s, %s, 'EURUSD', 'RESEARCH', 'alice', 'alice')", (code + '_EURUSD', a['id']))
+        return a
+
+    def test_delete_and_archive(self):
+        a = self._account('DEL_ME', '1001')
+        r = self.client.delete(f"/api/config/accounts/{a['id']}?version={a['version']}")
+        self.assertEqual(r.status_code, 204, r.text)
+        with self.connect() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM md_collection_plans WHERE code='DEL_ME_EURUSD'").fetchone())
+        b = self._account('KEEP_ME', '1002')
+        with self.connect() as db:
+            db.execute("INSERT INTO cfg_credential_use(credential_id, owner, owner_id, used_by, purpose) VALUES (gen_random_uuid(), 'account', %s, 'alice', 'LOGIN')", (b['id'],))
+        r = self.client.delete(f"/api/config/accounts/{b['id']}?version={b['version']}")
+        self.assertEqual(r.status_code, 409)
+        self.assertRegex(r.json()['detail'], r'KEEP_ME cannot be deleted: it has 1 login\(s\) in the audit trail.*Archive it instead')
+        r = self.client.post(ARCHIVE_URL.format(id=b['id']), json={'version': b['version'], 'reason': 'test done'})
+        self.assertEqual(r.status_code, 200, r.text)
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT status FROM md_collection_plans WHERE code='KEEP_ME_EURUSD'").fetchone()['status'], 'ARCHIVED')

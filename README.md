@@ -861,3 +861,6 @@ The reader retries a refused login automatically with current MT5 client builds 
 - **MT4 and cTrader** accounts and servers can be recorded now (database update 022); they collect once their connectors are built.
 - **Providers** record the technologies they offer; Add account lists those first. `apply-test-setup.sh` sets them for your providers.
 - Overview checklist follows the same steps. Full audit: `docs/SETUP_AUDIT_2026-11-15.md`.
+- 0.34.1: **Deleting an account** says exactly what keeps it (logins in the audit trail, deployments, collected prices or
+  bars, broker symbol specs) and offers **Archive** in the same step. An account with nothing collected is deleted with
+  its collection plans. Archiving an account also archives its collection plans, so collection stops.

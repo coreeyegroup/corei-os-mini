@@ -1438,8 +1438,14 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   async function remove() {
     if (!selected || !window.confirm(`Delete this ${SINGULAR[entity]}? This cannot be undone. Records that depend on it must be removed first.`)) return;
     setBusy(true); setError('');
+    let offerArchive = '';
     try { await api(`config/${entity}/${selected.id}?version=${selected.version}`, 'DELETE'); setSelected(null); setDraft(null); setNotice('Deleted.'); await load(); reloadRefs(); }
-    catch (err) { setError((err as Error).message + (ARCHIVABLE.includes(entity) && (err as any).status === 409 ? ' Use Archive.' : '')); } finally { setBusy(false); }
+    catch (err) {
+      const message = (err as Error).message;
+      if (ARCHIVABLE.includes(entity) && (err as any).status === 409) offerArchive = message; else setError(message);
+    } finally { setBusy(false); }
+    // Kept for its history: say why, and archive it in the same step if the person agrees.
+    if (offerArchive) { if (window.confirm(`${offerArchive}\n\nArchive it now?`)) await archive(); else setError(offerArchive); }
   }
   function focusField(code: string) {
     const label = BLOCKER_FIELD[code]; if (!label) return;
