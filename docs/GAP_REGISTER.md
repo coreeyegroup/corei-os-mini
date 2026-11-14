@@ -136,6 +136,12 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-31 | High | mtapi SDK behind the MT5 servers (1035; IndexOutOfRange after login) | OPEN — owner: current mtapi licence with update subscription; compare mt5api.dll versions |
 | A-32 | Medium | Order adapters (MT5, FIX, Upstox) not built | OPEN — next stage (OMS) |
 | A-33 | High | Set-up organised by record type, not by how a firm thinks (technology › who › accounts) | DONE 0.25.0 (Connectivity tree) |
+| A-34 | High | Strategy, allocation and risk run only in the paper workflow on synthetic prices; not fed by collected prices | OPEN — next build step |
+| A-35 | High | Fills, positions and P&L reconciliation | OPEN — after order adapters |
+| A-36 | Medium | One collector node: no standby for prices | OPEN |
+| A-37 | Low | Configuration.tsx (1,750 lines) and config_store.py (1,100 lines) to split by domain | OPEN — before order adapters |
+| A-38 | Low | UI bundle 555 kB in one chunk | OPEN |
+| A-39 | High | MT5 server level in the tree; servers added by hand; latency order only on request | DONE 0.26.0 |
 
 ## C. Owner decisions
 

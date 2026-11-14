@@ -4,7 +4,7 @@ CSV import/export, policies, alerts, health, broker facts, order checks, rate li
 the daily broker login. PostgreSQL tests need COREI_TEST_DATABASE_URL."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
 import os
@@ -234,7 +234,7 @@ class Controls(unittest.TestCase):
         group = self.ok(self.alice.post('/api/config/groups', json={'code': 'GOLD_DESK', 'name': 'Gold desk'}), 201)
         account = self.ok(self.alice.post('/api/config/accounts', json={
             'connection_id': demo['id'], 'code': 'VTM_D1', 'name': 'Demo gold', 'external_account_id': '5001', 'base_currency': 'USD',
-            'relationship': 'CLIENT', 'group_ids': [group['id']], 'margin_mode': 'HEDGING', 'expires_on': '2026-11-13'}), 201)
+            'relationship': 'CLIENT', 'group_ids': [group['id']], 'margin_mode': 'HEDGING', 'expires_on': (date.today() + timedelta(days=3)).isoformat()}), 201)
         self.assertEqual((account['group_ids'], account['margin_mode_source']), ([group['id']], 'MANUAL'))
         self.assertIn('MANDATE_MISSING', account['trading_blockers'])
         self.assertIn('MARGIN_MODE_NOT_CONFIRMED_BY_BROKER', account['warnings'])
@@ -294,7 +294,7 @@ class Controls(unittest.TestCase):
         health = self.ok(self.alice.get('/api/config/health'))
         self.assertEqual(health['network']['egress_ip'], '203.0.113.200')
         self.assertEqual([c['done'] for c in health['checklist']][:4], [True, True, True, True])
-        self.assertIn('ACCOUNT_EXPIRING', health['accounts'][0]['warnings'])
+        self.assertIn('ACCOUNT_EXPIRING', next(a for a in health['accounts'] if a['id'] == account['id'])['warnings'])
 
         # CSV: dry run, all-or-nothing on error, formula-safe export.
         csv_text = ('connection_code,code,name,external_account_id,base_currency,relationship,groups\n'

@@ -638,6 +638,14 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## MT5: broker › accounts, fastest address per account — release 0.26.0
+
+DEC-57. No migration, no reader rebuild. Audit: `docs/AUDIT_2026-11-14.md`.
+
+- **MetaTrader 5 › broker › accounts.** No server level: each account line shows its server name and the latency of the address it uses first. Server records are kept automatically from the accounts.
+- **Server & route on every MT5 account:** *Fastest (automatic)* is the default, re-measured every 6 hours and before each login; *Server's order* and *Pinned* remain. **Measure now**, **Refresh from broker** (new addresses the broker publishes are added and measured; LIVE additions go to approval) and **Change server…** (pick another server of the same broker from its published list; LIVE moves need approval).
+- **Add who** under MT5 asks only for the broker, then opens *Add MT5 account*.
+
 ## Connectivity: technology › who › accounts — release 0.25.0
 
 DEC-56. Migration `020_provider_types.sql` (provider types). No reader rebuild needed.

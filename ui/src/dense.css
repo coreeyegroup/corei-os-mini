@@ -427,10 +427,10 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .ct-row.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .ct-list:focus .ct-row.sel { outline: 1px solid var(--accent); outline-offset: -1px; }
 .ct-caret { width: 12px; flex: none; text-align: center; color: var(--muted); font-size: 10px; cursor: pointer; }
-.ct-label { overflow: hidden; text-overflow: ellipsis; }
+.ct-label { flex: 0 0 auto; max-width: 62%; overflow: hidden; text-overflow: ellipsis; }
 .ct-tech > .ct-label, .ct-type > .ct-label, .ct-none > .ct-label { font-weight: 600; }
 .ct-row.planned > .ct-label { color: var(--muted); font-weight: 400; }
-.ct-meta { margin-left: auto; padding-left: 8px; color: var(--muted); font-size: 11px; flex: none; }
+.ct-meta { margin-left: auto; padding-left: 8px; color: var(--muted); font-size: 11px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ct-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); vertical-align: middle; }
 .ct-dot.ok { background: #2e9d5b; } .ct-dot.warn { background: #d29922; } .ct-dot.bad { background: #f85149; }
 .ct-dot.idle { background: transparent; border: 1px solid var(--muted); width: 5px; height: 5px; } .ct-dot.off { background: color-mix(in srgb, var(--muted) 40%, transparent); }
@@ -454,3 +454,18 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .ct-ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
 .ct-ready ul { margin: 0; padding-left: 16px; font-size: 12px; }
 @media (max-width: 760px) { .ct { flex-direction: column; height: auto; } .ct-tree { width: auto; max-width: none; resize: none; max-height: 50vh; } }
+/* MT5 account: server and route */
+.ct-route { margin: 8px 0; padding: 4px 10px 8px; border: 1px solid var(--line); background: var(--surface); }
+.ct-route-head { display: flex; align-items: center; gap: 8px; }
+.ct-route-head .ct-sub { margin: 4px 0; }
+.ct-route .cfg-route { margin-top: 4px; }
+.ct-inline { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.ct-inline input { height: 22px; min-width: 0; flex: 1; max-width: 260px; }
+.ct-serverlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px; max-height: 180px; overflow: auto; margin: 4px 0;
+  border: 1px solid var(--line); padding: 2px; background: var(--canvas); }
+.ct-serverlist button { display: flex; justify-content: space-between; gap: 6px; height: 22px; padding: 0 6px; border: 0; border-radius: 2px; background: none; text-align: left; font-size: 11.5px; }
+.ct-serverlist button:hover:not(:disabled) { background: var(--hover); }
+.ct-serverlist button[aria-selected=true] { background: var(--accent); color: #fff; }
+.ct-serverlist button.current span { font-weight: 600; }
+.ct-serverlist button:disabled { opacity: .45; }
+.ct-serverlist small { color: inherit; opacity: .7; }

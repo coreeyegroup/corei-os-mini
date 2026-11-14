@@ -166,6 +166,10 @@ def _apply(row: dict, secret: dict, actor: str, reason: str) -> Any:
         if payload.get('credential'):
             data.credential = CredentialEnvelope.model_validate({'credential': {**payload['credential'], **{k: v for k, v in secret.items() if k != 'bridge_token'}}}).credential
         return store.setup_mt5_account(actor, data, approved=True, reason=reason)
+    if action == 'ACCOUNT_SERVER':
+        from .config_models import Mt5ServerMoveIn
+        return store.move_mt5_account(actor, UUID(payload['account_id']), Mt5ServerMoveIn.model_validate(payload['move']),
+                                      approved=True, reason=reason)
     raise HTTPException(422, f'Unknown change action {action}.')
 
 

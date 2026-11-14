@@ -186,6 +186,37 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
     return _pending(response, store.setup_mt5_account(actor, data))
 
 
+@router.post('/accounts/{account_id}/mt5-server')
+def move_mt5_account(account_id: UUID, payload: dict, response: Response, actor: str = Depends(editor)):
+    """Put an MT5 account on another server of its broker (found or created); LIVE needs approval."""
+    _no_store(response)
+    from .config_models import Mt5ServerMoveIn
+    return _pending(response, store.move_mt5_account(actor, account_id, parse(Mt5ServerMoveIn, payload)))
+
+
+@router.post('/accounts/{account_id}/mt5-addresses/refresh')
+async def refresh_mt5_addresses(account_id: UUID, payload: dict, response: Response, actor: str = Depends(editor)):
+    """Update the account's server addresses from the MT5 broker directory (or an analysed servers.dat)
+    and measure them all again."""
+    _no_store(response)
+    from .config_models import Mt5AddressRefreshIn
+    data = parse(Mt5AddressRefreshIn, payload)
+    return await run_in_threadpool(store.refresh_mt5_addresses, actor, account_id, data.catalog_id)
+
+
+@router.post('/accounts/{account_id}/mt5-latency')
+async def measure_account_latency(account_id: UUID, response: Response, actor: str = Depends(editor)):
+    """Measure every enabled address of the account's server now; returns the account with its new order."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        account = store.get_record(db, 'accounts', account_id)
+    if not account or account.get('platform') != 'MT5':
+        raise HTTPException(404, 'MT5 account not found.')
+    await run_in_threadpool(store.refresh_latency_if_stale, account['connection_id'], actor, True)
+    with store.transaction('read') as db:
+        return store.get_record(db, 'accounts', account_id)
+
+
 @router.get('/adapters')
 def adapter_catalogue(response: Response, _: Principal = Depends(current_user)):
     """Every access technology COREI connects through, its role and build state."""

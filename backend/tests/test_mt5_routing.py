@@ -151,7 +151,7 @@ class Mt5SetupAndRouting(unittest.TestCase):
         self.assertEqual(first['connection_action'], 'CREATED')
         self.assertEqual(first['connection']['code'], 'VTM_MT5_LIVE')
         self.assertEqual(first['account']['credential_kind'], 'MT5_LOGIN')
-        self.assertEqual(first['account']['routing']['mode'], 'SERVER')
+        self.assertEqual(first['account']['routing']['mode'], 'FASTEST', 'new accounts route to the fastest address')
         self.assertEqual([p['host'] for p in first['account']['routing']['addresses']], ['203.0.113.1', '203.0.113.2'])
         self.assertNotIn('connection_settings', first['account'])
 
@@ -215,6 +215,51 @@ class Mt5SetupAndRouting(unittest.TestCase):
         fastest = self.ok(self.client.put(f"/api/config/accounts/{account['id']}", json={**body, 'version': flagged['version'],
                           'access_mode': 'FASTEST', 'access_points': []}))
         self.assertEqual((fastest['routing']['addresses'][0]['latency_ms'], fastest['routing']['warnings']), (42.5, []))
+
+    def test_account_moves_server_and_refreshes_addresses_from_broker(self):
+        made = self.ok(self.client.post('/api/config/mt5/account-setup', json=self.setup_body('7001', [A], access_mode='ACCOUNT', access_points=[A])), 201)
+        account = made['account']
+        D, E = {'host': '203.0.113.4', 'port': 443}, {'host': '203.0.113.5', 'port': 1950}
+        measured = []
+
+        def fake_measure(points, wait_seconds=90):
+            measured.append(list(points))
+            return {'measured_from': 'core', 'attempts': 3, 'results': [
+                {'host': h, 'port': p, 'reachable': True, 'latency_ms': 50.0 - i * 10, 'error': None} for i, (h, p) in enumerate(points)]}
+        with patch('corei_os_mini.latency.measure_blocking', fake_measure):
+            # Move to Live 5: the server record is created, the login keeps its id and password, pinned addresses reset to fastest.
+            target = {'server_name': 'VTMarkets-Live 5', 'access_points': [{'name': 'VTMarkets-Live 5', **D, 'source': 'DIRECTORY'}]}
+            moved = self.ok(self.client.post(f"/api/config/accounts/{account['id']}/mt5-server", json={'server': target, 'version': account['version']}))
+            self.assertEqual((moved['connection_action'], moved['account']['id'], moved['account']['credential_kind']), ('CREATED', account['id'], 'MT5_LOGIN'))
+            self.assertEqual((moved['account']['access_mode'], moved['account']['access_points']), ('FASTEST', []))
+            self.assertEqual(moved['connection']['settings']['server_name'], 'VTMarkets-Live 5')
+            self.assertEqual(self.ok(self.client.post(f"/api/config/accounts/{account['id']}/mt5-server",
+                                                      json={'server': target, 'version': moved['account']['version']}), 409)['detail'][:30],
+                             'The account is already on VTMa')
+            stale = self.client.post(f"/api/config/accounts/{account['id']}/mt5-server", json={'server': target, 'version': account['version']})
+            self.assertEqual(stale.status_code, 409)
+
+            # The broker now publishes two more addresses for Live 5 (and no longer lists D): added, measured, D reported.
+            published = {'servers': [{'server_name': 'VTMarkets-Live 5', 'access_points': [{'name': 'AP 1', **E}, {'name': 'AP 2', 'host': '203.0.113.6', 'port': 443}]}]}
+            with patch('corei_os_mini.broker_catalog.search_directory', lambda term: published):
+                fresh = self.ok(self.client.post(f"/api/config/accounts/{account['id']}/mt5-addresses/refresh", json={}))
+            self.assertEqual((fresh['source'], fresh['published'], fresh['added'], fresh['not_listed']), ('DIRECTORY', 2, 2, [D]))
+            self.assertEqual(len(measured[-1]), 3, 'every enabled address measured again')
+            self.assertEqual([a['host'] for a in fresh['account']['routing']['addresses']], ['203.0.113.6', '203.0.113.5', '203.0.113.4'])
+
+            # Measure now: forced, even when fresh.
+            count = len(measured)
+            self.ok(self.client.post(f"/api/config/accounts/{account['id']}/mt5-latency"))
+            self.assertEqual(len(measured), count + 1)
+
+            # LIVE moves change where the password goes: with four-eyes on they wait for approval.
+            with self.connect() as db:
+                db.execute("UPDATE cfg_policies SET value='true' WHERE key='four_eyes_live_changes'")
+            current = fresh['account']
+            pending = self.client.post(f"/api/config/accounts/{account['id']}/mt5-server",
+                                       json={'server': {**target, 'server_name': 'VTMarkets-Live 3', 'access_points': [{'name': 'x', **A}]}, 'version': current['version']})
+            self.assertEqual(pending.status_code, 202, pending.text)
+            self.assertEqual(pending.json()['change_request']['action'], 'ACCOUNT_SERVER')
 
 
 if __name__ == '__main__':

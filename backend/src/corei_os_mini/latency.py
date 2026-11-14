@@ -83,3 +83,26 @@ async def measure(addresses: list[tuple[str, int]]) -> dict[str, Any]:
         gate = asyncio.Semaphore(PARALLEL)
         results = await asyncio.gather(*(_one(h, p, gate) for h, p in addresses))
     return {'measured_from': socket.gethostname()[:253], 'attempts': ATTEMPTS, 'results': list(results)}
+
+
+def measure_blocking(addresses: list[tuple[str, int]], wait_seconds: float = 90) -> dict[str, Any]:
+    """Background refresh (collector start, broker reads): the same test in its own thread and event loop,
+    so it can be called from synchronous code and never waits on the interactive test's lock."""
+    import threading
+    out: dict[str, Any] = {}
+
+    async def run() -> list[dict]:
+        gate = asyncio.Semaphore(PARALLEL)
+        return list(await asyncio.gather(*(_one(h, p, gate) for h, p in addresses)))
+
+    def target() -> None:
+        try:
+            out['results'] = asyncio.run(run())
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            out['error'] = str(exc)[:200]
+    thread = threading.Thread(target=target, daemon=True, name='latency-refresh')
+    thread.start()
+    thread.join(wait_seconds)
+    if 'results' not in out:
+        raise RuntimeError(out.get('error') or 'latency refresh timed out')
+    return {'measured_from': socket.gethostname()[:253], 'attempts': ATTEMPTS, 'results': out['results']}

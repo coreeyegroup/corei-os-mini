@@ -24,7 +24,7 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
-  { id: 'brokers', label: 'Connectivity', hint: 'Technology › who › server or session › accounts. Select a level to see it and add the next one' },
+  { id: 'brokers', label: 'Connectivity', hint: 'Technology › who › accounts. Select a level to add the next one' },
   { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
   { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
   { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
@@ -184,7 +184,7 @@ const blank: Record<Entity, Row> = {
     adapter: 'DEFAULT', server_utc_offset_minutes: '', dst_rule: 'UNKNOWN', clock_source: 'UNKNOWN', max_orders_per_second: '', max_order_burst: '',
     registered_egress_ip: '', maintenance: [] },
   accounts: { connection_id: '', code: '', name: '', external_account_id: '', holder_name: '', base_currency: 'USD', trading_permission: 'DISABLED', status: 'ACTIVE',
-    access_mode: 'SERVER', access_points: [], margin_mode: 'UNKNOWN', broker_group: '', leverage: '', stop_out_level: '', max_open_orders: '', max_open_positions: '',
+    access_mode: 'FASTEST', access_points: [], margin_mode: 'UNKNOWN', broker_group: '', leverage: '', stop_out_level: '', max_open_orders: '', max_open_positions: '',
     expires_on: '', password_changed_on: '', relationship: 'OWN', mandate_reference: '', mandate_expires_on: '', other_users: '', group_ids: [] },
   groups: { code: '', name: '', description: '', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
@@ -214,7 +214,7 @@ const orNull = (v: unknown) => v === '' || v == null ? null : v;
 const numOrNull = (v: unknown) => v === '' || v == null ? null : Number(v);
 const strOrNull = (v: unknown) => v === '' || v == null ? null : String(v);
 
-function toPayload(entity: Entity, draft: Row): Row {
+export function toPayload(entity: Entity, draft: Row): Row {
   const out: Row = {};
   for (const key of FIELDS[entity]) out[key] = draft[key];
   if (entity === 'mappings') {
@@ -418,13 +418,13 @@ function LatencyBadge({ sample }: { sample?: Row }) {
 }
 
 const ACCESS_MODES: [string, string, string][] = [
-  ['SERVER', "Use the server's addresses", "The connection's ticked addresses, in the connection's order. Changes to the server apply to this account."],
-  ['FASTEST', 'Fastest first', "The connection's ticked addresses, fastest by the latest latency test first."],
+  ['FASTEST', 'Fastest (automatic)', "The server's ticked addresses, fastest first. COREI measures them again every 6 hours and before each login."],
+  ['SERVER', "Server's order", "The server's ticked addresses, in the order set on the server. Changes to the server apply to this account."],
   ['ACCOUNT', 'Choose for this account', "Only the addresses ticked here, in this order. Must be among the server's addresses."],
 ];
 
 /** How one MT5 account chooses among its server's addresses. */
-function AccountAddresses({ mode, own, serverPoints, connectionId, change, routing }: {
+export function AccountAddresses({ mode, own, serverPoints, connectionId, change, routing }: {
   mode: string; own: Row[]; serverPoints: Row[]; connectionId?: string; routing?: Row;
   change: (mode: string, own: Row[]) => void }) {
   const lat = useLatency(connectionId);
@@ -995,7 +995,7 @@ function AddUpstoxAccount({ close, created }: { close: () => void; created: (acc
 function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, Row[]>; close: () => void; created: (account: Row | null, note: string) => void; preset?: Row | null }) {
   // Opened on a server in the Connectivity tree: broker, environment, server and its addresses come from that connection.
   const [f, setF] = useState<Row>({ provider_id: preset?.provider_id ?? '', environment: preset?.environment ?? 'LIVE', external_account_id: '', holder_name: '', name: '', code: '',
-    base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'SERVER', access_points: [] as Row[],
+    base_currency: 'USD', trading_permission: 'DISABLED', password: '', access_level: 'FULL', access_mode: 'FASTEST', access_points: [] as Row[],
     server: preset ? { server_name: preset.settings?.server_name ?? '', access_points: (preset.settings?.access_points ?? []).map((p: Row) => ({ ...p })) }
       : { server_name: '', access_points: [] as Row[] }, adapter: preset?.adapter === 'TERMINAL_BRIDGE' ? 'TERMINAL_BRIDGE' : 'MTAPI_DIRECT', bridge_token: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -1175,6 +1175,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     if (openId === 'new') { open(null); return; }
     if (openId === 'new:MT5' || openId === 'new:UPSTOX') { setAdding(openId.slice(4) as 'MT5' | 'UPSTOX'); return; }
     // From the Connectivity tree: an account on a chosen server ('new:MT5:<connection>', 'new:ACCOUNT:<connection>').
+    if (openId.startsWith('new:MT5P:')) { setMt5Preset({ provider_id: openId.slice(9), environment: 'LIVE', settings: {} }); setAdding('MT5'); return; }
     if (openId.startsWith('new:MT5:')) { void (async () => { const id = openId.slice(8);
       setMt5Preset(refs.connections.find(c => c.id === id) ?? await api(`config/connections/${id}`).catch(() => null)); setAdding('MT5'); })(); return; }
     if (openId.startsWith('new:ACCOUNT:')) { open(null); setDraft(d => ({ ...(d ?? blank[entity]), connection_id: openId.slice(12) })); return; }

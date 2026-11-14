@@ -172,6 +172,9 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
         raise HTTPException(409, 'Reading from the broker is available for MT5 and FIX accounts; other platforms use their own login.')
     if not str(account['external_account_id']).isdigit():
         raise HTTPException(409, 'The MT5 login must be a number.')
+    if account.get('access_mode') == 'FASTEST' and store.refresh_latency_if_stale(account['connection_id'], actor):
+        with store.transaction('read') as db:  # the address order follows the new measurement
+            account = store.get_record(db, 'accounts', account_id)
     if account.get('credential_kind') != 'MT5_LOGIN':
         raise HTTPException(409, 'Save the investor (read-only) or master password first.')
     addresses = (account.get('routing') or {}).get('addresses') or []

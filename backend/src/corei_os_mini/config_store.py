@@ -381,7 +381,8 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
         connection = _connection(db, data['connection_id'])
         if connection['platform'] == 'MT5' and not re.fullmatch(r'[1-9][0-9]{0,19}', data['external_account_id']):
             raise HTTPException(422, 'MT5 account number must be digits only (the broker login).')
-        if connection['platform'] != 'MT5' and (data.get('access_mode', 'SERVER') != 'SERVER' or data.get('access_points')):
+        # FASTEST (the default) and SERVER mean nothing outside MT5 and are accepted; a pinned address list is refused.
+        if connection['platform'] != 'MT5' and (data.get('access_mode') == 'ACCOUNT' or data.get('access_points')):
             raise HTTPException(422, 'Address choice applies to MT5 accounts only.')
         if data.get('access_mode') == 'ACCOUNT':
             on_server = {(p['host'], int(p['port'])) for p in connection['settings'].get('access_points', [])}
@@ -766,6 +767,35 @@ def record_latency(actor: str, connection_id: UUID, measured_from: str, results:
                         measured_from, actor))
 
 
+# FASTEST routing is only as good as its measurements: a measurement older than this is taken again
+# automatically before COREI logs in (broker reads, collector start).
+LATENCY_MAX_AGE = timedelta(hours=6)
+
+
+def refresh_latency_if_stale(connection_id, actor: str = 'system', force: bool = False) -> bool:
+    """Measure every enabled address of an MT5 server again when any is unmeasured or older than
+    LATENCY_MAX_AGE (or when forced). Returns True when a measurement was taken. Never raises:
+    a failed refresh leaves the previous order in place."""
+    from . import latency as latency_check
+    try:
+        with transaction('read') as db:
+            conn = db.execute('SELECT platform, adapter, settings FROM cfg_connections WHERE id=%s', (connection_id,)).fetchone()
+            if not conn or conn['platform'] != 'MT5' or conn['adapter'] == 'TERMINAL_BRIDGE':
+                return False
+            points = [(p['host'], int(p['port'])) for p in conn['settings'].get('access_points', []) if p.get('enabled', True)]
+            latest = latest_latency(db, [connection_id]).get(str(connection_id), {})
+        now = datetime.now(timezone.utc)
+        stale = [k for k in points if k not in latest or now - datetime.fromisoformat(latest[k]['measured_at']) > LATENCY_MAX_AGE]
+        if not points or (not stale and not force):
+            return False
+        measured = latency_check.measure_blocking(points)
+        record_latency(actor, connection_id, measured['measured_from'], measured['results'])
+        return True
+    except Exception:  # noqa: BLE001 - routing falls back to the last order
+        _log.warning('latency refresh failed for connection %s', connection_id, exc_info=True)
+        return False
+
+
 def connection_latency(connection_id: UUID) -> list[dict]:
     with transaction('read') as db:
         latest = latest_latency(db, [connection_id]).get(str(connection_id), {})
@@ -880,6 +910,124 @@ def setup_upstox_account(actor: str, data: dict, credential: BaseModel | None, b
         return {'provider_action': provider_action, 'connection_action': connection_action,
                 'redirect_url': connection['settings'].get('oauth_redirect_url'),
                 'connection': get_record(db, 'connections', connection['id']), 'account': get_record(db, 'accounts', account_id)}
+
+
+def _mt5_account(db, account_id, lock: bool = False) -> tuple[dict, dict]:
+    account = db.execute('SELECT * FROM cfg_accounts WHERE id=%s' + (' FOR UPDATE' if lock else ''), (account_id,)).fetchone()
+    if not account:
+        raise HTTPException(404, 'Account not found.')
+    connection = db.execute('SELECT * FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone()
+    if connection['platform'] != 'MT5':
+        raise HTTPException(409, 'Servers and addresses are chosen per account for MT5 accounts only.')
+    return account, connection
+
+
+def move_mt5_account(actor: str, account_id: UUID, data, approved: bool = False, reason: str = '') -> dict:
+    """Put an MT5 account on another server of the same broker: the server record for (broker, environment,
+    server name) is reused or created, addresses it lacks are added, and the account moves with its id,
+    password, groups and history. Pinned addresses belong to the old server, so the account goes back to
+    'fastest'. A LIVE move changes where the password is sent: it needs approval under four-eyes."""
+    from .config_models import Mt5Settings
+    with transaction('update') as db:
+        account, current = _mt5_account(db, account_id, lock=True)
+        if account['version'] != data.version:
+            raise HTTPException(409, 'This account was changed by someone else. Reload and try again.')
+        if current['adapter'] == 'TERMINAL_BRIDGE':
+            raise HTTPException(409, 'This account is read through the MT5 terminal bridge: the terminal chooses the server. '
+                                     'Log the terminal in to the new server instead.')
+        env = current['environment']
+        target_name = data.server.server_name
+        if _server_key(target_name) == _server_key(current['settings'].get('server_name', '')):
+            raise HTTPException(409, f'The account is already on {target_name}. Use Refresh addresses to update its addresses.')
+        matches = [c for c in db.execute(
+            "SELECT * FROM cfg_connections WHERE provider_id=%s AND platform='MT5' AND environment=%s AND status <> 'ARCHIVED' "
+            'ORDER BY code FOR UPDATE', (current['provider_id'], env)).fetchall()
+            if _server_key(c['settings'].get('server_name', '')) == _server_key(target_name)]
+        target = matches[0] if matches else None
+        if env == 'LIVE' and not approved and four_eyes_on(db):
+            return request_change(db, actor, 'accounts', account_id, 'ACCOUNT_SERVER',
+                                  f"Move LIVE MT5 account {account['code']} (login {account['external_account_id']}) from "
+                                  f"{current['settings'].get('server_name')} to {target_name}"
+                                  f"{'' if target else ' (new server record)'}",
+                                  {'account_id': str(account_id), 'move': data.model_dump(mode='json')},
+                                  base_version=data.version, reason=data.reason)
+        action = 'REUSED'
+        if target is None:
+            provider = db.execute('SELECT * FROM cfg_providers WHERE id=%s', (current['provider_id'],)).fetchone()
+            new = ConnectionIn.model_validate({
+                'provider_id': current['provider_id'], 'code': _connection_code(db, provider['code'], env),
+                'name': f"{provider['name']} MT5 {env.lower()} · {target_name}"[:120], 'platform': 'MT5', 'environment': env,
+                'purpose': current['purpose'], 'adapter': current['adapter'], 'settings': data.server.model_dump(mode='json')})
+            target_id = _insert(db, actor, 'connections', new, reason or data.reason or f"Created when {account['code']} moved server")
+            action = 'CREATED'
+        else:
+            target_id = target['id']
+            have = {(p['host'], int(p['port'])) for p in target['settings'].get('access_points', [])}
+            extra = [p for p in data.server.access_points if (p.host, p.port) not in have]
+            if extra:
+                settings = Mt5Settings.model_validate({**target['settings'], 'access_points': [
+                    *target['settings'].get('access_points', []), *[p.model_dump(mode='json') for p in extra]]}).model_dump(mode='json')
+                after = db.execute('UPDATE cfg_connections SET settings=%s, version=version+1, updated_at=now() WHERE id=%s RETURNING *',
+                                   (Jsonb(settings), target_id)).fetchone()
+                audit(db, actor, 'UPDATE', 'connection', target_id, target, after, f"Added {len(extra)} address(es) when {account['code']} moved server")
+                action = 'ADDRESSES_ADDED'
+        mode = 'FASTEST' if account['access_mode'] == 'ACCOUNT' else account['access_mode']
+        after = db.execute("UPDATE cfg_accounts SET connection_id=%s, access_mode=%s, access_points='[]'::jsonb, version=version+1, "
+                           'updated_at=now() WHERE id=%s RETURNING *', (target_id, mode, account_id)).fetchone()
+        audit(db, actor, 'MOVE_SERVER', 'account', account_id, account, after,
+              reason or data.reason or f"{current['settings'].get('server_name')} → {target_name}")
+        return {'connection_action': action, 'account': get_record(db, 'accounts', account_id),
+                'connection': get_record(db, 'connections', target_id)}
+
+
+def refresh_mt5_addresses(actor: str, account_id: UUID, catalog_id: str | None = None) -> dict:
+    """The account's server as the broker publishes it now (MT5 broker directory, or an analysed
+    servers.dat): addresses the record lacks are added (LIVE: through approval under four-eyes),
+    addresses the broker no longer lists are reported and left for a person to untick, then every
+    address is measured so 'fastest' uses the new list."""
+    from . import broker_catalog
+    from .config_models import Mt5Settings
+    with transaction('read') as db:
+        account, connection = _mt5_account(db, account_id)
+        provider = db.execute('SELECT name FROM cfg_providers WHERE id=%s', (connection['provider_id'],)).fetchone()
+    name = connection['settings'].get('server_name', '')
+    if catalog_id:
+        listed = broker_catalog.server(broker_catalog.recall(catalog_id, actor), name)
+        source = 'SERVERS_DAT'
+    else:
+        listed = None
+        for term in dict.fromkeys([name.split('-')[0].strip(), provider['name']]):
+            try:
+                found = broker_catalog.search_directory(term[:64])
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                continue
+            listed = next((e for e in found['servers'] if _server_key(e['server_name']) == _server_key(name)), None)
+            if listed:
+                break
+        if listed is None:
+            raise HTTPException(404, f'The MT5 broker directory does not list {name}. Use a servers.dat from a terminal logged in to it.')
+        source = 'DIRECTORY'
+    have = {(p['host'], int(p['port'])) for p in connection['settings'].get('access_points', [])}
+    published = {(p['host'].lower(), int(p['port'])): p for p in listed['access_points']}
+    extra = [{'name': p.get('name') or name, 'host': h, 'port': port, 'enabled': True, 'source': source,
+              'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds')} for (h, port), p in published.items() if (h, port) not in have]
+    not_listed = [{'host': h, 'port': p} for (h, p) in have if (h, p) not in published]
+    pending = None
+    if extra:
+        settings = Mt5Settings.model_validate({**connection['settings'], 'access_points': [*connection['settings'].get('access_points', []), *extra]})
+        record = ConnectionIn.model_validate({k: connection[k] for k in ConnectionIn.model_fields if k in connection} | {
+            'settings': settings.model_dump(mode='json')})
+        result = update(actor, 'connections', connection['id'], record, connection['version'],
+                        reason=f"{len(extra)} address(es) published by the broker ({source.lower().replace('_', '.')})")
+        pending = result.get('change_request')
+    if not pending:
+        refresh_latency_if_stale(connection['id'], actor, force=True)
+    with transaction('read') as db:
+        return {'server_name': name, 'source': source, 'published': len(published), 'added': 0 if pending else len(extra),
+                'awaiting_approval': len(extra) if pending else 0, 'change_request': pending, 'not_listed': not_listed,
+                'account': get_record(db, 'accounts', account_id)}
 
 
 def setup_mt5_account(actor: str, data: Mt5AccountSetupIn, approved: bool = False, reason: str = '') -> dict:

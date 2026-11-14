@@ -22,7 +22,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[],groups:[]};const prefs={};const approvals=[];const importCalls=[];let needReauth=false,reauthCalls=0;
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
- const searched=[],latencyCalls=[],setups=[],upstoxSetups=[],venues=[];
+ const searched=[],latencyCalls=[],setups=[],upstoxSetups=[],venues=[],mt5Calls=[];
  const requests=[];let n=0;
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
@@ -114,6 +114,11 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      const rows=servers.flatMap(s=>s.access_points.map(a=>({server_name:s.server_name,company_name:s.company_name,...a})))
        .filter(r=>b.every(t=>(r.server_name+' '+r.company_name).toLowerCase().includes(t))&&q.every(t=>`${r.host}:${r.port} ${r.name}`.toLowerCase().includes(t)));
      return ok({total:rows.length,server_matches:new Set(rows.map(r=>r.server_name)).size,offset:0,items:rows.slice(0,200)});}
+   if(parts[0]==='accounts'&&parts[2]==='mt5-latency'){mt5Calls.push('latency');return ok(enrich('accounts',db.accounts.find(a=>a.id===parts[1])));}
+   if(parts[0]==='accounts'&&parts[2]==='mt5-addresses'){mt5Calls.push('refresh');const a=db.accounts.find(x=>x.id===parts[1]);
+     return ok({server_name:'ICMarketsSC-Demo',source:'DIRECTORY',published:3,added:1,awaiting_approval:0,change_request:null,not_listed:[{host:'203.0.113.10',port:443}],account:enrich('accounts',a)});}
+   if(parts[0]==='accounts'&&parts[2]==='mt5-server'){const body=JSON.parse(options.body);mt5Calls.push('move:'+body.server.server_name);
+     const a=db.accounts.find(x=>x.id===parts[1]);a.version++;return ok({connection_action:'CREATED',account:enrich('accounts',a),connection:enrich('connections',db.connections.find(c=>c.id===a.connection_id))});}
    const entity=parts[0];
    if(parts[2]==='latency')return ok({items:[]});
    if(parts[2]==='credential'&&needReauth)return fail(428,'Re-enter your password to confirm this action.');
@@ -318,7 +323,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
  button('Test latency').click();await tick();await tick();
  assert.equal(latencyCalls.at(-1).connection_id,conn.id);
- assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-latency')].map(x=>x.textContent),['12 ms','11 ms']);
+ // New accounts default to fastest: the measured order applies at once.
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-latency')].map(x=>x.textContent),['11 ms','12 ms']);
+ $('.cfg-route input[value="SERVER"]').click();await tick();
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
  $('.cfg-route input[value="FASTEST"]').click();await tick();
  assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.10:443','192.0.2.11:444']);
  $('.cfg-route input[value="ACCOUNT"]').click();await tick();
@@ -446,6 +454,31 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(row('ECN')&&row('LMAX Global'),'grouped by provider type');
  [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
  console.log('PASS: Connectivity tree lists technologies (planned ones greyed), adds a who with its FIX session in one step, and opens Add account on the chosen server.');
+ // MT5: accounts sit directly under the broker; each account has its server and route (fastest by default), measure, refresh, change server.
+ [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
+ const mt5Acct=db.accounts.find(a=>db.connections.find(c=>c.id===a.connection_id)?.platform==='MT5');
+ const acctRow=rows().find(r=>r.classList.contains('ct-acct')&&r.querySelector('.ct-label').textContent===mt5Acct.external_account_id);
+ assert.ok(acctRow,'MT5 account listed in the tree');
+ assert.ok(!rows().some(r=>r.classList.contains('ct-conn')&&r.querySelector('.ct-label').textContent==='ICMarketsSC-Demo'),'no MT5 server level in the tree');
+ assert.match(acctRow.querySelector('.ct-meta').textContent,/ICMarketsSC-Demo/,'the account line names its server');
+ acctRow.click();await tick();await tick();
+ assert.match($('.ct-route').textContent,/Server & routeMeasure nowRefresh from brokerChange server…/);
+ [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Measure now').click();await tick();await tick();
+ [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Refresh from broker').click();await tick();await tick();
+ assert.match($('.ct-route [role=status]').textContent,/3 address\(es\) published by the broker for ICMarketsSC-Demo; 1 new added and measured; 1 on record no longer listed/);
+ [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Change server…').click();await tick();
+ fill(byLabel('New server name'),'ICMarketsSC-Demo02');fill(byLabel('New server addresses'),'203.0.113.77:443');await tick();
+ [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Move to ICMarketsSC-Demo02').click();await tick();await tick();
+ assert.deepEqual(mt5Calls,['latency','refresh','move:ICMarketsSC-Demo02']);
+ // Add who under MT5 = the broker; it goes straight on to its first account.
+ row('MetaTrader 5').click();await tick();
+ [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add who').click();await tick();
+ assert.equal(byLabel('MT5 server name'),null,'no server asked for the broker');
+ fill(byLabel('Provider name'),'Pepperstone');await submit($('.ct-add'));await tick();await tick();
+ assert.ok(db.providers.some(p=>p.name==='Pepperstone'&&p.kind==='BROKER'));
+ assert.match($('.fw').textContent,/Add MT5 account/,'Add MT5 account opens for the new broker');
+ $('[aria-label="Close window"]')?.click();await tick();
+ console.log('PASS: MT5 accounts sit under the broker with their server and route; measure, refresh from broker and change server work from the account.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
  await open2('Accounts');

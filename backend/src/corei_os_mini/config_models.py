@@ -299,7 +299,7 @@ class AccountIn(_Strict):
     other_users: Text(300) = ''
     group_ids: Annotated[list[UUID], Field(max_length=50)] = Field(default_factory=list)
     # Which of the server's addresses this account uses (MT5 only). See mt5_routing.
-    access_mode: AccessMode = 'SERVER'
+    access_mode: AccessMode = 'FASTEST'
     # The account's own ordered choice; kept when switching modes so nothing is lost.
     access_points: Annotated[list[AddressRef], Field(max_length=MAX_ACCESS_POINTS)] = Field(default_factory=list)
 
@@ -503,3 +503,17 @@ class VenueSetupIn(_Strict):
         if (self.provider_id is None) == (self.provider is None):
             raise ValueError('Choose an existing provider or describe a new one (not both).')
         return self
+
+
+class Mt5ServerMoveIn(_Strict):
+    """Move an MT5 account to another server of the same broker (the broker moved the login, or it was
+    entered on the wrong server). The server record is found or created; the account keeps its id,
+    password, groups and history. LIVE moves need approval under four-eyes."""
+    server: Mt5Settings
+    version: int
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] = ''
+
+
+class Mt5AddressRefreshIn(_Strict):
+    """Bring an account's server addresses up to date from the MT5 broker directory or an analysed servers.dat."""
+    catalog_id: Annotated[str, StringConstraints(max_length=80)] | None = None

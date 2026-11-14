@@ -341,6 +341,9 @@ class SourceWorker(threading.Thread):
         return [reader_path(), '--stream'], request
 
     def _session(self) -> bool:
+        # FASTEST routing: measure the server's addresses again first when the last measurement is old.
+        if self.platform == 'MT5':
+            cfg.refresh_latency_if_stale(self.connection_id, 'collector')
         with cfg.transaction('read') as db:
             account = cfg.get_record(db, 'accounts', UUID(self.account_id))
             conn = db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (self.connection_id,)).fetchone()
