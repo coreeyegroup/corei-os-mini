@@ -325,3 +325,4 @@ button.cfg-tile { cursor: pointer; }
 .cfg-tech.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .cfg-tech:disabled { opacity: .45; cursor: not-allowed; }
 .fw .cfg-form .cfg-pair > .cfg-field:has(> button) button { width: auto; }
+.cfg-footer-stack { display: flex; flex-direction: column; gap: 6px; width: 100%; }

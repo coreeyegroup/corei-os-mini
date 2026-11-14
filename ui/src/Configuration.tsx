@@ -626,6 +626,7 @@ function suggestId(entity: Entity, d: Row, refs: Record<string, Row[]>): string 
   return /^[A-Z]/.test(id) ? id : '';
 }
 
+const PURGEABLE = ['providers', 'connections', 'accounts'];
 export const PLATFORM_TAG: Record<string, string> = { MT5: 'MT5', MT4: 'MT4', CTRADER: 'CTRADER', FIX: 'FIX', REST_API: 'API' };
 export const PLATFORM_LABEL: Record<string, string> = { MT5: 'MetaTrader 5', MT4: 'MetaTrader 4', CTRADER: 'cTrader', FIX: 'FIX 4.4 / 4.2', REST_API: 'Broker / exchange API' };
 const TECH_OPTIONS: [string, string][] = [['MT5', 'MetaTrader 5'], ['MT4', 'MetaTrader 4'], ['CTRADER', 'cTrader'], ['FIX', 'FIX 4.4 / 4.2'],
@@ -1370,6 +1371,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
   const [mt5Preset, setMt5Preset] = useState<Row | null>(null);
   const [accountPreset, setAccountPreset] = useState<AccountPreset>({});
+  const [blocked, setBlocked] = useState('');
   const [adding, setAdding] = useState<'' | 'ACCOUNT' | 'MT5' | 'UPSTOX'>(''), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
   const prefKey = `corei-os-mini.list.${entity}`;
   const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
@@ -1438,14 +1440,29 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   async function remove() {
     if (!selected || !window.confirm(`Delete this ${SINGULAR[entity]}? This cannot be undone. Records that depend on it must be removed first.`)) return;
     setBusy(true); setError('');
-    let offerArchive = '';
+    setBlocked('');
     try { await api(`config/${entity}/${selected.id}?version=${selected.version}`, 'DELETE'); setSelected(null); setDraft(null); setNotice('Deleted.'); await load(); reloadRefs(); }
     catch (err) {
       const message = (err as Error).message;
-      if (ARCHIVABLE.includes(entity) && (err as any).status === 409) offerArchive = message; else setError(message);
+      // Has history: say why, and offer both ways on — delete permanently with everything attached, or archive.
+      if (PURGEABLE.includes(entity) && (err as any).status === 409) setBlocked(message); else setError(message);
     } finally { setBusy(false); }
-    // Kept for its history: say why, and archive it in the same step if the person agrees.
-    if (offerArchive) { if (window.confirm(`${offerArchive}\n\nArchive it now?`)) await archive(); else setError(offerArchive); }
+  }
+  async function purge() {
+    if (!selected) return;
+    const what = entity === 'accounts' ? 'its collected prices and bars, collection plans, symbol catalogue, broker reads, deployments and login'
+      : entity === 'connections' ? 'its accounts (with their collected data, plans and logins), symbol mappings, latency checks and login'
+      : 'its servers and their accounts, with all their collected data, plans and logins';
+    const typed = window.prompt(`Delete ${selected.code} permanently, with ${what}?\nThis cannot be undone; the audit log keeps one entry of what was removed.\n\nType ${selected.code} to confirm:`);
+    if (typed === null) return;
+    if (typed.trim() !== selected.code) { setError(`Not deleted: type ${selected.code} exactly.`); return; }
+    const reason = window.prompt('Reason (kept in the audit log, at least 5 characters):');
+    if (!reason || reason.trim().length < 5) { if (reason !== null) setError('Give a reason of at least 5 characters.'); return; }
+    setBusy(true); setError(''); setBlocked('');
+    try { const r = await api(`config/${entity}/${selected.id}/delete-permanently`, 'POST', { version: selected.version, confirm: typed.trim(), reason: reason.trim() });
+      const removed = Object.entries(r.removed as Record<string, number>).map(([k, n]) => `${n.toLocaleString()} ${k}`).join(', ');
+      setSelected(null); setDraft(null); setNotice(`${r.code} deleted permanently${removed ? ` (${removed})` : ''}.`); await load(); reloadRefs(); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   function focusField(code: string) {
     const label = BLOCKER_FIELD[code]; if (!label) return;
@@ -1512,10 +1529,14 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
     {draft && <FloatingWindow storageKey={entity === 'connections' ? 'corei-os-mini.connection-window.v1' : entity === 'accounts' ? 'corei-os-mini.account-window.v1' : 'corei-os-mini.config-window.v1'}
       width={entity === 'connections' || entity === 'accounts' || entity === 'providers' ? 780 : 560}
-      footer={canEdit ? <div className="cfg-actions">
+      footer={canEdit ? <div className="cfg-footer-stack"><div className="cfg-actions">
           <button className="primary" form="cfg-record-form" disabled={busy || !dirty}>{selected ? 'Save changes' : `Create ${SINGULAR[entity]}`}</button>
           {selected && ARCHIVABLE.includes(entity) && selected.status !== 'ARCHIVED' && <button type="button" disabled={busy} onClick={() => void archive()}>Archive</button>}
-          {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}</div>
+          {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}
+          {selected && PURGEABLE.includes(entity) && <button type="button" className="danger" disabled={busy} onClick={() => void purge()}
+            title="Removes it and everything attached to it (collected data, plans, logins; for a server or provider its accounts too). Typed confirmation; audited.">Delete permanently…</button>}</div>
+        {blocked && <p role="alert" className="cfg-error">{blocked} <button type="button" className="danger" onClick={() => void purge()}>Delete permanently…</button>{' '}
+          <button type="button" onClick={() => { setBlocked(''); void archive(); }}>Archive…</button></p>}</div>
         : <p className="cfg-note">Read only. Changes need the Trading operations role.</p>}
       title={selected ? `${SINGULAR[entity][0].toUpperCase()}${SINGULAR[entity].slice(1)} · ${selected.code ?? selected.symbol ?? selected.broker_symbol}` : `New ${SINGULAR[entity]}`}
       subtitle={selected ? `Version ${selected.version} · updated ${new Date(selected.updated_at).toLocaleString()}${dirty ? ' · unsaved changes' : ''}` : dirty ? 'Unsaved' : undefined}

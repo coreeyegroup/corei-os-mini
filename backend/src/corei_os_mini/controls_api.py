@@ -170,6 +170,22 @@ class ArchiveIn(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
 
 
+class PurgeIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: int = Field(ge=1)
+    confirm: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post('/{entity}/{record_id}/delete-permanently')
+def delete_permanently(entity: Literal['providers', 'connections', 'accounts'], record_id: UUID, payload: dict,
+                       response: Response, user: Principal = Depends(_ops)):
+    """Delete a provider, server or account and everything attached to it (typed code + reason; audited)."""
+    _no_store(response)
+    data = _parse(PurgeIn, payload)
+    return store.purge(user.username, entity, record_id, data.version, data.confirm, data.reason)
+
+
 @router.post('/{entity}/{record_id}/archive')
 def archive(entity: Literal['providers', 'connections', 'accounts', 'groups'], record_id: UUID, payload: dict,
             response: Response, user: Principal = Depends(_ops)):

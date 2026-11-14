@@ -15,7 +15,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const w=dom.window;const errors=[];w.addEventListener('error',e=>errors.push(e.message));
  w.HTMLElement.prototype.scrollIntoView=function(){};
  w.localStorage.setItem('corei-os-mini.workstation.layout.v1',JSON.stringify(layout));
- w.confirm=()=>true;
+ w.confirm=()=>true;const purges=[];
 
  // ---- mock backend ----
  let signedIn=false;const session={roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],must:true};
@@ -77,6 +77,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      if(method==='PUT'){const u=users.find(x=>url.endsWith(x.id));Object.assign(u,body,{version:u.version+1});return ok(u);}
      return ok({reset:true});}
    const u=new URL(url,'https://x');const parts=u.pathname.replace('/api/config/','').split('/');
+   if(parts[2]==='delete-permanently'){const body=JSON.parse(options.body);purges.push({entity:parts[0],...body});
+     const list=db[parts[0]];const i=list.findIndex(x=>x.id===parts[1]);const code=list[i].code;
+     if(body.confirm!==code)return fail(422,'Type the code');list.splice(i,1);return ok({code,removed:{'collected prices':12,accounts:1}});}
    if(parts[0]==='summary')return ok({counts:Object.fromEntries(Object.entries(db).map(([k,v])=>[k,v.length])),execution_controls:Object.values(controls),credential_storage_ready:true,available_adapters:[]});
    if(parts[0]==='execution-controls'){
      if(method==='GET')return ok({items:Object.values(controls)});
@@ -563,6 +566,15 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
  assert.deepEqual([...w.document.querySelectorAll('.cfg-table tbody tr td:first-child')].map(td=>td.textContent),['ICM_DEMO_LMX_1','ICM_DEMO_A123456','ICM_DEMO_51234567','ICM_DEMO_777001','ICM_DEMO_700123']);  // descending; numeric-aware: 51234567 > 777001
  console.log('PASS: chips open the linked record in its section; lists sort by column.');
+ // Delete permanently: typed code + reason; the account and everything attached go (audited on the server).
+ const victim=db.accounts.find(a=>a.code==='ICM_DEMO_700123');
+ [...w.document.querySelectorAll('.cfg-table tbody tr')].find(tr=>tr.textContent.includes('ICM_DEMO_700123')).click();await tick();await tick();
+ const answers=['ICM_DEMO_700123','remove test account'];w.prompt=()=>answers.shift();
+ button('Delete permanently…').click();await tick();await tick();await tick();
+ assert.deepEqual(purges.at(-1),{entity:'accounts',version:victim.version,confirm:'ICM_DEMO_700123',reason:'remove test account'});
+ assert.ok(!db.accounts.some(a=>a.code==='ICM_DEMO_700123'));
+ assert.match(w.document.body.textContent,/ICM_DEMO_700123 deleted permanently \(12 collected prices, 1 accounts\)/);
+ console.log('PASS: Delete permanently removes an account with everything attached after the typed code and a reason.');
 
  // CSV import: checked first, then applied.
  button('Import CSV').click();await tick();

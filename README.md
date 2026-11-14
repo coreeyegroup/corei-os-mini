@@ -864,3 +864,6 @@ The reader retries a refused login automatically with current MT5 client builds 
 - 0.34.1: **Deleting an account** says exactly what keeps it (logins in the audit trail, deployments, collected prices or
   bars, broker symbol specs) and offers **Archive** in the same step. An account with nothing collected is deleted with
   its collection plans. Archiving an account also archives its collection plans, so collection stops.
+- 0.34.2: **Delete permanently…** on every provider, server and account (beside Delete and Archive): removes it with
+  everything attached — collected prices and bars, plans, catalogue, broker reads, deployments, logins; a server's or
+  provider's accounts too. Type the code and a reason; the audit log keeps one entry listing what was removed.

@@ -65,3 +65,24 @@ class DeleteOrArchive(Base):
         self.assertEqual(r.status_code, 200, r.text)
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT status FROM md_collection_plans WHERE code='KEEP_ME_EURUSD'").fetchone()['status'], 'ARCHIVED')
+
+    def test_delete_permanently(self):
+        b = self._account('GONE_ME', '1003')
+        with self.connect() as db:
+            db.execute("INSERT INTO cfg_credential_use(credential_id, owner, owner_id, used_by, purpose) VALUES (gen_random_uuid(), 'account', %s, 'alice', 'LOGIN')", (b['id'],))
+        url = f"/api/config/accounts/{b['id']}/delete-permanently"
+        r = self.client.post(url, json={'version': b['version'], 'confirm': 'WRONG', 'reason': 'clean test data'})
+        self.assertEqual(r.status_code, 422)
+        r = self.client.post(url, json={'version': b['version'], 'confirm': 'GONE_ME', 'reason': 'clean test data'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['removed'], {'collection plans': 1, 'accounts': 1})
+        with self.connect() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM cfg_accounts WHERE code='GONE_ME'").fetchone())
+            self.assertEqual(db.execute("SELECT action FROM cfg_audit_log WHERE entity_id=%s ORDER BY id DESC LIMIT 1", (str(b['id']),)).fetchone()['action'], 'DELETE_PERMANENTLY')
+        # A provider: its servers and their accounts go too.
+        c = self._account('GONE_TOO', '1004')
+        with self.connect() as db:
+            prov = db.execute("SELECT p.id, p.version FROM cfg_providers p JOIN cfg_connections c ON c.provider_id=p.id JOIN cfg_accounts a ON a.connection_id=c.id WHERE a.code='GONE_TOO'").fetchone()
+        r = self.client.post(f"/api/config/providers/{prov['id']}/delete-permanently", json={'version': prov['version'], 'confirm': 'PGONE_TOO', 'reason': 'clean test data'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['removed'], {'collection plans': 1, 'accounts': 1, 'servers': 1})

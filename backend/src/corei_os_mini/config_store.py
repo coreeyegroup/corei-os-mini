@@ -609,6 +609,67 @@ def delete(actor: str, entity: str, record_id: UUID, version: int) -> None:
         audit(db, actor, 'DELETE', spec.label, record_id, before, None)
 
 
+# ---------- delete permanently ----------
+# Removes the record and everything attached to it: for an account its collected prices, bars, quality, events,
+# collection plans, symbol catalogue, broker reads, deployments and login; for a server its accounts (as above),
+# symbol mappings, latency checks and login; for a provider its servers (as above). The audit log keeps one entry
+# with what was removed. Archived market-data files on disk are listed in md_files and are not erased here.
+
+def _purge_account(db, account_id: UUID) -> dict:
+    counts: dict[str, int] = {}
+    def gone(label: str, query: str, params: tuple) -> None:
+        n = db.execute(query, params).rowcount
+        if n:
+            counts[label] = counts.get(label, 0) + n
+    aid = (account_id,)
+    gone('collected prices', 'DELETE FROM md_ticks WHERE account_id=%s', aid)
+    gone('collected bars', 'DELETE FROM md_bars WHERE account_id=%s', aid)
+    gone('latest prices', 'DELETE FROM md_latest WHERE account_id=%s', aid)
+    gone('quality minutes', 'DELETE FROM md_quality WHERE account_id=%s', aid)
+    gone('market-data events', 'DELETE FROM md_events WHERE account_id=%s', aid)
+    gone('archived-file records', 'DELETE FROM md_files WHERE account_id=%s', aid)
+    gone('collection plans', 'DELETE FROM md_collection_plans WHERE account_id=%s', aid)
+    gone('collection controls', 'DELETE FROM md_controls WHERE scope=%s', (f'account:{account_id}',))
+    gone('strategy deployments', 'DELETE FROM cfg_deployments WHERE account_id=%s', aid)
+    gone('accounts', 'DELETE FROM cfg_accounts WHERE id=%s', aid)
+    return counts
+
+
+def _merge(total: dict, part: dict) -> dict:
+    for k, v in part.items():
+        total[k] = total.get(k, 0) + v
+    return total
+
+
+def purge(actor: str, entity: str, record_id: UUID, version: int, confirm: str, reason: str) -> dict:
+    """Delete permanently, with everything attached. `confirm` must be the record's code (typed by the person)."""
+    if entity not in ('accounts', 'connections', 'providers'):
+        raise HTTPException(404, 'Delete permanently applies to providers, servers and accounts.')
+    spec = SPECS[entity]
+    with transaction('delete') as db:
+        before = _locked(db, spec, record_id, version)
+        if confirm.strip() != before['code']:
+            raise HTTPException(422, f"Type the code {before['code']} exactly to delete it permanently.")
+        counts: dict[str, int] = {}
+        if entity == 'accounts':
+            _merge(counts, _purge_account(db, record_id))
+        else:
+            conns = [record_id] if entity == 'connections' else \
+                [r['id'] for r in db.execute('SELECT id FROM cfg_connections WHERE provider_id=%s', (record_id,)).fetchall()]
+            for cid in conns:
+                for a in db.execute('SELECT id FROM cfg_accounts WHERE connection_id=%s', (cid,)).fetchall():
+                    _merge(counts, _purge_account(db, a['id']))
+                n = db.execute('DELETE FROM cfg_symbol_mappings WHERE connection_id=%s', (cid,)).rowcount
+                if n:
+                    counts['symbol mappings'] = counts.get('symbol mappings', 0) + n
+                db.execute('DELETE FROM cfg_connections WHERE id=%s', (cid,))
+                counts['servers'] = counts.get('servers', 0) + 1
+            if entity == 'providers':
+                db.execute('DELETE FROM cfg_providers WHERE id=%s', (record_id,))
+        audit(db, actor, 'DELETE_PERMANENTLY', spec.label, record_id, before, {'removed': counts}, reason)
+        return {'code': before['code'], 'removed': counts}
+
+
 def archive(actor: str, entity: str, record_id: UUID, version: int, reason: str) -> dict:
     if entity not in ARCHIVABLE:
         raise HTTPException(404, 'This record type is not archived.')
