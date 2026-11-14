@@ -63,6 +63,7 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Configuration', section: 'alerts', label: 'Alert channels', group: 'Controls', keywords: 'email telegram webhook' },
   { view: 'Configuration', section: 'users', label: 'Users & roles', group: 'Controls' },
   { view: 'Configuration', section: 'audit', label: 'Audit log', group: 'Controls', keywords: 'history changes' },
+  { view: 'Configuration', section: 'database', label: 'Database', group: 'Controls', keywords: 'postgres postgresql table row column sql edit delete' },
   { view: 'Operations', label: 'Monitor', group: 'System', keywords: 'status health attention' },
   { view: 'Infrastructure', section: 'health', label: 'System health', group: 'System', keywords: 'server postgres disk services' },
   { view: 'Infrastructure', section: 'tables', label: 'Database tables', group: 'System', keywords: 'postgres excel edit rows' },
@@ -116,7 +117,7 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['2 · Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
   ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
   ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],
-  ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log']]],
+  ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log'], ['database', 'Database']]],
 ];
 export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
 /** The side-bar row a Setup section belongs to (the record lists highlight "Connectivity"). */

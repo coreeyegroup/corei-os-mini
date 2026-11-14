@@ -326,3 +326,25 @@ button.cfg-tile { cursor: pointer; }
 .cfg-tech:disabled { opacity: .45; cursor: not-allowed; }
 .fw .cfg-form .cfg-pair > .cfg-field:has(> button) button { width: auto; }
 .cfg-footer-stack { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+
+/* Database editor */
+.dbx { display: grid; grid-template-columns: 260px 1fr; gap: 10px; min-height: 0; height: 100%; }
+.dbx-tables { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); padding-right: 8px; }
+.dbx-tables ul { list-style: none; margin: 6px 0 0; padding: 0; overflow: auto; }
+.dbx-tables li { display: flex; flex-direction: column; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.dbx-tables li[aria-selected=true] { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.dbx-tables li small { color: var(--muted); font-size: 11px; }
+.dbx-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.dbx-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.dbx-reason { flex: 1 1 320px; }
+.dbx-page { font-variant-numeric: tabular-nums; color: var(--muted); }
+.dbx-grid { overflow: auto; min-height: 0; }
+.dbx-grid td { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbx-grid th small { display: block; color: var(--muted); font-weight: normal; font-size: 10px; }
+.dbx-colbtn, .dbx-del { padding: 0 4px; min-width: 0; }
+.dbx-null { color: var(--muted); }
+.dbx-secret { color: var(--muted); font-style: italic; }
+.dbx-cell { display: flex; gap: 3px; }
+.dbx-cell input { min-width: 160px; }
+.dbx-new input { min-width: 90px; }
+.dbx-colform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 5px; margin-bottom: 6px; }

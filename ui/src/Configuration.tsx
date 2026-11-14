@@ -9,13 +9,14 @@
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
 import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
+import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import ConnectTree from './ConnectTree';
 import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
-type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit';
-type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts'>;
+type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database';
+type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -38,6 +39,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'alerts', label: 'Alerts', hint: 'E-mail, Telegram and webhook notifications' },
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
+  { id: 'database', label: 'Database', hint: 'Every table: add, edit and delete rows; add, change and drop columns; create and drop tables (Administrator; reason and password; audited)' },
 ];
 
 /* Headings in the section list, so 14 sections read as five groups. */
@@ -1998,6 +2000,7 @@ export default function Configuration() {
         : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
         : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
         : current.id === 'users' ? <Users me={user} />
+        : current.id === 'database' ? (user.roles.includes('ADMIN') ? <DatabaseEditor /> : <p className="cfg-note">The database editor needs the Administrator role.</p>)
         : current.id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
         : current.id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />
         : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={canEdit} navigate={navigate}

@@ -12,6 +12,7 @@ from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
 from .infra_api import router as infra_router
 from .md_api import router as md_router
+from .db_admin_api import router as db_admin_router
 from .broker_login import oauth_router, router as broker_login_router
 from . import config_store
 from .credentials import storage_ready as credential_storage_ready
@@ -68,6 +69,7 @@ app.include_router(strategy_router)
 app.include_router(controls_router)
 app.include_router(infra_router)
 app.include_router(md_router)
+app.include_router(db_admin_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
 app.include_router(config_router)
@@ -168,7 +170,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.34.2-delete-permanently",
+        "release": "0.35.0-database-editor",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

@@ -867,3 +867,13 @@ The reader retries a refused login automatically with current MT5 client builds 
 - 0.34.2: **Delete permanently…** on every provider, server and account (beside Delete and Archive): removes it with
   everything attached — collected prices and bars, plans, catalogue, broker reads, deployments, logins; a server's or
   provider's accounts too. Type the code and a reason; the audit log keeps one entry listing what was removed.
+
+## Database editor — release 0.35.0
+
+Setup › Administration › **Database** (Administrator role): every table of COREI's database.
+- **Rows:** search all columns, sort, page (50–1000), double-click a cell to edit (∅ sets it empty), **+ Row**, delete a row.
+- **Columns:** **+ Column** (name, type, empty allowed, default); **⋯** on a column to rename, change type, allow/require
+  empty, set or remove default, or **Drop column…** (type `table.column`).
+- **Tables:** **+ Table**, **Drop table…** (type the name).
+- Every change: a reason (audit log) and your password re-entered. Secrets stay hidden and are changed from their own screens.
+- Structure changes made here are not part of COREI's migration files.
