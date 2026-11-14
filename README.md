@@ -838,3 +838,6 @@ The reader retries a refused login automatically with current MT5 client builds 
   shows steps 4–6 (login saved, login tested, collecting) and opens Market data to pick symbols.
 - `apply-test-setup.sh` also names servers in the standard form ("VT Markets · MT5 live · VTMarkets-Live 2"), fixes broker names
   (Exness, IC Markets) and archives "Meta Trader" (a technology, not a provider).
+- 0.32.1: the tree is **Provider › Account › Server** (DEC-62): each account shows the server it uses beneath it; an MT5 account
+  picks its server from the broker's list when added and can change it; only servers in use are kept. A Broker login result is
+  shown once and removed from the address, so a saved link no longer repeats an old message.

@@ -24,7 +24,7 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
-  { id: 'brokers', label: 'Connectivity', hint: 'Provider › server / session › account. Select a level to add the next one' },
+  { id: 'brokers', label: 'Connectivity', hint: 'Provider › account › server. Select a level to add the next one' },
   { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
   { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
   { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
@@ -1661,7 +1661,10 @@ export default function Configuration() {
   const [section, setSection] = useSection<Section>('Configuration', 'health', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
   const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
+  // The broker's redirect result, shown once: the address is cleaned so a saved link never repeats an old message.
   const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
+  const [brokerReason] = useState(() => new URLSearchParams(window.location.search).get('reason'));
+  useEffect(() => { if (brokerLogin) { try { window.history.replaceState(null, '', window.location.pathname + window.location.hash); } catch { /* address only */ } } }, []);
   async function loadRefs() {
     try {
       const [p, c, i, g, a, s] = await Promise.all(['providers', 'connections', 'instruments', 'groups', 'accounts', 'summary'].map(x => api('config/' + x)));
@@ -1733,7 +1736,7 @@ export default function Configuration() {
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
       {brokerLogin && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
-        : `Broker login failed${new URLSearchParams(window.location.search).get('reason') ? ': ' + new URLSearchParams(window.location.search).get('reason') : '.'}`}</p>}
+        : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`}</p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
         : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} /></div>

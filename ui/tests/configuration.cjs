@@ -433,14 +433,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  nav('Connectivity').click();await tick();await tick();await tick();
  const rows=()=>[...w.document.querySelectorAll('.ct-row')];const row=t=>rows().find(r=>r.querySelector('.ct-label').textContent===t);
  // Default: provider › server / session › account, the overview shows the six steps; + Provider adds step 1 alone.
- assert.match($('.ct-head').textContent,/Provider › server \/ session › account/);
- assert.deepEqual([...w.document.querySelectorAll('.ct-flow b')].map(b=>b.textContent),['1 · Provider','2 · Server / session','3 · Account','4 · Login','5 · Test','6 · Collect']);
+ assert.match($('.ct-head').textContent,/Provider › account › server/);
+ assert.deepEqual([...w.document.querySelectorAll('.ct-flow b')].map(b=>b.textContent),['1 · Provider','2 · Account','3 · Server','4 · Login','5 · Test','6 · Collect']);
  [...w.document.querySelectorAll('.ct-tools button')].find(b=>b.textContent==='+ Provider').click();await tick();
  fill(byLabel('Provider name'),'Exness Global');fill(byLabel('Provider type'),'BROKER');fill(byLabel('Regulator'),'FSA');await tick();
  await submit($('.ct-add'));await tick();await tick();
  assert.ok(db.providers.some(p=>p.name==='Exness Global'&&p.code==='EXNESS_GLOBAL'&&p.regulator==='FSA'));
  assert.match($('.ct-detail').textContent,/Step 1 · Provider/,'the new provider is selected');
- assert.match($('.ct-detail').textContent,/Next step: Add server \/ session/);
+ assert.match($('.ct-detail').textContent,/Next step: Add MT5 account/);
  assert.ok(row('Exness Global'),'listed in the provider tree');
  [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
  assert.deepEqual(rows().filter(r=>r.classList.contains('ct-tech')).map(r=>r.querySelector('.ct-label').textContent),['MetaTrader 5','MetaTrader 4','FIX 4.4 / 4.2','Broker & exchange APIs']);
@@ -471,8 +471,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const acctRow=rows().find(r=>r.classList.contains('ct-acct')&&r.querySelector('.ct-label').textContent===mt5Acct.external_account_id);
  assert.ok(acctRow,'MT5 account listed in the tree');
  const serverRow=rows().find(r=>r.classList.contains('ct-conn')&&r.querySelector('.ct-label').textContent==='ICMarketsSC-Demo');
- assert.ok(serverRow,'the MT5 server is its own level');
- assert.ok(rows().indexOf(serverRow)<rows().indexOf(acctRow)&&Number(acctRow.getAttribute('aria-level'))===Number(serverRow.getAttribute('aria-level'))+1,'the account sits under its server');
+ assert.ok(serverRow,'the server the account uses is shown under it');
+ assert.ok(rows().indexOf(acctRow)<rows().indexOf(serverRow)&&Number(serverRow.getAttribute('aria-level'))===Number(acctRow.getAttribute('aria-level'))+1,'provider › account › server');
  acctRow.click();await tick();await tick();
  assert.match($('.ct-steps').textContent,/4 · Login saved.*5 · Login tested.*6 · Collecting/);
  assert.match($('.ct-route').textContent,/Server & routeMeasure nowRefresh from brokerChange server…/);
@@ -483,17 +483,15 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(byLabel('New server name'),'ICMarketsSC-Demo02');fill(byLabel('New server addresses'),'203.0.113.77:443');await tick();
  [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Move to ICMarketsSC-Demo02').click();await tick();await tick();
  assert.deepEqual(mt5Calls,['latency','refresh','move:ICMarketsSC-Demo02']);
- // Add who under MT5 = the broker and its MT5 server (from the broker list or typed); then Add account on that server.
+ // Add who under MT5 = the broker; no server list asked: it goes straight on to its first account (which picks its server).
  row('MetaTrader 5').click();await tick();
  [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add who').click();await tick();
- fill(byLabel('Provider name'),'Pepperstone');fill(byLabel('MT5 server name'),'Pepperstone-Demo');fill(byLabel('MT5 server addresses'),'198.51.100.9:443');await tick();
- assert.equal(byLabel('Environment').value,'DEMO','environment taken from the server name');
- await submit($('.ct-add'));await tick();await tick();
- const mv=venues.at(-1);
- assert.deepEqual(mv.provider,{name:'Pepperstone',code:'PEPPERSTONE',kind:'BROKER'});
- assert.equal(mv.connection.platform,'MT5');assert.equal(mv.connection.settings.server_name,'Pepperstone-Demo');
- assert.deepEqual(mv.connection.settings.access_points.map(p=>[p.host,p.port]),[['198.51.100.9',443]]);
- console.log('PASS: MT5 is provider › server › account like every technology; route, measure, refresh and change server work from the account; a broker is added with its MT5 server.');
+ assert.equal(byLabel('MT5 server name'),null,'no server asked for the broker');
+ fill(byLabel('Provider name'),'Pepperstone');await submit($('.ct-add'));await tick();await tick();
+ assert.ok(db.providers.some(p=>p.name==='Pepperstone'&&p.kind==='BROKER'));
+ assert.match($('.fw').textContent,/Add MT5 account/,'Add MT5 account opens for the new broker');
+ $('[aria-label="Close window"]')?.click();await tick();
+ console.log('PASS: provider › account › server: each MT5 account shows the server it uses; route, measure, refresh and change server work from the account; a broker goes straight on to its first account.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
  await open2('Accounts');

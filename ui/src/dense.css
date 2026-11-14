@@ -482,3 +482,4 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .ct-steps > button { align-self: center; }
 .ct-picker { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .ct-tools > button.ct-addp { width: auto; padding: 0 8px; white-space: nowrap; }
+.ct-tools input { min-width: 70px; }
