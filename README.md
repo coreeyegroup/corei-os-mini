@@ -813,3 +813,13 @@ DEC-46. No migration.
 ### MT5 "OLD_VERSION" (broker refuses the connector's MT5 version)
 
 The reader retries a refused login automatically with current MT5 client builds (6241 down to 5370) when the installed SDK has a build setting. To pin a build, add `COREI_MT5_CLIENT_BUILD=<build>` (the build the broker's own MT5 terminal shows under Help › About) to `/etc/corei-os-mini/workstation.env` and redeploy. `bash scripts/describe-mt5-api.sh` lists the SDK's build settings under `client_build_settings`; if that list is empty, the SDK itself must be updated.
+
+## Test setup values and MT5 through the official terminal — release 0.31.0
+
+- `scripts/apply-test-setup.sh` writes the correct provider details (VT Markets, MetaQuotes, Upstox), account names, six instruments
+  (XAUUSD, EURUSD, GBPUSD, USDJPY, NIFTY50, NIFTYBANK), groups (SRC_FX_METALS, SRC_INDIA, TEST_DEMO), symbol mappings and collection
+  plans. Dry run by default; `--apply` writes through COREI's rules (audit log, approvals for LIVE changes). Running it again changes nothing.
+- `scripts/setup-mt5-terminal.sh <instance> <port> [installer-url]` installs the official MetaTrader 5 terminal under Wine with the COREI
+  terminal bridge as a systemd service on 127.0.0.1. Use it when login fails with "MT5 SDK too old for this server".
+- `scripts/apply-test-setup.sh --bridge <ACCOUNT_CODE> --port <port> --state <folder> [--apply]` switches that account's server to the
+  terminal: method Terminal bridge, pinned certificate fingerprint, token saved write-only (never printed).
