@@ -827,3 +827,14 @@ The reader retries a refused login automatically with current MT5 client builds 
   (instead of waiting out the 5-minute / 1-hour back-off), and the "MT5 SDK too old" message names the terminal route.
 - 0.31.2: `deploy-workstation.sh` applies database updates (migrations) before deploying. Before this, new tables were only
   created by `configure-workstation-database.sh`, so the Market data source list failed with "Database schema out of date".
+
+## Provider › server / session › account — release 0.32.0
+
+- Setup › Connectivity opens grouped by **provider** (the counterparty), then its **servers / sessions** (MT5 server, FIX session,
+  API endpoint), then the **accounts** on each. Every technology has the same three levels; Technology and Provider type groupings remain.
+- The overview shows the six set-up steps (provider, server / session, account, login, test, collect) with counts, and a next step per provider.
+- **+ Provider** adds a provider on its own (name, type, legal entity, regulator, licence). A provider's panel adds its MT5 server
+  (picked from the broker's published list, or typed), FIX session or API; a server's panel adds its accounts; an account's panel
+  shows steps 4–6 (login saved, login tested, collecting) and opens Market data to pick symbols.
+- `apply-test-setup.sh` also names servers in the standard form ("VT Markets · MT5 live · VTMarkets-Live 2"), fixes broker names
+  (Exness, IC Markets) and archives "Meta Trader" (a technology, not a provider).

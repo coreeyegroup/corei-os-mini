@@ -469,3 +469,16 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .ct-serverlist button.current span { font-weight: 600; }
 .ct-serverlist button:disabled { opacity: .45; }
 .ct-serverlist small { color: inherit; opacity: .7; }
+
+/* Connectivity: the six set-up steps, per-account checklist, MT5 server picker */
+.ct-flow { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; }
+.ct-flow li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border: 1px solid var(--line, #2a3340); border-radius: 6px; }
+.ct-flow li small { opacity: .7; font-variant-numeric: tabular-nums; }
+.ct-steps { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 8px 0 10px; }
+.ct-steps > div { flex: 1 1 180px; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid var(--line, #2a3340); border-radius: 6px; }
+.ct-steps > div.ok b { color: var(--ok, #3fb37f); }
+.ct-steps > div.todo b { color: var(--warn, #d9a441); }
+.ct-steps > div span { font-size: 12px; opacity: .8; }
+.ct-steps > button { align-self: center; }
+.ct-picker { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.ct-tools > button.ct-addp { width: auto; padding: 0 8px; white-space: nowrap; }

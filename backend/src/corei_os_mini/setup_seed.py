@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from . import config_store as store
-from .config_models import AccountGroupIn, AccountIn, InstrumentIn, MappingIn, ProviderIn
+from .config_models import AccountGroupIn, AccountIn, ConnectionIn, InstrumentIn, MappingIn, ProviderIn
 from .md import plans
 
 REASON = 'Test setup values (scripts/apply-test-setup.sh)'
@@ -33,6 +33,13 @@ PROVIDERS = {
     'UPSTOK': {'name': 'Upstox', 'legal_entity': 'RKSV Securities India Pvt Ltd', 'regulator': 'SEBI (India)', 'licence_number': 'INZ000185137',
                'jurisdiction': 'India', 'execution_model': 'EXCHANGE', 'website': 'https://upstox.com', 'exposure_currency': 'INR'},
 }
+# Names only (no facts claimed): brokers added earlier with their code as name.
+PROVIDER_NAMES = {'EXNESS': 'Exness', 'ICMARKETS': 'IC Markets'}
+# A technology entered as a provider: archived (kept in the audit log; restore any time).
+PROVIDERS_TO_ARCHIVE = {'META_TRADER': 'MetaTrader is a technology (MT4/MT5), not a provider: choose it as a server type under a broker.'}
+# Standard connection names: "<Provider> · <technology> <environment> · <server or endpoint>".
+CONNECTION_NAMES = {'METAQUOTES_MT5_DEMO': 'MetaQuotes · MT5 demo · MetaQuotes-Demo', 'VTMARKET_MT5_LIVE': 'VT Markets · MT5 live · VTMarkets-Live 2',
+                    'UPSTOK_API_LIVE': 'Upstox · API live · api.upstox.com'}
 ACCOUNTS = {  # by account code
     'VTMARKET_LIVE_35822869': {'name': 'VT Markets live 2 · 35822869'},
     'METAQUOTES_DEMO_5056977914': {'name': 'MetaQuotes demo · 5056977914'},
@@ -116,6 +123,20 @@ def run(actor: str, apply: bool) -> int:
             r.upsert('providers', ProviderIn, providers[code], values, f"provider {code}")
         else:
             print(f'  provider {code} not found: skipped')
+    for code, name in PROVIDER_NAMES.items():
+        if code in providers:
+            r.upsert('providers', ProviderIn, providers[code], {'name': name}, f'provider {code}')
+    for code, why in PROVIDERS_TO_ARCHIVE.items():
+        p = providers.get(code)
+        if p and p['status'] != 'ARCHIVED':
+            try:
+                r.upsert('providers', ProviderIn, p, {'status': 'ARCHIVED'}, f'provider {code} ({why})')
+            except Exception as exc:  # noqa: BLE001 - e.g. still has active servers: report and go on
+                print(f"    not archived: {getattr(exc, 'detail', exc)}")
+    print('Servers and sessions')
+    for c in store.list_records('connections', {}, ''):
+        if c['code'] in CONNECTION_NAMES:
+            r.upsert('connections', ConnectionIn, c, {'name': CONNECTION_NAMES[c['code']]}, f"server {c['code']}")
     print('Instruments')
     instruments = {i['symbol']: i for i in store.list_records('instruments', {}, '')}
     for spec in INSTRUMENTS:

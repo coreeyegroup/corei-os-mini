@@ -24,7 +24,7 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
-  { id: 'brokers', label: 'Connectivity', hint: 'Technology › who › accounts. Select a level to add the next one' },
+  { id: 'brokers', label: 'Connectivity', hint: 'Provider › server / session › account. Select a level to add the next one' },
   { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
   { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
   { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
@@ -42,7 +42,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
 
 /* Headings in the section list, so 14 sections read as five groups. */
 /* The four views of the Connect screen: the tree, then the three record lists behind it. */
-const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Who (providers)'], ['connections', 'Servers & sessions'], ['accounts', 'Accounts']];
+const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Providers'], ['connections', 'Servers & sessions'], ['accounts', 'Accounts']];
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The broker connection failed — reason below',

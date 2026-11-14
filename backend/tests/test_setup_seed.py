@@ -21,6 +21,8 @@ class SetupSeed(test_market_data.MarketData):
             'access_points': [{'name': 'MetaQuotes-Demo', 'host': '194.164.179.214', 'port': 443}]}}), 201)
         self.ok(self.alice.post('/api/config/accounts', json={'connection_id': conn['id'], 'code': 'METAQUOTES_DEMO_5056977914', 'name': 'MetaQuotes demo',
                                                              'external_account_id': '5056977914', 'base_currency': 'USD', 'trading_permission': 'TRADING'}), 201)
+        self.ok(self.alice.post('/api/config/providers', json={'code': 'META_TRADER', 'name': 'Meta Trader', 'kind': 'BROKER'}), 201)
+        self.ok(self.alice.post('/api/config/providers', json={'code': 'EXNESS', 'name': 'EXNESS', 'kind': 'BROKER'}), 201)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             setup_seed.run('alice', apply=False)
@@ -36,6 +38,9 @@ class SetupSeed(test_market_data.MarketData):
         with self.connect() as db:
             p = db.execute("SELECT * FROM cfg_providers WHERE code='VTMARKET'").fetchone()
             self.assertEqual((p['name'], p['legal_entity'], p['licence_number']), ('VT Markets', 'VT Markets (Pty) Ltd', 'FSP 50865'))
+            self.assertEqual(db.execute("SELECT status FROM cfg_providers WHERE code='META_TRADER'").fetchone()['status'], 'ARCHIVED')
+            self.assertEqual(db.execute("SELECT name FROM cfg_providers WHERE code='EXNESS'").fetchone()['name'], 'Exness')
+            self.assertEqual(db.execute("SELECT name FROM cfg_connections WHERE code='METAQUOTES_MT5_DEMO'").fetchone()['name'], 'MetaQuotes · MT5 demo · MetaQuotes-Demo')
             self.assertEqual(db.execute('SELECT count(*) AS n FROM cfg_instruments').fetchone()['n'], 6)
             plans = db.execute("SELECT broker_symbol, status, purpose FROM md_collection_plans ORDER BY 1").fetchall()
             self.assertEqual([(x['broker_symbol'], x['status']) for x in plans], [('EURUSD', 'ACTIVE'), ('GBPUSD', 'ACTIVE'), ('USDJPY', 'ACTIVE'), ('XAUUSD', 'ACTIVE')])
