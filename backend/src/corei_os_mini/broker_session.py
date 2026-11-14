@@ -17,6 +17,7 @@ kept even when a field cannot be normalised; those symbols are listed as unmappe
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -39,6 +40,9 @@ _busy: set[str] = set()
 _lock = threading.Lock()
 
 MARGIN_MODES = {'hedg': 'HEDGING', 'netting': 'NETTING', 'exchange': 'EXCHANGE'}
+
+
+log = logging.getLogger(__name__)
 
 
 def _pick(facts: dict[str, Any], *fragments: str, numeric: bool = False) -> Any:
@@ -276,7 +280,14 @@ def _read(actor: str, account: dict, addresses: list[dict], symbols: list[str] |
                 cur.executemany('INSERT INTO cfg_symbol_specs(account_id, broker_symbol, spec, source, raw, read_id) '
                                 "VALUES (%s,%s,%s,'BROKER',%s,%s)",
                                 [(account['id'], name[:64], Jsonb(spec), Jsonb(raw), read_id) for name, spec, raw in stored_specs])
-    return {'id': read_id, 'connected': True, 'host': result['host'], 'port': result['port'], 'connect_ms': result.get('connect_ms'),
+    # Every symbol the server lists goes to the source's catalogue (Market data › Dashboard › Available).
+    catalogue = 0
+    try:
+        from .md import catalog
+        catalogue = catalog.store_mt5(account['id'], result)
+    except Exception:  # noqa: BLE001 - the read itself succeeded; the catalogue is refreshed at the next login
+        log.warning('symbol catalogue not stored for account %s', account['id'], exc_info=True)
+    return {'id': read_id, 'connected': True, 'catalogue_symbols': catalogue, 'host': result['host'], 'port': result['port'], 'connect_ms': result.get('connect_ms'),
             'attempts': result.get('attempts') or [], 'credential_level': level, 'facts': facts, 'client_build': result.get('client_build'),
             'server_time_offset_minutes': offset, 'symbols_available': result.get('symbols_available', 0),
             'symbols_stored': len(stored_specs), 'symbols_unmapped': unmapped[:50], 'symbol_error': result.get('symbol_error')}

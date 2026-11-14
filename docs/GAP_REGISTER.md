@@ -144,6 +144,7 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 | A-39 | High | MT5 server level in the tree; servers added by hand; latency order only on request | DONE 0.26.0 |
 | A-40 | Medium | No market dashboard; live prices only as a table | DONE 0.27.0 (workspaces dashboard) |
 | A-41 | Medium | Generic "database unavailable" message hid the real cause (seen on the Upstox login callback, 14 Nov) | DONE 0.27.0 (specific messages); OPEN: owner to read the log line if it recurs |
+| A-42 | High | Symbols typed by hand; provider symbol lists not loaded (Upstox file, MT5 list beyond 2,000, FIX security list) | DONE 0.30.0 (symbol catalogue) |
 
 ## C. Owner decisions
 

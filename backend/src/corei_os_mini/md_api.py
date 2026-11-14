@@ -86,6 +86,32 @@ def latest(response: Response, account_id: UUID | None = None, _: str = Depends(
     return {'items': store.latest(account_id)}
 
 
+@router.get('/catalog/{account_id}')
+def catalogue(account_id: UUID, response: Response, q: str = Query('', max_length=64), asset_class: str = Query('', max_length=16),
+              exchange: str = Query('', max_length=32), segment: str = Query('', max_length=120), show: str = Query('all', pattern='^(all|collected|not_collected)$'),
+              limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0), _: str = Depends(require_operator)):
+    """Every symbol the source offers (loaded from the provider), with filters, facets and what is collected."""
+    _no_store(response)
+    from .md import catalog
+    return catalog.listing(account_id, q, asset_class, exchange, segment, show, limit, offset)
+
+
+@router.post('/catalog/{account_id}/refresh')
+def refresh_catalogue(account_id: UUID, response: Response, user: Principal = Depends(_ops)):
+    """Load the symbol list from the provider now (MT5: a login; Upstox: the daily file; FIX: SecurityListRequest)."""
+    _no_store(response)
+    from .md import catalog
+    return catalog.refresh(user.username, account_id)
+
+
+@router.post('/catalog/{account_id}/collect', status_code=201)
+def collect_from_catalogue(account_id: UUID, payload: dict, response: Response, user: Principal = Depends(_ops)):
+    """Collect picked symbols: one plan each (defaults given), instrument and mapping linked, started."""
+    _no_store(response)
+    from .md import catalog
+    return catalog.collect(user.username, account_id, _parse(catalog.CollectIn, payload))
+
+
 @router.get('/sources')
 def sources(response: Response, _: str = Depends(require_operator)):
     _no_store(response)

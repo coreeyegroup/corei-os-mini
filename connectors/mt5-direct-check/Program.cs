@@ -741,6 +741,7 @@ static int Session()
         try { serverTime = (api.GetType().GetProperty("ServerTime")?.GetValue(api) as DateTime?)?.ToString("yyyy-MM-ddTHH:mm:ss"); } catch (Exception) { }
         var symbols = new Dictionary<string, object>();
         var available = 0;
+        string[] allNames = Array.Empty<string>();
         string? symbolError = null;
         try
         {
@@ -749,6 +750,7 @@ static int Session()
             {
                 var names = SymbolNames(holder).ToArray();
                 available = names.Length;
+                allNames = names;
                 var wanted = r.symbols is { Length: > 0 } ? r.symbols.Where(s => names.Contains(s, StringComparer.OrdinalIgnoreCase) || names.Length == 0)
                     : names.Take(Math.Clamp(r.max_symbols, 0, 5000));
                 foreach (var sym in wanted) symbols[sym] = SymbolFacts(holder, sym);
@@ -761,7 +763,7 @@ static int Session()
         {
             connected = true, h.host, h.port, connect_ms = connectMs, attempts,
             utc_now = utcNow.ToString("yyyy-MM-ddTHH:mm:ss"), server_time = serverTime,
-            account, symbols_available = available, symbols, symbol_error = symbolError,
+            account, symbols_available = available, symbols, symbol_names = allNames, symbol_error = symbolError,
             sdk_version = typeof(MT5API).Assembly.GetName().Version?.ToString(), client_build = BuildUsed,
         }));
         return 0;

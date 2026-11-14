@@ -93,6 +93,12 @@ class FakeVenue:
                             subscribed[symbol] = rid
                             send('W', [(262, rid), (55, symbol), (268, '2'), (269, '0'), (270, f'{price[symbol]:.5f}'), (271, '1000000'),
                                        (269, '1'), (270, f'{price[symbol] + 0.0002:.5f}'), (271, '1000000')])
+                    elif kind == 'x':  # SecurityListRequest: two fragments
+                        rid = d.get(320)
+                        send('y', [(320, rid), (322, 'L1'), (560, '0'), (146, '1'), (55, 'EUR/USD'), (107, 'Euro vs US Dollar'), (167, 'FOR'),
+                                   (15, 'USD'), (969, '0.00001'), (893, 'N')])
+                        send('y', [(320, rid), (322, 'L1'), (560, '0'), (146, '2'), (55, 'XAU/USD'), (107, 'Gold spot'), (167, 'FOR'), (15, 'USD'),
+                                   (969, '0.01'), (55, 'UK100'), (107, 'FTSE 100'), (167, 'INDEX'), (15, 'GBP'), (969, '0.1'), (893, 'Y')])
                     elif kind == '1':
                         send('0', [(112, d.get(112, ''))])
                     elif kind == '5':
@@ -217,6 +223,12 @@ class FixThroughCollector(test_market_data.MarketData):
         self.assertEqual(stored['data_blockers'], [], 'FIX session with its login: nothing blocks data')
         checked = self.ok(self.alice.post(f"/api/config/accounts/{account['id']}/read-from-broker", json={}))
         self.assertTrue(checked['connected'])
+        # The venue's instrument list (SecurityListRequest) fills the source's catalogue.
+        loaded = self.ok(self.alice.post(f"/api/md/catalog/{account['id']}/refresh"))
+        self.assertEqual((loaded['source'], loaded['symbols']), ('FIX_SECURITY_LIST', 3))
+        listed = {i['broker_symbol']: i for i in self.ok(self.alice.get(f"/api/md/catalog/{account['id']}"))['items']}
+        self.assertEqual((listed['XAU/USD']['suggested_instrument'], listed['XAU/USD']['digits'], listed['UK100']['asset_class']), ('XAUUSD', 2, 'INDEX'))
+        self.assertEqual(listed['EUR/USD']['suggested_instrument'], 'EURUSD')
 
         # An execution-only connection is not a price source.
         exec_conn = self.ok(self.alice.post('/api/config/connections', json={

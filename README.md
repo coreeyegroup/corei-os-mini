@@ -638,6 +638,18 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Symbols come from the provider — release 0.30.0
+
+DEC-59. Migration `021_symbol_catalog.sql`. **Reader rebuild needed** (`scripts/setup-broker-accounts.sh`): the MT5 reader now returns the full symbol-name list.
+
+- Every source has an **Available** tab next to *Collected* (Market data › Dashboard): every symbol the provider offers, loaded automatically —
+  - **MT5**: the server's symbol list and rules at every login (*Refresh symbols* logs in; names beyond the 2,000 with full rules are listed too);
+  - **Upstox**: its daily instrument file (NSE, BSE, MCX: equities, indices, futures, options with lot, tick, expiry, strike), reloaded nightly;
+  - **FIX**: the venue's list via SecurityListRequest.
+- Filter by asset class (with counts), exchange, segment/group, collected or not; search symbol and name; 100 per page.
+- Pick one or many → **Collect** with the options shown (purpose, role, quotes/bars/depth, timeframes, days kept, archive, start now). COREI **suggests the instrument name** (XAUUSD.r → XAUUSD, SPX500.cash → US500, Nifty 50 → NIFTY50; editable), creates or links the instrument and its symbol mapping, so the same instrument joins across sources.
+- API: `GET /api/md/catalog/{account}`, `POST /api/md/catalog/{account}/refresh`, `POST /api/md/catalog/{account}/collect`; nightly job `catalogues`.
+
 ## Stages: Market data collects, Market intelligence compares — release 0.29.0
 
 No migration, no reader rebuild. Workflow: `docs/WORKFLOW.md`; features: `docs/MARKET_DASHBOARD.md`.

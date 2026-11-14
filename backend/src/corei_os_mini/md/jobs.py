@@ -353,9 +353,15 @@ def backup(root: Path | None = None) -> dict:
     return summary
 
 
+def catalogues() -> dict:
+    """Reload the symbol lists that providers publish daily (Upstox instrument file)."""
+    from . import catalog
+    return {'refreshed': catalog.refresh_due()}
+
+
 def nightly() -> dict:
     out = {}
-    for name, job in (('archive', archive), ('journals', journals), ('verify', verify), ('backup', backup)):
+    for name, job in (('archive', archive), ('journals', journals), ('verify', verify), ('backup', backup), ('catalogues', catalogues)):
         try:
             out[name] = job()
         except Exception as exc:  # noqa: BLE001 - later jobs still run
@@ -368,9 +374,9 @@ def nightly() -> dict:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
     parser = argparse.ArgumentParser(description='COREI market-data jobs')
-    parser.add_argument('job', choices=['nightly', 'archive', 'journals', 'verify', 'backup'])
+    parser.add_argument('job', choices=['nightly', 'archive', 'journals', 'verify', 'backup', 'catalogues'])
     job = parser.parse_args().job
-    result = {'nightly': nightly, 'archive': archive, 'journals': journals, 'verify': verify, 'backup': backup}[job]()
+    result = {'nightly': nightly, 'archive': archive, 'journals': journals, 'verify': verify, 'backup': backup, 'catalogues': catalogues}[job]()
     import json
     print(json.dumps(result, default=str, indent=2))
 

@@ -219,7 +219,7 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
         move={d => move(s.account_id, d)} remove={() => update({ all: false, sources: (ws.all ? sources.map(x => x.account_id) : ws.sources).filter(x => x !== s.account_id) })}
         addInstrument={() => setEditing({ ...BLANK, account_id: s.account_id })} edit={r => r.plan ? setEditing(r.plan) : setEditing({ ...BLANK, account_id: s.account_id, broker_symbol: r.broker_symbol })}
         setPaused={p => void setSourcePaused(s, p)} planStatus={(r, st, reason) => void setPlanStatus(r, st, reason)}
-        backfill={(planIds, form) => void act(`Backfill ${s.account_name || s.account_code}`, async () => {
+        changed={refresh} backfill={(planIds, form) => void act(`Backfill ${s.account_name || s.account_code}`, async () => {
           for (const id of planIds) await api('md/jobs', 'POST', { plan_id: id, ...form });
           return `Backfill queued for ${planIds.length} instrument${planIds.length === 1 ? '' : 's'} (Market data › Backfill shows progress).`; })} />;
     })}</div>
@@ -235,12 +235,13 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
 
 /* ---------- one source: header, details, instrument table ---------- */
 
-function SourceSection({ s, c, paused, rows, total, collapsed, cols, ctx, ws, canEdit, avgQ, first, last, expanded, setExpanded, allRows, toggle, sort, move, remove, addInstrument, edit, setPaused, planStatus, backfill }: {
+function SourceSection({ s, c, paused, rows, total, collapsed, cols, ctx, ws, canEdit, avgQ, first, last, expanded, setExpanded, allRows, toggle, sort, move, remove, addInstrument, edit, setPaused, planStatus, backfill, changed }: {
   s: Row; c?: Row; paused: boolean; rows: Row[]; total: number; collapsed: boolean; cols: Col[]; ctx: Ctx; ws: SourceWs; canEdit: boolean; avgQ: number | null; first: boolean; last: boolean;
   expanded: string; setExpanded: (k: string) => void; allRows: Row[]; toggle: () => void; sort: (id: string) => void; move: (d: number) => void; remove: () => void;
   addInstrument: () => void; edit: (r: Row) => void; setPaused: (p: boolean) => void; planStatus: (r: Row, status: string, reason: string) => void;
-  backfill: (planIds: string[], form: Row) => void }) {
+  backfill: (planIds: string[], form: Row) => void; changed: () => void }) {
   const [panel, setPanel] = useState<'' | 'details' | 'backfill'>(''), [confirm, setConfirm] = useState('');
+  const [view, setView] = useState<'collected' | 'available'>('collected');
   const state = paused ? 'paused' : c?.state ? String(c.state).toLowerCase() : 'collector not running';
   const dot = paused ? 'warn' : c?.state === 'CONNECTED' ? 'ok' : c?.state === 'FAILED' ? 'bad' : c?.state ? 'warn' : '';
   const perMin = rows.reduce((n, r) => n + Number(r.ticks_last_minute || 0), 0);
@@ -276,8 +277,13 @@ function SourceSection({ s, c, paused, rows, total, collapsed, cols, ctx, ws, ca
         ['Active plans', String(s.active_plans)], ['Last error', c?.last_error ?? '—']] as [string, string][]).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
     </dl>}
     {panel === 'backfill' && <BackfillForm rows={rows.filter(r => r.plan_id)} done={(ids, form) => { backfill(ids, form); setPanel(''); }} cancel={() => setPanel('')} />}
-    {!collapsed && !total && <p className="sb-none">Nothing collected from this source yet.{canEdit ? ' Use + Instrument.' : ''}</p>}
-    {!collapsed && total > 0 && <div className="sb-table"><table className="mb-table">
+    {!collapsed && <div className="sb-views" role="tablist" aria-label="Instruments of this source">
+      <button role="tab" aria-selected={view === 'collected'} onClick={() => setView('collected')}>Collected <small>{total}</small></button>
+      <button role="tab" aria-selected={view === 'available'} onClick={() => setView('available')} title="Every symbol this source offers, loaded from the provider">Available <small>{s.catalogue_symbols ?? 0}</small></button>
+    </div>}
+    {!collapsed && view === 'available' && <Available s={s} canEdit={canEdit} changed={changed} />}
+    {!collapsed && view === 'collected' && !total && <p className="sb-none">Nothing collected from this source yet. Open <b>Available</b> to pick from the provider's symbols{canEdit ? ', or use + Instrument' : ''}.</p>}
+    {!collapsed && view === 'collected' && total > 0 && <div className="sb-table"><table className="mb-table">
       <thead><tr>{cols.map(col => <th key={col.id} className={col.num ? 'num' : ''} title={col.title} aria-sort={ws.sort.col === col.id ? (ws.sort.dir === 1 ? 'ascending' : 'descending') : undefined}
         onClick={() => col.id !== 'trend' && sort(col.id)}>{col.label}{ws.sort.col === col.id ? (ws.sort.dir === 1 ? ' ▲' : ' ▼') : ''}</th>)}<th className="sb-rowact">Actions</th></tr></thead>
       <tbody>{rows.map(r => { const k = keyOf(r), open = expanded === k;
@@ -315,4 +321,122 @@ function BackfillForm({ rows, done, cancel }: { rows: Row[]; done: (ids: string[
       {!rows.length && <small className="mb-dim">Add instruments first.</small>}</span>
     <button type="button" onClick={cancel}>Cancel</button><button className="primary" disabled={!f.ids.length || f.reason.trim().length < 3}>Queue backfill</button>
   </form>;
+}
+
+/* ---------- every symbol the source offers (from the provider), to pick from ---------- */
+
+const SOURCE_LABEL: Record<string, string> = { MT5_LOGIN: 'the MT5 server (read at each login)', UPSTOX_FILE: "Upstox's daily instrument file",
+  FIX_SECURITY_LIST: "the venue's FIX security list", MANUAL: 'manual entry' };
+const PAGE = 100;
+
+function Available({ s, canEdit, changed }: { s: Row; canEdit: boolean; changed: () => void }) {
+  const [f, setF] = useState({ q: '', asset_class: '', exchange: '', segment: '', show: 'all', offset: 0 });
+  const [data, setData] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(''), [notice, setNotice] = useState('');
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [opts, setOpts] = useState({ purpose: 'RESEARCH', feed_role: 'PRIMARY', quotes: true, bars: true, depth: false, depth_levels: 5, bar_timeframes: ['M1'] as string[],
+    hot_days: 14, bars_hot_days: 365, archive: true, link_instruments: true, start: true });
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const qs = new URLSearchParams({ q: f.q, asset_class: f.asset_class, exchange: f.exchange, segment: f.segment, show: f.show, limit: String(PAGE), offset: String(f.offset) });
+      void api(`md/catalog/${s.account_id}?${qs}`).then(d => { setData(d); setError(''); }).catch(e => setError((e as Error).message));
+    }, f.q ? 250 : 0);
+    return () => window.clearTimeout(t);
+  }, [f, nonce, s.account_id]);
+  const set = (patch: Partial<typeof f>) => setF(o => ({ ...o, offset: 0, ...patch }));
+  const items: Row[] = data?.items ?? [];
+  const nPicked = Object.keys(picked).length;
+  const toggle = (r: Row) => setPicked(p => { const n = { ...p }; if (r.broker_symbol in n) delete n[r.broker_symbol]; else n[r.broker_symbol] = r.suggested_instrument ?? ''; return n; });
+  const pageable = items.filter(r => !r.plan_id);
+  const allOnPage = pageable.length > 0 && pageable.every(r => r.broker_symbol in picked);
+  async function refresh() {
+    setBusy('refresh'); setError(''); setNotice('');
+    try { const r = await api(`md/catalog/${s.account_id}/refresh`, 'POST', {}); setNotice(`${r.symbols.toLocaleString()} symbols loaded from ${SOURCE_LABEL[r.source] ?? r.source}.`); setNonce(n => n + 1); changed(); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(''); }
+  }
+  async function collect(only?: Row) {
+    const list = only ? { [only.broker_symbol]: only.suggested_instrument ?? '' } : picked;
+    setBusy('collect'); setError(''); setNotice('');
+    try {
+      const data_types = [opts.quotes && 'QUOTES', opts.bars && 'BARS', opts.depth && 'DEPTH'].filter(Boolean);
+      const r = await api(`md/catalog/${s.account_id}/collect`, 'POST', { items: Object.entries(list).map(([broker_symbol, instrument]) => ({ broker_symbol, instrument: instrument || null })),
+        purpose: opts.purpose, feed_role: opts.feed_role, data_types, bar_timeframes: opts.bars ? opts.bar_timeframes : [], depth_levels: opts.depth ? opts.depth_levels : 0,
+        hot_days: opts.hot_days, bars_hot_days: opts.bars_hot_days, archive: opts.archive, link_instruments: opts.link_instruments, start: opts.start });
+      setNotice([`${r.created.length} added`, r.started ? `${r.started} collecting now` : '', r.awaiting_approval.length ? `${r.awaiting_approval.length} waiting for approval` : '',
+        r.skipped.length ? `${r.skipped.length} already collected` : '', r.errors.length ? `${r.errors.length} not added: ${r.errors.map((e: Row) => `${e.broker_symbol} (${e.error})`).join('; ')}` : '',
+        ...r.created.filter((c: Row) => c.note).map((c: Row) => `${c.broker_symbol}: ${c.note}`)].filter(Boolean).join(' · ') + '.');
+      if (!only) setPicked({});
+      setNonce(n => n + 1); changed();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
+  }
+  const facets = data?.facets ?? { asset_class: [], exchange: [], segment: [] };
+  const lastRun = data?.last_run;
+  return <div className="sb-avail" aria-label="Available symbols">
+    <div className="sb-avail-head">
+      <span>{data ? <><b>{Number(data.catalogue_size).toLocaleString()}</b> symbols from {SOURCE_LABEL[data.source] ?? data.source}{data.refreshed_at ? ` · loaded ${new Date(data.refreshed_at).toLocaleString()}` : ''}</> : 'Loading…'}</span>
+      {lastRun && lastRun.ok === false && <span className="neg">Last load failed: {lastRun.error}</span>}
+      {canEdit && <button onClick={() => void refresh()} disabled={!!busy} title={s.platform === 'MT5' ? 'Logs in to the broker and reads its symbol list' : 'Loads the list from the provider now'}>
+        {busy === 'refresh' ? 'Loading…' : 'Refresh symbols'}</button>}
+    </div>
+    {data && !data.catalogue_size && <p className="sb-none">{s.platform === 'MT5' ? 'The MT5 server sends its symbol list at login. Use Refresh symbols (it logs in), or Log in and read now on the account.'
+      : s.platform === 'FIX' ? 'Refresh symbols asks the venue for its instrument list on the FIX session.'
+      : 'Refresh symbols loads the provider\'s instrument list.'}</p>}
+    {data && data.catalogue_size > 0 && <>
+      <div className="sb-avail-filters">
+        <input aria-label="Search available symbols" placeholder={`Search ${Number(data.catalogue_size).toLocaleString()} symbols, names…`} value={f.q} onChange={e => set({ q: e.target.value })} />
+        <span className="sb-chips" role="group" aria-label="Asset class">
+          <button aria-pressed={!f.asset_class} onClick={() => set({ asset_class: '' })}>All</button>
+          {facets.asset_class.map((x: Row) => <button key={x.k} aria-pressed={f.asset_class === x.k} onClick={() => set({ asset_class: f.asset_class === x.k ? '' : x.k })}>{CLASS_LABEL[x.k] ?? x.k} <small>{Number(x.n).toLocaleString()}</small></button>)}
+        </span>
+        {facets.exchange.length > 0 && <select aria-label="Exchange" value={f.exchange} onChange={e => set({ exchange: e.target.value })}><option value="">Every exchange</option>{facets.exchange.map((x: Row) => <option key={x.k} value={x.k}>{x.k} ({x.n})</option>)}</select>}
+        {facets.segment.length > 0 && <select aria-label="Segment" value={f.segment} onChange={e => set({ segment: e.target.value })}><option value="">Every segment / group</option>{facets.segment.map((x: Row) => <option key={x.k} value={x.k}>{x.k} ({x.n})</option>)}</select>}
+        <Seg label="Show" value={f.show} options={[['all', 'All'], ['not_collected', 'Not collected'], ['collected', 'Collected']]} change={v => set({ show: v })} />
+      </div>
+      {canEdit && nPicked > 0 && <div className="sb-collect" role="group" aria-label="Collect selected">
+        <b>{nPicked} selected</b>
+        <label>Purpose<select aria-label="Purpose for selected" value={opts.purpose} onChange={e => setOpts({ ...opts, purpose: e.target.value })}>
+          {[['RESEARCH', 'Collect (research)'], ['MONITORING', 'Monitoring (execution account quote)'], ['REFERENCE', 'Reference'], ['TRADING_FEED', 'Trading feed']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+        {opts.purpose === 'TRADING_FEED' && <label>Role<select aria-label="Feed role for selected" value={opts.feed_role} onChange={e => setOpts({ ...opts, feed_role: e.target.value })}>{['PRIMARY', 'BACKUP', 'REFERENCE'].map(v => <option key={v}>{v}</option>)}</select></label>}
+        <label className="mb-chip"><input type="checkbox" checked={opts.quotes} onChange={e => setOpts({ ...opts, quotes: e.target.checked })} />quotes</label>
+        <label className="mb-chip"><input type="checkbox" checked={opts.bars} onChange={e => setOpts({ ...opts, bars: e.target.checked })} />bars</label>
+        {opts.bars && <span className="sb-chips">{['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'].map(t => <button key={t} aria-pressed={opts.bar_timeframes.includes(t)}
+          onClick={() => setOpts({ ...opts, bar_timeframes: opts.bar_timeframes.includes(t) ? opts.bar_timeframes.filter(x => x !== t) : [...opts.bar_timeframes, t] })}>{t}</button>)}</span>}
+        <label className="mb-chip"><input type="checkbox" checked={opts.depth} onChange={e => setOpts({ ...opts, depth: e.target.checked })} />depth</label>
+        {opts.depth && <label>levels<input aria-label="Depth levels" type="number" min={1} max={50} value={opts.depth_levels} onChange={e => setOpts({ ...opts, depth_levels: Number(e.target.value) })} /></label>}
+        <label>keep prices<input aria-label="Days of prices kept" type="number" min={1} max={365} value={opts.hot_days} onChange={e => setOpts({ ...opts, hot_days: Number(e.target.value) })} />d</label>
+        <label>bars<input aria-label="Days of bars kept" type="number" min={1} max={3650} value={opts.bars_hot_days} onChange={e => setOpts({ ...opts, bars_hot_days: Number(e.target.value) })} />d</label>
+        <label className="mb-chip"><input type="checkbox" checked={opts.archive} onChange={e => setOpts({ ...opts, archive: e.target.checked })} />archive</label>
+        <label className="mb-chip" title="Create or link the COREI instrument (name in the Instrument column) so sources can be compared"><input type="checkbox" checked={opts.link_instruments} onChange={e => setOpts({ ...opts, link_instruments: e.target.checked })} />link instruments</label>
+        <label className="mb-chip"><input type="checkbox" checked={opts.start} onChange={e => setOpts({ ...opts, start: e.target.checked })} />start now</label>
+        <button className="primary" disabled={!!busy || (!opts.quotes && !opts.bars && !opts.depth) || (opts.bars && !opts.bar_timeframes.length)} onClick={() => void collect()}>{busy === 'collect' ? 'Adding…' : `Collect ${nPicked}`}</button>
+        <button onClick={() => setPicked({})}>Clear</button>
+      </div>}
+      <div className="sb-table"><table className="mb-table sb-avail-table">
+        <thead><tr>{canEdit && <th><input type="checkbox" aria-label="Select page" checked={allOnPage} onChange={() => setPicked(p => { const n = { ...p };
+          for (const r of pageable) { if (allOnPage) delete n[r.broker_symbol]; else n[r.broker_symbol] = r.suggested_instrument ?? ''; } return n; })} /></th>}
+          <th>Symbol</th><th>Name</th><th>Class</th><th>Exchange / group</th><th className="num">Digits</th><th className="num">Tick</th><th className="num">Lot / min · step</th><th className="num">Contract</th>
+          <th>Expiry · strike</th><th>Instrument (COREI)</th><th>Status</th>{canEdit && <th />}</tr></thead>
+        <tbody>{items.map(r => { const on = r.broker_symbol in picked;
+          return <tr key={r.broker_symbol} className={on ? 'sel' : ''}>
+            {canEdit && <td><input type="checkbox" aria-label={`Select ${r.display_symbol || r.broker_symbol}`} disabled={!!r.plan_id} checked={on} onChange={() => toggle(r)} /></td>}
+            <td title={r.broker_symbol}><b>{r.display_symbol || r.broker_symbol}</b>{r.display_symbol && r.display_symbol !== r.broker_symbol && <small className="mb-dim"> {r.broker_symbol}</small>}</td>
+            <td className="mb-src" title={r.description}>{r.description}</td><td>{CLASS_LABEL[r.asset_class] ?? r.asset_class}</td>
+            <td className="mb-dim">{[r.exchange, r.segment].filter(Boolean).join(' · ')}</td>
+            <td className="num mono">{r.digits ?? '—'}</td><td className="num mono">{r.tick_size != null ? Number(r.tick_size) : '—'}</td>
+            <td className="num mono">{r.lot_size != null ? Number(r.lot_size) : r.volume_min != null ? `${Number(r.volume_min)} · ${Number(r.volume_step)}` : '—'}</td>
+            <td className="num mono">{r.contract_size != null ? Number(r.contract_size).toLocaleString() : '—'}</td>
+            <td className="mb-dim">{[r.expiry, r.strike != null ? Number(r.strike) : null].filter(x => x != null && x !== '').join(' · ') || '—'}</td>
+            <td>{on ? <input className="sb-inst" aria-label={`Instrument for ${r.broker_symbol}`} value={picked[r.broker_symbol]} maxLength={32}
+              onChange={e => setPicked(p => ({ ...p, [r.broker_symbol]: e.target.value.toUpperCase() }))} />
+              : <span className={r.instrument_id ? '' : 'mb-dim'} title={r.instrument_id ? 'Exists in Setup › Instruments' : 'Created when collected'}>{r.suggested_instrument}{r.instrument_id ? ' ✓' : ''}</span>}</td>
+            <td>{r.plan_id ? <span className={`sb-plan ${r.plan_status}`}>{PLAN_STATUS[r.plan_status] ?? r.plan_status}</span> : <span className="mb-dim">—</span>}</td>
+            {canEdit && <td className="sb-rowact">{!r.plan_id && <button onClick={() => void collect(r)} disabled={!!busy} title="Collect this symbol with the settings shown above">Collect</button>}</td>}
+          </tr>; })}
+          {!items.length && <tr><td colSpan={13} className="mb-empty">No symbol matches.</td></tr>}</tbody></table></div>
+      <div className="sb-pager"><span>{data.total ? `${f.offset + 1}–${Math.min(f.offset + PAGE, data.total)} of ${Number(data.total).toLocaleString()}` : '0'}</span>
+        <button disabled={f.offset === 0} onClick={() => setF(o => ({ ...o, offset: Math.max(0, o.offset - PAGE) }))}>‹ Previous</button>
+        <button disabled={f.offset + PAGE >= data.total} onClick={() => setF(o => ({ ...o, offset: o.offset + PAGE }))}>Next ›</button></div>
+    </>}
+    {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+  </div>;
 }

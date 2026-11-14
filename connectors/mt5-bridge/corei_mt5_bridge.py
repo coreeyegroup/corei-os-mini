@@ -149,7 +149,7 @@ def session(request: dict) -> dict:
             symbols[name] = symbol_dict(info)
     return {'connected': True, 'host': 'terminal', 'port': 0, 'connect_ms': int((time.monotonic() - started) * 1000),
             'attempts': [{'host': 'terminal', 'port': 0, 'ok': True}], 'utc_now': now_iso(), 'server_time': server_time(),
-            'account': account, 'symbols': symbols, 'symbols_available': len(names), 'client_build': terminal_build(),
+            'account': account, 'symbols': symbols, 'symbol_names': names, 'symbols_available': len(names), 'client_build': terminal_build(),
             'sdk_version': f"MetaTrader5 {getattr(mt5, '__version__', '?')}"}
 
 

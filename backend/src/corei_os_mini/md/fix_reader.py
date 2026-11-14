@@ -6,7 +6,8 @@ stdin, first line: {"host", "port", "tls", "tls_verify", "begin_string", "sender
                     "reset_seq_on_logon", "md_depth", "md_snapshots_only", "symbols": [...], "timeout_seconds"}
 then commands:     {"cmd": "subscribe"|"unsubscribe", "symbols": [...]}, {"cmd": "history", "id", ...}, {"cmd": "stop"}
 stdout:            connected, q, subscribed, hb, error, history_error, failed, disconnected, stopped.
-With --session it logs on, reports, and logs out ("Log in and read now").
+With --session it logs on, reports, and logs out ("Log in and read now"); with --securities it asks for the
+venue's instrument list (SecurityListRequest) for the symbol catalogue.
 
 Messages used (FIX 4.4): Logon A, Heartbeat 0, TestRequest 1, ResendRequest 2 (answered with SequenceReset-GapFill),
 Reject 3, SequenceReset 4, Logout 5, MarketDataRequest V, MarketDataSnapshotFullRefresh W,
@@ -318,6 +319,58 @@ def run_session(request: dict) -> int:
     return 0
 
 
+SECURITY_FIELDS = {55: 'symbol', 48: 'security_id', 107: 'description', 167: 'security_type', 461: 'cfi_code', 15: 'currency',
+                   207: 'exchange', 231: 'contract_multiplier', 969: 'min_price_increment', 541: 'maturity', 202: 'strike', 311: 'underlying',
+                   1147: 'unit_of_measure_qty'}
+
+
+def run_securities(request: dict, wait: float = 60.0) -> int:
+    """The venue's instrument list: SecurityListRequest (x, all securities), answered by one or more
+    SecurityList (y) messages; for the symbol catalogue."""
+    s = Session(request)
+    try:
+        s.connect()
+        s.logon()
+    except Refused as exc:
+        emit({'connected': False, 'error': str(exc)})
+        return 3
+    except (OSError, TimeoutError, ConnectionError, ssl.SSLError) as exc:
+        emit({'connected': False, 'error': f'{type(exc).__name__}: {exc}'[:300]})
+        return 3
+    finally:
+        request.pop('password', None)
+    req_id = f'COREI-SL-{int(time.time())}'
+    s.send('x', [(320, req_id), (559, '4')])
+    found: list[dict] = []
+    error, done, deadline = None, False, time.monotonic() + wait
+    while not done and time.monotonic() < deadline:
+        for m in s.receive(2.0):
+            kind = next((v for t, v in m if t == 35), '')
+            if kind == '1':
+                s.send('0', [(112, next((v for t, v in m if t == 112), ''))])
+            elif kind in ('3', 'j'):
+                error = next((v for t, v in m if t == 58), 'Security list request rejected')
+                done = True
+            elif kind == 'y':
+                result = next((v for t, v in m if t == 560), '0')
+                if result != '0':
+                    error = {'1': 'invalid or unsupported request', '2': 'no instruments match', '3': 'not authorised',
+                             '4': 'instrument data temporarily unavailable', '5': 'request for instrument data not supported'}.get(result, f'result {result}')
+                current: dict | None = None
+                for tag, value in m:
+                    if tag == 55:
+                        current = {}
+                        found.append(current)
+                    if current is not None and tag in SECURITY_FIELDS:
+                        current.setdefault(SECURITY_FIELDS[tag], value)
+                if next((v for t, v in m if t == 893), 'Y') == 'Y' or result != '0':
+                    done = True
+    s.logout()
+    s.close()
+    emit({'connected': True, 'securities': found, 'complete': done and error is None, 'error': error})
+    return 0
+
+
 def run_stream(request: dict) -> int:
     s = Session(request)
     try:
@@ -408,6 +461,8 @@ def main(argv: list[str]) -> int:
     except (ValueError, KeyError, TypeError):
         emit({'t': 'failed', 'attempts': [{'error': 'Bad request: expected the FIX session settings on stdin.'}]})
         return 2
+    if '--securities' in argv:
+        return run_securities(request)
     return run_session(request) if '--session' in argv else run_stream(request)
 
 

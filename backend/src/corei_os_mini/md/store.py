@@ -226,7 +226,8 @@ def sources() -> list[dict]:
                 c.id AS connection_id, c.code AS connection_code, c.platform, c.environment, c.purpose, c.settings->>'server_name' AS server_name,
                 p.id AS provider_id, p.name AS provider_name, p.kind AS provider_kind, s.state AS collector_state, s.heartbeat_at,
                 (SELECT count(*) FROM md_collection_plans pl WHERE pl.account_id=a.id AND pl.status='ACTIVE') AS active_plans,
-                (SELECT count(*) FROM md_latest l WHERE l.account_id=a.id) AS symbols_with_prices
+                (SELECT count(*) FROM md_latest l WHERE l.account_id=a.id) AS symbols_with_prices,
+                (SELECT count(*) FROM md_symbol_catalog k WHERE k.account_id=a.id) AS catalogue_symbols
             FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id JOIN cfg_providers p ON p.id=c.provider_id
             LEFT JOIN md_collector_status s ON s.account_id=a.id
             WHERE a.status <> 'ARCHIVED' ORDER BY p.name, c.environment, a.name''').fetchall()

@@ -27,7 +27,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    data_types:['QUOTES','BARS'],bar_timeframes:['M1'],schedule:'ALWAYS',window_days:[1,2,3,4,5],hot_days:14,bars_hot_days:365,archive:true,status:'ACTIVE',status_reason:'Start',version:3,
    environment:'LIVE',active_feed:true,score:96,stale_seconds:10,max_latency_ms:1500,max_gap_seconds:60,conflate_ms:0,depth_levels:0,backfill_per_minute:30,on_breach:'SWITCH',pending_changes:0}];
  const controls=[{scope:'ALL',paused:false,reason:'Initial state',version:1,updated_by:'system',updated_at:now}];
- const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[],p1Status=[],jobs=[];
+ const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[],p1Status=[],jobs=[],catalogCalls=[];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
@@ -37,7 +37,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31',problem:null},
      {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',state:'FAILED',host:null,port:null,lag_ms:null,subscribed:0,ticks_total:0,backlog:0,heartbeat_age_seconds:3,last_error:'ServerException: OLD_VERSION',
       problem:{title:'Broker refused the connector version',detail:'The broker requires a newer MT5 version.',permanent:true,raw:'ServerException: OLD_VERSION'}}]});
-   if(url.endsWith('/md/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',provider_name:'VT Markets',platform:'MT5',environment:'LIVE',purpose:'BOTH',collector_state:'CONNECTED',active_plans:1,symbols_with_prices:1},
+   if(url.includes('/md/catalog/a1/refresh')){catalogCalls.push('refresh');return ok({source:'MT5_LOGIN',symbols:3,refreshed_at:now});}
+   if(url.includes('/md/catalog/a1/collect')){catalogCalls.push(body);return ok({created:body.items.map(i=>({broker_symbol:i.broker_symbol,plan_id:'px',code:'X',instrument:i.instrument})),started:body.items.length,awaiting_approval:[],skipped:[],errors:[]},201);}
+   if(url.includes('/md/catalog/a1')){catalogCalls.push(url);const q=new URL('https://x'+url.slice(url.indexOf('/api'))).searchParams;
+     const all=[{broker_symbol:'XAUUSD.r',display_symbol:'XAUUSD.r',description:'Gold vs US Dollar',asset_class:'METAL',digits:2,tick_size:'0.01',volume_min:'0.01',volume_step:'0.01',contract_size:'100',suggested_instrument:'XAUUSD',instrument_id:'i1',plan_id:'p1',plan_status:'ACTIVE'},
+       {broker_symbol:'XAGUSD.r',display_symbol:'XAGUSD.r',description:'Silver vs US Dollar',asset_class:'METAL',digits:3,suggested_instrument:'XAGUSD'},
+       {broker_symbol:'US30.cash',display_symbol:'US30.cash',description:'Dow Jones 30',asset_class:'INDEX',digits:1,suggested_instrument:'US30'}];
+     const items=all.filter(r=>(!q.get('asset_class')||r.asset_class===q.get('asset_class'))&&(!q.get('q')||JSON.stringify(r).toLowerCase().includes(q.get('q').toLowerCase())));
+     return ok({items,total:items.length,catalogue_size:3,source:'MT5_LOGIN',refreshed_at:now,last_run:{ok:true},facets:{asset_class:[{k:'METAL',n:2},{k:'INDEX',n:1}],exchange:[],segment:[{k:'Metals › Spot',n:2}]}});}
+   if(url.endsWith('/md/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',provider_name:'VT Markets',platform:'MT5',environment:'LIVE',purpose:'BOTH',collector_state:'CONNECTED',active_plans:1,symbols_with_prices:1,catalogue_symbols:3},
      {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',provider_name:'IC Markets',platform:'MT5',environment:'LIVE',purpose:'BOTH',collector_state:'FAILED',active_plans:1,symbols_with_prices:1}]});
    if(url.endsWith('/md/instruments'))return ok({items:[{symbol:'XAUUSD',asset_class:'METAL',sources:2,priced:true,broker_symbols:['XAUUSD','XAUUSD.r']},{symbol:'NIFTY',asset_class:null,sources:0,priced:false,broker_symbols:[]}]});
    if(url.includes('/md/bars/'))return ok({items:Array.from({length:30},(_,i)=>({bar_time:new Date(Date.parse(now)-i*60000).toISOString(),open:2400+i%5,high:2403+i%5,low:2398+i%5,close:2401+(i%3),ticks:40,source:'BUILT'}))});
@@ -91,6 +99,27 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  [...sec('VT Markets gold').querySelectorAll('.sb-actions button')].find(b=>b.textContent==='Backfill').click();await settle();
  await submit($('.sb-backfill'));
  assert.equal(jobs.at(-1).plan_id,'p1');assert.equal(jobs.at(-1).timeframe,'M1');
+ // Available: every symbol the provider offers; filter by class, search, pick, rename the instrument, collect.
+ [...sec('VT Markets gold').querySelectorAll('.sb-views button')].find(b=>b.textContent.startsWith('Available')).click();await settle();
+ assert.match(sec('VT Markets gold').querySelector('.sb-avail-head').textContent,/3 symbols from the MT5 server \(read at each login\)/);
+ assert.deepEqual([...sec('VT Markets gold').querySelectorAll('.sb-chips[aria-label="Asset class"] button')].map(b=>b.textContent),['All','Metals 2','Indices 1']);
+ assert.ok([...sec('VT Markets gold').querySelectorAll('.sb-avail-table tbody tr')][0].querySelector('input[type=checkbox]').disabled,'a collected symbol cannot be picked again');
+ [...sec('VT Markets gold').querySelectorAll('.sb-chips[aria-label="Asset class"] button')].find(b=>b.textContent.startsWith('Indices')).click();await settle();
+ assert.ok(catalogCalls.some(u=>typeof u==='string'&&u.includes('asset_class=INDEX')));
+ assert.equal(sec('VT Markets gold').querySelectorAll('.sb-avail-table tbody tr').length,1);
+ sec('VT Markets gold').querySelector('[aria-label="Select US30.cash"]').click();await settle();
+ fill(sec('VT Markets gold').querySelector('[aria-label="Instrument for US30.cash"]'),'DJ30');
+ fill(sec('VT Markets gold').querySelector('[aria-label="Purpose for selected"]'),'MONITORING');
+ [...sec('VT Markets gold').querySelectorAll('.sb-collect .sb-chips button')].find(b=>b.textContent==='H1').click();await settle();
+ [...sec('VT Markets gold').querySelectorAll('.sb-collect button')].find(b=>b.textContent==='Collect 1').click();await settle();
+ const picked=catalogCalls.filter(x=>typeof x==='object').at(-1);
+ assert.deepEqual(picked.items,[{broker_symbol:'US30.cash',instrument:'DJ30'}]);
+ assert.equal(picked.purpose,'MONITORING');assert.deepEqual(picked.bar_timeframes,['M1','H1']);assert.equal(picked.start,true);assert.equal(picked.link_instruments,true);
+ assert.match(sec('VT Markets gold').querySelector('.sb-avail [role=status]').textContent,/1 added · 1 collecting now/);
+ [...sec('VT Markets gold').querySelectorAll('.sb-avail-head button')].find(b=>b.textContent==='Refresh symbols').click();await settle();
+ assert.ok(catalogCalls.includes('refresh'));
+ [...sec('VT Markets gold').querySelectorAll('.sb-views button')].find(b=>b.textContent.startsWith('Collected')).click();await settle();
+ console.log('PASS: Available: provider symbol list with class filters and search; pick, rename instrument, collect with options; refresh from the provider.');
  [...sec('VT Markets gold').querySelectorAll('.sb-actions button')].find(b=>b.textContent==='+ Instrument').click();await settle();
  assert.match($('.fw').textContent,/New collection plan/);
  assert.equal($('.fw [aria-label="Account"]')?.value ?? $$('.fw select').find(x=>[...x.options].some(o=>o.value==='a1'))?.value,'a1','the plan form opens on this source');
