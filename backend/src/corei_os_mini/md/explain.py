@@ -55,9 +55,11 @@ RULES = [
      'The MT5 terminal on the bridge machine refused the login. Open the terminal there and log in by hand once with the same '
      'login, password and server; the terminal shows the broker\'s own message.'),
     (r'PROTOCOL_AFTER_LOGIN', True, 'MT5 SDK too old for this server (login accepted)',
-     'The broker accepted the account and password, then the MT5 SDK could not read the server\'s reply. COREI already '
-     'tried the oldest client build the server accepts. The SDK (mt5api.dll) must be updated to a release that speaks '
-     'this server\'s protocol, then run scripts/setup-broker-accounts.sh. Your login details are correct.'),
+     'Your login details are correct: the broker accepted them, then the direct MT5 SDK (mt5api.dll) could not read the '
+     'server\'s reply because the SDK is older than the server. Fix: read this account through the official MT5 terminal. '
+     'On the server run: sudo bash scripts/setup-mt5-terminal.sh <name> <port>, then sudo bash scripts/apply-test-setup.sh '
+     '--bridge <ACCOUNT_CODE> --port <port> --state /var/lib/corei-mt5/<name>/state --apply. COREI retries as soon as the '
+     'account is switched. (Or install a current licensed mt5api.dll and run scripts/setup-broker-accounts.sh.)'),
     (r'BROKER_LOGIN_EXPIRED|daily login expired|Upstox refused the session', True, 'Broker login needed today',
      'Upstox issues one login per day, valid until 03:30 IST. Open Setup › Accounts › this account › Log in at broker '
      '(or TOTP login). The collector picks the new login up within 5 minutes.'),

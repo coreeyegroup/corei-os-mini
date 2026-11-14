@@ -257,6 +257,31 @@ class SourceWorker(threading.Thread):
             except subprocess.TimeoutExpired:
                 self.proc.kill()
 
+    def _config_stamp(self) -> Any:
+        """Changes when the account, its connection (method, bridge, addresses) or either's saved login changes."""
+        try:
+            with cfg.transaction('read') as db:
+                row = db.execute(
+                    'SELECT a.version AS av, a.updated_at AS au, c.version AS cv, c.updated_at AS cu, c.adapter, '
+                    '(SELECT max(updated_at) FROM cfg_credentials k WHERE k.account_id=a.id OR k.connection_id=c.id) AS ku '
+                    'FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id WHERE a.id=%s', (self.account_id,)).fetchone()
+            return tuple(row.values()) if row else None
+        except Exception:  # noqa: BLE001 - database briefly unavailable: just keep waiting
+            return None
+
+    def _wait_or_config_change(self, delay: float) -> None:
+        """Wait before the next try, but retry at once when someone fixes the setup (new method, bridge, password)."""
+        before = self._config_stamp()
+        deadline = time.monotonic() + delay
+        while not self.stopping.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0 or self.stopping.wait(min(left, 30)):
+                return
+            now = self._config_stamp()
+            if before is not None and now is not None and now != before:
+                self._event('CONFIG_CHANGED', 'INFO', message='Setup changed: retrying now.')
+                return
+
     # ----- main loop -----
     def run(self) -> None:
         if self.platform not in cfg.DATA_ADAPTERS:
@@ -284,7 +309,7 @@ class SourceWorker(threading.Thread):
             else:
                 self.state = 'RECONNECTING'
                 delay = RECONNECT_STEPS[min(attempt, len(RECONNECT_STEPS) - 1)]
-            self.stopping.wait(delay)
+            self._wait_or_config_change(delay)
         self.state = 'STOPPED'
         self.flush_journal()
         self.journal.close()

@@ -823,3 +823,5 @@ The reader retries a refused login automatically with current MT5 client builds 
   terminal bridge as a systemd service on 127.0.0.1. Use it when login fails with "MT5 SDK too old for this server".
 - `scripts/apply-test-setup.sh --bridge <ACCOUNT_CODE> --port <port> --state <folder> [--apply]` switches that account's server to the
   terminal: method Terminal bridge, pinned certificate fingerprint, token saved write-only (never printed).
+- 0.31.1: a failed source retries within 30 seconds when its account, connection method, bridge or saved login changes
+  (instead of waiting out the 5-minute / 1-hour back-off), and the "MT5 SDK too old" message names the terminal route.
