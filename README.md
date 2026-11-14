@@ -825,3 +825,5 @@ The reader retries a refused login automatically with current MT5 client builds 
   terminal: method Terminal bridge, pinned certificate fingerprint, token saved write-only (never printed).
 - 0.31.1: a failed source retries within 30 seconds when its account, connection method, bridge or saved login changes
   (instead of waiting out the 5-minute / 1-hour back-off), and the "MT5 SDK too old" message names the terminal route.
+- 0.31.2: `deploy-workstation.sh` applies database updates (migrations) before deploying. Before this, new tables were only
+  created by `configure-workstation-database.sh`, so the Market data source list failed with "Database schema out of date".

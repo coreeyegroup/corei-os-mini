@@ -6,4 +6,6 @@ if [[ $(id -u) == 0 ]]; then
     exit 1
 fi
 bash scripts/install-workstation.sh
+# Database updates first (safe to repeat: each migration is applied once, in order, and recorded).
+sudo python3 scripts/configure-workstation-database.py
 sudo python3 scripts/deploy-workstation.py "$PWD" "$(id -un)"
