@@ -180,13 +180,76 @@ def update_row(actor: str, table: str, key: dict, values: dict, reason: str) -> 
         return {k: _show(v, bycol[k]) for k, v in row.items()}
 
 
-def delete_row(actor: str, table: str, key: dict, reason: str) -> None:
+def _references(db, table: str) -> list[dict]:
+    """Foreign keys in other tables (or this one) that point at `table`: child table, its columns, the parent columns."""
+    return db.execute(
+        """SELECT c.conname AS name, cl.relname AS child, c.confdeltype AS on_delete,
+                  array_agg(a.attname::text ORDER BY k.n) AS child_cols, array_agg(pa.attname::text ORDER BY k.n) AS parent_cols
+           FROM pg_constraint c
+           JOIN pg_class cl ON cl.oid = c.conrelid JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+           JOIN pg_class p ON p.oid = c.confrelid
+           CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, n)
+           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.ck
+           JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
+           WHERE c.contype = 'f' AND c.conparentid = 0 AND p.relname = %s AND ns.nspname = current_schema()
+           GROUP BY c.conname, cl.relname, c.confdeltype ORDER BY cl.relname""", (table,)).fetchall()
+
+
+def _linked(db, table: str, where: sql.Composable, depth: int = 0, path: tuple = ()) -> list[dict]:
+    """Every row in other tables that points (directly or through others) at the rows `table WHERE where`, deepest
+    first — the order they must be deleted in. Foreign keys that set the value empty on delete are listed as such."""
+    if depth > 8:
+        return []
+    steps: list[dict] = []
+    for fk in _references(db, table):
+        if (fk['child'], fk['name']) in path:
+            continue
+        cond = sql.SQL('({}) IN (SELECT {} FROM {} WHERE {})').format(
+            sql.SQL(', ').join(sql.Identifier(c) for c in fk['child_cols']), sql.SQL(', ').join(sql.Identifier(c) for c in fk['parent_cols']),
+            sql.Identifier(table), where)
+        n = db.execute(sql.SQL('SELECT count(*) AS n FROM {} WHERE {}').format(sql.Identifier(fk['child']), cond)).fetchone()['n']
+        if not n:
+            continue
+        action = 'set empty' if fk['on_delete'] in ('n', 'd') else 'delete'
+        if action == 'delete':
+            steps += _linked(db, fk['child'], cond, depth + 1, path + ((fk['child'], fk['name']),))
+        steps.append({'table': fk['child'], 'rows': n, 'action': action, 'via': fk['name'], 'cond': cond})
+    return steps
+
+
+def _summary(steps: list[dict]) -> list[dict]:
+    out: dict[tuple, int] = {}
+    for st in steps:
+        out[(st['table'], st['action'])] = out.get((st['table'], st['action']), 0) + st['rows']
+    return [{'table': t, 'action': a, 'rows': n} for (t, a), n in out.items()]
+
+
+def linked_rows(table: str, key: dict) -> dict:
+    """What deleting this row would also remove (or set empty) in other tables."""
     with _tx() as db:
         cols = _columns(db, table)
-        row = db.execute(sql.SQL('DELETE FROM {} WHERE {} RETURNING *').format(sql.Identifier(table), _key_where(cols, key))).fetchone()
+        return {'linked': _summary(_linked(db, table, _key_where(cols, key)))}
+
+
+def delete_row(actor: str, table: str, key: dict, reason: str, with_linked: bool = False) -> dict:
+    """Delete one row. with_linked: first delete every row in other tables that points at it (deepest first)."""
+    with _tx() as db:
+        cols = _columns(db, table)
+        where = _key_where(cols, key)
+        removed: list[dict] = []
+        if with_linked:
+            steps = _linked(db, table, where)
+            for st in steps:
+                if st['action'] == 'delete':
+                    n = db.execute(sql.SQL('DELETE FROM {} WHERE {}').format(sql.Identifier(st['table']), st['cond'])).rowcount
+                    if n:
+                        removed.append({'table': st['table'], 'action': 'delete', 'rows': n})
+            removed = _summary([{**r, 'cond': None} for r in removed])
+        row = db.execute(sql.SQL('DELETE FROM {} WHERE {} RETURNING *').format(sql.Identifier(table), where)).fetchone()
         if not row:
             raise HTTPException(404, 'That row no longer exists.')
-        store.audit(db, actor, 'DB_DELETE', f'db:{table}', str(key)[:200], _plain(row, cols), None, reason)
+        store.audit(db, actor, 'DB_DELETE', f'db:{table}', str(key)[:200], {**(_plain(row, cols) or {}), 'linked_removed': removed}, None, reason)
+        return {'removed': removed}
 
 
 def _plain(row: dict | None, cols: list[dict]) -> dict | None:

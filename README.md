@@ -877,3 +877,6 @@ Setup › Administration › **Database** (Administrator role): every table of C
 - **Tables:** **+ Table**, **Drop table…** (type the name).
 - Every change: a reason (audit log) and your password re-entered. Secrets stay hidden and are changed from their own screens.
 - Structure changes made here are not part of COREI's migration files.
+- 0.35.1: Database › delete a row: rows in other tables that point at it are listed first (e.g. a provider's servers,
+  their accounts and collection plans) and deleted together with it after one confirmation; references that are set
+  empty on delete are listed as such. One audit-log entry records the row and what went with it.

@@ -57,8 +57,16 @@ export default function DatabaseEditor() {
     setEditing(null);
   }
   async function deleteRow(r: Row) {
-    if (!window.confirm(`Delete this row from ${table}?\n${JSON.stringify(keyOf(r))}\nThis cannot be undone.`)) return;
-    await run('Row deleted.', () => api(`admin/db/tables/${T}/rows/delete`, 'POST', { key: keyOf(r), reason: reason.trim() }));
+    if (!needReason()) return;
+    // Rows elsewhere that point at this one are listed first; they can be deleted together with it.
+    let linked: Row[] = [];
+    try { linked = (await api(`admin/db/tables/${T}/rows/linked`, 'POST', { key: keyOf(r) })).linked; } catch (e) { setError((e as Error).message); return; }
+    const deletes = linked.filter(l => l.action === 'delete'), empties = linked.filter(l => l.action !== 'delete');
+    const list = [...deletes.map(l => `  • delete ${Number(l.rows).toLocaleString()} row(s) in ${l.table}`), ...empties.map(l => `  • set empty in ${Number(l.rows).toLocaleString()} row(s) of ${l.table}`)].join('\n');
+    const text = `Delete this row from ${table}?\n${JSON.stringify(keyOf(r))}\n${linked.length ? `\nIt is used by other rows, which go with it:\n${list}\n` : ''}\nThis cannot be undone.`;
+    if (!window.confirm(text)) return;
+    await run(deletes.length ? `Row deleted with ${deletes.reduce((n, l) => n + Number(l.rows), 0).toLocaleString()} linked row(s).` : 'Row deleted.',
+      () => api(`admin/db/tables/${T}/rows/delete`, 'POST', { key: keyOf(r), reason: reason.trim(), with_linked: deletes.length > 0 }), deletes.length > 0);
   }
   async function insertRow(e: FormEvent) {
     e.preventDefault(); if (!adding) return;

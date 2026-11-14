@@ -33,6 +33,11 @@ class RowChangeIn(_In):
 class RowDeleteIn(_In):
     key: dict[str, Any]
     reason: str = Reason
+    with_linked: bool = False
+
+
+class RowKeyIn(_In):
+    key: dict[str, Any]
 
 
 class ColumnIn(_In):
@@ -89,9 +94,16 @@ def update_row(table: str, data: RowChangeIn, user: Principal = Depends(_admin),
     return db_admin.update_row(user.username, table, data.key, data.values, data.reason)
 
 
-@router.post('/tables/{table}/rows/delete', status_code=204)
+@router.post('/tables/{table}/rows/linked')
+def linked_rows(table: str, data: RowKeyIn, response: Response, _: Principal = Depends(_admin)):
+    """Rows in other tables that point at this row: what Delete with linked rows would remove."""
+    _no_store(response)
+    return db_admin.linked_rows(table, data.key)
+
+
+@router.post('/tables/{table}/rows/delete')
 def delete_row(table: str, data: RowDeleteIn, user: Principal = Depends(_admin), __: Principal = Depends(require_reauth)):
-    db_admin.delete_row(user.username, table, data.key, data.reason)
+    return db_admin.delete_row(user.username, table, data.key, data.reason, data.with_linked)
 
 
 @router.post('/tables/{table}/columns')
