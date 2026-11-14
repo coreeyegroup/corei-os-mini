@@ -1537,6 +1537,10 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
           {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}
           {selected && PURGEABLE.includes(entity) && <button type="button" className="danger" disabled={busy} onClick={() => void purge()}
             title="Removes it and everything attached to it (collected data, plans, logins; for a server or provider its accounts too). Typed confirmation; audited.">Delete permanently…</button>}</div>
+        {selected && PURGEABLE.includes(entity) && <p className="cfg-note cfg-remove-help">
+          <b>Archive</b>: stop using it — hidden from lists, collection stops, kept with its history; restore any time (Show archived › set Inactive). ·{' '}
+          <b>Delete</b>: remove only this record, and only when nothing is attached; otherwise it says what is. ·{' '}
+          <b>Delete permanently</b>: remove it with everything attached ({entity === 'providers' ? 'its servers, accounts, collected data and logins' : entity === 'connections' ? 'its accounts, collected data and logins' : 'its collected data, plans and login'}); type its code to confirm; cannot be undone.</p>}
         {blocked && <p role="alert" className="cfg-error">{blocked} <button type="button" className="danger" onClick={() => void purge()}>Delete permanently…</button>{' '}
           <button type="button" onClick={() => { setBlocked(''); void archive(); }}>Archive…</button></p>}</div>
         : <p className="cfg-note">Read only. Changes need the Trading operations role.</p>}
