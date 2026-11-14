@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Configuration from "./Configuration";
 import Infrastructure, { Health, SignIn } from "./Infrastructure";
 import MarketData from "./MarketData";
+import Intelligence from "./Intelligence";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
@@ -38,9 +39,9 @@ type Runtime = {
 };
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
-  "Market data": "1 · Market data: collection plans, live prices, feed quality and broker comparison, backfill, archive and backups",
+  "Market data": "1 · Market data: workspaces › sources › instruments, collection plans, feed quality, backfill, archive and backups",
   Configuration: "Providers, connections, accounts, instruments, symbol mappings and order-sending controls",
-  Intelligence: "2 · Market intelligence: features, sessions, regimes, screening",
+  Intelligence: "2 · Market intelligence: select and compare collected data across sources, charts; features, sessions, regimes, screening",
   Signals: "3 · Signal intelligence: signal model, lifecycle, decision engine",
   Strategies: "4 · Strategy intelligence: versions, deployments, runtime, backtest",
   Risk: "5 · Risk intelligence: limits, sizing, loss limits, margin and exposure",
@@ -386,6 +387,7 @@ export default function App() {
       );
     if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
     if (view === "Operations") return <Monitor overview={overview} signedOut={signedOut}/>;
+    if (view === "Intelligence") return <Intelligence open={v=>goto(v)}/>;
     if (stageOf(view)) return <Stage view={view} open={v=>goto(v)}/>;
     return null;
   }

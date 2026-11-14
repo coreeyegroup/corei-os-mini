@@ -13,7 +13,7 @@ import { api } from './Configuration';
 import { eventSummary } from './MarketData';
 import { digitsOf, goto } from './nav';
 
-type Row = Record<string, any>;
+export type Row = Record<string, any>;
 type Workspace = {
   id: string; name: string;
   sources: string[]; instruments: string[];          // empty = all
@@ -24,10 +24,10 @@ type Workspace = {
 const PREF = 'md.workspaces.v2';
 const FRAMES = ['TICK', 'S1', 'M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
 export const baseSymbol = (s: string) => { const u = String(s).toUpperCase().split(/[^A-Z0-9]/)[0]; return /^[A-Z]{6}[A-Z]{1,2}$/.test(u) && /^(XAU|XAG|EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY)/.test(u) ? u.slice(0, 6) : u; };
-const keyOf = (r: Row) => `${r.account_id}|${r.broker_symbol}`;
-const instOf = (r: Row) => String(r.instrument_symbol || r.broker_symbol);
+export const keyOf = (r: Row) => `${r.account_id}|${r.broker_symbol}`;
+export const instOf = (r: Row) => String(r.instrument_symbol || r.broker_symbol);
 const CCY = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY|SGD|HKD|NOK|SEK|ZAR|MXN|TRY|PLN|CNH|INR)/;
-const CLASS_LABEL: Record<string, string> = { FX: 'FX', METAL: 'Metals', INDEX: 'Indices', COMMODITY: 'Commodities', CRYPTO: 'Crypto', EQUITY: 'Equities', FUTURE: 'Futures', OPTION: 'Options', OTHER: 'Other' };
+export const CLASS_LABEL: Record<string, string> = { FX: 'FX', METAL: 'Metals', INDEX: 'Indices', COMMODITY: 'Commodities', CRYPTO: 'Crypto', EQUITY: 'Equities', FUTURE: 'Futures', OPTION: 'Options', OTHER: 'Other' };
 export function classOf(symbol: string, known?: string | null): string {
   if (known) return known;
   const u = baseSymbol(symbol);
@@ -38,12 +38,13 @@ export function classOf(symbol: string, known?: string | null): string {
   if (u.length === 6 && CCY.test(u) && CCY.test(u.slice(3))) return 'FX';
   return 'OTHER';
 }
-const fmt = (v: any, d: number) => v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(d);
-const ago = (s?: number | null) => s == null || !Number.isFinite(Number(s)) ? '—' : s < 1 ? 'now' : s < 60 ? `${Number(s).toFixed(s < 10 ? 1 : 0)}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+export const fmt = (v: any, d: number) => v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(d);
+export const ago = (s?: number | null) => s == null || !Number.isFinite(Number(s)) ? '—' : s < 1 ? 'now' : s < 60 ? `${Number(s).toFixed(s < 10 ? 1 : 0)}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
 let TZ: 'local' | 'utc' = 'local';
-const clock = (v?: string) => { if (!v) return '—'; const t = new Date(v); const ms = String(t.getUTCMilliseconds()).padStart(3, '0');
+export const setTz = (tz: 'local' | 'utc') => { TZ = tz; };
+export const clock = (v?: string) => { if (!v) return '—'; const t = new Date(v); const ms = String(t.getUTCMilliseconds()).padStart(3, '0');
   return (TZ === 'utc' ? t.toISOString().slice(11, 19) : t.toLocaleTimeString([], { hour12: false })) + '.' + ms; };
-const stamp = (v?: string) => !v ? '—' : TZ === 'utc' ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) + 'Z' : new Date(v).toLocaleString([], { hour12: false });
+export const stamp = (v?: string) => !v ? '—' : TZ === 'utc' ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) + 'Z' : new Date(v).toLocaleString([], { hour12: false });
 
 function useVisible() {
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
@@ -51,7 +52,7 @@ function useVisible() {
   return visible;
 }
 
-function usePoll<T = Row>(path: string | null, every: number): [T | null, string] {
+export function usePoll<T = Row>(path: string | null, every: number): [T | null, string] {
   const [data, setData] = useState<T | null>(null), [error, setError] = useState('');
   const visible = useVisible();
   useEffect(() => {
@@ -68,13 +69,13 @@ function usePoll<T = Row>(path: string | null, every: number): [T | null, string
 
 /* ---------- columns: every one can be shown, hidden and sorted ---------- */
 
-type Col = { id: string; label: string; title: string; num?: boolean; value: (r: Row, x: Ctx) => any; cell: (r: Row, x: Ctx) => React.ReactNode };
-type Ctx = { flash: Record<string, string>; hist: Map<string, number[]>; sources: Record<string, Row> };
-const mid = (r: Row) => r.bid != null && r.ask != null ? (Number(r.bid) + Number(r.ask)) / 2 : r.last != null ? Number(r.last) : NaN;
-const spreadPts = (r: Row) => r.bid != null && r.ask != null ? Math.round((Number(r.ask) - Number(r.bid)) * 10 ** digitsOf(r)) : null;
-const chgPct = (r: Row) => r.day_open && Number.isFinite(mid(r)) ? (mid(r) / Number(r.day_open) - 1) * 100 : null;
-const isStale = (r: Row) => !r.noData && Number(r.age_seconds) > (r.stale_seconds ?? 10);
-const COLS: Col[] = [
+export type Col = { id: string; label: string; title: string; num?: boolean; value: (r: Row, x: Ctx) => any; cell: (r: Row, x: Ctx) => React.ReactNode };
+export type Ctx = { flash: Record<string, string>; hist: Map<string, number[]>; sources: Record<string, Row> };
+export const mid = (r: Row) => r.bid != null && r.ask != null ? (Number(r.bid) + Number(r.ask)) / 2 : r.last != null ? Number(r.last) : NaN;
+export const spreadPts = (r: Row) => r.bid != null && r.ask != null ? Math.round((Number(r.ask) - Number(r.bid)) * 10 ** digitsOf(r)) : null;
+export const chgPct = (r: Row) => r.day_open && Number.isFinite(mid(r)) ? (mid(r) / Number(r.day_open) - 1) * 100 : null;
+export const isStale = (r: Row) => !r.noData && Number(r.age_seconds) > (r.stale_seconds ?? 10);
+export const COLS: Col[] = [
   { id: 'symbol', label: 'Symbol', title: 'Broker symbol', value: r => r.broker_symbol, cell: r => <><b>{r.broker_symbol}</b>{r.feed_role && <small className={`mb-role ${r.active_feed ? 'on' : ''}`}>{r.feed_role === 'PRIMARY' ? 'P' : r.feed_role === 'BACKUP' ? 'B' : ''}</small>}</> },
   { id: 'instrument', label: 'Instr', title: 'Instrument (COREI name)', value: r => instOf(r), cell: r => r.instrument_symbol ?? <span className="mb-dim">{baseSymbol(r.broker_symbol)}</span> },
   { id: 'class', label: 'Class', title: 'Asset class', value: r => classOf(instOf(r), r.asset_class), cell: r => CLASS_LABEL[classOf(instOf(r), r.asset_class)] },
@@ -103,7 +104,7 @@ const COLS: Col[] = [
   { id: 'time', label: 'Broker time', title: 'Time of the last price at the source', value: r => r.source_time, cell: r => <span className="mb-dim">{r.source_time ? clock(r.source_time) : '—'}</span> },
   { id: 'trend', label: 'Trend', title: 'Mid price, last 5 minutes on this screen', value: () => 0, cell: (r, x) => <Spark points={x.hist.get(keyOf(r)) ?? []} /> },
 ];
-const DEFAULT_COLS = ['symbol', 'source', 'env', 'bid', 'ask', 'spread', 'chg', 'range', 'age', 'latency', 'ticks', 'quality', 'trend'];
+export const DEFAULT_COLS = ['symbol', 'source', 'env', 'bid', 'ask', 'spread', 'chg', 'range', 'age', 'latency', 'ticks', 'quality', 'trend'];
 const blankWs = (patch: Partial<Workspace> = {}): Workspace => ({ id: 'ws' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: 'All sources', sources: [], instruments: [],
   env: '', roles: [], status: '', minQuality: 0, search: '', group: 'none', sort: { col: 'symbol', dir: 1 }, columns: DEFAULT_COLS, panes: 1, charts: [], rate: 1000, tz: 'local', ...patch });
 
@@ -340,21 +341,21 @@ export function Picker({ label, items, selected, change, empty, allMeansAll = tr
   </div>;
 }
 
-function Seg({ label, value, options, change }: { label: string; value: string; options: [string, string][]; change: (v: string) => void }) {
+export function Seg({ label, value, options, change }: { label: string; value: string; options: [string, string][]; change: (v: string) => void }) {
   return <span className="mb-seg" role="group" aria-label={label}>{options.map(([v, l]) => <button key={v} aria-pressed={value === v} onClick={() => change(v)}>{l}</button>)}</span>;
 }
 
-function Kpi({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
+export function Kpi({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return <div className={`mb-kpi ${tone}`}><small>{label}</small><b>{value}</b></div>;
 }
 
-function Range({ low, high, value }: { low?: number; high?: number; value: number }) {
+export function Range({ low, high, value }: { low?: number; high?: number; value: number }) {
   if (low == null || high == null || !Number.isFinite(value) || high <= low) return <span className="mb-range none" />;
   const pos = Math.max(0, Math.min(1, (value - low) / (high - low)));
   return <span className="mb-range" title={`Low ${low} · High ${high}`}><i style={{ left: `${pos * 100}%` }} /></span>;
 }
 
-function Spark({ points }: { points: number[] }) {
+export function Spark({ points }: { points: number[] }) {
   if (points.length < 2) return <svg className="mb-spark" width="80" height="18" aria-hidden="true" />;
   const lo = Math.min(...points), hi = Math.max(...points), span = hi - lo || 1;
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${(i / (points.length - 1) * 80).toFixed(1)},${(17 - (p - lo) / span * 16).toFixed(1)}`).join('');
@@ -363,7 +364,7 @@ function Spark({ points }: { points: number[] }) {
 
 /* ---------- chart: candles by timeframe, or ticks ---------- */
 
-function Chart({ row, rows, pane }: { row: Row; rows: Row[]; pane: number }) {
+export function Chart({ row, rows, pane }: { row: Row; rows: Row[]; pane: number }) {
   const PK = `corei-os-mini.md.frame.${pane}`;
   const [frame, setFrame] = useState<string>(() => { try { return localStorage.getItem(PK) || 'M1'; } catch { return 'M1'; } });
   useEffect(() => { try { localStorage.setItem(PK, frame); } catch { /* preference only */ } }, [frame]);
@@ -424,7 +425,7 @@ function Chart({ row, rows, pane }: { row: Row; rows: Row[]; pane: number }) {
 
 /* ---------- time & sales ---------- */
 
-function Tape({ row }: { row: Row }) {
+export function Tape({ row }: { row: Row }) {
   const [data] = usePoll<Row>(`md/ticks/${row.account_id}/${encodeURIComponent(row.broker_symbol)}?seconds=120&limit=200`, 2000);
   const d = digitsOf(row);
   const items: Row[] = [...(data?.items ?? [])].reverse();
@@ -440,7 +441,7 @@ function Tape({ row }: { row: Row }) {
 
 /* ---------- the same instrument from every source ---------- */
 
-function SourcesPanel({ row, rows, sources }: { row: Row; rows: Row[]; sources: Record<string, Row> }) {
+export function SourcesPanel({ row, rows, sources }: { row: Row; rows: Row[]; sources: Record<string, Row> }) {
   // Same instrument: linked by a plan, or the same base symbol once broker suffixes are dropped (XAUUSD.r, XAUUSDm, EURUSD-ECN).
   const same = rows.filter(r => (row.instrument_id && r.instrument_id === row.instrument_id) || baseSymbol(r.broker_symbol) === baseSymbol(row.broker_symbol));
   const d = digitsOf(row), ref = same.find(r => r.active_feed && !r.noData) ?? row, refMid = mid(ref);

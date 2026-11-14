@@ -1,4 +1,19 @@
-# Market dashboard — features, options and controls
+# Market data dashboards — features, options and controls
+
+Two screens, two stages (see `docs/WORKFLOW.md`):
+
+## Stage 1 · Market data › Dashboard — collect and watch (0.29.0)
+
+| Area | Features, options, controls |
+| --- | --- |
+| **Workspaces** | Tabs; New (empty), Duplicate, One per source, Rename (double-click), Close; "all sources" mode follows new sources, or a fixed, ordered list. Saved for the user. |
+| **Workspace controls** | Sources in workspace (searchable, grouped by provider · technology), status (live, stale, no price, paused), minimum quality, asset class, search, 27 columns, sort, expand/collapse all, refresh 0.5–5 s, local/UTC, freeze display, CSV, *Analyse → Market intelligence* |
+| **Health strip** | Sources live, instruments live, stale, no price, paused, errors, average quality, latency p95, prices per minute |
+| **Source section** | Provider · technology · server · environment · collector state · address · lag · instruments · prices/min · quality; problem in plain words. **+ Instrument** (every collection-plan option: purpose, feed role, instrument link, data types, bar timeframes, depth, conflation, schedule and window, storage days, archive, history, quality thresholds, size estimate, start/pause/archive with approval), **Pause/Resume source**, **Backfill** (timeframe, range, reason, which instruments), **Details** (account, login, server, role, collector, heartbeat, backlog, server clock, plans, last error), **Connectivity**, move up/down, remove from workspace, collapse |
+| **Instrument rows** | Quote and health columns plus plan status, purpose/role, stored data, days kept, schedule; actions: chart + time & sales (drill-down), settings (full plan editor), pause/start, remove (history kept) |
+| **Events** | Events of the workspace's sources |
+
+## Stage 2 · Market intelligence › Select & compare
 
 Market data › **Dashboard**. Built for many providers (20+) and instruments (100+): nothing is limited to a fixed
 list, and every selection is a search-and-pick list that grows with the configuration.

@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import FloatingWindow from './FloatingWindow';
-import MarketBoard from './MarketBoard';
+import SourceBoard from './SourceBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
 import './configuration.css';
@@ -15,7 +15,7 @@ import './marketdata.css';
 type Row = Record<string, any>;
 type Tab = 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
 const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: 'dashboard', label: 'Dashboard', hint: 'Live prices in workspaces: one per account, all sources, or your own selection. Click a symbol for its chart, time & sales and every source.' },
+  { id: 'dashboard', label: 'Dashboard', hint: 'Stage 1 · collect and watch: workspaces › sources › instruments. Add instruments per source, pause, backfill, details. Comparing and charting across sources is Stage 2 · Market intelligence.' },
   { id: 'live', label: 'Table', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
   { id: 'plans', label: 'Collection plans', hint: 'What is collected, from which account, when, and how long it is kept.' },
   { id: 'quality', label: 'Quality', hint: 'Latency, gaps, frozen prices, spreads, spikes and deviation from other sources — compare brokers.' },
@@ -53,7 +53,7 @@ export default function MarketData() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       <div className="cfg-pane">
-        {tab === 'dashboard' ? <MarketBoard /> : tab === 'live' ? <Live /> : tab === 'plans' ? <Plans canEdit={canEdit} /> : tab === 'quality' ? <Quality /> : tab === 'events' ? <Events />
+        {tab === 'dashboard' ? <SourceBoard canEdit={canEdit} /> : tab === 'live' ? <Live /> : tab === 'plans' ? <Plans canEdit={canEdit} /> : tab === 'quality' ? <Quality /> : tab === 'events' ? <Events />
           : tab === 'backfill' ? <Backfill canEdit={canEdit} /> : tab === 'controls' ? <Controls canEdit={canEdit} /> : <Archive />}
       </div>
     </section>
@@ -104,7 +104,7 @@ function Live() {
 
 /* ---------- plans ---------- */
 
-const BLANK: Row = { code: '', account_id: '', broker_symbol: '', instrument_id: '', purpose: 'RESEARCH', feed_role: 'PRIMARY', data_types: ['QUOTES', 'BARS'],
+export const BLANK: Row = { code: '', account_id: '', broker_symbol: '', instrument_id: '', purpose: 'RESEARCH', feed_role: 'PRIMARY', data_types: ['QUOTES', 'BARS'],
   bar_timeframes: ['M1'], depth_levels: 0, schedule: 'ALWAYS', window_start: '', window_end: '', window_days: [1, 2, 3, 4, 5], conflate_ms: 0, hot_days: 14,
   bars_hot_days: 365, archive: true, backfill_from: '', backfill_per_minute: 30, max_latency_ms: 1500, max_gap_seconds: 60, max_spread_points: '',
   stale_seconds: 10, on_breach: 'ALERT' };
@@ -150,7 +150,7 @@ function Plans({ canEdit }: { canEdit: boolean }) {
   </>;
 }
 
-function PlanWindow({ plan, canEdit, accounts, instruments, close, saved }: { plan: Row; canEdit: boolean; accounts: Row[]; instruments: Row[];
+export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved }: { plan: Row; canEdit: boolean; accounts: Row[]; instruments: Row[];
   close: () => void; saved: (p: Row) => void }) {
   const [f, setF] = useState<Row>(() => ({ ...BLANK, ...plan, instrument_id: plan.instrument_id ?? '', max_spread_points: plan.max_spread_points ?? '',
     backfill_from: plan.backfill_from ?? '', window_start: plan.window_start ?? '', window_end: plan.window_end ?? '' }));

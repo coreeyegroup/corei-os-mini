@@ -27,7 +27,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    data_types:['QUOTES','BARS'],bar_timeframes:['M1'],schedule:'ALWAYS',window_days:[1,2,3,4,5],hot_days:14,bars_hot_days:365,archive:true,status:'ACTIVE',status_reason:'Start',version:3,
    environment:'LIVE',active_feed:true,score:96,stale_seconds:10,max_latency_ms:1500,max_gap_seconds:60,conflate_ms:0,depth_levels:0,backfill_per_minute:30,on_breach:'SWITCH',pending_changes:0}];
  const controls=[{scope:'ALL',paused:false,reason:'Initial state',version:1,updated_by:'system',updated_at:now}];
- const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[];
+ const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[],p1Status=[],jobs=[];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
@@ -43,7 +43,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/md/bars/'))return ok({items:Array.from({length:30},(_,i)=>({bar_time:new Date(Date.parse(now)-i*60000).toISOString(),open:2400+i%5,high:2403+i%5,low:2398+i%5,close:2401+(i%3),ticks:40,source:'BUILT'}))});
    if(url.includes('/md/ticks/')){tickCalls.push(url);return ok({items:[{received_at:now,source_time:now,bid:2401.15,ask:2401.4},{received_at:now,source_time:now,bid:2401.2,ask:2401.45}]});}
    if(url.endsWith('/operator/prefs')&&method==='GET')return ok({});
-   if(url.includes('/operator/prefs/')){prefPuts.push(body);return ok({saved:true});}
+   if(url.includes('/operator/prefs/')){prefPuts.push({key:decodeURIComponent(url.split('/prefs/')[1]),...body});return ok({saved:true});}
+   if(url.endsWith('/md/plans/p1/status')){p1Status.push(body);return ok({...plans[0],status:body.status});}
+   if(url.endsWith('/md/jobs')&&method==='POST'){jobs.push(body);return ok({id:'j'+jobs.length},201);}
    if(url.startsWith('/api/md/plans')&&method==='GET')return ok({items:plans});
    if(url.endsWith('/md/plans')&&method==='POST'){created.push(body);const p={...body,id:'p2',status:'DRAFT',version:1,account_code:'ICM_B',environment:'LIVE',instrument_symbol:'XAUUSD',status_reason:''};plans.push(p);return ok(p,201);}
    if(url.endsWith('/md/plans/p2/status')){statusCalls.push(body);return ok({change_request:{id:'r1',summary:'Start LIVE trading feed GOLD_B (XAUUSD)'}},202);}
@@ -51,6 +53,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/config/accounts'))return ok({items:accounts});
    if(url.endsWith('/config/instruments'))return ok({items:instruments});
    if(url.endsWith('/md/controls'))return ok({items:controls});
+   if(url.includes('/md/controls/')&&!url.endsWith('/ALL')){switches.push({url,body});const scope=decodeURIComponent(url.split('/md/controls/')[1]);return ok({scope,paused:body.paused,reason:body.reason,version:1});}
    if(url.includes('/md/controls/')){switches.push({url,body});controls[0]={...controls[0],paused:body.paused,reason:body.reason,version:2};return ok(controls[0]);}
    if(url.includes('/md/quality?'))return ok({items:[{account_id:'a1',account_code:'VTM_A',connection_code:'VTM_L3',broker_symbol:'XAUUSD.r',instrument_symbol:'XAUUSD',score:96.2,ticks:120000,latency_p50_ms:38,latency_p95_ms:90,spread_avg:22,spread_max:41,max_gap_seconds:3,spikes:0,deviation_bp:0.4,empty_minutes:0},
      {account_id:'a2',account_code:'ICM_B',connection_code:'ICM_1',broker_symbol:'XAUUSD',instrument_symbol:'XAUUSD',score:71.5,ticks:90000,latency_p50_ms:80,latency_p95_ms:400,spread_avg:30,spread_max:90,max_gap_seconds:45,spikes:2,deviation_bp:3.1,empty_minutes:12}]});
@@ -68,6 +71,43 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle(3);};
 
+ // Stage 1 dashboard (default): workspaces › sources › instruments.
+ const sections=()=>$$('.sb-source');
+ const sec=name=>sections().find(x=>x.querySelector('.sb-name').textContent===name);
+ assert.deepEqual(sections().map(x=>x.querySelector('.sb-name').textContent),['VT Markets gold','IC Markets B']);
+ assert.match(sec('VT Markets gold').querySelector('.sb-head').textContent,/VT Markets · MT5.*LIVE.*connected.*198\.51\.100\.10:443.*lag 12 ms/);
+ assert.match(sec('VT Markets gold').querySelector('tbody').textContent,/XAUUSD\.r.*collecting/);
+ assert.match(sec('IC Markets B').querySelector('.mb-problem').textContent,/Broker refused the connector version/);
+ assert.match(sec('IC Markets B').querySelector('tbody').textContent,/XAUUSD.*no plan/,'a priced symbol without a plan is still listed');
+ assert.match($('.sb .mb-kpis').textContent,/Sources live1\/2/);
+ // Source actions: pause the source; pause one instrument; chart + time & sales; backfill; + Instrument opens every plan option.
+ [...sec('VT Markets gold').querySelectorAll('.sb-actions button')].find(b=>b.textContent.includes('Pause source')).click();await settle();
+ assert.ok(switches.some(x=>x.url.includes('account%3Aa1')&&x.body.paused===true),'source paused');
+ sec('VT Markets gold').querySelector('[aria-label="Pause XAUUSD.r"]').click();await settle();
+ assert.equal(p1Status.at(-1).status,'PAUSED');
+ sec('VT Markets gold').querySelector('[aria-label="Chart XAUUSD.r"]').click();await settle();
+ assert.equal($$('.sb-drill .mb-svg g.up, .sb-drill .mb-svg g.down').length,30,'drill-down chart');
+ assert.ok($('.sb-drill').textContent.includes('Time & sales'));
+ [...sec('VT Markets gold').querySelectorAll('.sb-actions button')].find(b=>b.textContent==='Backfill').click();await settle();
+ await submit($('.sb-backfill'));
+ assert.equal(jobs.at(-1).plan_id,'p1');assert.equal(jobs.at(-1).timeframe,'M1');
+ [...sec('VT Markets gold').querySelectorAll('.sb-actions button')].find(b=>b.textContent==='+ Instrument').click();await settle();
+ assert.match($('.fw').textContent,/New collection plan/);
+ assert.equal($('.fw [aria-label="Account"]')?.value ?? $$('.fw select').find(x=>[...x.options].some(o=>o.value==='a1'))?.value,'a1','the plan form opens on this source');
+ $('[aria-label="Close window"]').click();await settle();
+ // Workspaces: a new one starts empty; add one source to it.
+ button('+ New').click();await settle();
+ assert.match($('.sb-empty').textContent,/no sources yet/);
+ $$('.mb-pickbtn').find(b=>b.textContent.startsWith('Sources in workspace')).click();await settle();
+ $$('.mb-popitem').find(l=>l.textContent.includes('IC Markets B')).querySelector('input').click();await settle();
+ w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));await settle();
+ assert.deepEqual(sections().map(x=>x.querySelector('.sb-name').textContent),['IC Markets B']);
+ await new Promise(r=>setTimeout(r,900));
+ assert.equal(prefPuts.filter(p=>p.key==='md.sources.v1').at(-1).value.length,2,'source workspaces saved for the user');
+ console.log('PASS: stage 1 dashboard: workspaces › sources › instruments; pause source and instrument, chart drill-down, backfill, add instrument, new workspace.');
+
+ // Stage 2 · Market intelligence: the comparison board.
+ w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Intelligence'}}));await settle(12);
  // Dashboard (default): one workspace with every source and instrument; pickers, filters, grouping, columns, panes.
  const tabs=()=>$$('.mb-tabs [role=tab]').map(b=>b.textContent);
  const pickBtn=l=>$$('.mb-pickbtn').find(b=>b.textContent.startsWith(l));
@@ -113,9 +153,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  button('One per source').click();await settle();
  assert.deepEqual(tabs(),['All sources','VT Markets gold','IC Markets B']);
  await new Promise(r=>setTimeout(r,900));
- assert.equal(prefPuts.at(-1).value.length,3,'workspaces saved as a preference');
+ assert.equal(prefPuts.filter(p=>p.key==='md.workspaces.v2').at(-1).value.length,3,'workspaces saved as a preference');
  assert.equal(boardRows().length,1,'the new workspace shows its source only');
  console.log('PASS: dashboard: source and instrument pickers (grouped, searchable, only), filters, grouping, columns, sort, chart panes, workspaces saved.');
+ w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Market data'}}));await settle(12);
  nav('Table').click();await settle();
 
  // Live: collector card and prices; a 42 s old price is flagged.
@@ -150,7 +191,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  nav('Controls').click();await settle();
  button('Pause everything…').click();await settle(2);
  fill($('[aria-label="Switch reason"]'),'Broker maintenance');await submit($('[aria-label="Collection switch"] form'));
- assert.deepEqual(switches[0].body,{paused:true,version:1,reason:'Broker maintenance'});
+ assert.deepEqual(switches.filter(x=>x.url.endsWith('/ALL'))[0].body,{paused:true,version:1,reason:'Broker maintenance'});
  assert.ok($('.md-switch').textContent.includes('PAUSED'));
  nav('Quality').click();await settle();
  const q=$$('.md-quality tbody tr');assert.equal(q.length,2);assert.ok(q[0].textContent.includes('XAUUSD'));assert.equal(q[1].querySelector('td').textContent,'');assert.ok(q[1].textContent.includes('3.1 bp'));

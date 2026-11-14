@@ -638,6 +638,13 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Stages: Market data collects, Market intelligence compares — release 0.29.0
+
+No migration, no reader rebuild. Workflow: `docs/WORKFLOW.md`; features: `docs/MARKET_DASHBOARD.md`.
+
+- **Stage 1 · Market data › Dashboard** is now *workspaces › sources › instruments*: each source is its own section (state, address, lag, quality, problem) with **+ Instrument** (every collection-plan option), **pause/resume source**, **backfill**, **details**, reorder and remove; each instrument row has its quote and health, plan status and what is stored, with chart + time & sales, settings, pause/start and remove.
+- **Stage 2 · Market intelligence › Select & compare** holds the cross-source board (pickers, filters, 26 columns, grouping, 1/2/4 charts with source overlay, time & sales, sources comparison, CSV); the stage map stays as a tab.
+
 ## Market dashboard controls for many sources and instruments — release 0.28.0
 
 No migration, no reader rebuild. Full list: `docs/MARKET_DASHBOARD.md`.
