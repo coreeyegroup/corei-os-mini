@@ -317,3 +317,11 @@ button.cfg-tile { cursor: pointer; }
 .cfg-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; }
 .cfg-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .cfg-specs .cfg-search { width: 100%; margin: 6px 0; }
+
+/* Add account: technology cards (offered by the provider first; planned ones recorded, not-recordable ones disabled) */
+.cfg-techs { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; margin: 4px 0 8px; }
+.cfg-tech { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 9px; text-align: left; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.cfg-tech small { font-size: 11px; color: var(--muted); }
+.cfg-tech.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.cfg-tech:disabled { opacity: .45; cursor: not-allowed; }
+.fw .cfg-form .cfg-pair > .cfg-field:has(> button) button { width: auto; }

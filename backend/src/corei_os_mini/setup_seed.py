@@ -35,6 +35,9 @@ PROVIDERS = {
 }
 # Names only (no facts claimed): brokers added earlier with their code as name.
 PROVIDER_NAMES = {'EXNESS': 'Exness', 'ICMARKETS': 'IC Markets'}
+# Technologies each provider offers accounts on (Add account lists these first; any other can still be chosen).
+PROVIDER_TECHNOLOGIES = {'VTMARKET': ['MT5', 'MT4'], 'METAQUOTES': ['MT5'], 'UPSTOK': ['API'], 'ANGLE_ONE': ['API'],
+                         'EXNESS': ['MT5', 'MT4'], 'ICMARKETS': ['MT5', 'MT4', 'CTRADER']}
 # A technology entered as a provider: archived (kept in the audit log; restore any time).
 PROVIDERS_TO_ARCHIVE = {'META_TRADER': 'MetaTrader is a technology (MT4/MT5), not a provider: choose it as a server type under a broker.'}
 # Standard connection names: "<Provider> · <technology> <environment> · <server or endpoint>".
@@ -99,6 +102,11 @@ class Run:
         return result
 
 
+def _latest(result: Any, current: dict) -> dict:
+    """The record after an upsert (so a second change to it uses its new version); a pending approval keeps the current one."""
+    return result if isinstance(result, dict) and 'id' in result and 'version' in result else current
+
+
 def _norm(v: Any) -> Any:
     if isinstance(v, Decimal):
         return v.normalize()
@@ -120,12 +128,15 @@ def run(actor: str, apply: bool) -> int:
     providers = {p['code']: p for p in store.list_records('providers', {}, '')}
     for code, values in PROVIDERS.items():
         if code in providers:
-            r.upsert('providers', ProviderIn, providers[code], values, f"provider {code}")
+            providers[code] = _latest(r.upsert('providers', ProviderIn, providers[code], values, f"provider {code}"), providers[code])
         else:
             print(f'  provider {code} not found: skipped')
     for code, name in PROVIDER_NAMES.items():
         if code in providers:
-            r.upsert('providers', ProviderIn, providers[code], {'name': name}, f'provider {code}')
+            providers[code] = _latest(r.upsert('providers', ProviderIn, providers[code], {'name': name}, f'provider {code}'), providers[code])
+    for code, techs in PROVIDER_TECHNOLOGIES.items():
+        if code in providers and providers[code]['status'] != 'ARCHIVED':
+            providers[code] = _latest(r.upsert('providers', ProviderIn, providers[code], {'technologies': techs}, f'provider {code} technologies'), providers[code])
     for code, why in PROVIDERS_TO_ARCHIVE.items():
         p = providers.get(code)
         if p and p['status'] != 'ARCHIVED':

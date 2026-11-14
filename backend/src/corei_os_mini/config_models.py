@@ -43,6 +43,9 @@ class Holiday(_Strict):
     name: Text(120) = ''
 
 
+Technology = Literal['MT5', 'MT4', 'CTRADER', 'FIX', 'API', 'FEED', 'EXCHANGE']
+
+
 class ProviderIn(_Strict):
     code: Code
     name: Name
@@ -61,6 +64,14 @@ class ProviderIn(_Strict):
     exposure_limit: Annotated[Decimal, Field(gt=0, max_digits=20, decimal_places=2)] | None = None
     exposure_currency: Annotated[str, Upper, StringConstraints(pattern=r'^([A-Z]{3})?$')] = ''
     holidays: Annotated[list[Holiday], Field(max_length=400)] = Field(default_factory=list)
+    # The technologies this provider offers accounts on (e.g. a broker with MT4, MT5 and cTrader). Add account
+    # offers these first; any other technology can still be chosen.
+    technologies: Annotated[list[Technology], Field(max_length=10)] = Field(default_factory=list)
+
+    @field_validator('technologies')
+    @classmethod
+    def unique_technologies(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(value))
 
     @model_validator(mode='after')
     def exposure_has_currency(self) -> 'ProviderIn':
@@ -203,7 +214,26 @@ class FixSettings(_Strict):
         return Mt5AccessPoint.valid_host(value)
 
 
-SETTINGS_BY_PLATFORM = {'MT5': Mt5Settings, 'REST_API': RestApiSettings, 'FIX': FixSettings}
+class CTraderSettings(_Strict):
+    """cTrader Open API: one endpoint per environment; the app's client ID and secret are the connection's credential,
+    and one cTrader ID's OAuth grant covers all its accounts. Recorded now; the connector is planned."""
+    host: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=253)] = 'live.ctraderapi.com'
+    port: Annotated[int, Field(ge=1, le=65535)] = 5035
+    oauth_redirect_url: str | None = None
+
+    @field_validator('host')
+    @classmethod
+    def valid_host(cls, value: str) -> str:
+        return Mt5AccessPoint.valid_host(value)
+
+    @field_validator('oauth_redirect_url')
+    @classmethod
+    def redirect_url(cls, value: str | None) -> str | None:
+        return None if not value else _url(value, ('https',), local_http=True)
+
+
+# MT4 servers have the same shape as MT5 servers: a name from the broker's list and its addresses.
+SETTINGS_BY_PLATFORM = {'MT5': Mt5Settings, 'MT4': Mt5Settings, 'CTRADER': CTraderSettings, 'REST_API': RestApiSettings, 'FIX': FixSettings}
 
 
 class MaintenanceWindow(_Strict):
@@ -214,14 +244,15 @@ class MaintenanceWindow(_Strict):
     note: Text(120) = ''
 
 
-ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'REST_API': {'DEFAULT', 'NATIVE'}, 'FIX': {'DEFAULT', 'NATIVE'}}
+ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'MT4': {'DEFAULT'}, 'CTRADER': {'DEFAULT', 'NATIVE'},
+            'REST_API': {'DEFAULT', 'NATIVE'}, 'FIX': {'DEFAULT', 'NATIVE'}}
 
 
 class ConnectionIn(_Strict):
     provider_id: UUID
     code: Code
     name: Name
-    platform: Literal['MT5', 'REST_API', 'FIX']
+    platform: Literal['MT5', 'MT4', 'CTRADER', 'REST_API', 'FIX']
     environment: Literal['DEMO', 'LIVE']
     purpose: Purpose
     settings: dict

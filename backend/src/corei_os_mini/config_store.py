@@ -255,7 +255,7 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
         data.append('ACCOUNT_INACTIVE')
     if row['trading_permission'] == 'DISABLED':
         data.append('ACCOUNT_PERMISSION_DISABLED')
-    if row['platform'] == 'MT5' and not row.get('credential_kind'):
+    if row['platform'] in ('MT5', 'MT4') and not row.get('credential_kind'):
         data.append('ACCOUNT_CREDENTIAL_MISSING')
     if row['platform'] == 'REST_API' and not row.get('connection_credential_kind'):
         data.append('CONNECTION_CREDENTIAL_MISSING')
@@ -393,8 +393,8 @@ def _connection(db, connection_id) -> dict:
 def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
     if entity == 'accounts':
         connection = _connection(db, data['connection_id'])
-        if connection['platform'] == 'MT5' and not re.fullmatch(r'[1-9][0-9]{0,19}', data['external_account_id']):
-            raise HTTPException(422, 'MT5 account number must be digits only (the broker login).')
+        if connection['platform'] in ('MT5', 'MT4') and not re.fullmatch(r'[1-9][0-9]{0,19}', data['external_account_id']):
+            raise HTTPException(422, f"{connection['platform']} account number must be digits only (the broker login).")
         # FASTEST (the default) and SERVER mean nothing outside MT5 and are accepted; a pinned address list is refused.
         if connection['platform'] != 'MT5' and (data.get('access_mode') == 'ACCOUNT' or data.get('access_points')):
             raise HTTPException(422, 'Address choice applies to MT5 accounts only.')
@@ -626,8 +626,8 @@ def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> 
                              'WHERE a.id=%s FOR UPDATE OF a', (owner_id,)).fetchone()
         if not account:
             raise HTTPException(404, 'Account not found.')
-        if account['platform'] != 'MT5' or not isinstance(credential, Mt5LoginCredential):
-            raise HTTPException(422, 'Only MT5 accounts hold their own login. API credentials belong to the connection.')
+        if account['platform'] not in ('MT5', 'MT4') or not isinstance(credential, Mt5LoginCredential):
+            raise HTTPException(422, 'Only MT5 and MT4 accounts hold their own login (password). API, FIX and cTrader credentials belong to the server.')
         if access_level == 'READ_ONLY' and account['trading_permission'] == 'TRADING' and not db.execute(
                 "SELECT 1 FROM cfg_credentials WHERE account_id=%s AND access_level='FULL'", (owner_id,)).fetchone():
             raise HTTPException(422, 'This account is permitted to trade: save its master password first. '
@@ -644,6 +644,12 @@ def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> 
         if connection['adapter'] != 'TERMINAL_BRIDGE' or not isinstance(credential, BridgeTokenCredential):
             raise HTTPException(422, 'An MT5 connection takes only the terminal bridge token (when its method is Terminal bridge). '
                                      'MT5 logins are saved on each account.')
+        return 'connection_id', connection
+    if connection['platform'] == 'MT4':
+        raise HTTPException(422, 'MT4 logins are saved on each account, not on the server.')
+    if connection['platform'] == 'CTRADER':
+        if not isinstance(credential, OAuthClientCredential):
+            raise HTTPException(422, 'A cTrader server takes the Open API app\'s client ID and secret.')
         return 'connection_id', connection
     expected = {'API_KEY': ApiKeyCredential, 'OAUTH2': OAuthClientCredential}.get(connection['settings'].get('auth_method'))
     if connection['platform'] != 'REST_API' or not isinstance(credential, expected or ()):

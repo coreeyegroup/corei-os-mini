@@ -178,7 +178,7 @@ export function Section({ n, title, children }: { n: number; title: string; chil
 
 const blank: Record<Entity, Row> = {
   providers: { code: '', name: '', kind: 'BROKER', status: 'ACTIVE', legal_entity: '', regulator: '', licence_number: '', jurisdiction: '',
-    execution_model: 'UNKNOWN', website: '', support_contact: '', dealing_contact: '', exposure_limit: '', exposure_currency: '', holidays: [] },
+    execution_model: 'UNKNOWN', website: '', support_contact: '', dealing_contact: '', exposure_limit: '', exposure_currency: '', holidays: [], technologies: [] },
   connections: { provider_id: '', code: '', name: '', platform: 'MT5', environment: 'DEMO', purpose: 'BOTH', status: 'ACTIVE',
     settings: { server_name: '', access_points: [{ name: 'Added manually', host: '', port: 443, source: 'MANUAL' }] },
     adapter: 'DEFAULT', server_utc_offset_minutes: '', dst_rule: 'UNKNOWN', clock_source: 'UNKNOWN', max_orders_per_second: '', max_order_burst: '',
@@ -193,7 +193,7 @@ const blank: Record<Entity, Row> = {
 };
 const FIELDS: Record<Entity, string[]> = {
   providers: ['code', 'name', 'kind', 'status', 'legal_entity', 'regulator', 'licence_number', 'jurisdiction', 'execution_model', 'website',
-    'support_contact', 'dealing_contact', 'exposure_limit', 'exposure_currency', 'holidays'],
+    'support_contact', 'dealing_contact', 'exposure_limit', 'exposure_currency', 'holidays', 'technologies'],
   connections: ['provider_id', 'code', 'name', 'platform', 'environment', 'purpose', 'settings', 'status', 'adapter', 'server_utc_offset_minutes',
     'dst_rule', 'clock_source', 'max_orders_per_second', 'max_order_burst', 'registered_egress_ip', 'maintenance'],
   accounts: ['connection_id', 'code', 'name', 'external_account_id', 'holder_name', 'base_currency', 'trading_permission', 'status', 'access_mode', 'access_points',
@@ -231,18 +231,18 @@ export function toPayload(entity: Entity, draft: Row): Row {
     out.group_ids = [...(draft.group_ids ?? [])].sort(); }
   if (entity === 'providers') { out.exposure_limit = strOrNull(draft.exposure_limit);
     for (const k of ['legal_entity', 'regulator', 'licence_number', 'jurisdiction', 'website', 'support_contact', 'dealing_contact', 'exposure_currency']) out[k] = draft[k] ?? '';
-    out.execution_model = draft.execution_model ?? 'UNKNOWN'; out.holidays = draft.holidays ?? []; }
+    out.execution_model = draft.execution_model ?? 'UNKNOWN'; out.holidays = draft.holidays ?? []; out.technologies = draft.technologies ?? []; }
   if (entity === 'connections') { out.server_utc_offset_minutes = numOrNull(draft.server_utc_offset_minutes); out.max_order_burst = numOrNull(draft.max_order_burst);
     out.max_orders_per_second = strOrNull(draft.max_orders_per_second); out.registered_egress_ip = orNull(draft.registered_egress_ip);
     out.adapter = draft.adapter ?? 'DEFAULT'; out.dst_rule = draft.dst_rule ?? 'UNKNOWN'; out.clock_source = draft.clock_source ?? 'UNKNOWN';
     out.maintenance = draft.maintenance ?? []; }
   if (entity === 'mappings') out.account_id = orNull(draft.account_id);
   if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision); }
-  if (entity === 'connections' && draft.platform === 'MT5')
+  if (entity === 'connections' && (draft.platform === 'MT5' || draft.platform === 'MT4'))
     out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
       access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
         source: p.source ?? 'UNKNOWN', confirmed_at: p.confirmed_at ?? null })),
-      bridge: draft.adapter === 'TERMINAL_BRIDGE' && draft.settings.bridge?.host
+      bridge: draft.platform === 'MT5' && draft.adapter === 'TERMINAL_BRIDGE' && draft.settings.bridge?.host
         ? { host: draft.settings.bridge.host, port: Number(draft.settings.bridge.port || 9443), fingerprint: draft.settings.bridge.fingerprint } : null };
   if (entity === 'connections' && draft.platform === 'FIX') {
     const s = draft.settings;
@@ -251,6 +251,8 @@ export function toPayload(entity: Entity, draft: Row): Row {
       heartbeat_seconds: Number(s.heartbeat_seconds || 30), reset_seq_on_logon: s.reset_seq_on_logon !== false, md_depth: Number(s.md_depth || 1),
       md_snapshots_only: !!s.md_snapshots_only };
   }
+  if (entity === 'connections' && draft.platform === 'CTRADER')
+    out.settings = { host: draft.settings.host, port: Number(draft.settings.port || 5035), oauth_redirect_url: draft.settings.oauth_redirect_url || null };
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
@@ -611,7 +613,7 @@ function suggestId(entity: Entity, d: Row, refs: Record<string, Row[]>): string 
   if (entity === 'connections') {
     const provider = refs.providers.find(p => p.id === d.provider_id);
     if (!provider) return '';
-    const base = `${provider.code}_${d.platform === 'MT5' ? 'MT5' : 'API'}_${d.environment}`;
+    const base = `${provider.code}_${PLATFORM_TAG[d.platform] ?? 'API'}_${d.environment}`;
     const taken = new Set(refs.connections.map(c => c.code));
     id = base; for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
   }
@@ -624,12 +626,17 @@ function suggestId(entity: Entity, d: Row, refs: Record<string, Row[]>): string 
   return /^[A-Z]/.test(id) ? id : '';
 }
 
+export const PLATFORM_TAG: Record<string, string> = { MT5: 'MT5', MT4: 'MT4', CTRADER: 'CTRADER', FIX: 'FIX', REST_API: 'API' };
+export const PLATFORM_LABEL: Record<string, string> = { MT5: 'MetaTrader 5', MT4: 'MetaTrader 4', CTRADER: 'cTrader', FIX: 'FIX 4.4 / 4.2', REST_API: 'Broker / exchange API' };
+const TECH_OPTIONS: [string, string][] = [['MT5', 'MetaTrader 5'], ['MT4', 'MetaTrader 4'], ['CTRADER', 'cTrader'], ['FIX', 'FIX 4.4 / 4.2'],
+  ['API', 'Broker / exchange API'], ['FEED', 'Fast feed / data vendor'], ['EXCHANGE', 'Exchange direct']];
+
 function suggestName(d: Row, refs: Record<string, Row[]>): string {
   const provider = refs.providers.find(p => p.id === d.provider_id);
   if (!provider) return '';
   const env = d.environment === 'LIVE' ? 'live' : 'demo';
-  if (d.platform === 'MT5') return `${provider.name} MT5 ${env}${d.settings?.server_name ? ` · ${d.settings.server_name}` : ''}`.slice(0, 120);
-  return `${provider.name} API ${env}`.slice(0, 120);
+  const where = d.settings?.server_name || d.settings?.host || (d.settings?.api_base_url ?? '').replace(/^https:\/\//, '');
+  return `${provider.name} · ${PLATFORM_TAG[d.platform] ?? 'API'} ${env}${where ? ` · ${where}` : ''}`.slice(0, 120);
 }
 
 function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity; draft: Row; setDraft: (r: Row) => void; editing: boolean; refs: Record<string, Row[]> }) {
@@ -660,6 +667,10 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
       {text('name', 'Provider name', { required: true, maxLength: 120 }, 'Brand, e.g. IC Markets, VT Markets, Upstox')}
       <div className="cfg-pair">{code('Provider ID', 'ICMARKETS, EXNESS, UPSTOX')}
         {pick('kind', 'Provider type', [['BROKER', 'Broker'], ['EXCHANGE', 'Exchange'], ['ECN', 'ECN'], ['PRIME_BROKER', 'Prime broker'], ['LIQUIDITY_PROVIDER', 'Liquidity provider'], ['FAST_FEED', 'Fast feed'], ['DATA_VENDOR', 'Data vendor'], ['DATA_CENTRE', 'Data centre']])}</div>
+      <Field label="Technologies offered" hint="What this provider offers accounts on, e.g. a broker with MT4, MT5 and cTrader. Add account shows these first; any other can still be chosen.">
+        <div className="cfg-checks" role="group" aria-label="Technologies offered">{TECH_OPTIONS.map(([id, label]) =>
+          <label key={id} className="cfg-check"><input type="checkbox" aria-label={label} checked={(draft.technologies ?? []).includes(id)}
+            onChange={e => set('technologies', e.target.checked ? [...(draft.technologies ?? []), id] : (draft.technologies ?? []).filter((t: string) => t !== id))} /> {label}</label>)}</div></Field>
     </Section>
     <Section n={2} title="Legal entity and regulation">
       {text('legal_entity', 'Legal entity', { maxLength: 200 }, 'The firm that holds the accounts, e.g. VT Markets (Pty) Ltd. One brand can have several.')}
@@ -688,17 +699,19 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
   if (entity === 'connections') {
     const platform = (v: string) => setDraft({ ...draft, platform: v, adapter: v === 'FIX' ? 'NATIVE' : 'DEFAULT',
-      settings: v === 'MT5' ? blank.connections.settings : v === 'FIX' ? { ...FIX_BLANK } : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
+      settings: v === 'MT5' || v === 'MT4' ? blank.connections.settings : v === 'FIX' ? { ...FIX_BLANK } : v === 'CTRADER' ? { ...CTRADER_BLANK } : { api_base_url: '', stream_url: '', auth_method: 'API_KEY' } });
     return <>
       <Section n={1} title="Broker">
         {ref('provider_id', 'Provider', refs.providers, r => `${r.name} (${r.code})`)}
         <div className="cfg-pair">
-          <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['FIX', 'FIX 4.4 / 4.2'], ['REST_API', 'Broker API']]} onChange={platform} /></Field>
+          <Field label="Platform" hint={locked('platform') ? 'Fixed after creation' : undefined}><Choice label="Platform" value={draft.platform} disabled={locked('platform')} options={[['MT5', 'MetaTrader 5'], ['MT4', 'MetaTrader 4'], ['CTRADER', 'cTrader'], ['FIX', 'FIX 4.4 / 4.2'], ['REST_API', 'Broker API']]} onChange={platform} /></Field>
           {pick('environment', 'Environment', [['DEMO', 'Demo'], ['LIVE', 'Live']])}
         </div>
       </Section>
-      <Section n={2} title={draft.platform === 'MT5' ? 'Server and addresses' : draft.platform === 'FIX' ? 'FIX session' : 'API app'}>
+      <Section n={2} title={draft.platform === 'MT5' || draft.platform === 'MT4' ? 'Server and addresses' : draft.platform === 'FIX' ? 'FIX session' : draft.platform === 'CTRADER' ? 'cTrader Open API endpoint' : 'API app'}>
         {draft.platform === 'FIX' ? <FixFields settings={draft.settings} change={s => set('settings', s)} />
+          : draft.platform === 'CTRADER' ? <CTraderFields settings={draft.settings} change={s => set('settings', s)} />
+          : draft.platform === 'MT4' ? <Mt4Server settings={draft.settings} change={s => set('settings', s)} />
           : draft.platform === 'MT5' ? <Mt5Server settings={draft.settings} connectionId={draft.id} change={s => {
             // The server name decides the environment on a new connection (MetaQuotes-Demo is a demo server).
             const env = envOfServer(s.server_name);
@@ -755,7 +768,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     const mt5 = connection?.platform === 'MT5';
     return <>
       <Section n={1} title="Connection">
-        {ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${r.platform === 'MT5' ? r.settings?.server_name ?? 'MT5' : r.platform === 'FIX' ? `FIX ${r.settings?.host ?? ''}` : 'API'} · ${r.environment}`)}
+        {ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${PLATFORM_TAG[r.platform] ?? r.platform} ${r.settings?.server_name ?? r.settings?.host ?? (r.settings?.api_base_url ?? '').replace(/^https:\/\//, '')} · ${r.environment}`)}
         {connection && <p className="cfg-note">Environment <Env value={connection.environment} />{mt5 ? <> · server <strong>{connection.settings?.server_name}</strong></> : null}</p>}
       </Section>
       <Section n={2} title="Account">
@@ -834,6 +847,32 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
 export const ROLE_OPTIONS: [string, string][] = [['MARKET_DATA', 'Data source'], ['TRADING', 'Execution'], ['BOTH', 'Data source and execution']];
 export const PURPOSE_LABEL: Record<string, string> = Object.fromEntries(ROLE_OPTIONS);
+export const CTRADER_BLANK = { host: 'live.ctraderapi.com', port: 5035, oauth_redirect_url: '' };
+
+/** cTrader Open API: the endpoint per environment; the app's client ID and secret are saved as the server's credential. */
+export function CTraderFields({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const s = { ...CTRADER_BLANK, ...settings };
+  return <div className="cfg-pair">
+    <Field label="Open API host" hint="live.ctraderapi.com or demo.ctraderapi.com"><Choice label="cTrader host" value={s.host}
+      options={[['live.ctraderapi.com', 'live.ctraderapi.com (live)'], ['demo.ctraderapi.com', 'demo.ctraderapi.com (demo)']]} onChange={v => change({ ...s, host: v })} /></Field>
+    <Field label="Port"><input aria-label="cTrader port" type="number" min={1} max={65535} value={s.port} onChange={e => change({ ...s, port: e.target.value })} /></Field>
+    <Field label="OAuth redirect URL" hint="Optional: the address registered with your Open API app"><input aria-label="cTrader redirect URL" type="url" value={s.oauth_redirect_url ?? ''} onChange={e => change({ ...s, oauth_redirect_url: e.target.value })} /></Field>
+  </div>;
+}
+
+/** MT4 server: the name from the broker's list and its addresses (host:port), typed as the broker gives them. */
+export function Mt4Server({ settings, change }: { settings: Row; change: (s: Row) => void }) {
+  const points: Row[] = settings.access_points ?? [];
+  const text = points.filter(p => p.host).map(p => `${p.host}:${p.port ?? 443}`).join(', ');
+  return <div className="cfg-pair">
+    <Field label="MT4 server name" hint="As in the MT4 terminal's login window, e.g. VTMarkets-Live"><input aria-label="MT4 server name" maxLength={120} value={settings.server_name ?? ''}
+      onChange={e => change({ ...settings, server_name: e.target.value, access_points: points.map(p => ({ ...p, name: e.target.value })) })} /></Field>
+    <Field label="Addresses" hint="host:port, comma-separated"><input aria-label="MT4 server addresses" defaultValue={text}
+      onChange={e => change({ ...settings, access_points: e.target.value.split(/[\s,;]+/).filter(Boolean).map(x => { const m = x.match(/^(.+?)(?::(\d+))?$/)!;
+        return { name: settings.server_name ?? '', host: m[1], port: Number(m[2] ?? 443), enabled: true, source: 'MANUAL' }; }) })} /></Field>
+  </div>;
+}
+
 export const FIX_BLANK = { host: '', port: 443, tls: true, tls_verify: true, begin_string: 'FIX.4.4', sender_comp_id: '', target_comp_id: '', sender_sub_id: '',
   target_sub_id: '', heartbeat_seconds: 30, reset_seq_on_logon: true, md_depth: 1, md_snapshots_only: false };
 
@@ -882,7 +921,7 @@ export function BridgeFields({ settings, change }: { settings: Row; change: (s: 
 }
 
 function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connections'; row: Row; reload: () => void }) {
-  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.platform === 'FIX' ? 'FIX_LOGIN' : row.platform === 'MT5' ? 'BRIDGE_TOKEN' : row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
+  const kind = owner === 'accounts' ? 'MT5_LOGIN' : row.platform === 'FIX' ? 'FIX_LOGIN' : row.platform === 'MT5' ? 'BRIDGE_TOKEN' : row.platform === 'CTRADER' || row.settings?.auth_method === 'OAUTH2' ? 'OAUTH_CLIENT' : 'API_KEY';
   const empty = { password: '', access_level: 'FULL', api_key: '', api_secret: '', client_id: '', client_secret: '', token: '', username: '' };
   const [secret, setSecret] = useState(empty), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const levels = owner === 'accounts'
@@ -1104,6 +1143,183 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
   </FloatingWindow>;
 }
 
+/* ---------- Add account: the one form for every account ---------- */
+
+/** Where an account is added from (tree, provider, technology, server, Accounts tab): what is already known. */
+export type AccountPreset = { provider_id?: string; technology?: string; connection_id?: string };
+const DEFAULT_SETTINGS: Record<string, () => Row> = {
+  MT4: () => ({ server_name: '', access_points: [] }), CTRADER: () => ({ ...CTRADER_BLANK }), FIX: () => ({ ...FIX_BLANK }),
+  REST_API: () => ({ api_base_url: '', auth_method: 'API_KEY', oauth_redirect_url: '' }),
+};
+const STATE_TEXT: Record<string, string> = { BUILT: 'built', PARTIAL: 'partly built', PLANNED: 'recorded now · connector planned' };
+
+/** Provider › technology › account › server › login. MT5 and Upstox continue in their dedicated one-step forms
+ *  (server list, addresses, bridge; app key and daily login); MT4, cTrader, FIX and other APIs are completed here. */
+function AddAccount({ refs, preset, close, created, openMt5, openUpstox, newProvider }: { refs: Record<string, Row[]>; preset: AccountPreset;
+  close: () => void; created: (account: Row | null, note: string) => void; openMt5: (p: Row) => void; openUpstox: () => void; newProvider: () => void }) {
+  const presetConn = refs.connections.find(c => c.id === preset.connection_id);
+  const techOf = (platform?: string) => platform === 'REST_API' ? 'API' : platform;
+  const [cat, setCat] = useState<Row | null>(null);
+  useEffect(() => { void api('config/tree').then(setCat).catch(() => setCat({ technologies: [], api_presets: [] })); }, []);
+  const [f, setF] = useState<Row>({ provider_id: preset.provider_id ?? presetConn?.provider_id ?? '', tech: preset.technology ?? techOf(presetConn?.platform) ?? '',
+    api: '', environment: presetConn?.environment ?? 'LIVE', server: presetConn?.id ?? '', settings: {}, purpose: 'BOTH',
+    external_account_id: '', holder_name: '', name: '', code: '', base_currency: 'USD', trading_permission: 'READ_ONLY',
+    password: '', access_level: 'READ_ONLY', key: '', secret: '', username: '', _codeEdited: false, _nameEdited: false });
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const providers = refs.providers.filter(p => p.status !== 'ARCHIVED');
+  const provider = providers.find(p => p.id === f.provider_id);
+  // Every technology is listed: those the provider offers first, then those usual for its type, then the rest.
+  const offered = (id: string) => (provider?.technologies ?? []).includes(id);
+  const rank = (t: Row) => (offered(t.id) ? 2 : 0) + (provider && t.kinds.includes(provider.kind) ? 1 : 0) + (t.platform ? 0.5 : 0);
+  const ordered: Row[] = [...(cat?.technologies ?? [])].sort((a, b) => rank(b) - rank(a));
+  const tech = (cat?.technologies ?? []).find((t: Row) => t.id === f.tech);
+  const platform: string | undefined = tech?.platform;
+  const apiPreset: Row | undefined = (cat?.api_presets ?? []).find((a: Row) => a.id === f.api);
+  const dedicated = f.tech === 'MT5' ? 'MT5' : f.tech === 'API' && f.api === 'UPSTOX' ? 'UPSTOX' : '';
+  const servers = refs.connections.filter(c => c.provider_id === f.provider_id && c.platform === platform && c.status !== 'ARCHIVED' && c.environment === f.environment
+    && (f.tech !== 'API' || !apiPreset?.api_base_url || (c.settings?.api_base_url ?? '').startsWith(apiPreset.api_base_url)));
+  const server = refs.connections.find(c => c.id === f.server);
+  const settings = f.server === 'new' ? f.settings : server?.settings ?? {};
+  const idLabel = f.tech === 'MT4' ? 'MT4 login (account number)' : f.tech === 'CTRADER' ? 'cTrader account number' : f.tech === 'FIX' ? 'Account (FIX tag 1) or session account'
+    : apiPreset?.account_label ?? 'Account / client ID';
+  function set(patch: Row) {
+    setF(o => {
+      const n = { ...o, ...patch };
+      if ('provider_id' in patch) { n.server = ''; }
+      if ('tech' in patch) { n.server = ''; n.api = ''; n.settings = platform ? {} : {}; }
+      if ('api' in patch) { const ap = (cat?.api_presets ?? []).find((a: Row) => a.id === patch.api); n.server = '';
+        n.settings = { ...DEFAULT_SETTINGS.REST_API(), api_base_url: ap?.api_base_url ?? '', auth_method: ap?.auth_method ?? 'API_KEY',
+          oauth_redirect_url: ap?.auth_method === 'OAUTH2' ? `${window.location.origin}/api/oauth/${String(ap?.id ?? 'broker').toLowerCase()}/callback` : '' };
+        if (['UPSTOX', 'ANGELONE', 'ZERODHA', 'DHAN', 'FYERS'].includes(patch.api)) n.base_currency = 'INR'; }
+      if (patch.server === 'new') { const plat = (cat?.technologies ?? []).find((t: Row) => t.id === n.tech)?.platform;
+        n.settings = n.tech === 'API' ? n.settings?.api_base_url !== undefined && n.settings.api_base_url !== '' ? n.settings : { ...DEFAULT_SETTINGS.REST_API(), ...(n.settings ?? {}) }
+          : (DEFAULT_SETTINGS[plat] ?? (() => ({})))();
+        if (n.tech === 'FIX') n.purpose = 'MARKET_DATA'; if (n.tech === 'CTRADER') n.settings.host = n.environment === 'DEMO' ? 'demo.ctraderapi.com' : 'live.ctraderapi.com'; }
+      const p = providers.find(x => x.id === n.provider_id);
+      if (!n._codeEdited && p && n.external_account_id) n.code = `${p.code}_${n.environment}_${idPart(n.external_account_id)}`.slice(0, 32).replace(/_+$/, '');
+      if (!n._nameEdited && p && n.external_account_id) n.name = `${p.name} · ${PLATFORM_TAG[(cat?.technologies ?? []).find((t: Row) => t.id === n.tech)?.platform] ?? n.tech} ${n.environment === 'LIVE' ? 'live' : 'demo'} · ${n.external_account_id}`.slice(0, 120);
+      return n;
+    });
+  }
+  const newServerOk = f.server !== 'new' ? true : f.tech === 'MT4' ? !!(settings.server_name && settings.access_points?.length)
+    : f.tech === 'FIX' ? !!(settings.host && settings.sender_comp_id && settings.target_comp_id) : f.tech === 'API' ? !!settings.api_base_url && (settings.auth_method !== 'OAUTH2' || !!settings.oauth_redirect_url) : true;
+  const ready = !!(f.provider_id && platform && !dedicated && f.server && newServerOk && f.external_account_id && f.name && f.code && f.base_currency);
+  async function save(e: FormEvent) {
+    e.preventDefault(); if (!ready) return; setBusy(true); setError('');
+    const notes: string[] = [];
+    try {
+      let connId = f.server;
+      if (f.server === 'new') {
+        const s = f.tech === 'MT4' ? { server_name: settings.server_name, access_points: settings.access_points.map((p: Row) => ({ name: settings.server_name, host: p.host, port: Number(p.port), enabled: true, source: 'MANUAL' })) }
+          : f.tech === 'CTRADER' ? { host: settings.host, port: Number(settings.port || 5035), oauth_redirect_url: settings.oauth_redirect_url || null }
+          : f.tech === 'FIX' ? { ...settings, port: Number(settings.port), heartbeat_seconds: Number(settings.heartbeat_seconds), md_depth: Number(settings.md_depth) }
+          : { api_base_url: settings.api_base_url, auth_method: settings.auth_method, ...(settings.auth_method === 'OAUTH2' ? { oauth_redirect_url: settings.oauth_redirect_url } : {}) };
+        const r = await api('config/venues', 'POST', { provider_id: f.provider_id, connection: { platform, environment: f.environment, purpose: f.purpose,
+          adapter: f.tech === 'FIX' || f.tech === 'API' ? 'NATIVE' : 'DEFAULT', settings: s } });
+        const pending = pendingMessage(r);
+        if (pending) { created(null, `${pending} Add the account after it is approved.`); return; }
+        connId = r.connection.id; notes.push(`server ${r.connection.code} created`);
+      }
+      const acct = await api('config/accounts', 'POST', { connection_id: connId, code: f.code, name: f.name, external_account_id: f.external_account_id,
+        holder_name: f.holder_name, base_currency: f.base_currency, trading_permission: f.trading_permission });
+      const pendingAcct = pendingMessage(acct);
+      if (pendingAcct) { created(null, pendingAcct); return; }
+      if (f.tech === 'MT4' && f.password) {
+        await api(`config/accounts/${acct.id}/credential`, 'PUT', { credential: { kind: 'MT5_LOGIN', password: f.password, access_level: f.access_level } }); notes.push('password saved');
+      }
+      const connCredential = f.tech === 'CTRADER' && f.key ? { kind: 'OAUTH_CLIENT', client_id: f.key, client_secret: f.secret }
+        : f.tech === 'FIX' && f.username ? { kind: 'FIX_LOGIN', username: f.username, password: f.password }
+        : f.tech === 'API' && f.key ? (settings.auth_method === 'OAUTH2' ? { kind: 'OAUTH_CLIENT', client_id: f.key, client_secret: f.secret } : { kind: 'API_KEY', api_key: f.key, api_secret: f.secret }) : null;
+      if (connCredential) { await api(`config/connections/${connId}/credential`, 'PUT', { credential: connCredential }); notes.push('server login saved'); }
+      setF(o => ({ ...o, password: '', key: '', secret: '' }));
+      created(acct, `Account ${acct.code} added${notes.length ? ` (${notes.join(', ')})` : ''}.${tech?.state === 'PLANNED' || (f.tech === 'API' && apiPreset?.state === 'PLANNED') ? ' Its connector is planned: it is recorded with its server and login, and collects once the connector is built.' : ''}`);
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  const dirty = !!(f.provider_id || f.tech || f.external_account_id);
+  return <FloatingWindow storageKey="corei-os-mini.add-account.v1" width={820} title="Add account" subtitle="Provider › technology › account › server › login"
+    onClose={() => { if (!dirty || window.confirm('Discard this account?')) close(); }}
+    footer={<div className="cfg-actions">
+      {dedicated ? <button className="primary" type="button" disabled={!f.provider_id} onClick={() => dedicated === 'MT5' ? openMt5({ provider_id: f.provider_id, environment: f.environment, settings: {} }) : openUpstox()}>
+        Continue · {dedicated === 'MT5' ? 'MT5 login, server and addresses' : 'Upstox client ID and app'}</button>
+        : <button className="primary" form="cfg-add-account" disabled={busy || !ready}>{busy ? 'Adding…' : 'Add account'}</button>}
+      {!dedicated && !ready && <span className="cfg-note">Choose provider and technology, then fill in the account and its server.</span>}</div>}>
+    <form className="cfg-form" id="cfg-add-account" onSubmit={save} autoComplete="off">
+      <Section n={1} title="Provider">
+        <div className="cfg-pair">
+          <Field label="Provider" hint="Not listed? + New provider (the one provider form)"><select aria-label="Provider" required value={f.provider_id} onChange={e => set({ provider_id: e.target.value })}>
+            <option value="" disabled>Select…</option>{providers.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}</select></Field>
+          <Field label=" "><button type="button" onClick={newProvider}>+ New provider…</button></Field>
+        </div>
+      </Section>
+      <Section n={2} title="Technology">
+        {!f.provider_id ? <p className="cfg-note">Choose the provider first.</p> : !cat ? <p className="cfg-note">Loading…</p> :
+          <div className="cfg-techs" role="radiogroup" aria-label="Technology">{ordered.map((t: Row) =>
+            <button key={t.id} type="button" role="radio" aria-checked={f.tech === t.id} disabled={!t.platform} className={`cfg-tech${f.tech === t.id ? ' on' : ''}`}
+              onClick={() => set({ tech: t.id })} title={t.platform ? t.summary : `${t.summary} Not recordable yet${t.id === 'FEED' || t.id === 'EXCHANGE' ? ': use FIX 4.4 if the provider offers it' : ''}.`}>
+              <b>{t.label}</b><small>{offered(t.id) ? `offered by ${provider?.name} · ` : ''}{t.platform ? STATE_TEXT[t.state] ?? t.state : 'planned'}</small></button>)}</div>}
+        {f.tech === 'API' && <Field label="Which API"><Choice label="Which API" value={f.api} options={[['', 'Select…'], ...(cat?.api_presets ?? []).map((a: Row) =>
+          [a.id, `${a.label}${a.state === 'BUILT' ? '' : ' (recorded now · data planned)'}`] as [string, string])]} onChange={v => set({ api: v })} /></Field>}
+        {dedicated && <p className="cfg-ok">{dedicated === 'MT5' ? 'MT5 continues in its form: login, password, the server picked from the broker\'s list, addresses and connection method.'
+          : 'Upstox continues in its form: client ID, app key and secret, then the daily broker login.'}</p>}
+      </Section>
+      {platform && !dedicated && (f.tech !== 'API' || f.api) && <>
+        <Section n={3} title="Account">
+          <div className="cfg-pair">
+            <Field label={idLabel}><input aria-label="Account number or ID" required maxLength={64} value={f.external_account_id}
+              {...(f.tech === 'MT4' ? { inputMode: 'numeric' as const, pattern: '[1-9][0-9]{0,19}' } : {})} onChange={e => set({ external_account_id: e.target.value.trim() })} /></Field>
+            <Field label="Environment"><Choice label="Environment" value={f.environment} options={[['LIVE', 'Live'], ['DEMO', 'Demo']]} onChange={v => set({ environment: v, server: '' })} /></Field>
+          </div>
+          <div className="cfg-pair">
+            <Field label="Account name"><input aria-label="Account name" required maxLength={120} value={f.name} onChange={e => set({ name: e.target.value, _nameEdited: e.target.value !== '' })} /></Field>
+            <Field label="Account ID" hint="Suggested; fixed after saving"><input aria-label="Account ID" required maxLength={32} pattern="[A-Za-z][A-Za-z0-9_]{1,31}" value={f.code}
+              onChange={e => set({ code: e.target.value, _codeEdited: e.target.value !== '' })} /></Field>
+          </div>
+          <div className="cfg-pair">
+            <Field label="Account holder"><input aria-label="Account holder" maxLength={120} value={f.holder_name} onChange={e => set({ holder_name: e.target.value })} /></Field>
+            <Field label="Account currency"><input aria-label="Account currency" required maxLength={10} value={f.base_currency} onChange={e => set({ base_currency: e.target.value.toUpperCase() })} /></Field>
+          </div>
+          <Field label="Trading permission" hint="Orders also need order sending on"><Choice label="Trading permission" value={f.trading_permission}
+            options={[['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only'], ['TRADING', 'Trading']]} onChange={v => set({ trading_permission: v })} /></Field>
+        </Section>
+        <Section n={4} title="Server">
+          <Field label={f.tech === 'FIX' ? 'FIX session' : f.tech === 'API' ? 'API endpoint' : `${tech.label} server`}>
+            <Choice label="Server" value={f.server} options={[['', 'Select…'], ...servers.map(c => [c.id, `${c.settings?.server_name ?? c.settings?.host ?? c.settings?.api_base_url ?? c.code} · ${c.code}`] as [string, string]),
+              ['new', `+ New ${f.tech === 'FIX' ? 'FIX session' : f.tech === 'API' ? 'API endpoint' : 'server'} of ${provider?.name ?? 'this provider'}`]]} onChange={v => set({ server: v })} /></Field>
+          {f.server === 'new' && <>
+            {f.tech === 'MT4' && <Mt4Server settings={settings} change={s2 => set({ settings: s2 })} />}
+            {f.tech === 'CTRADER' && <CTraderFields settings={settings} change={s2 => set({ settings: s2 })} />}
+            {f.tech === 'FIX' && <FixFields settings={settings} change={s2 => set({ settings: s2 })} />}
+            {f.tech === 'API' && <div className="cfg-pair">
+              <Field label="API base URL"><input aria-label="API base URL" required type="url" value={settings.api_base_url ?? ''} onChange={e => set({ settings: { ...settings, api_base_url: e.target.value } })} /></Field>
+              <Field label="Login method"><Choice label="API login method" value={settings.auth_method ?? 'API_KEY'} options={[['API_KEY', 'API key and secret'], ['OAUTH2', 'OAuth (daily login)']]}
+                onChange={v => set({ settings: { ...settings, auth_method: v } })} /></Field>
+              {settings.auth_method === 'OAUTH2' && <Field label="Redirect URL" hint="Register this address with the broker app"><input aria-label="OAuth redirect URL" required type="url"
+                value={settings.oauth_redirect_url ?? ''} onChange={e => set({ settings: { ...settings, oauth_redirect_url: e.target.value } })} /></Field>}
+            </div>}
+            <Field label="Role" hint="Data source: prices are taken from it. Execution: trading accounts"><Choice label="Role" value={f.purpose} options={ROLE_OPTIONS} onChange={v => set({ purpose: v })} /></Field>
+          </>}
+          {server && <p className="cfg-note cfg-reuse">Uses {server.code}{server.account_count ? ` (${server.account_count} account${server.account_count === 1 ? '' : 's'} already on it)` : ''}.</p>}
+        </Section>
+        <Section n={5} title="Login">
+          {f.tech === 'MT4' && <div className="cfg-pair">
+            <Field label="Password" hint="Stored encrypted; can be added later"><input aria-label="Password" type="password" autoComplete="new-password" maxLength={4096} value={f.password} onChange={e => set({ password: e.target.value })} /></Field>
+            <Field label="Password type"><Choice label="Password type" value={f.access_level} options={[['READ_ONLY', 'Investor (read only)'], ['FULL', 'Master (can trade)']]} onChange={v => set({ access_level: v })} /></Field></div>}
+          {(f.tech === 'CTRADER' || f.tech === 'API') && <div className="cfg-pair">
+            <Field label={f.tech === 'CTRADER' || settings.auth_method === 'OAUTH2' ? 'App client ID' : 'API key'} hint="Saved encrypted on the server; leave empty if it is already saved there">
+              <input aria-label="API key" autoComplete="off" value={f.key} onChange={e => set({ key: e.target.value })} /></Field>
+            <Field label={f.tech === 'CTRADER' || settings.auth_method === 'OAUTH2' ? 'App client secret' : 'API secret'}><input aria-label="API secret" type="password" autoComplete="new-password" value={f.secret} onChange={e => set({ secret: e.target.value })} /></Field></div>}
+          {f.tech === 'FIX' && <div className="cfg-pair">
+            <Field label="Session username" hint="Only if the venue uses one (tag 553)"><input aria-label="FIX username" autoComplete="off" value={f.username} onChange={e => set({ username: e.target.value })} /></Field>
+            <Field label="Session password" hint="Tag 554"><input aria-label="FIX password" type="password" autoComplete="new-password" value={f.password} onChange={e => set({ password: e.target.value })} /></Field></div>}
+          {f.tech === 'API' && apiPreset?.daily_login && <p className="cfg-note">{apiPreset.label} issues a session each trading day: log in from the account after it is added. COREI never stores your PIN or TOTP seed.</p>}
+          {(tech?.state === 'PLANNED' || (f.tech === 'API' && apiPreset?.state === 'PLANNED')) && <p className="cfg-note">The {f.tech === 'API' ? apiPreset?.label : tech?.label} connector is planned: the account, its server and login are recorded now and it collects once the connector is built.</p>}
+        </Section>
+      </>}
+      {error && <p role="alert" className="cfg-error">{error}</p>}
+    </form>
+  </FloatingWindow>;
+}
+
 /* ---------- record list + detail ---------- */
 
 /** A link to another record; the list handles the click (data-nav="section:id"). */
@@ -1116,8 +1332,8 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Type', r => r.kind], ['Servers', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
   groups: [['Group ID', r => r.code], ['Name', r => r.name], ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
   connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => <Link to="providers" id={r.provider_id}>{r.provider_code}</Link>],
-    ['Platform', r => r.platform === 'MT5' ? 'MT5' : r.platform === 'FIX' ? 'FIX' : 'API'], ['Role', r => PURPOSE_LABEL[r.purpose] ?? r.purpose], ['Env', r => <Env value={r.environment} />],
-    ['Server', r => r.platform === 'FIX' ? `${r.settings.host}:${r.settings.port} · ${r.settings.sender_comp_id} → ${r.settings.target_comp_id}` : r.platform === 'MT5' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
+    ['Technology', r => PLATFORM_TAG[r.platform] ?? r.platform], ['Role', r => PURPOSE_LABEL[r.purpose] ?? r.purpose], ['Env', r => <Env value={r.environment} />],
+    ['Server', r => r.platform === 'FIX' ? `${r.settings.host}:${r.settings.port} · ${r.settings.sender_comp_id} → ${r.settings.target_comp_id}` : r.platform === 'CTRADER' ? `${r.settings.host}:${r.settings.port}` : r.platform === 'MT5' || r.platform === 'MT4' ? <>{r.settings.server_name}<small className="cfg-note"> · {r.settings.access_points.filter((p: Row) => p.enabled !== false).length} access points</small></> : r.settings.api_base_url],
     ['Clock', r => r.server_utc_offset_minutes == null ? <span className="cfg-pill warn">Not set</span> : `UTC${r.server_utc_offset_minutes >= 0 ? '+' : ''}${r.server_utc_offset_minutes / 60}${r.dst_rule && r.dst_rule !== 'NONE' && r.dst_rule !== 'UNKNOWN' ? ' ' + r.dst_rule + ' DST' : ''}`],
     ['Live', r => r.live_status?.state ? <span className={`cfg-pill ${r.live_status.state === 'CONNECTED' ? 'ok' : r.live_status.state === 'FAILED' ? 'warn' : 'off'}`}>{r.live_status.state}</span> : <span className="cfg-note">—</span>],
     ['Accounts', r => r.account_count],
@@ -1153,7 +1369,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
   const [selected, setSelected] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loadError, setLoadError] = useState('');
   const [mt5Preset, setMt5Preset] = useState<Row | null>(null);
-  const [adding, setAdding] = useState<'' | 'MT5' | 'UPSTOX'>(''), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
+  const [accountPreset, setAccountPreset] = useState<AccountPreset>({});
+  const [adding, setAdding] = useState<'' | 'ACCOUNT' | 'MT5' | 'UPSTOX'>(''), [importing, setImporting] = useState(false), [specsVersion, setSpecsVersion] = useState(0);
   const prefKey = `corei-os-mini.list.${entity}`;
   const [view, setView] = useState<Row>(() => { try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; } });
   const setViewPref = (patch: Row) => { const next = { ...view, ...patch }; setView(next); try { localStorage.setItem(prefKey, JSON.stringify(next)); } catch { /* preference only */ } };
@@ -1179,6 +1396,9 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     if (openId.startsWith('new:MT5:')) { void (async () => { const id = openId.slice(8);
       setMt5Preset(refs.connections.find(c => c.id === id) ?? await api(`config/connections/${id}`).catch(() => null)); setAdding('MT5'); })(); return; }
     if (openId.startsWith('new:ACCOUNT:')) { open(null); setDraft(d => ({ ...(d ?? blank[entity]), connection_id: openId.slice(12) })); return; }
+    // The one Add account form: 'add' or 'add:<provider>:<technology>:<server>' (each part optional).
+    if (openId === 'add' || openId.startsWith('add:')) { const [, provider_id, technology, connection_id] = openId.split(':');
+      setAccountPreset({ provider_id: provider_id || undefined, technology: technology || undefined, connection_id: connection_id || undefined }); setAdding('ACCOUNT'); return; }
     void (async () => {
     let row = rows?.find(r => r.id === openId);
     if (!row) row = (await load()).find(r => r.id === openId) ?? (await api(`config/${entity}/${openId}`).catch(() => null));
@@ -1252,9 +1472,9 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         <span className="cfg-toolbar-gap" />
         {exportable && <a className="cfg-button" href={`/api/config/export/${entity}.csv`} download>Export CSV</a>}
         {canEdit && entity === 'accounts' && <button onClick={() => setImporting(true)}>Import CSV</button>}
-        {canEdit && entity === 'accounts' && <><button className="primary" onClick={() => setAdding('MT5')} title="Login, password and server: creates the broker's connection too">Add MT5 account</button>
-          <button className="primary" onClick={() => setAdding('UPSTOX')} title="Client ID and your Upstox app's key and secret: creates the broker and connection too">Add Upstox account</button></>}
-        {canEdit && entity === 'connections' && <span className="cfg-note">A server is added with its account (Accounts › Add MT5 / Upstox account): only servers in use are kept. Open one here to change its addresses, clock or limits; FIX sessions and other APIs: New server (advanced).</span>}
+        {canEdit && entity === 'accounts' && <button className="primary" onClick={() => { setAccountPreset({}); setAdding('ACCOUNT'); }}
+          title="Provider › technology (MT5, MT4, cTrader, FIX, API …) › account › server › login">Add account</button>}
+        {canEdit && entity === 'connections' && <span className="cfg-note">A server is added with its account (Accounts › Add account): only servers in use are kept. Open one here to change its addresses, clock, limits or login.</span>}
         {canEdit ? <button className={entity === 'accounts' || entity === 'connections' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}{entity === 'accounts' || entity === 'connections' ? ' (advanced)' : ''}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
@@ -1272,6 +1492,11 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         </tbody></table></div>}
     </div>
     {importing && <ImportAccounts close={() => setImporting(false)} done={() => { setImporting(false); void load(); reloadRefs(); }} />}
+    {adding === 'ACCOUNT' && <AddAccount refs={refs} preset={accountPreset} close={() => setAdding('')} newProvider={() => { setAdding(''); navigate('providers', 'new'); }}
+      openMt5={p => { setMt5Preset(p); setAdding('MT5'); }} openUpstox={() => setAdding('UPSTOX')} created={(account, note) => {
+        setAdding(''); reloadRefs();
+        if (!account) { setNotice(note); void load(); return; }
+        void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
     {adding === 'UPSTOX' && <AddUpstoxAccount close={() => setAdding('')} created={(account, note) => {
       setAdding(''); reloadRefs();
       void load(account.id).then(() => { setSelected(account); setDraft({ ...account }); setNotice(note); }); }} />}
@@ -1294,10 +1519,9 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         <button type="button" className="cfg-chip" onClick={() => navigate('providers', selected.provider_id)}>{selected.provider_code}</button>
         {entity === 'accounts' && <> › <strong>{selected.code}</strong> › server <button type="button" className="cfg-chip" onClick={() => navigate('connections', selected.connection_id)}>{selected.connection_code}</button></>}
         {entity === 'connections' && <> › {selected.account_count > 0 ? <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button> : 'no account yet'} › server <strong>{selected.code}</strong></>}</p>}
-      {selected && entity === 'providers' && canEdit && <p className="cfg-crumbs">Next · step 2, an account at {selected.name}:{' '}
-        <button type="button" className="cfg-chip" onClick={() => navigate('accounts', 'new:MT5P:' + selected.id)}>Add MT5 account</button>{' '}
-        <button type="button" className="cfg-chip" onClick={() => navigate('accounts', 'new:UPSTOX')}>Add Upstox account</button>{' '}
-        <button type="button" className="cfg-chip" onClick={() => navigate('brokers', 'p:' + selected.id)}>FIX session / other API (in the tree)</button></p>}
+      {selected && entity === 'providers' && canEdit && <p className="cfg-crumbs">Next · step 2:{' '}
+        <button type="button" className="cfg-chip" onClick={() => navigate('accounts', 'add:' + selected.id)}>Add account at {selected.name}</button>
+        {' '}(choose its technology{(selected.technologies ?? []).length ? `: ${(selected.technologies as string[]).join(', ')} offered` : ''}) · <button type="button" className="cfg-link" onClick={() => navigate('brokers', 'p:' + selected.id)}>show in the tree</button></p>}
       {selected?.pending_changes > 0 && <p className="cfg-note cfg-reuse">A change to this {SINGULAR[entity]} is waiting for approval. <button type="button" className="cfg-link" onClick={() => navigate('approvals')}>Open Approvals</button></p>}
       {entity === 'accounts' && selected && <div className="cfg-blockers rd">
         {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => k === 'trading_blockers' && selected.trading_permission !== 'TRADING'
@@ -1322,8 +1546,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {selected?.status === 'ARCHIVED' && <p className="cfg-note">Archived. Set status to Inactive and save to restore it.</p>}
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
       </form>
-      {canEdit && selected && entity === 'accounts' && selected.platform === 'MT5' && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
-      {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
+      {canEdit && selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'MT4') && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
+      {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX' || selected.platform === 'CTRADER') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'FIX') && <BrokerRead account={selected} canEdit={canEdit} platform={selected.platform} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
       {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}

@@ -40,6 +40,7 @@ class SetupSeed(test_market_data.MarketData):
             self.assertEqual((p['name'], p['legal_entity'], p['licence_number']), ('VT Markets', 'VT Markets (Pty) Ltd', 'FSP 50865'))
             self.assertEqual(db.execute("SELECT status FROM cfg_providers WHERE code='META_TRADER'").fetchone()['status'], 'ARCHIVED')
             self.assertEqual(db.execute("SELECT name FROM cfg_providers WHERE code='EXNESS'").fetchone()['name'], 'Exness')
+            self.assertEqual(db.execute("SELECT technologies FROM cfg_providers WHERE code='EXNESS'").fetchone()['technologies'], ['MT5', 'MT4'])
             self.assertEqual(db.execute("SELECT name FROM cfg_connections WHERE code='METAQUOTES_MT5_DEMO'").fetchone()['name'], 'MetaQuotes · MT5 demo · MetaQuotes-Demo')
             self.assertEqual(db.execute('SELECT count(*) AS n FROM cfg_instruments').fetchone()['n'], 6)
             plans = db.execute("SELECT broker_symbol, status, purpose FROM md_collection_plans ORDER BY 1").fetchall()

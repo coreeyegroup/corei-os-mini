@@ -851,3 +851,13 @@ The reader retries a refused login automatically with current MT5 client builds 
   MT5 account or a FIX session / API for an existing provider — it no longer creates providers.
 - Names are the same everywhere: Providers, Accounts, Servers. Account records read provider › account › server.
 - A broker-login result banner can be dismissed and is not kept in the address.
+
+## Add account: provider › technology › account › server › login — release 0.34.0
+
+- **One Add account form** (Accounts tab, tree overview, provider, technology and server panels): choose the provider,
+  then the **technology** — MetaTrader 5, MetaTrader 4, cTrader, FIX 4.4 / 4.2 or a broker / exchange API (Upstox,
+  Angel One SmartAPI, Zerodha Kite Connect, Dhan, Fyers, other) — then the account, its server and its login.
+  MT5 and Upstox continue in their dedicated one-step forms.
+- **MT4 and cTrader** accounts and servers can be recorded now (database update 022); they collect once their connectors are built.
+- **Providers** record the technologies they offer; Add account lists those first. `apply-test-setup.sh` sets them for your providers.
+- Overview checklist follows the same steps. Full audit: `docs/SETUP_AUDIT_2026-11-15.md`.

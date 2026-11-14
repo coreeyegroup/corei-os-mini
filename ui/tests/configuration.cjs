@@ -48,12 +48,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      connections:db.connections.map(r=>enrich('connections',r)),accounts:db.accounts.map(r=>enrich('accounts',r)),
      summary:{accounts:db.accounts.length,data_ready:0,trading_ready:0,with_warnings:0}});
    if(url.endsWith('/config/tree')){const kinds={BROKER:'Broker',EXCHANGE:'Exchange',ECN:'ECN',FAST_FEED:'Fast feed',DATA_VENDOR:'Data vendor',DATA_CENTRE:'Data centre'};
-     const conns=db.connections.map(c=>({...enrich('connections',c),technology:{MT5:'MT5',FIX:'FIX',REST_API:'API'}[c.platform],accounts:db.accounts.filter(a=>a.connection_id===c.id).map(a=>enrich('accounts',a))}));
+     const conns=db.connections.map(c=>({...enrich('connections',c),technology:{MT5:'MT5',MT4:'MT4',CTRADER:'CTRADER',FIX:'FIX',REST_API:'API'}[c.platform],accounts:db.accounts.filter(a=>a.connection_id===c.id).map(a=>enrich('accounts',a))}));
      const tech=(id,label,platform,state,k)=>{const who=db.providers.map(p=>({provider:p,connections:conns.filter(c=>c.technology===id&&c.provider_id===p.id)})).filter(x=>x.connections.length);
        return {id,label,platform,state,kinds:k,who_hint:'who',account:'login',summary:label+' summary',adapter_details:[{id:id+'_A',label:label+' adapter',data:state,orders:'PLANNED',how:'how',credential:'login',examples:'ex'}],
          who,counts:{who:who.length,connections:who.reduce((n,x)=>n+x.connections.length,0),accounts:who.reduce((n,x)=>n+x.connections.reduce((m,c)=>m+c.accounts.length,0),0)}};};
      const used=new Set(conns.map(c=>c.provider_id));
-     return ok({technologies:[tech('MT5','MetaTrader 5','MT5','BUILT',['BROKER']),tech('MT4','MetaTrader 4',null,'PLANNED',['BROKER']),tech('FIX','FIX 4.4 / 4.2','FIX','BUILT',['ECN','BROKER','FAST_FEED']),tech('API','Broker & exchange APIs','REST_API','PARTIAL',['BROKER'])],
+     return ok({technologies:[tech('MT5','MetaTrader 5','MT5','BUILT',['BROKER']),tech('MT4','MetaTrader 4','MT4','PLANNED',['BROKER']),tech('CTRADER','cTrader','CTRADER','PLANNED',['BROKER']),tech('FIX','FIX 4.4 / 4.2','FIX','BUILT',['ECN','BROKER','FAST_FEED']),tech('API','Broker & exchange APIs','REST_API','PARTIAL',['BROKER']),tech('FEED','Fast feeds & data vendors',null,'PLANNED',['FAST_FEED'])],
+       api_presets:[{id:'UPSTOX',label:'Upstox API',state:'BUILT',api_base_url:'https://api.upstox.com',auth_method:'OAUTH2',account_label:'Upstox client ID (UCC)',daily_login:true},
+         {id:'ANGELONE',label:'Angel One SmartAPI',state:'PLANNED',api_base_url:'https://apiconnect.angelone.in',auth_method:'API_KEY',account_label:'Angel One client code',daily_login:true}],
        providers:db.providers,connections:conns,unconnected:db.providers.filter(p=>!used.has(p.id)),provider_kinds:kinds,roles:{},summary:{accounts:db.accounts.length,data_ready:0,trading_ready:0,with_warnings:0}});}
    if(url.endsWith('/config/venues')){const body=JSON.parse(options.body);venues.push(body);
      let p=db.providers.find(x=>x.id===body.provider_id);
@@ -150,6 +152,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  // The three record lists are tabs of the Connect screen (Connectivity): open it, then the tab.
  const open2=async label=>{nav('Connectivity').click();await tick();await tick();tab(label).click();await tick();await tick();};
  const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
+ // The one Add account form: provider, technology (and API), then Continue (MT5, Upstox) or fill in here.
+ const startAdd=async(techLabel,apiId,go=true)=>{button('Add account').click();await tick();await tick();await tick();
+   fill($('#cfg-add-account [aria-label="Provider"]'),db.providers[0].id);await tick();await tick();
+   [...w.document.querySelectorAll('#cfg-add-account [role=radio]')].find(b=>b.querySelector('b').textContent===techLabel).click();await tick();
+   if(apiId){fill(byLabel('Which API'),apiId);await tick();}
+   if(go){[...w.document.querySelectorAll('.fw button.primary')].find(b=>b.textContent.startsWith('Continue')).click();await tick();await tick();}};
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();};
 
  // Sign in
@@ -191,7 +199,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('New server (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
- assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) MT5 demo');  // name suggested too
+ assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) · MT5 demo');  // name suggested too
  assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name','4Method, clock and limits']);
  button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Connection name'),'ICM MT5 demo');
@@ -350,9 +358,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Add MT5 account in one step: login, password, server; existing connection reused.
  $('[aria-label="Close window"]').click();await tick();
- button('Add MT5 account').click();await tick();
+ await startAdd('MetaTrader 5');
  const addWin=$('.fw');assert.match(addWin.textContent,/Add MT5 account/);
- assert.equal(button('Add account').disabled,true);
+ assert.equal($('.fw button.primary[form="cfg-add-mt5"]').disabled,true);
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Environment'),'DEMO');await tick();
  fill(byLabel('Broker login'),'777001');fill(byLabel('Account holder'),'Coreeye Group Pvt Ltd');fill(byLabel('Password'),'setup-secret');await tick();
  const datFile=addWin.querySelector('.cfg-finder input[type="file"]');Object.defineProperty(datFile,'files',{value:[new w.File(['x'],'servers.dat')]});
@@ -379,7 +387,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: Add MT5 account sends login, password, server and per-account addresses in one step; reuses the existing connection.');
 
  // A new server: the direct SDK is the default; choosing the terminal bridge (fallback) needs host, fingerprint and token before Add is enabled.
- button('Add MT5 account').click();await tick();
+ await startAdd('MetaTrader 5');
  const addWin2=$('.fw');
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  fill(byLabel('Broker login'),'777002');fill(byLabel('Account name'),'Bridge test');await tick();
@@ -400,7 +408,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log("PASS: a new MT5 server defaults to the direct SDK; the terminal bridge fallback's host, fingerprint and token travel with the one-step set-up.");
 
  // Add Upstox account in one step: client ID, app key and secret; redirect URL shown to copy.
- button('Add Upstox account').click();await tick();
+ await startAdd('Broker & exchange APIs','UPSTOX');
  const upWin=$('.fw');assert.match(upWin.textContent,/Add Upstox account/);
  assert.match(byLabel('Redirect URL').value,/\/api\/oauth\/upstox\/callback$/);
  fill(byLabel('Upstox client ID'),'7ab123');fill(byLabel('API key'),'app-key');fill(byLabel('API secret'),'app-secret');await tick();
@@ -411,6 +419,32 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(!w.document.body.textContent.includes('app-secret'));
  $('[aria-label="Close window"]').click();await tick();
  console.log('PASS: Add Upstox account sends client ID, app key and secret in one step.');
+
+ // The same Add account form for other technologies: an Angel One API account and an MT4 account, each with a new server and its login.
+ await startAdd('Broker & exchange APIs','ANGELONE',false);
+ assert.ok([...w.document.querySelectorAll('#cfg-add-account [role=radio]')].some(b=>b.querySelector('b').textContent==='cTrader'),'cTrader offered');
+ assert.ok([...w.document.querySelectorAll('#cfg-add-account [role=radio]')].find(b=>b.querySelector('b').textContent==='Fast feeds & data vendors').disabled,'feeds: planned, not recordable');
+ fill($('#cfg-add-account [aria-label="Environment"]'),'DEMO');fill(byLabel('Account number or ID'),'A123456');await tick();
+ assert.equal(byLabel('Account ID').value,'ICM_DEMO_A123456');assert.equal(byLabel('Account currency').value,'INR');
+ fill(byLabel('Server'),'new');await tick();
+ assert.equal(byLabel('API base URL').value,'https://apiconnect.angelone.in');
+ fill(byLabel('API key'),'ang-key');fill(byLabel('API secret'),'ang-secret');await tick();
+ assert.match($('#cfg-add-account').textContent,/connector is planned: the account, its server and login are recorded now/);
+ const before=venues.length;await submit($('#cfg-add-account'));await tick();await tick();await tick();
+ assert.equal(venues.length,before+1);assert.equal(venues.at(-1).connection.platform,'REST_API');assert.equal(venues.at(-1).connection.settings.api_base_url,'https://apiconnect.angelone.in');
+ const ang=db.accounts.find(a=>a.external_account_id==='A123456');assert.ok(ang,'account created on the new server');
+ assert.deepEqual(JSON.parse(requests.filter(r=>r.url.endsWith('/credential')).at(-1).body).credential,{kind:'API_KEY',api_key:'ang-key',api_secret:'ang-secret'});
+ assert.ok(!w.document.body.textContent.includes('ang-secret'));
+ $('[aria-label="Close window"]')?.click();await tick();
+ await startAdd('MetaTrader 4',null,false);
+ fill($('#cfg-add-account [aria-label="Environment"]'),'DEMO');fill(byLabel('Account number or ID'),'700123');fill(byLabel('Server'),'new');await tick();
+ fill(byLabel('MT4 server name'),'ICMarkets-Live07');fill(byLabel('MT4 server addresses'),'198.51.100.21:443');fill(byLabel('Password'),'mt4-pass');await tick();
+ await submit($('#cfg-add-account'));await tick();await tick();await tick();
+ assert.equal(venues.at(-1).connection.platform,'MT4');assert.deepEqual(venues.at(-1).connection.settings.access_points.map(p=>p.host),['198.51.100.21']);
+ const mt4=db.accounts.find(a=>a.external_account_id==='700123');assert.ok(mt4);
+ assert.deepEqual(JSON.parse(requests.filter(r=>r.url.endsWith('/credential')).at(-1).body).credential,{kind:'MT5_LOGIN',password:'mt4-pass',access_level:'READ_ONLY'});
+ $('[aria-label="Close window"]')?.click();await tick();
+ console.log('PASS: one Add account form: provider › technology › account › server › login for API (Angel One), MT4 and the dedicated MT5 / Upstox forms.');
 
  // A FIX data source: platform FIX, session settings, role Data source; the record lists show the role.
  await open2('Servers');
@@ -439,38 +473,46 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.fw-title').textContent,/New provider/,'the same form as Providers › New provider');
  assert.equal(w.document.querySelectorAll('[aria-label="Provider name"]').length,1,'one provider form only');
  fill(byLabel('Provider name'),'Exness Global');fill(byLabel('Regulator'),'FSA');await tick();
+ byLabel('MetaTrader 5').click();byLabel('MetaTrader 4').click();await tick();
  await submit($('.cfg-detail .cfg-form'));await tick();await tick();
  const exn=db.providers.find(p=>p.name==='Exness Global');
- assert.ok(exn&&exn.code==='EXNESS_GLOBAL'&&exn.regulator==='FSA');
- assert.match($('.cfg-detail').textContent,/Next · step 2, an account at Exness Global/);
- [...w.document.querySelectorAll('.cfg-detail .cfg-chip')].find(b=>b.textContent.startsWith('FIX session')).click();await tick();await tick();await tick();await tick();
+ assert.ok(exn&&exn.code==='EXNESS_GLOBAL'&&exn.regulator==='FSA');assert.deepEqual(exn.technologies,['MT5','MT4'],'technologies offered saved');
+ assert.match($('.cfg-detail').textContent,/Next · step 2: Add account at Exness Global \(choose its technology: MT5, MT4 offered\)/);
+ [...w.document.querySelectorAll('.cfg-detail .cfg-link')].find(b=>b.textContent==='show in the tree').click();await tick();await tick();await tick();await tick();
  assert.match($('.ct-detail').textContent,/Step 1 · Provider/,'the tree opens on the new provider');
- assert.match($('.ct-detail').textContent,/Next step: Add MT5 account/);
+ assert.match($('.ct-detail').textContent,/Next step: Add account — choose its technology \(MT5, MT4 offered\)/);
  assert.ok(row('Exness Global'),'listed in the provider tree');
  [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
- assert.deepEqual(rows().filter(r=>r.classList.contains('ct-tech')).map(r=>r.querySelector('.ct-label').textContent),['MetaTrader 5','MetaTrader 4','FIX 4.4 / 4.2','Broker & exchange APIs']);
+ assert.deepEqual(rows().filter(r=>r.classList.contains('ct-tech')).map(r=>r.querySelector('.ct-label').textContent),['MetaTrader 5','MetaTrader 4','cTrader','FIX 4.4 / 4.2','Broker & exchange APIs','Fast feeds & data vendors']);
  assert.ok(row('MetaTrader 4').classList.contains('planned'));
  row('FIX 4.4 / 4.2').click();await tick();
  assert.match($('.ct-detail').textContent,/TechnologyFIX 4.4 \/ 4.2/);
- [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add FIX session').click();await tick();
+ [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add FIX 4.4 / 4.2 account').click();await tick();await tick();await tick();
+ assert.match($('.fw-title').textContent,/Add account/,'the one Add account form, technology preset');
  assert.equal(byLabel('Provider name'),null,'no second provider form');
- fill(byLabel('Provider'),db.providers[0].id);
+ fill($('#cfg-add-account [aria-label="Provider"]'),db.providers[0].id);await tick();await tick();
+ assert.equal($('#cfg-add-account [role=radio][aria-checked=true] b').textContent,'FIX 4.4 / 4.2');
+ fill($('#cfg-add-account [aria-label="Environment"]'),'DEMO');fill(byLabel('Account number or ID'),'LMX-1');fill(byLabel('Server'),'new');await tick();
  fill(byLabel('FIX host'),'fix-md.example.net');fill(byLabel('SenderCompID'),'COREI');fill(byLabel('TargetCompID'),'LMXBDM');await tick();
  assert.equal(byLabel('Role').value,'MARKET_DATA','FIX defaults to a data source');
- await submit($('.ct-add'));await tick();await tick();
+ await submit($('#cfg-add-account'));await tick();await tick();await tick();
  const v=venues.at(-1);
  assert.equal(v.provider_id,db.providers[0].id);assert.equal(v.provider,undefined);
  assert.equal(v.connection.platform,'FIX');assert.equal(v.connection.settings.port,443);assert.equal(v.connection.settings.target_comp_id,'LMXBDM');
- assert.ok($('.ct-detail').textContent.includes('Server / session · '+db.providers[0].name),'the new session is selected');
+ const fixAcct=db.accounts.find(x=>x.external_account_id==='LMX-1');assert.ok(fixAcct,'FIX account on its new session');
+ $('[aria-label="Close window"]')?.click();await tick();
+ nav('Connectivity').click();await tick();await tick();
+ [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
+ rows().find(r=>r.classList.contains('ct-conn')&&r.querySelector('.ct-label').textContent==='fix-md.example.net:443').click();await tick();
  [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add account').click();await tick();await tick();await tick();
- assert.equal(byLabel('Connection')?.value ?? $('.fw select')?.value, db.connections.at(-1).id, 'the account form opens on that session');
+ assert.equal($('#cfg-add-account [aria-label="Server"]').value,fixAcct.connection_id,'Add account opens on that server');
  $('[aria-label="Close window"]')?.click();await tick();
  nav('Connectivity').click();await tick();await tick();
  [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Provider type').click();await tick();
  [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
  assert.ok(row('Broker')&&row(db.providers[0].name),'grouped by provider type');
  [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
- console.log('PASS: Connectivity: one provider form from every entry point with a next step; tree lists technologies; a FIX session is added for an existing provider; Add account opens on it.');
+ console.log('PASS: Connectivity: one provider form with technologies offered and a next step; tree lists every technology; a FIX account and its session through Add account; Add account opens on a chosen server.');
  // MT5: provider › server › account, like every technology; the account has its route (fastest by default), measure, refresh, change server.
  [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
  const mt5Acct=db.accounts.find(a=>db.connections.find(c=>c.id===a.connection_id)?.platform==='MT5');
@@ -489,10 +531,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(byLabel('New server name'),'ICMarketsSC-Demo02');fill(byLabel('New server addresses'),'203.0.113.77:443');await tick();
  [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Move to ICMarketsSC-Demo02').click();await tick();await tick();
  assert.deepEqual(mt5Calls,['latency','refresh','move:ICMarketsSC-Demo02']);
- // MT5 technology: Add MT5 account opens the one account form (provider, login, password, its server).
+ // MT5 technology: Add account opens the one form with MT5 chosen; it continues in the MT5 form.
  row('MetaTrader 5').click();await tick();
- [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add MT5 account').click();await tick();await tick();await tick();
- assert.match($('.fw').textContent,/Add MT5 account/,'the one MT5 account form');
+ [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add MetaTrader 5 account').click();await tick();await tick();await tick();
+ assert.match($('.fw').textContent,/Add account/);assert.match($('.fw').textContent,/MT5 continues in its form/);
  $('[aria-label="Close window"]')?.click();await tick();
  console.log('PASS: provider › account › server: each MT5 account shows the server it uses; route, measure, refresh and change server work from the account; a broker goes straight on to its first account.');
 
@@ -519,7 +561,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
- assert.deepEqual([...w.document.querySelectorAll('.cfg-table tbody tr td:first-child')].map(td=>td.textContent),['ICM_DEMO_51234567','ICM_DEMO_777001']);  // numeric-aware: 51234567 > 777001
+ assert.deepEqual([...w.document.querySelectorAll('.cfg-table tbody tr td:first-child')].map(td=>td.textContent),['ICM_DEMO_LMX_1','ICM_DEMO_A123456','ICM_DEMO_51234567','ICM_DEMO_777001','ICM_DEMO_700123']);  // descending; numeric-aware: 51234567 > 777001
  console.log('PASS: chips open the linked record in its section; lists sort by column.');
 
  // CSV import: checked first, then applied.

@@ -60,10 +60,10 @@ TECHNOLOGIES: list[dict] = [
     {'id': 'MT5', 'state': 'BUILT', 'label': 'MetaTrader 5', 'platform': 'MT5', 'adapters': ['MT5_DIRECT', 'MT5_TERMINAL'],
      'kinds': ['BROKER'], 'who_hint': 'Broker and its MT5 server (e.g. VT Markets › VTMarkets-Live 3)',
      'account': 'MT5 login', 'summary': 'Retail and prime-of-prime brokers on MetaTrader 5.'},
-    {'id': 'MT4', 'state': 'PLANNED', 'label': 'MetaTrader 4', 'platform': None, 'adapters': ['MT4_DIRECT'],
+    {'id': 'MT4', 'state': 'PLANNED', 'label': 'MetaTrader 4', 'platform': 'MT4', 'adapters': ['MT4_DIRECT'],
      'kinds': ['BROKER'], 'who_hint': 'Broker and its MT4 server', 'account': 'MT4 login',
      'summary': 'Brokers still on MetaTrader 4.'},
-    {'id': 'CTRADER', 'state': 'PLANNED', 'label': 'cTrader', 'platform': None, 'adapters': ['CTRADER'],
+    {'id': 'CTRADER', 'state': 'PLANNED', 'label': 'cTrader', 'platform': 'CTRADER', 'adapters': ['CTRADER'],
      'kinds': ['BROKER'], 'who_hint': 'Broker on cTrader', 'account': 'cTrader account (one cTrader ID can hold many)',
      'summary': 'Brokers on cTrader, through the official Open API.'},
     {'id': 'FIX', 'state': 'BUILT', 'label': 'FIX 4.4 / 4.2', 'platform': 'FIX', 'adapters': ['FIX44', 'LMAX'],
@@ -82,6 +82,24 @@ TECHNOLOGIES: list[dict] = [
 ]
 PLATFORM_TECHNOLOGY = {t['platform']: t['id'] for t in TECHNOLOGIES if t['platform']}
 
+# Broker & exchange APIs: starting values for the server (endpoint and login method) when adding an account.
+# Every value stays editable; only Upstox has a built market-data reader today, the others are recorded and
+# collect once their reader is built. 'daily_login': the broker issues a session each trading day.
+API_PRESETS: list[dict] = [
+    {'id': 'UPSTOX', 'label': 'Upstox API', 'state': 'BUILT', 'api_base_url': 'https://api.upstox.com', 'auth_method': 'OAUTH2',
+     'account_label': 'Upstox client ID (UCC)', 'daily_login': True},
+    {'id': 'ANGELONE', 'label': 'Angel One SmartAPI', 'state': 'PLANNED', 'api_base_url': 'https://apiconnect.angelone.in', 'auth_method': 'API_KEY',
+     'account_label': 'Angel One client code', 'daily_login': True},
+    {'id': 'ZERODHA', 'label': 'Zerodha Kite Connect', 'state': 'PLANNED', 'api_base_url': 'https://api.kite.trade', 'auth_method': 'OAUTH2',
+     'account_label': 'Zerodha client ID', 'daily_login': True},
+    {'id': 'DHAN', 'label': 'Dhan API', 'state': 'PLANNED', 'api_base_url': 'https://api.dhan.co', 'auth_method': 'API_KEY',
+     'account_label': 'Dhan client ID', 'daily_login': False},
+    {'id': 'FYERS', 'label': 'Fyers API', 'state': 'PLANNED', 'api_base_url': 'https://api-t1.fyers.in', 'auth_method': 'OAUTH2',
+     'account_label': 'Fyers client ID', 'daily_login': True},
+    {'id': 'OTHER', 'label': 'Other broker or exchange API', 'state': 'PLANNED', 'api_base_url': '', 'auth_method': 'API_KEY',
+     'account_label': 'Account / client ID', 'daily_login': False},
+]
+
 PROVIDER_KINDS = {'BROKER': 'Broker', 'EXCHANGE': 'Exchange', 'ECN': 'ECN', 'PRIME_BROKER': 'Prime broker',
                   'LIQUIDITY_PROVIDER': 'Liquidity provider', 'FAST_FEED': 'Fast feed', 'DATA_VENDOR': 'Data vendor',
                   'DATA_CENTRE': 'Data centre'}
@@ -95,7 +113,7 @@ def technologies() -> list[dict]:
 
 
 def catalogue() -> dict:
-    return {'adapters': CATALOGUE, 'roles': ROLES, 'technologies': technologies(), 'provider_kinds': PROVIDER_KINDS}
+    return {'adapters': CATALOGUE, 'roles': ROLES, 'technologies': technologies(), 'provider_kinds': PROVIDER_KINDS, 'api_presets': API_PRESETS}
 
 
 def tree(providers: list[dict], connections: list[dict], accounts: list[dict]) -> dict:
@@ -116,6 +134,6 @@ def tree(providers: list[dict], connections: list[dict], accounts: list[dict]) -
                       'counts': {'who': len(who), 'connections': sum(len(w['connections']) for w in who),
                                  'accounts': sum(len(c['accounts']) for w in who for c in w['connections'])}})
     used = {str(c['provider_id']) for c in conns}
-    return {'technologies': techs, 'providers': providers, 'connections': conns,
+    return {'technologies': techs, 'providers': providers, 'connections': conns, 'api_presets': API_PRESETS,
             'unconnected': [p for p in providers if str(p['id']) not in used],
             'provider_kinds': PROVIDER_KINDS, 'roles': ROLES}

@@ -32,12 +32,13 @@ function connDot(c: Row) {
   return c.status !== 'ACTIVE' ? 'off' : s === 'CONNECTED' ? 'ok' : s === 'FAILED' ? 'bad' : c.accounts?.some((a: Row) => acctDot(a) === 'warn') ? 'warn' : 'idle';
 }
 const worst = (dots: string[]) => ['bad', 'warn', 'ok', 'idle', 'off'].find(d => dots.includes(d)) ?? 'idle';
-const where = (c: Row) => c.platform === 'MT5' ? c.settings?.server_name : c.platform === 'FIX' ? `${c.settings?.host}:${c.settings?.port}` : c.settings?.api_base_url?.replace(/^https:\/\//, '');
+const where = (c: Row) => c.platform === 'MT5' || c.platform === 'MT4' ? c.settings?.server_name : c.platform === 'FIX' || c.platform === 'CTRADER' ? `${c.settings?.host}:${c.settings?.port}` : c.settings?.api_base_url?.replace(/^https:\/\//, '');
 
 const permission = (a: Row) => a.trading_permission === 'READ_ONLY' ? ' · read only' : a.trading_permission === 'DISABLED' ? ' · disabled' : '';
 export const fastest = (a: Row) => { const first = a.routing?.addresses?.[0]; return first?.latency_ms != null ? `${Math.round(first.latency_ms)} ms` : ''; };
 
-const TECH_SHORT: Record<string, string> = { MT5: 'MT5', FIX: 'FIX', REST_API: 'API' };
+const TECH_SHORT: Record<string, string> = { MT5: 'MT5', MT4: 'MT4', CTRADER: 'cTrader', FIX: 'FIX', REST_API: 'API' };
+const TECH_OF: Record<string, string> = { MT5: 'MT5', MT4: 'MT4', CTRADER: 'CTRADER', FIX: 'FIX', REST_API: 'API' };
 
 /** Under each account: the server (MT5) or session / API it connects through. */
 function serverNode(c: Row, a: Row | null): Node {
@@ -149,13 +150,13 @@ export default function ConnectTree({ navigate, canEdit, changed, focus }: { nav
     </div>
     <div className="ct-detail" aria-live="polite">
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {!sel ? <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} />
+      {!sel ? <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} addAccount={() => navigate('accounts', 'add')} />
         : sel.node.kind === 'tech' ? <TechPanel key={sel.node.key} tech={sel.node.ref!} data={data} canEdit={canEdit} select={select} done={done} navigate={navigate} />
         : sel.node.kind === 'type' ? <TypePanel node={sel.node} select={select} navigate={navigate} canEdit={canEdit} />
         : sel.node.kind === 'who' ? <WhoPanel key={sel.node.key} provider={sel.node.ref!} data={data} canEdit={canEdit} select={select} navigate={navigate} done={done} />
         : sel.node.kind === 'conn' ? <ConnPanel key={sel.node.key} conn={sel.node.ref!} data={data} canEdit={canEdit} select={select} navigate={navigate} />
         : sel.node.kind === 'acct' ? <AcctPanel key={sel.node.key} account={sel.node.ref!} conn={(data.connections as Row[]).find(c => c.id === sel.node.ref!.connection_id) ?? {}} data={data} canEdit={canEdit} navigate={navigate} reload={() => void load()} />
-        : <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} />}
+        : <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} addAccount={() => navigate('accounts', 'add')} />}
     </div>
   </div>;
 }
@@ -172,22 +173,22 @@ const pill = (v?: string | null) => v ? <span className={`cfg-pill ${v === 'BUIL
 
 const FLOW: [string, string][] = [
   ['Provider', 'Who you deal with: broker, exchange, ECN, prime broker, liquidity provider, feed, data vendor, data centre. Legal entity, regulator, contacts.'],
-  ['Account', 'The account you hold there: MT5 login, FIX account, Upstox client ID.'],
-  ['Server', 'Where that account connects. MT5: the one server of the broker\'s list this login is on (only that one is kept; change it any time; fastest address by default). FIX: the session. API: the endpoint.'],
+  ['Account', 'Add account: choose its technology (MT5, MT4, cTrader, FIX, broker / exchange API such as Upstox or Angel One), then the account number or client ID.'],
+  ['Server', 'In the same form: the server that account uses. MT5/MT4: the one server of the broker\'s list the login is on (only servers in use are kept; change any time). FIX: the session. cTrader / API: the endpoint.'],
   ['Login', 'Save the account password (MT5: investor password is enough for prices) or the API key; Upstox: log in at the broker each day.'],
   ['Test', 'Read the account once: balance, server time and the provider\'s symbol list.'],
   ['Collect', 'Market data › Dashboard › the source › Available: pick symbols to collect. Then compare in Market intelligence.'],
 ];
 
-function Overview({ data, select, canEdit, add }: { data: Row; select: (k: string) => void; canEdit: boolean; add: () => void }) {
+function Overview({ data, select, canEdit, add, addAccount }: { data: Row; select: (k: string) => void; canEdit: boolean; add: () => void; addAccount: () => void }) {
   const providers = (data.providers as Row[]).filter(p => p.status !== 'ARCHIVED'), conns = data.connections as Row[];
   const accounts = conns.flatMap(c => c.accounts as Row[]);
   const counts = [providers.length, accounts.length, accounts.length, accounts.filter(a => !a.data_blockers.some((b: string) => /CREDENTIAL|TOKEN|LOGIN/.test(b))).length,
     accounts.filter(a => a.last_login_at).length, data.summary.data_ready];
   return <>
-    <Head level="Connectivity" title="Connect a provider, step by step">{canEdit && <button className="primary" onClick={add}>+ Provider</button>}</Head>
+    <Head level="Connectivity" title="Connect a provider, step by step">{canEdit && <><button className="primary" onClick={add}>+ Provider</button><button className="primary" onClick={addAccount}>Add account</button></>}</Head>
     <ol className="ct-flow">{FLOW.map(([t, d], i) => <li key={t}><b>{i + 1} · {t}</b><span className="cfg-note">{d}</span><small>{counts[i]} {i < 3 ? 'set up' : 'done'}</small></li>)}</ol>
-    <p className="cfg-note">The tree on the left follows the same order: provider › account › the server it uses. Select a provider to add an account (an MT5 account picks its server from the broker's list as it is added); select an account to save its login, test it, change its server and collect.</p>
+    <p className="cfg-note">The tree on the left follows the same order: provider › account › the server it uses. <b>Add account</b> is one form wherever it is opened (here, a provider, a technology, a server or the Accounts tab): provider › technology › account › server › login.</p>
     <table className="cfg-table ct-grid"><thead><tr><th>Provider</th><th>Type</th><th>Accounts</th><th>Servers in use</th><th>Next step</th></tr></thead>
       <tbody>{providers.map(p => { const mine = conns.filter(c => c.provider_id === p.id), acc = mine.flatMap(c => c.accounts as Row[]);
         const next = !acc.length ? 'Add an account' : acc.some(a => a.data_blockers.length) ? 'Fix account (see why)' : 'Collect symbols';
@@ -199,16 +200,13 @@ function Overview({ data, select, canEdit, add }: { data: Row; select: (k: strin
 }
 
 function TechPanel({ tech, data, canEdit, select, done, navigate }: { tech: Row; data: Row; canEdit: boolean; select: (k: string) => void; done: (k?: string) => Promise<void>; navigate: Navigate }) {
-  const [adding, setAdding] = useState(false);
   return <>
     <Head level="Technology" title={tech.label}>
-      {tech.platform && canEdit && (tech.id === 'MT5' ? <button className="primary" onClick={() => navigate('accounts', 'new:MT5')}>Add MT5 account</button>
-        : <button className="primary" onClick={() => setAdding(true)} disabled={adding}>Add {tech.id === 'FIX' ? 'FIX session' : 'API'}</button>)}
+      {tech.platform && canEdit && <button className="primary" onClick={() => navigate('accounts', `add::${tech.id}`)}>Add {tech.label} account</button>}
       {pill(tech.state)}
     </Head>
     <p className="cfg-note">{tech.summary}</p>
     <Facts rows={[['Who', tech.who_hint], ['Account', tech.account], ['Provider types', tech.kinds.map((k: string) => data.provider_kinds[k]).join(', ')]]} />
-    {adding && <AddWho tech={tech} data={data} navigate={navigate} cancel={() => setAdding(false)} done={async key => { setAdding(false); await done(key); }} />}
     {!tech.platform && <p className="cfg-note ct-planned">Not built yet: nothing can be added here. {tech.id === 'FEED' ? 'A vendor that offers FIX can be added under FIX 4.4 / 4.2 now.' : tech.id === 'EXCHANGE' ? 'Exchanges and futures gateways that offer FIX can be added under FIX 4.4 / 4.2 now.' : ''}</p>}
     <h3 className="ct-sub">Adapters</h3>
     <table className="cfg-table"><thead><tr><th>Adapter</th><th>Prices</th><th>Orders</th><th>How it works</th><th>Login</th><th>Examples</th></tr></thead>
@@ -235,25 +233,17 @@ function TypePanel({ node, select, navigate, canEdit }: { node: Node; select: (k
 
 function WhoPanel({ provider, data, canEdit, select, navigate, done }: { provider: Row; data: Row; canEdit: boolean; select: (k: string) => void; navigate: Navigate; done: (k?: string) => Promise<void> }) {
   const conns = (data.connections as Row[]).filter(c => c.provider_id === provider.id);
-  // MT5: the account is added with its server. FIX and APIs: the session or API is set up first, then accounts on it.
-  const sessions = (data.technologies as Row[]).filter(t => t.platform && t.id !== 'MT5' && t.kinds.includes(provider.kind));
-  const mt5 = (data.technologies as Row[]).some(t => t.id === 'MT5' && t.kinds.includes(provider.kind));
-  const [tech, setTech] = useState<string>('');
-  const t = sessions.find(x => x.id === tech);
   const accounts = conns.flatMap(c => c.accounts.map((a: Row) => ({ a, c })));
-  const upstox = /upstox/i.test(provider.name);
+  const offered: string[] = provider.technologies ?? [];
   return <>
     <Head level={`Step 1 · Provider · ${data.provider_kinds[provider.kind] ?? provider.kind}`} title={provider.name}>
-      {canEdit && mt5 && !upstox && <button className="primary" onClick={() => navigate('accounts', 'new:MT5P:' + provider.id)} title="Login, password and the server it is on (picked from the broker's list)">Add MT5 account</button>}
-      {canEdit && upstox && <button className="primary" onClick={() => navigate('accounts', 'new:UPSTOX')}>Add Upstox account</button>}
-      {canEdit && sessions.length > 0 && <Choice label="Add a FIX session or API" value={tech} options={[['', 'Add FIX session / API…'], ...sessions.map(b => [b.id, b.id === 'FIX' ? 'FIX session' : b.label] as [string, string])]} onChange={setTech} />}
+      {canEdit && <button className="primary" onClick={() => navigate('accounts', 'add:' + provider.id)} title="Provider › technology › account › server › login">Add account</button>}
       <button onClick={() => navigate('providers', provider.id)}>Open record</button>
     </Head>
-    {!accounts.length && !t && <p className="cfg-ok">Next step: <b>{upstox ? 'Add Upstox account' : mt5 ? 'Add MT5 account' : 'Add FIX session / API'}</b>{mt5 && !upstox ? ' — the login, its password and the server it is on.' : '.'}</p>}
+    {!accounts.length && <p className="cfg-ok">Next step: <b>Add account</b> — choose its technology ({offered.length ? `${offered.join(', ')} offered` : 'MT5, MT4, cTrader, FIX or API'}), then the account and its server.</p>}
     <Facts rows={[['Code', provider.code], ['Legal entity', provider.legal_entity], ['Regulator', [provider.regulator, provider.licence_number].filter(Boolean).join(' · ')],
       ['Jurisdiction', provider.jurisdiction], ['Execution model', provider.execution_model !== 'UNKNOWN' ? provider.execution_model : ''],
-      ['Exposure limit', provider.exposure_limit ? `${provider.exposure_limit} ${provider.exposure_currency}` : ''], ['Status', provider.status]]} />
-    {t && <AddWho tech={t} data={data} provider={provider} navigate={navigate} cancel={() => setTech('')} done={async key => { setTech(''); await done(key); }} />}
+      ['Exposure limit', provider.exposure_limit ? `${provider.exposure_limit} ${provider.exposure_currency}` : ''], ['Technologies offered', offered.join(', ')], ['Status', provider.status]]} />
     <h3 className="ct-sub">Step 2 · Accounts ({accounts.length})</h3>
     {accounts.length === 0 ? <p className="cfg-empty">None yet.</p>
       : <table className="cfg-table"><thead><tr><th>Login / ID</th><th>Name</th><th>Server</th><th>Tech</th><th>Env</th><th>Route</th><th>Data</th></tr></thead>
@@ -262,11 +252,11 @@ function WhoPanel({ provider, data, canEdit, select, navigate, done }: { provide
           <td>{c.platform === 'MT5' ? `${c.adapter === 'TERMINAL_BRIDGE' ? 'terminal' : ROUTE_LABEL[a.access_mode] ?? a.access_mode}${fastest(a) ? ' · ' + fastest(a) : ''}` : '—'}</td>
           <td>{a.data_blockers.length ? <span className="cfg-pill warn" title={a.data_blockers.map(why).join(' · ')}>not ready</span> : <span className="cfg-pill ok">ready</span>}</td></tr>)}</tbody></table>}
     <h3 className="ct-sub">Step 3 · Servers in use ({conns.length})</h3>
-    {conns.length === 0 ? <p className="cfg-empty">None yet. {mt5 ? 'An MT5 server is kept here when an account on it is added — only the servers your accounts use, not the broker\'s whole list.' : ''}</p>
+    {conns.length === 0 ? <p className="cfg-empty">None yet. A server is kept here when an account on it is added — only the servers your accounts use, never a broker's whole list.</p>
       : <table className="cfg-table"><thead><tr><th>Server / session</th><th>Tech</th><th>Method</th><th>Role</th><th>Env</th><th>State</th><th>Accounts</th></tr></thead>
         <tbody>{conns.map(c => <tr key={c.id} className="ct-click" tabIndex={0} onClick={() => select(c.accounts.length ? 's:' + c.accounts[0].id : 'c:' + c.id)}>
           <td><b>{where(c)}</b> <small className="cfg-note">{c.code}</small></td><td>{TECH_SHORT[c.platform] ?? c.platform}</td>
-          <td>{c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'official terminal' : 'direct SDK') : c.platform === 'FIX' ? 'FIX session' : 'API'}</td>
+          <td>{c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'official terminal' : 'direct SDK') : c.platform === 'FIX' ? 'FIX session' : c.platform === 'MT4' ? 'MT4 (connector planned)' : c.platform === 'CTRADER' ? 'Open API (connector planned)' : 'API'}</td>
           <td><span className={`cfg-role ${c.purpose}`}>{PURPOSE_LABEL[c.purpose]}</span></td><td><Env value={c.environment} /></td>
           <td><i className={`ct-dot ${connDot(c)}`} /> {c.live_status?.state ?? 'never connected'}</td><td>{c.accounts.length}</td></tr>)}</tbody></table>}
   </>;
@@ -275,14 +265,16 @@ function WhoPanel({ provider, data, canEdit, select, navigate, done }: { provide
 const ROUTE_LABEL: Record<string, string> = { FASTEST: 'fastest', SERVER: "server's order", ACCOUNT: 'pinned' };
 
 function addAccountTarget(c: Row) {
+  // MT5 keeps its server preset in the MT5 form; every other account opens Add account on this server.
   if (c.platform === 'MT5') return 'new:MT5:' + c.id;
   if (c.platform === 'REST_API' && /upstox/i.test(c.settings?.api_base_url ?? '')) return 'new:UPSTOX';
-  return 'new:ACCOUNT:' + c.id;
+  return `add:${c.provider_id}:${TECH_OF[c.platform] ?? ''}:${c.id}`;
 }
 
 function ConnPanel({ conn: c, data, canEdit, select, navigate }: { conn: Row; data: Row; canEdit: boolean; select: (k: string) => void; navigate: Navigate }) {
   const provider = (data.providers as Row[]).find(p => p.id === c.provider_id);
-  const method = c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'MT5 terminal bridge (fallback)' : 'Direct SDK') : c.platform === 'FIX' ? `${c.settings?.begin_string ?? 'FIX.4.4'} session` : 'Broker API';
+  const method = c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'MT5 terminal bridge (fallback)' : 'Direct SDK') : c.platform === 'FIX' ? `${c.settings?.begin_string ?? 'FIX.4.4'} session`
+    : c.platform === 'MT4' ? 'MT4 (connector planned: recorded)' : c.platform === 'CTRADER' ? 'cTrader Open API (connector planned: recorded)' : 'Broker API';
   return <>
     <Head level={`Step 3 · Server / session · ${provider?.name ?? ''} · ${TECH_SHORT[c.platform] ?? c.platform}`} title={where(c) ?? c.code}>
       {canEdit && <button className="primary" onClick={() => navigate('accounts', addAccountTarget(c))}>Add account</button>}
@@ -441,51 +433,4 @@ function ChangeServer({ account: a, conn, provider, close, done }: { account: Ro
     <div className="cfg-actions"><button type="button" onClick={close}>Cancel</button>
       <button className="primary" type="button" disabled={busy || !target || target === conn.settings?.server_name || (!picked && !manual.addresses.trim())} onClick={() => void move()}>{target ? `Move to ${target}` : 'Move'}</button></div>
   </div>;
-}
-
-/* ---------- add who: provider (existing or new) + its server / session / API, one step ---------- */
-
-function AddWho({ tech, data, provider, navigate, cancel, done }: { tech: Row; data: Row; provider?: Row; navigate: Navigate; cancel: () => void; done: (key?: string) => Promise<void> }) {
-  const [f, setF] = useState<Row>({ provider_id: provider?.id ?? '', environment: 'DEMO', purpose: tech.id === 'FIX' ? 'MARKET_DATA' : 'BOTH',
-    adapter: 'NATIVE', settings: tech.id === 'FIX' ? { ...FIX_BLANK } : { api_base_url: '', auth_method: 'API_KEY' } });
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const set = (patch: Row) => setF(o => ({ ...o, ...patch }));
-  const providers = (data.providers as Row[]).filter(p => p.status !== 'ARCHIVED' && tech.kinds.includes(p.kind));
-  const upstox = tech.id === 'API';
-  function settings(): Row {
-    if (tech.id === 'FIX') { const s = f.settings; return { ...s, port: Number(s.port), heartbeat_seconds: Number(s.heartbeat_seconds), md_depth: Number(s.md_depth) }; }
-    return { api_base_url: f.settings.api_base_url, auth_method: f.settings.auth_method, ...(f.settings.auth_method === 'OAUTH2' ? { oauth_redirect_url: f.settings.oauth_redirect_url } : {}) };
-  }
-  async function submit(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError(''); setNotice('');
-    try {
-      const body = { provider_id: provider?.id ?? f.provider_id,
-        connection: { platform: tech.platform, environment: f.environment, purpose: f.purpose, adapter: f.adapter, settings: settings() } };
-      const r = await api('config/venues', 'POST', body);
-      const pending = pendingMessage(r);
-      if (pending) { setNotice(pending); await done(`w:${tech.id}:${r.provider.id}`); return; }
-      await done('c:' + r.connection.id);
-    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
-  }
-  return <form className="ct-add" onSubmit={submit} aria-label={`Add who through ${tech.label}`}>
-    <h3 className="ct-sub">{`Add ${tech.id === 'FIX' ? 'a FIX session' : 'an API'}${provider ? ` for ${provider.name}` : ''}`}</h3>
-    {upstox && <p className="cfg-note">Upstox: use <b>Add Upstox account</b> on the Upstox provider (or Accounts › Add Upstox account): the API and the account in one step. Other broker and exchange APIs: describe the API here.</p>}
-    {!provider && <div className="cfg-pair">
-      <Field label="Provider" hint="Not listed? Add it first under Providers (one form for every provider)"><Choice label="Provider" value={f.provider_id} options={[['', 'Select…'], ...providers.map(p => [p.id, `${p.name} (${data.provider_kinds[p.kind] ?? p.kind})`] as [string, string])]} onChange={v => set({ provider_id: v })} /></Field>
-      <Field label=" "><button type="button" onClick={() => navigate('providers', 'new')}>+ New provider…</button></Field>
-    </div>}
-    {tech.id === 'FIX' && <FixFields settings={f.settings} change={s => set({ settings: s })} />}
-    {tech.id === 'API' && <div className="cfg-pair">
-      <Field label="API base URL"><input aria-label="API base URL" required type="url" placeholder="https://api.example.com" value={f.settings.api_base_url} onChange={e => set({ settings: { ...f.settings, api_base_url: e.target.value } })} /></Field>
-      <Field label="Login"><Choice label="API login method" value={f.settings.auth_method} options={[['API_KEY', 'API key and secret'], ['OAUTH2', 'OAuth (daily login)']]} onChange={v => set({ settings: { ...f.settings, auth_method: v } })} /></Field>
-      {f.settings.auth_method === 'OAUTH2' && <Field label="Redirect URL"><input aria-label="OAuth redirect URL" required type="url" value={f.settings.oauth_redirect_url ?? ''} onChange={e => set({ settings: { ...f.settings, oauth_redirect_url: e.target.value } })} /></Field>}
-    </div>}
-    {<div className="cfg-pair">
-      <Field label="Environment"><Choice label="Environment" value={f.environment} options={[['DEMO', 'Demo'], ['LIVE', 'Live']]} onChange={v => set({ environment: v })} /></Field>
-      <Field label="Role" hint="Data source: prices are taken from it. Execution: trading accounts"><Choice label="Role" value={f.purpose} options={ROLE_OPTIONS} onChange={v => set({ purpose: v })} /></Field>
-    </div>}
-    {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
-    <div className="cfg-actions"><button type="button" onClick={cancel}>Cancel</button><button className="primary" disabled={busy || !(provider?.id ?? f.provider_id)}>{busy ? 'Adding…' : 'Add · next: its account'}</button></div>
-    {<p className="cfg-note">Then select the new session and use <b>Add account</b>. Save the {tech.id === 'FIX' ? 'session login (if the venue uses one)' : 'API key and secret'} under the record's Credential.</p>}
-  </form>;
 }

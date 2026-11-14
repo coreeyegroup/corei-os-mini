@@ -381,17 +381,16 @@ def health() -> dict:
                                "(SELECT account_id FROM cfg_session_tokens)").fetchone()['n']
         plans = db.execute("SELECT count(*) AS n FROM md_collection_plans WHERE status <> 'ARCHIVED'").fetchone()['n']
         db_counts = {'users': db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE'").fetchone()['n']}
-    # The order a person sets things up in. MT5: the broker, then Add MT5 account (it creates the
-    # server's connection). API brokers (Upstox): the broker, the connection with the app's key and
-    # secret, the account, then a daily broker login. Then data, then trading.
+    # The order a person sets things up in: provider, then each account (technology, server and login in one
+    # form), its first login, then data, instruments, strategies and alerts.
     users = db_counts.get('users', 1)
     checklist = [
-        {'step': '1 Broker', 'how': 'Connectivity › pick the technology (MT5, FIX, API …) › Add who: the broker, venue or feed and its server', 'done': counts['providers'] > 0, 'section': 'brokers'},
-        {'step': '2 Account', 'how': 'Connectivity › select the server › Add account (MT5 and Upstox also in one step)',
-         'done': counts['accounts'] > 0, 'section': 'brokers'},
-        {'step': '3 Credentials', 'how': 'MT5 password, or the Upstox app key and secret, saved for every account', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'brokers'},
-        {'step': '4 First login', 'how': 'MT5: Log in and read now. Upstox: Log in at broker (every trading day)', 'done': logged_in > 0, 'section': 'brokers'},
-        {'step': '5 Market data', 'how': 'Market data › Plans › New: account + symbol', 'done': plans > 0, 'section': 'plans'},
+        {'step': '1 Provider', 'how': 'Connectivity › + Provider: the broker, exchange, ECN or feed, and the technologies it offers', 'done': counts['providers'] > 0, 'section': 'providers'},
+        {'step': '2 Account', 'how': 'Connectivity › Add account: provider › technology (MT5, MT4, cTrader, FIX, API …) › account › its server › login',
+         'done': counts['accounts'] > 0, 'section': 'accounts'},
+        {'step': '3 Login saved', 'how': 'MT5/MT4 password on the account; API key, FIX logon or cTrader app on its server', 'done': counts['accounts'] > 0 and credentials_saved >= counts['accounts'], 'section': 'accounts'},
+        {'step': '4 First login', 'how': 'MT5: Log in and read now. Upstox and other daily-login APIs: Log in at broker (every trading day)', 'done': logged_in > 0, 'section': 'brokers'},
+        {'step': '5 Market data', 'how': 'Market data › Dashboard › the source › Available: pick symbols to collect', 'done': plans > 0, 'section': 'plans'},
         {'step': '6 Instruments', 'how': 'Instruments, then the broker symbol for each (Symbol mappings)', 'done': counts['instruments'] > 0 and counts['mappings'] > 0, 'section': 'instruments'},
         {'step': '7 Strategy', 'how': 'Register, approve a version, deploy on instrument × account', 'done': counts['deployments'] > 0, 'section': 'deployments'},
         {'step': '8 Alerts', 'how': 'An e-mail, Telegram or webhook channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
