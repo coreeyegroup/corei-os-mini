@@ -193,16 +193,65 @@ def queue_gap_backfill(plan_id: Any, timeframe: str, start: datetime, end: datet
 # ---------- screens ----------
 
 def latest(account_id: UUID | None = None) -> list[dict]:
+    """Latest price per account × symbol with what the dashboard filters and sorts on: the source (provider,
+    technology, environment, role), the instrument, the day range, and the last minute's quality figures."""
     with store.transaction('read') as db:
-        rows = db.execute('''SELECT l.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
+        rows = db.execute('''SELECT l.*, a.code AS account_code, a.name AS account_name, a.external_account_id,
+                c.code AS connection_code, c.platform, c.environment, c.purpose, p.id AS provider_id, p.name AS provider_name, p.kind AS provider_kind,
+                extract(epoch FROM now() - l.received_at)::float8 AS age_seconds,
+                (extract(epoch FROM l.received_at - l.source_time) * 1000)::float8 AS latency_ms,
                 (SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=l.account_id AND s.broker_symbol=l.broker_symbol
                           ORDER BY s.read_at DESC LIMIT 1) AS digits,
-                (SELECT q.score FROM md_quality q WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) AS score,
-                d.day_open, d.day_high, d.day_low, d.day_time
-            FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id
+                q.score, q.ticks AS ticks_last_minute, q.latency_p50_ms, q.spread_avg AS spread_avg_points,
+                d.day_open, d.day_high, d.day_low, d.day_time,
+                pl.code AS plan_code, pl.purpose AS plan_purpose, pl.feed_role, pl.stale_seconds, pl.instrument_id,
+                i.symbol AS instrument_symbol, i.asset_class
+            FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id JOIN cfg_connections c ON c.id=a.connection_id
+            JOIN cfg_providers p ON p.id=c.provider_id
+            LEFT JOIN LATERAL (SELECT q.score, q.ticks, q.latency_p50_ms, q.spread_avg FROM md_quality q
+                WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) q ON true
             LEFT JOIN LATERAL (SELECT b.open AS day_open, b.high AS day_high, b.low AS day_low, b.bar_time AS day_time FROM md_bars b
-                WHERE b.account_id=l.account_id AND b.broker_symbol=l.broker_symbol AND b.timeframe='D1' ORDER BY b.bar_time DESC LIMIT 1) d ON true''' + (' WHERE l.account_id=%s' if account_id else '') +
+                WHERE b.account_id=l.account_id AND b.broker_symbol=l.broker_symbol AND b.timeframe='D1' ORDER BY b.bar_time DESC LIMIT 1) d ON true
+            LEFT JOIN md_collection_plans pl ON pl.account_id=l.account_id AND pl.broker_symbol=l.broker_symbol AND pl.status <> 'ARCHIVED'
+            LEFT JOIN cfg_instruments i ON i.id=pl.instrument_id''' + (' WHERE l.account_id=%s' if account_id else '') +
                           ' ORDER BY l.broker_symbol, a.code', (account_id,) if account_id else ()).fetchall()
+    return [store.clean(r) for r in rows]
+
+
+def sources() -> list[dict]:
+    """Every account that can give prices, with its provider, technology, environment, role, collector state and
+    how many plans and prices it has: the dashboard's source picker (scales to many providers)."""
+    with store.transaction('read') as db:
+        rows = db.execute('''SELECT a.id AS account_id, a.code AS account_code, a.name AS account_name, a.external_account_id, a.status,
+                c.id AS connection_id, c.code AS connection_code, c.platform, c.environment, c.purpose, c.settings->>'server_name' AS server_name,
+                p.id AS provider_id, p.name AS provider_name, p.kind AS provider_kind, s.state AS collector_state, s.heartbeat_at,
+                (SELECT count(*) FROM md_collection_plans pl WHERE pl.account_id=a.id AND pl.status='ACTIVE') AS active_plans,
+                (SELECT count(*) FROM md_latest l WHERE l.account_id=a.id) AS symbols_with_prices
+            FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id JOIN cfg_providers p ON p.id=c.provider_id
+            LEFT JOIN md_collector_status s ON s.account_id=a.id
+            WHERE a.status <> 'ARCHIVED' ORDER BY p.name, c.environment, a.name''').fetchall()
+    return [store.clean(r) for r in rows]
+
+
+def instruments() -> list[dict]:
+    """Instruments to pick from: the instrument register plus every broker symbol that is planned or priced, with
+    how many sources give it."""
+    with store.transaction('read') as db:
+        rows = db.execute('''SELECT COALESCE(i.symbol, x.broker_symbol) AS symbol, i.id AS instrument_id, i.name, i.asset_class,
+                array_agg(DISTINCT x.broker_symbol) AS broker_symbols, count(DISTINCT x.account_id) AS sources,
+                bool_or(x.priced) AS priced
+            FROM (SELECT pl.account_id, pl.broker_symbol, pl.instrument_id, EXISTS (SELECT 1 FROM md_latest l WHERE l.account_id=pl.account_id
+                         AND l.broker_symbol=pl.broker_symbol) AS priced FROM md_collection_plans pl WHERE pl.status <> 'ARCHIVED'
+                  UNION ALL
+                  SELECT l.account_id, l.broker_symbol, NULL, true FROM md_latest l
+                  WHERE NOT EXISTS (SELECT 1 FROM md_collection_plans pl WHERE pl.account_id=l.account_id AND pl.broker_symbol=l.broker_symbol
+                                    AND pl.status <> 'ARCHIVED')) x
+            LEFT JOIN cfg_instruments i ON i.id=x.instrument_id
+            GROUP BY COALESCE(i.symbol, x.broker_symbol), i.id, i.name, i.asset_class
+            UNION ALL
+            SELECT i.symbol, i.id, i.name, i.asset_class, ARRAY[]::text[], 0, false FROM cfg_instruments i
+            WHERE i.status = 'ACTIVE' AND NOT EXISTS (SELECT 1 FROM md_collection_plans pl WHERE pl.instrument_id=i.id AND pl.status <> 'ARCHIVED')
+            ORDER BY 1''').fetchall()
     return [store.clean(r) for r in rows]
 
 

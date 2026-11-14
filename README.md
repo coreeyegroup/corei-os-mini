@@ -638,6 +638,15 @@ DEC-45. No migration.
 - Splits, tabs, the navigator (Ctrl B) and the bottom panel are still there (Layout menu), off by default. Ctrl-click a rail icon to open a screen as an extra tab; right-click a tab to open it in a separate window.
 - Broker login errors are explained in plain words on Market data › Live (e.g. *Broker refused the connector version*), retried every 5 minutes when retrying cannot help, and alerted once.
 
+## Market dashboard controls for many sources and instruments — release 0.28.0
+
+No migration, no reader rebuild. Full list: `docs/MARKET_DASHBOARD.md`.
+
+- **Sources** and **Instruments** pickers (searchable, grouped by provider · technology and by asset class, whole-group select, *only*); filters for environment, feed role, status and minimum quality; search.
+- 26 board columns to show or hide, sort by any, group by instrument / source / provider / asset class; planned symbols without a price are shown, not hidden.
+- 1, 2 or 4 chart panes with compare-to-another-source; refresh rate, pause, local/UTC time, CSV export; workspaces: new, duplicate, one per source, rename, close.
+- API: `GET /api/md/sources`, `GET /api/md/instruments`; `md/latest` carries provider, technology, environment, role, instrument, latency and last-minute quality.
+
 ## Market dashboard with workspaces — release 0.27.0
 
 DEC-58. No migration, no reader rebuild. How prices are collected, stored and used: `docs/MARKET_DATA_FLOW.md`.

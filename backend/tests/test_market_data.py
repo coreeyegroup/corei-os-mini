@@ -263,7 +263,14 @@ class MarketData(unittest.TestCase):
         self.assertTrue(plans['EU_A']['active_feed'])
         latest = self.ok(self.alice.get('/api/md/latest'))['items']
         self.assertEqual(len(latest), 3)
-        self.assertTrue({'day_open', 'day_high', 'day_low'} <= set(latest[0]), 'the dashboard shows the day range')
+        self.assertTrue({'day_open', 'day_high', 'day_low', 'provider_name', 'platform', 'environment', 'latency_ms', 'ticks_last_minute'} <= set(latest[0]),
+                        'the dashboard filters and sorts on source, day range and quality')
+        sources = self.ok(self.alice.get('/api/md/sources'))['items']
+        self.assertIn(str(a['id']), [s['account_id'] for s in sources])
+        self.assertTrue({'provider_name', 'platform', 'environment', 'collector_state', 'active_plans'} <= set(sources[0]))
+        picked = {i['symbol']: i for i in self.ok(self.alice.get('/api/md/instruments'))['items']}
+        self.assertTrue(picked, 'instruments to pick from')
+        self.assertTrue(any(i['sources'] >= 1 and i['priced'] for i in picked.values()))
         # Dashboard chart and time & sales: the latest prices of one symbol, oldest first.
         ticks = self.ok(self.alice.get(f"/api/md/ticks/{a['id']}/EURUSD?seconds=3600&limit=50"))['items']
         self.assertTrue(ticks)

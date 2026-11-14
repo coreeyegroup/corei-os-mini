@@ -37,6 +37,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31',problem:null},
      {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',state:'FAILED',host:null,port:null,lag_ms:null,subscribed:0,ticks_total:0,backlog:0,heartbeat_age_seconds:3,last_error:'ServerException: OLD_VERSION',
       problem:{title:'Broker refused the connector version',detail:'The broker requires a newer MT5 version.',permanent:true,raw:'ServerException: OLD_VERSION'}}]});
+   if(url.endsWith('/md/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',provider_name:'VT Markets',platform:'MT5',environment:'LIVE',purpose:'BOTH',collector_state:'CONNECTED',active_plans:1,symbols_with_prices:1},
+     {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',provider_name:'IC Markets',platform:'MT5',environment:'LIVE',purpose:'BOTH',collector_state:'FAILED',active_plans:1,symbols_with_prices:1}]});
+   if(url.endsWith('/md/instruments'))return ok({items:[{symbol:'XAUUSD',asset_class:'METAL',sources:2,priced:true,broker_symbols:['XAUUSD','XAUUSD.r']},{symbol:'NIFTY',asset_class:null,sources:0,priced:false,broker_symbols:[]}]});
    if(url.includes('/md/bars/'))return ok({items:Array.from({length:30},(_,i)=>({bar_time:new Date(Date.parse(now)-i*60000).toISOString(),open:2400+i%5,high:2403+i%5,low:2398+i%5,close:2401+(i%3),ticks:40,source:'BUILT'}))});
    if(url.includes('/md/ticks/')){tickCalls.push(url);return ok({items:[{received_at:now,source_time:now,bid:2401.15,ask:2401.4},{received_at:now,source_time:now,bid:2401.2,ask:2401.45}]});}
    if(url.endsWith('/operator/prefs')&&method==='GET')return ok({});
@@ -65,25 +68,54 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle(3);};
 
- // Dashboard (default): workspaces All sources + one per account; quote board, chart, time & sales, sources, feeds.
+ // Dashboard (default): one workspace with every source and instrument; pickers, filters, grouping, columns, panes.
  const tabs=()=>$$('.mb-tabs [role=tab]').map(b=>b.textContent);
- assert.deepEqual(tabs(),['All sources2','IC Markets B1','VT Markets gold1']);
- assert.equal($$('.mb-board tbody tr').length,2);
+ const pickBtn=l=>$$('.mb-pickbtn').find(b=>b.textContent.startsWith(l));
+ const boardRows=()=>$$('.mb-board tbody tr:not(.mb-group)');
+ assert.deepEqual(tabs(),['All sources']);
+ assert.equal(boardRows().length,2);
+ assert.match(pickBtn('Sources').textContent,/All \(2\)/);
  assert.match($('.mb-kpis').textContent,/Feeds live1\/2/);
  assert.match($('.mb-problem').textContent,/IC Markets B: Broker refused the connector version/);
- assert.ok($$('.mb-board tbody tr')[0].querySelector('td:nth-child(10) svg'),'trend column');
- assert.equal($$('.mb-svg g.up, .mb-svg g.down').length,30,'candles drawn for the selected symbol');
+ assert.equal($$('.mb-svg g.up, .mb-svg g.down').length,30,'candles drawn for the first row');
  assert.ok(tickCalls.some(u=>u.includes('seconds=120')),'time & sales loads recent ticks');
- assert.match($('[aria-label=Sources]').textContent,/XAUUSD · 2 sources/,'same instrument from both accounts');
- $$('.mb-tabs [role=tab]')[2].click();await settle();
- assert.equal($$('.mb-board tbody tr').length,1,'account workspace shows only that account');
- button('+ Workspace').click();await settle();
- fill($('[aria-label="Workspace name"]'),'Gold desk');
- $$('.mb-wsform .mb-chip input')[0].click();await settle();
- await submit($('.mb-wsform'));
- assert.ok(tabs().includes('★ Gold desk2'),'own workspace saved and shown');
- assert.equal(prefPuts.at(-1).value[0].name,'Gold desk','workspaces follow the user (saved as a preference)');
- console.log('PASS: dashboard workspaces (all, per account, own), quote board, candles, time & sales, sources comparison and feeds.');
+ assert.match($('[aria-label=Sources]').textContent,/XAUUSD · 2 sources/,'same instrument from both sources');
+ // Sources picker: grouped by provider, searchable; "only" keeps one source.
+ pickBtn('Sources').click();await settle();
+ assert.deepEqual($$('.mb-popgroup').map(g=>g.textContent),['VT Markets · MT51','IC Markets · MT51']);
+ fill($('[aria-label="Search sources"]'),'gold');await settle();
+ assert.equal($$('.mb-popitem').length,1);
+ $('.mb-popitem .mb-only').click();await settle();
+ assert.equal(boardRows().length,1);assert.match(pickBtn('Sources').textContent,/1 of 2/);
+ const esc=async()=>{w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));await settle();};
+ await esc();assert.equal($('.mb-pop'),null,'Escape closes the picker');
+ // Instrument picker lists the register too, by asset class; not-collected ones are marked.
+ pickBtn('Instruments').click();await settle();
+ assert.match($('.mb-pop').textContent,/Metals.*XAUUSD.*2 sources.*Indices.*NIFTY.*not collected/);
+ await esc();
+ // Back to all sources; filters, grouping, columns and sort.
+ pickBtn('Sources').click();await settle();$$('.mb-poptools button').find(b=>b.textContent==='Reset').click();await settle();await esc();
+ assert.equal(boardRows().length,2);
+ $$('.mb-seg[aria-label=Status] button').find(b=>b.textContent==='Stale').click();await settle();
+ assert.equal(boardRows().length,1,'stale filter');
+ $$('.mb-seg[aria-label=Status] button').find(b=>b.textContent==='All').click();await settle();
+ fill($('[aria-label="Group rows by"]'),'source');await settle();
+ assert.deepEqual($$('.mb-group b').map(b=>b.textContent),['IC Markets B','VT Markets gold']);
+ fill($('[aria-label="Group rows by"]'),'none');await settle();
+ pickBtn('Columns').click();await settle();
+ $$('.mb-popitem').find(l=>l.textContent.startsWith('Provider')).querySelector('input').click();await settle();await esc();
+ assert.ok($$('.mb-board th').some(th=>th.textContent.startsWith('Provider')),'column added');
+ $$('.mb-board th').find(th=>th.textContent.startsWith('Q')).click();await settle();
+ assert.match(boardRows()[0].textContent,/VT Markets gold/,'sorted by quality, best first');
+ $$('.mb-seg[aria-label=Charts] button').find(b=>b.textContent==='2').click();await settle();
+ assert.equal($$('.mb-charts > section').length,2);
+ // Workspaces: one per source; they are saved for the user.
+ button('One per source').click();await settle();
+ assert.deepEqual(tabs(),['All sources','VT Markets gold','IC Markets B']);
+ await new Promise(r=>setTimeout(r,900));
+ assert.equal(prefPuts.at(-1).value.length,3,'workspaces saved as a preference');
+ assert.equal(boardRows().length,1,'the new workspace shows its source only');
+ console.log('PASS: dashboard: source and instrument pickers (grouped, searchable, only), filters, grouping, columns, sort, chart panes, workspaces saved.');
  nav('Table').click();await settle();
 
  // Live: collector card and prices; a 42 s old price is flagged.
