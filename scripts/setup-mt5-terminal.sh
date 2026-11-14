@@ -43,10 +43,40 @@ install -d -m 755 /etc/apt/keyrings
 [[ -f /etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources ]] || \
   curl -fsSL -o "/etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources" "https://dl.winehq.org/wine-builds/ubuntu/dists/$VERSION_CODENAME/winehq-$VERSION_CODENAME.sources"
 apt-get update -qq
-if dpkg -l wine 2>/dev/null | grep -q '^ii' && ! dpkg -l winehq-stable 2>/dev/null | grep -q '^ii'; then
-  DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq wine wine64 libwine fonts-wine >/dev/null || true
+APTLOG=/var/log/corei-mt5-apt.log
+wine_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends winehq-stable >>"$APTLOG" 2>&1; }
+wine_ok() { dpkg-query -W -f='${db:Status-Status}' winehq-stable 2>/dev/null | grep -q '^installed$'; }
+if ! wine_ok && ! wine_install; then
+  echo "WineHQ's Wine was refused by apt; repairing and retrying (details: $APTLOG)."
+  # 1. Finish any interrupted package work.
+  dpkg --configure -a >>"$APTLOG" 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get -f install -y >>"$APTLOG" 2>&1 || true
+  # 2. Remove Ubuntu's own Wine (and its 32-bit parts) left from an earlier attempt: it conflicts with WineHQ's.
+  OLD_WINE=$(dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' 'wine*' 'libwine*' 'fonts-wine*' 2>/dev/null \
+    | awk '$2=="installed"{print $1}' | grep -vE '^(winehq-|wine-stable|wine-devel|wine-staging)' || true)
+  if [[ -n "$OLD_WINE" ]]; then
+    echo "Removing Ubuntu's older Wine packages: $(echo $OLD_WINE)"
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y $OLD_WINE >>"$APTLOG" 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >>"$APTLOG" 2>&1 || true
+  fi
+  # 3. Optional (asked for): bring installed libraries level with the 32-bit ones WineHQ needs.
+  if [[ "${COREI_UPGRADE_SYSTEM:-0}" == 1 ]]; then
+    echo "Upgrading installed packages (COREI_UPGRADE_SYSTEM=1); services such as PostgreSQL may restart for a few seconds."
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y >>"$APTLOG" 2>&1 || true
+  fi
+  apt-get update -qq
+  if ! wine_install; then
+    echo
+    echo "apt still refuses WineHQ's Wine. Its reason:"
+    { apt-get install -s --install-recommends winehq-stable 2>&1 || true; } | sed -n '/following packages have unmet dependencies/,/^E:/p' | head -40 || true
+    HELD=$(apt-mark showhold); [[ -n "$HELD" ]] && echo "Packages on hold (apt will not change them): $(echo $HELD)"
+    echo
+    echo "Most often: installed libraries are older than the 32-bit ones WineHQ needs. Run the same command again with"
+    echo "  sudo COREI_UPGRADE_SYSTEM=1 bash scripts/use-mt5-terminal.sh <ACCOUNT_CODE>"
+    echo "(it upgrades installed packages first; PostgreSQL and other services may restart for a few seconds), or send the lines above."
+    exit 1
+  fi
 fi
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --install-recommends winehq-stable >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb xauth openssl curl unzip ca-certificates >/dev/null
 wine --version
 
