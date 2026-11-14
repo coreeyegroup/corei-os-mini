@@ -17,7 +17,8 @@
 set -euo pipefail
 
 INSTANCE="${1:-}"; PORT="${2:-}"; INSTALLER_URL="${3:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
-PYTHON_URL="https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+PYTHON_URL="https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
+GET_PIP_URL="https://bootstrap.pypa.io/get-pip.py"
 [[ $EUID -eq 0 ]] || { echo "Run as root (sudo)."; exit 1; }
 [[ "$INSTANCE" =~ ^[a-z0-9][a-z0-9-]{1,30}$ ]] || { echo "Usage: $0 <instance (a-z0-9-)> <port> [broker-installer-url]"; exit 1; }
 [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1024 && "$PORT" -le 65535 ]] || { echo "Port must be 1024-65535."; exit 1; }
@@ -31,11 +32,22 @@ STATE=$BASE/state
 UNIT=corei-mt5-$INSTANCE
 
 step() { printf '\n== %s\n' "$*"; }
+trap 'echo; echo "FAILED at line $LINENO: $BASH_COMMAND"; echo "Fix the cause above and run the same command again (finished steps are skipped)."' ERR
 
-step "1/7 Packages: Wine, virtual screen, OpenSSL"
+step "1/7 Packages: current Wine from WineHQ, virtual screen, OpenSSL"
+# Ubuntu's own wine (6.0) is too old for current MT5 terminals and pretends to be Windows 7, which Python 3.9+ refuses.
+. /etc/os-release
 dpkg --add-architecture i386
+install -d -m 755 /etc/apt/keyrings
+[[ -f /etc/apt/keyrings/winehq-archive.key ]] || curl -fsSL -o /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+[[ -f /etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources ]] || \
+  curl -fsSL -o "/etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources" "https://dl.winehq.org/wine-builds/ubuntu/dists/$VERSION_CODENAME/winehq-$VERSION_CODENAME.sources"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wine wine64 xvfb xauth openssl curl ca-certificates >/dev/null
+if dpkg -l wine 2>/dev/null | grep -q '^ii' && ! dpkg -l winehq-stable 2>/dev/null | grep -q '^ii'; then
+  DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq wine wine64 libwine fonts-wine >/dev/null || true
+fi
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --install-recommends winehq-stable >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb xauth openssl curl unzip ca-certificates >/dev/null
 wine --version
 
 step "2/7 Service user and folders"
@@ -46,20 +58,29 @@ if ss -ltn "( sport = :$PORT )" | grep -q LISTEN && ! systemctl is-active --quie
   echo "Port $PORT is already in use by something else. Pick another port."; exit 1
 fi
 
-as_svc() { sudo -u "$SVC_USER" env HOME=/var/lib/corei-mt5 WINEPREFIX="$PREFIX" WINEARCH=win64 WINEDEBUG=-all "$@"; }
+cd "$BASE"   # Wine starts in the current folder; the service user cannot read the repository's home folder.
+as_svc() { sudo -u "$SVC_USER" env HOME=/var/lib/corei-mt5 WINEPREFIX="$PREFIX" WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" "$@"; }
 in_screen() { as_svc xvfb-run -a -s '-screen 0 1280x800x24' "$@"; }
 
-step "3/7 Wine prefix $PREFIX"
+step "3/7 Wine prefix $PREFIX (Windows 10 mode)"
 [[ -d "$PREFIX/drive_c" ]] || in_screen wineboot --init
-as_svc true
+in_screen wine reg add 'HKCU\Software\Wine' /v Version /d win10 /f >/dev/null
+as_svc wineserver -w
 
-step "4/7 Windows Python + MetaTrader5 package"
-PYEXE="$PREFIX/drive_c/Program Files/Python311/python.exe"
+step "4/7 Windows Python 3.11 + MetaTrader5 package"
+# The embeddable Python needs no installer (installers are the fragile part under Wine).
+PYDIR="$PREFIX/drive_c/corei-python"
+PYEXE="$PYDIR/python.exe"
 if [[ ! -f "$PYEXE" ]]; then
-  as_svc curl -fsSL -o "$BASE/downloads/python.exe" "$PYTHON_URL"
-  in_screen wine "$BASE/downloads/python.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+  as_svc curl -fsSL -o "$BASE/downloads/python-embed.zip" "$PYTHON_URL"
+  as_svc unzip -q -o "$BASE/downloads/python-embed.zip" -d "$PYDIR"
+  as_svc sed -i 's/^#\s*import site/import site/' "$PYDIR"/python3*._pth
 fi
-in_screen wine "$PYEXE" -m pip install --quiet --upgrade pip MetaTrader5
+if ! in_screen wine "$PYEXE" -m pip --version >/dev/null 2>&1; then
+  as_svc curl -fsSL -o "$BASE/downloads/get-pip.py" "$GET_PIP_URL"
+  in_screen wine "$PYEXE" "$(as_svc winepath -w "$BASE/downloads/get-pip.py")" --no-warn-script-location -q
+fi
+in_screen wine "$PYEXE" -m pip install --quiet --no-warn-script-location --upgrade MetaTrader5
 in_screen wine "$PYEXE" -c "import MetaTrader5 as m; print('MetaTrader5 package', m.__version__)"
 
 step "5/7 MetaTrader 5 terminal ($INSTALLER_URL)"
@@ -70,6 +91,7 @@ if [[ -z "$TERMINAL" ]]; then
   in_screen timeout 900 wine "$BASE/downloads/mt5setup.exe" /auto || true
   TERMINAL=$(find "$PREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe 2>/dev/null | head -1 || true)
 fi
+as_svc wineserver -k 2>/dev/null || true   # the installer starts the terminal; stop it, the service starts its own
 [[ -n "$TERMINAL" ]] || { echo "terminal64.exe was not installed. Check the installer URL and run again."; exit 1; }
 WIN_TERMINAL=$(as_svc winepath -w "$TERMINAL")
 echo "Terminal: $WIN_TERMINAL"

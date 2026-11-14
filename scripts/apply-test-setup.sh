@@ -8,6 +8,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE=/etc/corei-os-mini/workstation.env
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE: run the database setup first." >&2; exit 1; }
-set -a; . "$ENV_FILE"; set +a
+# Read KEY=value lines literally (as systemd does): values may contain $ and other shell characters.
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|'#'*) continue ;; esac
+  key="${line%%=*}"; value="${line#*=}"
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+  case "$value" in \"*\") value="${value:1:${#value}-2}" ;; \'*\') value="${value:1:${#value}-2}" ;; esac
+  export "$key=$value"
+done < "$ENV_FILE"
 export PYTHONPATH="$ROOT/backend/src"
 exec "$ROOT/.venv-workstation/bin/python" -m corei_os_mini.setup_seed "$@"
