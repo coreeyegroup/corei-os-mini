@@ -168,7 +168,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.32.1-provider-account-server",
+        "release": "0.33.0-connectivity-one-flow",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

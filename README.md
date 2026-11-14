@@ -841,3 +841,13 @@ The reader retries a refused login automatically with current MT5 client builds 
 - 0.32.1: the tree is **Provider › Account › Server** (DEC-62): each account shows the server it uses beneath it; an MT5 account
   picks its server from the broker's list when added and can change it; only servers in use are kept. A Broker login result is
   shown once and removed from the address, so a saved link no longer repeats an old message.
+
+## Connectivity: one flow, no duplicates — release 0.33.0
+
+- Tabs follow the flow: **Tree · Providers · Accounts · Servers** (provider › account › server).
+- **One form per record.** A provider is entered only in the provider form; the tree's **+ Provider** and every "new provider"
+  link open it, and after saving it offers step 2 (Add MT5 account / Add Upstox account / FIX session or other API).
+  Accounts use the Add MT5 / Add Upstox / New account forms wherever they are opened from. The tree's technology view adds an
+  MT5 account or a FIX session / API for an existing provider — it no longer creates providers.
+- Names are the same everywhere: Providers, Accounts, Servers. Account records read provider › account › server.
+- A broker-login result banner can be dismissed and is not kept in the address.

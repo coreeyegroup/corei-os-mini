@@ -89,7 +89,7 @@ function build(data: Row, group: string): Node[] {
   return nodes;
 }
 
-export default function ConnectTree({ navigate, canEdit, changed }: { navigate: Navigate; canEdit: boolean; changed?: () => void }) {
+export default function ConnectTree({ navigate, canEdit, changed, focus }: { navigate: Navigate; canEdit: boolean; changed?: () => void; focus?: string }) {
   const [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
   const [pref, setPref] = useState<Row>(() => ({ group: 'provider', open: [], ...readPref() }));
   const [selected, setSelected] = useState<string>(() => readPref().selected ?? ''), [filter, setFilter] = useState('');
@@ -98,6 +98,8 @@ export default function ConnectTree({ navigate, canEdit, changed }: { navigate: 
   useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, []);
   useEffect(() => { writePref({ ...pref, selected }); }, [selected]);
   const roots = useMemo(() => data ? build(data, pref.group) : [], [data, pref.group]);
+  // Opened from a record (e.g. a provider's next step): select that node once the tree is loaded.
+  useEffect(() => { if (focus && data && /^[pacs]:/.test(focus)) { if (pref.group !== 'provider' && focus.startsWith('p:')) save({ group: 'provider' }); select(focus); } }, [focus, !!data]);
   const index = useMemo(() => { const m = new Map<string, { node: Node; parents: Node[] }>();
     const walk = (ns: Node[], parents: Node[]) => ns.forEach(n => { m.set(n.key, { node: n, parents }); walk(n.children, [...parents, n]); }); walk(roots, []); return m; }, [roots]);
   const open = new Set<string>(pref.open);
@@ -127,7 +129,7 @@ export default function ConnectTree({ navigate, canEdit, changed }: { navigate: 
           <button aria-pressed={pref.group === 'tech'} onClick={() => save({ group: 'tech' })} title="Technology › provider › account › server">Technology</button>
           <button aria-pressed={pref.group === 'type'} onClick={() => save({ group: 'type' })} title="Broker, exchange, ECN, feed … › provider › account › server">Provider type</button>
         </div>
-        {canEdit && <button className="primary ct-addp" title="Step 1: add a provider (broker, exchange, ECN, feed …)" onClick={() => setSelected('new:provider')}>+ Provider</button>}
+        {canEdit && <button className="primary ct-addp" title="Step 1: add a provider (broker, exchange, ECN, feed …) — the same form as Providers › New provider" onClick={() => navigate('providers', 'new')}>+ Provider</button>}
         <input aria-label="Filter the tree" placeholder="Filter…" value={filter} onChange={e => setFilter(e.target.value)} />
         <button title="Expand all" aria-label="Expand all" onClick={() => save({ open: [...new Set([...open, ...index.keys()])] })}>+</button>
         <button title="Collapse all" aria-label="Collapse all" onClick={() => save({ open: [] })}>−</button>
@@ -147,14 +149,13 @@ export default function ConnectTree({ navigate, canEdit, changed }: { navigate: 
     </div>
     <div className="ct-detail" aria-live="polite">
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {selected === 'new:provider' ? <AddProvider data={data} cancel={() => setSelected('')} done={async key => { await done(key); }} />
-        : !sel ? <Overview data={data} select={select} canEdit={canEdit} add={() => setSelected('new:provider')} />
+      {!sel ? <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} />
         : sel.node.kind === 'tech' ? <TechPanel key={sel.node.key} tech={sel.node.ref!} data={data} canEdit={canEdit} select={select} done={done} navigate={navigate} />
         : sel.node.kind === 'type' ? <TypePanel node={sel.node} select={select} navigate={navigate} canEdit={canEdit} />
         : sel.node.kind === 'who' ? <WhoPanel key={sel.node.key} provider={sel.node.ref!} data={data} canEdit={canEdit} select={select} navigate={navigate} done={done} />
         : sel.node.kind === 'conn' ? <ConnPanel key={sel.node.key} conn={sel.node.ref!} data={data} canEdit={canEdit} select={select} navigate={navigate} />
         : sel.node.kind === 'acct' ? <AcctPanel key={sel.node.key} account={sel.node.ref!} conn={(data.connections as Row[]).find(c => c.id === sel.node.ref!.connection_id) ?? {}} data={data} canEdit={canEdit} navigate={navigate} reload={() => void load()} />
-        : <Overview data={data} select={select} canEdit={canEdit} add={() => setSelected('new:provider')} />}
+        : <Overview data={data} select={select} canEdit={canEdit} add={() => navigate('providers', 'new')} />}
     </div>
   </div>;
 }
@@ -197,41 +198,12 @@ function Overview({ data, select, canEdit, add }: { data: Row; select: (k: strin
   </>;
 }
 
-/** Step 1: the provider (counterparty) on its own. Its server or session is the next step. */
-function AddProvider({ data, cancel, done }: { data: Row; cancel: () => void; done: (key?: string) => Promise<void> }) {
-  const [f, setF] = useState<Row>({ name: '', code: '', kind: 'BROKER', legal_entity: '', regulator: '', licence_number: '', jurisdiction: '', website: '' });
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const set = (patch: Row) => setF(o => ({ ...o, ...patch }));
-  async function submit(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError('');
-    try { const r = await api('config/providers', 'POST', Object.fromEntries(Object.entries({ ...f, code: f.code || codeOf(f.name) }).filter(([, v]) => v !== '')));
-      await done('p:' + r.id); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
-  }
-  return <form className="ct-add" onSubmit={submit} aria-label="Add provider">
-    <Head level="Step 1 of 6 · Provider" title="Add provider" />
-    <p className="cfg-note">The company you deal with. Next you add the account you hold there; an MT5 account picks its server from the broker's list as it is added.</p>
-    <div className="cfg-pair">
-      <Field label="Name" hint="e.g. VT Markets, IC Markets, Upstox, LMAX Global"><input aria-label="Provider name" required maxLength={120} value={f.name} onChange={e => set({ name: e.target.value })} /></Field>
-      <Field label="Type"><Choice label="Provider type" value={f.kind} options={Object.entries(data.provider_kinds as Record<string, string>)} onChange={v => set({ kind: v })} /></Field>
-    </div>
-    <div className="cfg-pair">
-      <Field label="Code" hint="Short ID; filled in from the name"><input aria-label="Provider code" maxLength={32} placeholder={codeOf(f.name || 'Provider')} value={f.code} onChange={e => set({ code: e.target.value.toUpperCase() })} /></Field>
-      <Field label="Legal entity" hint="Optional"><input aria-label="Legal entity" maxLength={200} value={f.legal_entity} onChange={e => set({ legal_entity: e.target.value })} /></Field>
-    </div>
-    <div className="cfg-pair">
-      <Field label="Regulator" hint="Optional, e.g. FSCA, SEBI, FCA"><input aria-label="Regulator" maxLength={120} value={f.regulator} onChange={e => set({ regulator: e.target.value })} /></Field>
-      <Field label="Licence number" hint="Optional"><input aria-label="Licence number" maxLength={80} value={f.licence_number} onChange={e => set({ licence_number: e.target.value })} /></Field>
-    </div>
-    {error && <p role="alert" className="cfg-error">{error}</p>}
-    <div className="cfg-actions"><button type="button" onClick={cancel}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Adding…' : 'Add provider · next: its account'}</button></div>
-  </form>;
-}
-
 function TechPanel({ tech, data, canEdit, select, done, navigate }: { tech: Row; data: Row; canEdit: boolean; select: (k: string) => void; done: (k?: string) => Promise<void>; navigate: Navigate }) {
   const [adding, setAdding] = useState(false);
   return <>
     <Head level="Technology" title={tech.label}>
-      {tech.platform && canEdit && <button className="primary" onClick={() => setAdding(true)} disabled={adding}>Add who</button>}
+      {tech.platform && canEdit && (tech.id === 'MT5' ? <button className="primary" onClick={() => navigate('accounts', 'new:MT5')}>Add MT5 account</button>
+        : <button className="primary" onClick={() => setAdding(true)} disabled={adding}>Add {tech.id === 'FIX' ? 'FIX session' : 'API'}</button>)}
       {pill(tech.state)}
     </Head>
     <p className="cfg-note">{tech.summary}</p>
@@ -474,12 +446,11 @@ function ChangeServer({ account: a, conn, provider, close, done }: { account: Ro
 /* ---------- add who: provider (existing or new) + its server / session / API, one step ---------- */
 
 function AddWho({ tech, data, provider, navigate, cancel, done }: { tech: Row; data: Row; provider?: Row; navigate: Navigate; cancel: () => void; done: (key?: string) => Promise<void> }) {
-  const [f, setF] = useState<Row>({ provider_id: provider?.id ?? '', name: '', code: '', kind: tech.kinds[0], environment: 'DEMO', purpose: tech.id === 'FIX' ? 'MARKET_DATA' : 'BOTH',
+  const [f, setF] = useState<Row>({ provider_id: provider?.id ?? '', environment: 'DEMO', purpose: tech.id === 'FIX' ? 'MARKET_DATA' : 'BOTH',
     adapter: 'NATIVE', settings: tech.id === 'FIX' ? { ...FIX_BLANK } : { api_base_url: '', auth_method: 'API_KEY' } });
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const set = (patch: Row) => setF(o => ({ ...o, ...patch }));
-  const providers = (data.providers as Row[]).filter(p => p.status !== 'ARCHIVED');
-  const isNew = !provider && f.provider_id === '';
+  const providers = (data.providers as Row[]).filter(p => p.status !== 'ARCHIVED' && tech.kinds.includes(p.kind));
   const upstox = tech.id === 'API';
   function settings(): Row {
     if (tech.id === 'FIX') { const s = f.settings; return { ...s, port: Number(s.port), heartbeat_seconds: Number(s.heartbeat_seconds), md_depth: Number(s.md_depth) }; }
@@ -487,13 +458,8 @@ function AddWho({ tech, data, provider, navigate, cancel, done }: { tech: Row; d
   }
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setNotice('');
-    if (tech.id === 'MT5') {  // MT5: the provider is the broker; each account is added with the server it is on.
-      try { const id = isNew ? (await api('config/providers', 'POST', { name: f.name, code: f.code || codeOf(f.name), kind: 'BROKER' })).id : (provider?.id ?? f.provider_id);
-        await done('p:' + id); navigate('accounts', 'new:MT5P:' + id); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
-      return;
-    }
     try {
-      const body = { ...(isNew ? { provider: { name: f.name, code: f.code || codeOf(f.name), kind: f.kind } } : { provider_id: provider?.id ?? f.provider_id }),
+      const body = { provider_id: provider?.id ?? f.provider_id,
         connection: { platform: tech.platform, environment: f.environment, purpose: f.purpose, adapter: f.adapter, settings: settings() } };
       const r = await api('config/venues', 'POST', body);
       const pending = pendingMessage(r);
@@ -502,30 +468,24 @@ function AddWho({ tech, data, provider, navigate, cancel, done }: { tech: Row; d
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   return <form className="ct-add" onSubmit={submit} aria-label={`Add who through ${tech.label}`}>
-    <h3 className="ct-sub">{tech.id === 'MT5' ? 'Add broker · MetaTrader 5' : provider ? `Add ${tech.id === 'FIX' ? 'a FIX session' : 'an API'} for ${provider.name}` : `Add provider and its ${tech.label}`}</h3>
-    {upstox && <p className="cfg-note">Upstox: use <b>Add account</b> on Upstox, or Accounts › Add Upstox account: it creates the broker, the API and the account in one step. Other broker and exchange APIs: describe the API here.</p>}
+    <h3 className="ct-sub">{`Add ${tech.id === 'FIX' ? 'a FIX session' : 'an API'}${provider ? ` for ${provider.name}` : ''}`}</h3>
+    {upstox && <p className="cfg-note">Upstox: use <b>Add Upstox account</b> on the Upstox provider (or Accounts › Add Upstox account): the API and the account in one step. Other broker and exchange APIs: describe the API here.</p>}
     {!provider && <div className="cfg-pair">
-      <Field label="Who"><Choice label="Who" value={f.provider_id} options={[['', '+ New provider'], ...providers.map(p => [p.id, `${p.name} (${data.provider_kinds[p.kind] ?? p.kind})`] as [string, string])]} onChange={v => set({ provider_id: v })} /></Field>
-      {isNew && tech.id !== 'MT5' && <Field label="Type"><Choice label="Provider type" value={f.kind} options={Object.entries(data.provider_kinds as Record<string, string>)} onChange={v => set({ kind: v })} /></Field>}
+      <Field label="Provider" hint="Not listed? Add it first under Providers (one form for every provider)"><Choice label="Provider" value={f.provider_id} options={[['', 'Select…'], ...providers.map(p => [p.id, `${p.name} (${data.provider_kinds[p.kind] ?? p.kind})`] as [string, string])]} onChange={v => set({ provider_id: v })} /></Field>
+      <Field label=" "><button type="button" onClick={() => navigate('providers', 'new')}>+ New provider…</button></Field>
     </div>}
-    {isNew && <div className="cfg-pair">
-      <Field label="Name" hint="e.g. VT Markets, LMAX Global, Equinix LD4"><input aria-label="Provider name" required maxLength={120} value={f.name} onChange={e => set({ name: e.target.value })} /></Field>
-      <Field label="Code" hint="Short ID; filled in from the name"><input aria-label="Provider code" maxLength={32} placeholder={codeOf(f.name || 'Provider')} value={f.code} onChange={e => set({ code: e.target.value.toUpperCase() })} /></Field>
-    </div>}
-    {tech.id === 'MT5' && <p className="cfg-note">The broker is the provider. Next you add its accounts: for each, the login, the password and the server it is on, picked from the broker's published list.
-      Only the servers your accounts use are kept; each account connects to the fastest address by default and can change server any time.</p>}
     {tech.id === 'FIX' && <FixFields settings={f.settings} change={s => set({ settings: s })} />}
     {tech.id === 'API' && <div className="cfg-pair">
       <Field label="API base URL"><input aria-label="API base URL" required type="url" placeholder="https://api.example.com" value={f.settings.api_base_url} onChange={e => set({ settings: { ...f.settings, api_base_url: e.target.value } })} /></Field>
       <Field label="Login"><Choice label="API login method" value={f.settings.auth_method} options={[['API_KEY', 'API key and secret'], ['OAUTH2', 'OAuth (daily login)']]} onChange={v => set({ settings: { ...f.settings, auth_method: v } })} /></Field>
       {f.settings.auth_method === 'OAUTH2' && <Field label="Redirect URL"><input aria-label="OAuth redirect URL" required type="url" value={f.settings.oauth_redirect_url ?? ''} onChange={e => set({ settings: { ...f.settings, oauth_redirect_url: e.target.value } })} /></Field>}
     </div>}
-    {tech.id !== 'MT5' && <div className="cfg-pair">
+    {<div className="cfg-pair">
       <Field label="Environment"><Choice label="Environment" value={f.environment} options={[['DEMO', 'Demo'], ['LIVE', 'Live']]} onChange={v => set({ environment: v })} /></Field>
       <Field label="Role" hint="Data source: prices are taken from it. Execution: trading accounts"><Choice label="Role" value={f.purpose} options={ROLE_OPTIONS} onChange={v => set({ purpose: v })} /></Field>
     </div>}
     {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
-    <div className="cfg-actions"><button type="button" onClick={cancel}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Adding…' : tech.id === 'MT5' ? 'Next: add its first account' : 'Add · next: its account'}</button></div>
-    {tech.id !== 'MT5' && <p className="cfg-note">Then select the new session and use <b>Add account</b>. Save the {tech.id === 'FIX' ? 'session login (if the venue uses one)' : 'API key and secret'} under the record's Credential.</p>}
+    <div className="cfg-actions"><button type="button" onClick={cancel}>Cancel</button><button className="primary" disabled={busy || !(provider?.id ?? f.provider_id)}>{busy ? 'Adding…' : 'Add · next: its account'}</button></div>
+    {<p className="cfg-note">Then select the new session and use <b>Add account</b>. Save the {tech.id === 'FIX' ? 'session login (if the venue uses one)' : 'API key and secret'} under the record's Credential.</p>}
   </form>;
 }

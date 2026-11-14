@@ -25,9 +25,9 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
   { id: 'brokers', label: 'Connectivity', hint: 'Provider › account › server. Select a level to add the next one' },
-  { id: 'providers', label: 'Brokers', hint: 'The firms you trade through: legal entity, regulator, execution model' },
-  { id: 'connections', label: 'Servers and APIs', hint: 'One per broker server or API: environment, addresses, clock, order limits' },
-  { id: 'accounts', label: 'Broker accounts', hint: 'Logins at each broker: credentials, permission, routing, readiness' },
+  { id: 'providers', label: 'Providers', hint: 'Step 1 · who you deal with: broker, exchange, ECN, feed … legal entity, regulator, contacts, exposure' },
+  { id: 'accounts', label: 'Accounts', hint: 'Step 2 · the accounts you hold at each provider: login, credentials, permission, the server each uses, readiness' },
+  { id: 'connections', label: 'Servers', hint: 'Step 3 · where accounts connect: MT5 servers in use, FIX sessions, APIs — environment, addresses, clock, order limits' },
   { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
@@ -42,7 +42,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
 
 /* Headings in the section list, so 14 sections read as five groups. */
 /* The four views of the Connect screen: the tree, then the three record lists behind it. */
-const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Providers'], ['connections', 'Servers & sessions'], ['accounts', 'Accounts']];
+const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Providers'], ['accounts', 'Accounts'], ['connections', 'Servers']];
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The broker connection failed — reason below',
@@ -208,7 +208,7 @@ const IMMUTABLE: Record<Entity, string[]> = {
   providers: ['code'], connections: ['provider_id', 'code', 'platform', 'environment'],
   accounts: ['connection_id', 'code', 'external_account_id'], instruments: ['symbol'], mappings: ['connection_id', 'instrument_id', 'account_id'], groups: ['code'],
 };
-const SINGULAR: Record<Entity, string> = { providers: 'provider', connections: 'connection', accounts: 'account', instruments: 'instrument', mappings: 'symbol mapping', groups: 'account group' };
+const SINGULAR: Record<Entity, string> = { providers: 'provider', connections: 'server', accounts: 'account', instruments: 'instrument', mappings: 'symbol mapping', groups: 'account group' };
 const ARCHIVABLE: Entity[] = ['providers', 'connections', 'accounts', 'groups'];
 const orNull = (v: unknown) => v === '' || v == null ? null : v;
 const numOrNull = (v: unknown) => v === '' || v == null ? null : Number(v);
@@ -1113,7 +1113,7 @@ const Pending = ({ r }: { r: Row }) => r.pending_changes > 0 ? <> <span classNam
 
 const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
   providers: [['Provider ID', r => r.code], ['Provider name', r => r.name], ['Legal entity', r => r.legal_entity || '—'], ['Regulator', r => r.regulator || '—'],
-    ['Type', r => r.kind], ['Connections', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
+    ['Type', r => r.kind], ['Servers', r => r.connection_count], ['Status', r => <Status value={r.status} />]],
   groups: [['Group ID', r => r.code], ['Name', r => r.name], ['Accounts', r => r.account_count], ['Status', r => <Status value={r.status} />]],
   connections: [['Connection', r => <><strong>{r.code}</strong><small className="cfg-note"> {r.name}</small></>], ['Provider', r => <Link to="providers" id={r.provider_id}>{r.provider_code}</Link>],
     ['Platform', r => r.platform === 'MT5' ? 'MT5' : r.platform === 'FIX' ? 'FIX' : 'API'], ['Role', r => PURPOSE_LABEL[r.purpose] ?? r.purpose], ['Env', r => <Env value={r.environment} />],
@@ -1254,7 +1254,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {canEdit && entity === 'accounts' && <button onClick={() => setImporting(true)}>Import CSV</button>}
         {canEdit && entity === 'accounts' && <><button className="primary" onClick={() => setAdding('MT5')} title="Login, password and server: creates the broker's connection too">Add MT5 account</button>
           <button className="primary" onClick={() => setAdding('UPSTOX')} title="Client ID and your Upstox app's key and secret: creates the broker and connection too">Add Upstox account</button></>}
-        {canEdit && entity === 'connections' && <span className="cfg-note">New accounts create their connection: use Accounts › Add MT5 / Upstox account. Open a connection here to change its clock, limits or addresses.</span>}
+        {canEdit && entity === 'connections' && <span className="cfg-note">A server is added with its account (Accounts › Add MT5 / Upstox account): only servers in use are kept. Open one here to change its addresses, clock or limits; FIX sessions and other APIs: New server (advanced).</span>}
         {canEdit ? <button className={entity === 'accounts' || entity === 'connections' ? '' : 'primary'} onClick={() => open(null)}>New {SINGULAR[entity]}{entity === 'accounts' || entity === 'connections' ? ' (advanced)' : ''}</button> : <span className="cfg-note">Read only · needs Trading operations to change</span>}
       </div>
       {loadError && <p role="alert" className="cfg-error">{loadError}</p>}
@@ -1292,9 +1292,12 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       <div className="cfg-detail">
       {selected && (entity === 'accounts' || entity === 'connections') && <p className="cfg-crumbs">
         <button type="button" className="cfg-chip" onClick={() => navigate('providers', selected.provider_id)}>{selected.provider_code}</button>
-        {entity === 'accounts' && <> › <button type="button" className="cfg-chip" onClick={() => navigate('connections', selected.connection_id)}>{selected.connection_code}</button></>}
-        {' › '}<strong>{selected.code}</strong>
-        {entity === 'connections' && selected.account_count > 0 && <> · <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button></>}</p>}
+        {entity === 'accounts' && <> › <strong>{selected.code}</strong> › server <button type="button" className="cfg-chip" onClick={() => navigate('connections', selected.connection_id)}>{selected.connection_code}</button></>}
+        {entity === 'connections' && <> › {selected.account_count > 0 ? <button type="button" className="cfg-link" onClick={() => navigate('accounts', undefined)}>{selected.account_count} account(s)</button> : 'no account yet'} › server <strong>{selected.code}</strong></>}</p>}
+      {selected && entity === 'providers' && canEdit && <p className="cfg-crumbs">Next · step 2, an account at {selected.name}:{' '}
+        <button type="button" className="cfg-chip" onClick={() => navigate('accounts', 'new:MT5P:' + selected.id)}>Add MT5 account</button>{' '}
+        <button type="button" className="cfg-chip" onClick={() => navigate('accounts', 'new:UPSTOX')}>Add Upstox account</button>{' '}
+        <button type="button" className="cfg-chip" onClick={() => navigate('brokers', 'p:' + selected.id)}>FIX session / other API (in the tree)</button></p>}
       {selected?.pending_changes > 0 && <p className="cfg-note cfg-reuse">A change to this {SINGULAR[entity]} is waiting for approval. <button type="button" className="cfg-link" onClick={() => navigate('approvals')}>Open Approvals</button></p>}
       {entity === 'accounts' && selected && <div className="cfg-blockers rd">
         {(['data_blockers', 'trading_blockers', 'warnings'] as const).map(k => k === 'trading_blockers' && selected.trading_permission !== 'TRADING'
@@ -1663,7 +1666,7 @@ export default function Configuration() {
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   // The broker's redirect result, shown once: the address is cleaned so a saved link never repeats an old message.
   const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
-  const [brokerReason] = useState(() => new URLSearchParams(window.location.search).get('reason'));
+  const [brokerReason] = useState(() => new URLSearchParams(window.location.search).get('reason')), [loginShown, setLoginShown] = useState(false);
   useEffect(() => { if (brokerLogin) { try { window.history.replaceState(null, '', window.location.pathname + window.location.hash); } catch { /* address only */ } } }, []);
   async function loadRefs() {
     try {
@@ -1735,11 +1738,11 @@ export default function Configuration() {
           {summary && id !== 'brokers' && <small>{summary.counts?.[id]}</small>}</button>)}</nav>}
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
-      {brokerLogin && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
-        : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`}</p>}
+      {brokerLogin && !loginShown && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
+        : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`} <button type="button" className="cfg-link" aria-label="Dismiss" onClick={() => setLoginShown(true)}>✕</button></p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
-        : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} /></div>
+        : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={openId.id} /></div>
         : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
         : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
