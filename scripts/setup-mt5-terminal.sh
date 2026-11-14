@@ -47,7 +47,8 @@ APTLOG=/var/log/corei-mt5-apt.log
 # Only what Wine needs (no "recommends": those pull dozens of optional 32-bit libraries that often conflict on
 # servers, and MT5 needs none of them). Newest stable first, then older stable releases, then the devel branch.
 wine_chain() {  # <branch> <version>: the WineHQ packages of that version, named explicitly so apt resolves them together
-  local b=$1 v=$2 pkgs="winehq-$b=$v wine-$b=$v"
+  local b=$1 v=$2
+  local pkgs="winehq-$b=$v wine-$b=$v"
   for part in amd64 i386; do apt-cache madison "wine-$b-$part" 2>/dev/null | awk '{print $3}' | grep -qx "$v" && pkgs="$pkgs wine-$b-$part=$v"; done
   echo "$pkgs"
 }
