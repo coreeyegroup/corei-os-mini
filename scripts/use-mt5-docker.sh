@@ -45,10 +45,14 @@ else
 fi
 echo "Bridge for COREI: 127.0.0.1:$PORT   ·   Terminal view: 127.0.0.1:$VIEW"
 
-step "3/6 Image corei-mt5:local (first build ~5-10 minutes)"
+step "3/6 Wine that runs on this server, and the image corei-mt5:local (first time ~5-20 minutes)"
+bash "$ROOT/scripts/mt5-docker-wine-doctor.sh" || { echo "Stopped: no Wine build runs here (see above)."; exit 1; }
+WINE_CHOICE=$(sed -n 's/^WINE=//p' /var/lib/corei-mt5-docker/wine-choice)
+SECCOMP_CHOICE=$(sed -n 's/^SECCOMP=//p' /var/lib/corei-mt5-docker/wine-choice)
+echo "Using Wine: $WINE_CHOICE · system-call filter: $SECCOMP_CHOICE"
 # Registries refuse now and then ("429 Too Many Requests"): wait and try again.
 for try in 1 2 3 4 5 6; do
-  if docker build -q -t corei-mt5:local -f "$ROOT/connectors/mt5-docker/Dockerfile" "$ROOT"; then break; fi
+  if docker build -q --build-arg WINE="$WINE_CHOICE" -t corei-mt5:local -f "$ROOT/connectors/mt5-docker/Dockerfile" "$ROOT"; then break; fi
   (( try == 6 )) && { echo "The image could not be built after 6 tries (see the error above)."; false; }
   echo "Build failed (try $try of 6); waiting $((try * 30)) s and trying again…"; sleep $((try * 30))
 done
@@ -69,52 +73,26 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1 && [[ "$(docker inspect -f '{{.Im
   echo "The image was updated: replacing the container (MT5 and its data in $BASE/config are kept)."
   docker rm -f "$CONTAINER" >/dev/null
 fi
-# Docker's default system-call filter (seccomp) stops Wine from starting on some hosts ("could not load kernel32.dll").
-# When Wine fails under it, the container is made again without that filter and the choice is remembered for this account.
-SECCOMP_MARK=$BASE/wine-needs-seccomp-unconfined
 run_container() {
   local extra=()
-  [[ -f "$SECCOMP_MARK" ]] && extra=(--security-opt seccomp=unconfined)
+  [[ "$SECCOMP_CHOICE" == unconfined ]] && extra=(--security-opt seccomp=unconfined)
   docker run -d --name "$CONTAINER" --restart unless-stopped --shm-size 1g "${extra[@]}" \
     -e PUID=911 -e PGID=911 -e TZ=Etc/UTC -e CUSTOM_USER=corei -e PASSWORD="$(cat "$BASE/view-password")" \
     -e MT5_INSTALLER_URL="$INSTALLER" -e COREI_BRIDGE_PORT=9443 \
     -p "127.0.0.1:$PORT:9443" -p "127.0.0.1:$VIEW:3000" \
     -v "$BASE/config:/config" corei-mt5:local >/dev/null
 }
-# Wine in a throw-away Windows folder inside the container (as the container's user): proves Wine itself starts.
-wine_test() {
-  # Wine only accepts a folder whose parent belongs to the user, so the test folder sits in a private temp folder.
-  docker exec -u abc -e WINEDEBUG=-all "$CONTAINER" \
-    bash -c 'd=$(mktemp -d); export WINEPREFIX=$d/wine; timeout 180 wine cmd /c ver 2>&1; rc=$?; wineserver -k 2>/dev/null; rm -rf "$d"; exit $rc'
-}
+# The filter choice changed since the container was made: make it again.
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  have=$(docker inspect -f '{{join .HostConfig.SecurityOpt ","}}' "$CONTAINER")
+  if [[ ( "$SECCOMP_CHOICE" == unconfined && "$have" != *seccomp=unconfined* ) || ( "$SECCOMP_CHOICE" != unconfined && "$have" == *seccomp=unconfined* ) ]]; then
+    docker rm -f "$CONTAINER" >/dev/null
+  fi
+fi
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   docker start "$CONTAINER" >/dev/null
 else
   run_container
-fi
-echo "Host: $(uname -m) · kernel $(uname -r)"
-[[ "$(uname -m)" == x86_64 ]] || echo "WARNING: this server is $(uname -m); the MT5 terminal needs an x86_64 (Intel/AMD) server."
-echo "Checking that Wine starts inside the container…"
-sleep 5
-if OUT=$(wine_test); then
-  echo "Wine works: $(echo "$OUT" | tr -d '\r' | grep -m1 -i 'version' || echo ok)"
-elif [[ ! -f "$SECCOMP_MARK" ]]; then
-  echo "$OUT" | tail -3 | sed 's/^/  /'
-  echo "Wine does not start under Docker's default system-call filter on this host: making the container again without it."
-  touch "$SECCOMP_MARK"; docker rm -f "$CONTAINER" >/dev/null; run_container; sleep 5
-  if OUT=$(wine_test); then echo "Wine works now: $(echo "$OUT" | tr -d '\r' | grep -m1 -i 'version' || echo ok)"
-  else
-    rm -f "$SECCOMP_MARK"
-    echo "$OUT" | tail -5 | sed 's/^/  /'
-    echo "Wine still does not start, so the filter is not the cause. Send me the output of:"
-    echo "  sudo docker exec -u abc $CONTAINER bash -c 'd=\$(mktemp -d); WINEPREFIX=\$d/wine WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
-    exit 1
-  fi
-else
-  echo "$OUT" | tail -5 | sed 's/^/  /'
-  echo "Wine does not start in the container. Send me the output of:"
-  echo "  sudo docker exec -u abc $CONTAINER bash -c 'd=\$(mktemp -d); WINEPREFIX=\$d/wine WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
-  exit 1
 fi
 echo "Waiting for MT5 and the bridge (first start installs MT5 and Python: up to ~15 minutes)…"
 for i in $(seq 1 120); do
