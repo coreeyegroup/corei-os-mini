@@ -4,17 +4,29 @@
 # Progress: docker logs <container>, and /config/corei-start.log.
 exec >>/config/corei-start.log 2>&1
 set -u
-export WINEPREFIX=/config/.wine WINEDEBUG=-all
+export WINEPREFIX=/config/.wine WINEDEBUG=-all WINEARCH=win64
+# One copy only: the desktop session can launch its autostart more than once, and two Wine set-ups writing the same
+# folder at the same time break it ("could not load kernel32.dll").
+exec 9>/config/.corei-start.lock
+if ! flock -n 9; then echo "[$(date -Is)] another start is running; this one exits"; exit 0; fi
 MT5="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 INSTALLER_URL="${MT5_INSTALLER_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
 PYTHON_URL="${PYTHON_URL:-https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe}"
 PORT="${COREI_BRIDGE_PORT:-9443}"
 say() { echo "[$(date -Is)] $*"; }
 
-say "COREI MT5 container starting"
-if [ ! -d "$WINEPREFIX/drive_c" ]; then
+say "COREI MT5 container starting as $(id -un) · $(wine --version 2>/dev/null)"
+prefix_ok() { [ -f "$WINEPREFIX/drive_c/windows/system32/kernel32.dll" ]; }
+if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -d "$WINEPREFIX/drive_c/Program Files/MetaTrader 5" ]; then
+  say "The Wine folder is incomplete (an earlier interrupted set-up); creating it again"
+  wineserver -k 2>/dev/null; rm -rf "$WINEPREFIX"
+fi
+if ! prefix_ok; then
   say "1/5 Creating the Wine prefix (Windows 10 mode)"
   wineboot --init; wineserver -w
+  prefix_ok || { say "Wine could not create its Windows folder:"; ls -la "$WINEPREFIX" "$WINEPREFIX/drive_c/windows/system32" 2>&1 | head -20; \
+                 say "Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
+  say "Wine folder ready"
 fi
 wine reg add 'HKCU\Software\Wine' /v Version /t REG_SZ /d win10 /f >/dev/null 2>&1
 
@@ -25,7 +37,7 @@ if [ ! -f "$MT5" ]; then
   [ -f "$MT5" ] || MT5=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe | head -1)
 fi
 [ -f "$MT5" ] || MT5=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe | head -1)
-[ -n "$MT5" ] && [ -f "$MT5" ] || { say "MT5 terminal not installed; check the installer URL. Retrying in 60 s"; sleep 60; exec /corei/start.sh; }
+[ -n "$MT5" ] && [ -f "$MT5" ] || { say "MT5 terminal not installed; check the installer URL. Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
 
 if ! wine python --version >/dev/null 2>&1; then
   say "3/5 Installing Python for Windows"

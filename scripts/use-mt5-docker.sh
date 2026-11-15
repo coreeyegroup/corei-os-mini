@@ -64,6 +64,11 @@ chown -R 911:911 "$BASE/config"; chmod 600 "$STATE/corei-bridge.key" "$STATE/cor
 openssl x509 -in "$STATE/corei-bridge.crt" -noout -fingerprint -sha256 | sed 's/^/Certificate /'
 
 step "5/6 Container $CONTAINER"
+# A rebuilt image (an update to the container) replaces the container; the account's data in $BASE/config stays.
+if docker inspect "$CONTAINER" >/dev/null 2>&1 && [[ "$(docker inspect -f '{{.Image}}' "$CONTAINER")" != "$(docker image inspect -f '{{.Id}}' corei-mt5:local)" ]]; then
+  echo "The image was updated: replacing the container (MT5 and its data in $BASE/config are kept)."
+  docker rm -f "$CONTAINER" >/dev/null
+fi
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   docker start "$CONTAINER" >/dev/null
 else
