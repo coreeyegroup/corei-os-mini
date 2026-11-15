@@ -4,7 +4,7 @@
 # Progress: docker logs <container>, and /config/corei-start.log.
 exec >>/config/corei-start.log 2>&1
 set -u
-export WINEPREFIX=/config/.wine WINEDEBUG=-all WINEARCH=win64
+export WINEPREFIX=/config/.wine WINEDEBUG=-all
 # One copy only: the desktop session can launch its autostart more than once, and two Wine set-ups writing the same
 # folder at the same time break it ("could not load kernel32.dll").
 exec 9>/config/.corei-start.lock
@@ -16,15 +16,24 @@ PORT="${COREI_BRIDGE_PORT:-9443}"
 say() { echo "[$(date -Is)] $*"; }
 
 say "COREI MT5 container starting as $(id -un) · $(wine --version 2>/dev/null)"
-prefix_ok() { [ -f "$WINEPREFIX/drive_c/windows/system32/kernel32.dll" ]; }
-if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -d "$WINEPREFIX/drive_c/Program Files/MetaTrader 5" ]; then
-  say "The Wine folder is incomplete (an earlier interrupted set-up); creating it again"
+# Working = Wine can actually run a Windows command in it (a half-written folder can still contain kernel32.dll).
+prefix_ok() { [ -f "$WINEPREFIX/drive_c/windows/system32/kernel32.dll" ] && timeout 60 wine cmd /c exit 0 >/dev/null 2>&1; }
+diagnose() {
+  say "Diagnostics:"; uname -a; id; echo "WINEARCH=${WINEARCH:-} WINEPREFIX=$WINEPREFIX"
+  dpkg -l 'wine*' 'winehq*' 2>/dev/null | awk '/^ii/{print "  "$2" "$3}'
+  ls /opt/wine-stable/lib/wine 2>&1 | sed 's/^/  lib\/wine: /'
+  findmnt -no SOURCE,FSTYPE,OPTIONS -T /config 2>&1 | sed 's/^/  \/config mount: /'
+  cat /proc/sys/vm/mmap_min_addr 2>/dev/null | sed 's/^/  vm.mmap_min_addr: /'
+  timeout 60 wine cmd /c ver 2>&1 | head -5 | sed 's/^/  wine cmd: /'
+}
+if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then
+  say "The Wine folder does not work (left half-written by an earlier set-up); creating it again"
   wineserver -k 2>/dev/null; rm -rf "$WINEPREFIX"
 fi
 if ! prefix_ok; then
   say "1/5 Creating the Wine prefix (Windows 10 mode)"
   wineboot --init; wineserver -w
-  prefix_ok || { say "Wine could not create its Windows folder:"; ls -la "$WINEPREFIX" "$WINEPREFIX/drive_c/windows/system32" 2>&1 | head -20; \
+  prefix_ok || { say "Wine cannot run in its new Windows folder."; diagnose; \
                  say "Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
   say "Wine folder ready"
 fi
