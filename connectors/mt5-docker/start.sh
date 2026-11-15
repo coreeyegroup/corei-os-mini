@@ -28,9 +28,9 @@ diagnose() {
   grep -E '^Seccomp:' /proc/self/status | sed 's/^/  /'
   env | grep -E '^(LD_|WINE|PATH=)' | sed 's/^/  env: /'
   # A throw-away prefix outside /config: if this one works, the problem is the /config folder, not Wine.
-  rm -rf /tmp/corei-winetest
-  WINEPREFIX=/tmp/corei-winetest timeout 120 wine cmd /c ver 2>&1 | tail -3 | sed 's/^/  wine in \/tmp: /'
-  WINEPREFIX=/tmp/corei-winetest wineserver -k 2>/dev/null; rm -rf /tmp/corei-winetest
+  local d; d=$(mktemp -d)
+  WINEPREFIX=$d/wine timeout 120 wine cmd /c ver 2>&1 | tail -3 | sed 's/^/  wine in a temp folder: /'
+  WINEPREFIX=$d/wine wineserver -k 2>/dev/null; rm -rf "$d"
   WINEDEBUG=err+all,warn+module timeout 60 wine cmd /c exit 0 2>&1 | head -15 | sed 's/^/  wine in \/config: /'
 }
 if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then

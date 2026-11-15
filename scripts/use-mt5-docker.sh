@@ -83,8 +83,9 @@ run_container() {
 }
 # Wine in a throw-away Windows folder inside the container (as the container's user): proves Wine itself starts.
 wine_test() {
-  docker exec -u abc -e WINEDEBUG=-all -e WINEPREFIX=/tmp/corei-winetest "$CONTAINER" \
-    bash -c 'rm -rf /tmp/corei-winetest; timeout 180 wine cmd /c ver 2>&1; rc=$?; wineserver -k 2>/dev/null; rm -rf /tmp/corei-winetest; exit $rc'
+  # Wine only accepts a folder whose parent belongs to the user, so the test folder sits in a private temp folder.
+  docker exec -u abc -e WINEDEBUG=-all "$CONTAINER" \
+    bash -c 'd=$(mktemp -d); export WINEPREFIX=$d/wine; timeout 180 wine cmd /c ver 2>&1; rc=$?; wineserver -k 2>/dev/null; rm -rf "$d"; exit $rc'
 }
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   docker start "$CONTAINER" >/dev/null
@@ -106,13 +107,13 @@ elif [[ ! -f "$SECCOMP_MARK" ]]; then
     rm -f "$SECCOMP_MARK"
     echo "$OUT" | tail -5 | sed 's/^/  /'
     echo "Wine still does not start, so the filter is not the cause. Send me the output of:"
-    echo "  sudo docker exec -u abc $CONTAINER bash -c 'WINEPREFIX=/tmp/t WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
+    echo "  sudo docker exec -u abc $CONTAINER bash -c 'd=\$(mktemp -d); WINEPREFIX=\$d/wine WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
     exit 1
   fi
 else
   echo "$OUT" | tail -5 | sed 's/^/  /'
   echo "Wine does not start in the container. Send me the output of:"
-  echo "  sudo docker exec -u abc $CONTAINER bash -c 'WINEPREFIX=/tmp/t WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
+  echo "  sudo docker exec -u abc $CONTAINER bash -c 'd=\$(mktemp -d); WINEPREFIX=\$d/wine WINEDEBUG=err+all,warn+module timeout 120 wine cmd /c ver 2>&1 | head -40; uname -a; dpkg -l | grep -i wine'"
   exit 1
 fi
 echo "Waiting for MT5 and the bridge (first start installs MT5 and Python: up to ~15 minutes)…"
