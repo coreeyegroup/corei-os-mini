@@ -85,6 +85,25 @@ if ! wine_ok && ! wine_install; then
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y >>"$APTLOG" 2>&1 || true
   fi
   apt-get update -qq
+  # 4. A 32-bit peripheral library (camera / scanner support) that cannot be installed — typically because a
+  #    third-party repository (e.g. the Ondřej Surý PHP PPA) ships a newer 64-bit libgd3 with no 32-bit build.
+  #    MT5 never uses cameras or scanners, so an empty placeholder package stands in for the 32-bit library;
+  #    nothing else on the server changes. Remove it later with: apt-get purge <name>:i386
+  V=$(apt-cache madison winehq-stable 2>/dev/null | awk 'NR==1{print $3}')
+  BLOCKERS=$({ apt-get install -s --no-install-recommends $(wine_chain stable "$V") 2>&1 || true; } \
+    | grep -oE '^ +(libgphoto2-6|libgphoto2-port12|libsane1|libsane):i386' | awk '{print $1}' | sort -u || true)
+  for b in $BLOCKERS; do
+    name=${b%:i386}
+    ver=$(dpkg-query -W -f='${Version}' "$name:amd64" 2>/dev/null || true)
+    [[ -n "$ver" ]] || ver=$(apt-cache policy "$name:i386" | awk '/Candidate:/{print $2}')
+    [[ -n "$ver" && "$ver" != "(none)" ]] || continue
+    echo "Placing an empty 32-bit $name ($ver) so Wine installs: its real dependency cannot be installed here and MT5 does not use it."
+    d=$(mktemp -d); mkdir -p "$d/DEBIAN"
+    printf 'Package: %s\nVersion: %s\nArchitecture: i386\nMulti-Arch: same\nMaintainer: COREI <root@localhost>\nPriority: optional\nSection: libs\nDescription: COREI placeholder for %s (32-bit)\n Empty package so WineHQ installs; MT5 does not use cameras or scanners.\n' \
+      "$name" "$ver" "$name" > "$d/DEBIAN/control"
+    dpkg-deb --build "$d" "$d/$name.deb" >>"$APTLOG" 2>&1 && dpkg -i "$d/$name.deb" >>"$APTLOG" 2>&1 && apt-mark hold "$name:i386" >/dev/null
+    rm -rf "$d"
+  done
   if ! wine_install; then
     echo
     echo "apt still refuses WineHQ's Wine. Its reason:"
