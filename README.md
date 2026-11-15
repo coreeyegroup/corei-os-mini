@@ -880,3 +880,10 @@ Setup › Administration › **Database** (Administrator role): every table of C
 - 0.35.1: Database › delete a row: rows in other tables that point at it are listed first (e.g. a provider's servers,
   their accounts and collection plans) and deleted together with it after one confirmation; references that are set
   empty on delete are listed as such. One audit-log entry records the row and what went with it.
+
+## MT5 in Docker — release 0.36.0
+
+`sudo bash scripts/use-mt5-docker.sh <ACCOUNT_CODE> [broker's MT5 installer link]` — the official MT5 terminal in a
+container (Debian + WineHQ, so the host's packages never conflict) with COREI's TLS bridge; one container per account,
+127.0.0.1 only, restarts on boot; then the account is switched to it. View the terminal in a browser through an SSH
+tunnel (printed at the end). Replaces the host-Wine route (`use-mt5-terminal.sh`, kept as a fallback).
