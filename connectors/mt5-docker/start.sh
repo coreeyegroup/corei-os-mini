@@ -11,9 +11,10 @@ exec 9>/config/.corei-start.lock
 if ! flock -n 9; then echo "[$(date -Is)] another start is running; this one exits"; exit 0; fi
 MT5="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 INSTALLER_URL="${MT5_INSTALLER_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
+WEBVIEW_URL="${WEBVIEW_URL:-https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/c1336fd6-a2eb-4669-9b03-949fc70ace0e/MicrosoftEdgeWebview2Setup.exe}"
 PYTHON_URL="${PYTHON_URL:-https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe}"
 PORT="${COREI_BRIDGE_PORT:-9443}"
-say() { echo "[$(date -Is)] $*"; }
+say() { echo "[$(date -Is)] [$$] $*"; }
 
 say "COREI MT5 container starting as $(id -un) · $(wine --version 2>/dev/null)"
 # Working = Wine can actually run a Windows command in it (a half-written folder can still contain kernel32.dll).
@@ -50,13 +51,23 @@ if [ ! -f "$MT5" ]; then
   say "2/5 Installing MetaTrader 5 from $INSTALLER_URL"
   # The installer downloads the terminal and then starts it, so Wine never goes idle: waiting for Wine to finish
   # ("wineserver -w") hangs for ever. Instead: run it in the background, watch for terminal64.exe, then stop Wine.
+  # As MetaQuotes' own Linux script (mt5debian.sh): the WebView2 runtime first; the MT5 installer needs it.
+  if [ ! -d "$WINEPREFIX/drive_c/Program Files (x86)/Microsoft/EdgeWebView" ]; then
+    say "   WebView2 runtime (needed by the MT5 installer)"
+    if curl -fsSL -o /tmp/webview2.exe "$WEBVIEW_URL"; then
+      timeout 900 wine /tmp/webview2.exe /silent /install >/dev/null 2>&1; say "   WebView2 installer finished (exit $?)"
+      timeout 60 wineserver -w || wineserver -k; rm -f /tmp/webview2.exe
+    else
+      say "   Could not download WebView2 from $WEBVIEW_URL"
+    fi
+  fi
   if curl -fsSL -o /tmp/mt5setup.exe "$INSTALLER_URL"; then
     wine /tmp/mt5setup.exe /auto >/dev/null 2>&1 &
     for i in $(seq 1 60); do   # up to 10 minutes
       sleep 10
       found=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe 2>/dev/null | head -1)
       if [ -n "$found" ]; then say "Terminal installed: $found"; sleep 30; break; fi
-      (( i % 6 == 0 )) && say "  still installing ($((i / 6)) min; files so far: $(du -sh "$WINEPREFIX/drive_c/Program Files" 2>/dev/null | cut -f1))"
+      (( i % 6 == 0 )) && say "  still installing ($((i / 6)) min; files so far: $(du -sh "$WINEPREFIX/drive_c" 2>/dev/null | cut -f1); windows: $(wmctrl -l 2>/dev/null | cut -d' ' -f5- | paste -sd'|' -))"
     done
     wineserver -k 2>/dev/null; sleep 3
     rm -f /tmp/mt5setup.exe
@@ -67,7 +78,7 @@ if [ ! -f "$MT5" ]; then
   [ -f "$MT5" ] || MT5=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe | head -1)
 fi
 [ -f "$MT5" ] || MT5=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe | head -1)
-[ -n "$MT5" ] && [ -f "$MT5" ] || { say "MT5 terminal not installed; check the installer URL. Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
+[ -n "$MT5" ] && [ -f "$MT5" ] || { say "MT5 terminal not installed yet (see the windows listed above, or open the terminal view). Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
 
 if ! wine python --version >/dev/null 2>&1; then
   say "3/5 Installing Python for Windows"

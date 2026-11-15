@@ -13,7 +13,7 @@ ENV TITLE="COREI MT5" \
 ARG WINE=latest
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl; \
     dpkg --add-architecture i386; \
     if [ "$WINE" = debian ]; then \
       apt-get update; \
