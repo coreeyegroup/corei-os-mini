@@ -48,7 +48,21 @@ wine reg add 'HKCU\Software\Wine' /v Version /t REG_SZ /d win10 /f >/dev/null 2>
 
 if [ ! -f "$MT5" ]; then
   say "2/5 Installing MetaTrader 5 from $INSTALLER_URL"
-  curl -fsSL -o /tmp/mt5setup.exe "$INSTALLER_URL" && wine /tmp/mt5setup.exe /auto; wineserver -w; rm -f /tmp/mt5setup.exe
+  # The installer downloads the terminal and then starts it, so Wine never goes idle: waiting for Wine to finish
+  # ("wineserver -w") hangs for ever. Instead: run it in the background, watch for terminal64.exe, then stop Wine.
+  if curl -fsSL -o /tmp/mt5setup.exe "$INSTALLER_URL"; then
+    wine /tmp/mt5setup.exe /auto >/dev/null 2>&1 &
+    for i in $(seq 1 60); do   # up to 10 minutes
+      sleep 10
+      found=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe 2>/dev/null | head -1)
+      if [ -n "$found" ]; then say "Terminal installed: $found"; sleep 30; break; fi
+      (( i % 6 == 0 )) && say "  still installing ($((i / 6)) min; files so far: $(du -sh "$WINEPREFIX/drive_c/Program Files" 2>/dev/null | cut -f1))"
+    done
+    wineserver -k 2>/dev/null; sleep 3
+    rm -f /tmp/mt5setup.exe
+  else
+    say "Could not download the installer from $INSTALLER_URL"
+  fi
   # A broker installer may install into its own folder name: use the terminal it installed.
   [ -f "$MT5" ] || MT5=$(find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -iname terminal64.exe | head -1)
 fi
@@ -57,7 +71,7 @@ fi
 
 if ! wine python --version >/dev/null 2>&1; then
   say "3/5 Installing Python for Windows"
-  curl -fsSL -o /tmp/python.exe "$PYTHON_URL" && wine /tmp/python.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0; wineserver -w; rm -f /tmp/python.exe
+  curl -fsSL -o /tmp/python.exe "$PYTHON_URL" && wine /tmp/python.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0; timeout 600 wineserver -w || wineserver -k; rm -f /tmp/python.exe
 fi
 say "4/5 MetaTrader5 package (latest)"
 wine python -m pip install --quiet --disable-pip-version-check --upgrade MetaTrader5 || say "pip failed; using what is installed"
