@@ -42,7 +42,7 @@ const TECH_OF: Record<string, string> = { MT5: 'MT5', MT4: 'MT4', CTRADER: 'CTRA
 
 /** Under each account: the server (MT5) or session / API it connects through. */
 function serverNode(c: Row, a: Row | null): Node {
-  const route = a && c.platform === 'MT5' ? [c.adapter === 'TERMINAL_BRIDGE' ? 'terminal' : ROUTE_LABEL[a.access_mode] ?? a.access_mode, fastest(a)].filter(Boolean).join(' ') : SHORT_ROLE[c.purpose] ?? c.purpose;
+  const route = a && c.platform === 'MT5' ? [c.adapter === 'TERMINAL_PUSH' ? 'EA push' : c.adapter === 'TERMINAL_BRIDGE' ? 'terminal' : ROUTE_LABEL[a.access_mode] ?? a.access_mode, c.adapter === 'TERMINAL_PUSH' ? '' : fastest(a)].filter(Boolean).join(' ') : SHORT_ROLE[c.purpose] ?? c.purpose;
   return { key: a ? 's:' + a.id : 'c:' + c.id, kind: 'conn', ref: c, dot: connDot(c), label: where(c) ?? c.code,
     meta: [TECH_SHORT[c.platform] ?? c.platform, c.environment === 'LIVE' ? 'LIVE' : 'demo', route, a ? '' : 'no account yet'].filter(Boolean).join(' · '), children: [] };
 }
@@ -249,14 +249,14 @@ function WhoPanel({ provider, data, canEdit, select, navigate, done }: { provide
       : <table className="cfg-table"><thead><tr><th>Login / ID</th><th>Name</th><th>Server</th><th>Tech</th><th>Env</th><th>Route</th><th>Data</th></tr></thead>
         <tbody>{accounts.map(({ a, c }) => <tr key={a.id} className="ct-click" tabIndex={0} onClick={() => select('a:' + a.id)}>
           <td><b>{a.external_account_id}</b></td><td>{a.name}</td><td>{where(c)}</td><td>{TECH_SHORT[c.platform] ?? c.platform}</td><td><Env value={c.environment} /></td>
-          <td>{c.platform === 'MT5' ? `${c.adapter === 'TERMINAL_BRIDGE' ? 'terminal' : ROUTE_LABEL[a.access_mode] ?? a.access_mode}${fastest(a) ? ' · ' + fastest(a) : ''}` : '—'}</td>
+          <td>{c.platform === 'MT5' ? `${c.adapter === 'TERMINAL_PUSH' ? 'EA push' : c.adapter === 'TERMINAL_BRIDGE' ? 'terminal' : ROUTE_LABEL[a.access_mode] ?? a.access_mode}${fastest(a) ? ' · ' + fastest(a) : ''}` : '—'}</td>
           <td>{a.data_blockers.length ? <span className="cfg-pill warn" title={a.data_blockers.map(why).join(' · ')}>not ready</span> : <span className="cfg-pill ok">ready</span>}</td></tr>)}</tbody></table>}
     <h3 className="ct-sub">Step 3 · Servers in use ({conns.length})</h3>
     {conns.length === 0 ? <p className="cfg-empty">None yet. A server is kept here when an account on it is added — only the servers your accounts use, never a broker's whole list.</p>
       : <table className="cfg-table"><thead><tr><th>Server / session</th><th>Tech</th><th>Method</th><th>Role</th><th>Env</th><th>State</th><th>Accounts</th></tr></thead>
         <tbody>{conns.map(c => <tr key={c.id} className="ct-click" tabIndex={0} onClick={() => select(c.accounts.length ? 's:' + c.accounts[0].id : 'c:' + c.id)}>
           <td><b>{where(c)}</b> <small className="cfg-note">{c.code}</small></td><td>{TECH_SHORT[c.platform] ?? c.platform}</td>
-          <td>{c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'official terminal' : 'direct SDK') : c.platform === 'FIX' ? 'FIX session' : c.platform === 'MT4' ? 'MT4 (connector planned)' : c.platform === 'CTRADER' ? 'Open API (connector planned)' : 'API'}</td>
+          <td>{c.platform === 'MT5' ? (c.adapter === 'TERMINAL_PUSH' ? 'terminal push (COREI EA)' : c.adapter === 'TERMINAL_BRIDGE' ? 'official terminal' : 'direct SDK') : c.platform === 'FIX' ? 'FIX session' : c.platform === 'MT4' ? 'MT4 (connector planned)' : c.platform === 'CTRADER' ? 'Open API (connector planned)' : 'API'}</td>
           <td><span className={`cfg-role ${c.purpose}`}>{PURPOSE_LABEL[c.purpose]}</span></td><td><Env value={c.environment} /></td>
           <td><i className={`ct-dot ${connDot(c)}`} /> {c.live_status?.state ?? 'never connected'}</td><td>{c.accounts.length}</td></tr>)}</tbody></table>}
   </>;
@@ -273,7 +273,7 @@ function addAccountTarget(c: Row) {
 
 function ConnPanel({ conn: c, data, canEdit, select, navigate }: { conn: Row; data: Row; canEdit: boolean; select: (k: string) => void; navigate: Navigate }) {
   const provider = (data.providers as Row[]).find(p => p.id === c.provider_id);
-  const method = c.platform === 'MT5' ? (c.adapter === 'TERMINAL_BRIDGE' ? 'MT5 terminal bridge (fallback)' : 'Direct SDK') : c.platform === 'FIX' ? `${c.settings?.begin_string ?? 'FIX.4.4'} session`
+  const method = c.platform === 'MT5' ? (c.adapter === 'TERMINAL_PUSH' ? 'Terminal push (COREI EA in MT5)' : c.adapter === 'TERMINAL_BRIDGE' ? 'MT5 terminal bridge (fallback)' : 'Direct SDK') : c.platform === 'FIX' ? `${c.settings?.begin_string ?? 'FIX.4.4'} session`
     : c.platform === 'MT4' ? 'MT4 (connector planned: recorded)' : c.platform === 'CTRADER' ? 'cTrader Open API (connector planned: recorded)' : 'Broker API';
   return <>
     <Head level={`Step 3 · Server / session · ${provider?.name ?? ''} · ${TECH_SHORT[c.platform] ?? c.platform}`} title={where(c) ?? c.code}>

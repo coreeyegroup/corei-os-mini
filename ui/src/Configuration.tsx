@@ -79,6 +79,7 @@ export const BLOCKERS: Record<string, string> = {
   NO_ADDRESS_AVAILABLE: 'No server address is selected for this account',
   BRIDGE_NOT_CONFIGURED: 'The connection uses the MT5 terminal bridge but has no bridge host and certificate fingerprint — open the connection',
   BRIDGE_TOKEN_MISSING: 'The terminal bridge token is not saved on the connection (Credential)',
+  PUSH_TOKEN_MISSING: 'No push token yet: open the account’s server › New push token, then put it in the COREI EA',
   ACCOUNT_ADDRESSES_REMOVED_BY_SERVER: 'Some addresses chosen for this account are no longer listed by the server; they are skipped',
   ACCOUNT_ADDRESSES_FALLBACK_TO_SERVER: 'None of the addresses chosen for this account are listed by the server any more; using the server\'s addresses',
   NO_LATENCY_MEASURED: 'Fastest first has no latency test yet; using the server\'s order until one is run',
@@ -735,9 +736,9 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
       <Section n={4} title="Method, clock and limits">
         <div className="cfg-pair">
           {pick('adapter', 'Connection method', draft.platform === 'MT5'
-            ? [['MTAPI_DIRECT', 'Direct (mtapi SDK)'], ['DEFAULT', 'Default (direct)'], ['TERMINAL_BRIDGE', 'Terminal bridge (fallback)']]
+            ? [['MTAPI_DIRECT', 'Direct (mtapi SDK)'], ['DEFAULT', 'Default (direct)'], ['TERMINAL_PUSH', 'Terminal push (COREI EA in MT5)'], ['TERMINAL_BRIDGE', 'Terminal bridge (fallback)']]
             : draft.platform === 'FIX' ? [['NATIVE', 'FIX session']] : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']],
-            draft.platform === 'MT5' ? 'Direct speaks the MT5 protocol through the licensed SDK (keep it on its update subscription); the terminal bridge is a fallback for one account per terminal' : undefined)}
+            draft.platform === 'MT5' ? 'Direct: the licensed SDK speaks the MT5 protocol. Terminal push: the COREI EA in an MT5 terminal (your PC, a Windows VPS or the Docker container) sends prices over HTTPS — no SDK, no password in COREI. Terminal bridge: COREI reads from a terminal through the bridge program' : undefined)}
           {pick('clock_source', 'Clock set from', [['UNKNOWN', 'Not set'], ['MANUAL', 'Entered by hand'], ['SERVER_FILE', 'servers.dat'], ['BROKER_LOGIN', 'Broker at login']])}
         </div>
         <div className="cfg-pair">
@@ -921,6 +922,36 @@ export function BridgeFields({ settings, change }: { settings: Row; change: (s: 
     <Field label="Certificate fingerprint (SHA-256)" hint="As the bridge prints it: 32 pairs separated by colons"><input aria-label="Certificate fingerprint" maxLength={95} value={b.fingerprint}
       onChange={e => set({ fingerprint: e.target.value.trim().toUpperCase() })} placeholder="AB:CD:…" /></Field>
   </div>;
+}
+
+/** Terminal push: a push token (shown once) and the COREI EA, with the steps to run it in any MT5 terminal. */
+export function PushPanel({ conn, canEdit, reload }: { conn: Row; canEdit: boolean; reload: () => void }) {
+  const [token, setToken] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [seen, setSeen] = useState<Row[]>([]);
+  useEffect(() => { void api('md/push/terminals').then(r => setSeen(r.items)).catch(() => undefined); }, [conn.id]);
+  async function issue() {
+    if (conn.credential_kind && !window.confirm('Issue a new push token? The EA with the old token stops being accepted until you paste the new one.')) return;
+    setBusy(true); setError('');
+    try { const r = await api(`md/push-token/${conn.id}`, 'POST'); setToken(r.token ?? ''); if (!r.token) setError(pendingMessage(r) ?? 'Waiting for approval.'); reload(); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  const mine = seen;  // every terminal sending to COREI, with the account it sends for
+  return <section className="cfg-section" aria-label="Terminal push">
+    <h4><span>★</span> Terminal push — COREI EA</h4>
+    <ol className="cfg-steps-list">
+      <li><a href="/api/md/push/ea" download="COREI_Push.mq5">Download COREI_Push.mq5</a>, open it in MetaEditor (in MT5: Tools › MetaQuotes Language Editor) and press <b>F7</b> to compile.</li>
+      <li>In MT5: <b>Tools › Options › Expert Advisors</b> › tick “Allow WebRequest for listed URL” and add <code>{window.location.origin}</code>.</li>
+      <li>Log the terminal in to the account; attach <b>COREI_Push</b> to any chart. Inputs: <b>AccountCode</b> = the COREI account ID, <b>PushToken</b> = the token below. Nothing is traded.</li>
+      <li>Keep that terminal running (your PC, a Windows VPS or the COREI Docker container). Prices arrive within seconds; the account shows CONNECTED.</li>
+    </ol>
+    {canEdit && <p><button type="button" className="primary" disabled={busy} onClick={() => void issue()}>{conn.credential_kind ? 'New push token…' : 'Create push token'}</button>
+      {' '}{conn.credential_kind ? <span className="cfg-note">A token is saved (hidden). A new one replaces it.</span> : <span className="cfg-note">No token yet.</span>}</p>}
+    {token && <p className="cfg-ok" role="status">Push token (shown only now — copy it into the EA’s PushToken): <code className="cfg-secret-once">{token}</code>{' '}
+      <button type="button" onClick={() => void navigator.clipboard?.writeText(token)}>Copy</button></p>}
+    {error && <p role="alert" className="cfg-error">{error}</p>}
+    {mine.length > 0 && <table className="cfg-table" aria-label="Terminals sending to COREI"><thead><tr><th>Account</th><th>Terminal login</th><th>Server</th><th>Build</th><th>Last push</th><th>From</th></tr></thead>
+      <tbody>{mine.map(t => <tr key={t.account_id}><td>{t.account_code}</td><td>{t.login}</td><td>{t.server}</td><td>{t.build}</td>
+        <td>{new Date(t.last_push_at).toLocaleString()}</td><td>{t.remote_ip}</td></tr>)}</tbody></table>}
+  </section>;
 }
 
 function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connections'; row: Row; reload: () => void }) {
@@ -1116,13 +1147,15 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
         {!match && f.server.server_name && f.provider_id && <p className="cfg-note">A new connection will be created for this server.</p>}
         {!match && <div className="cfg-method">
           <Field label="How COREI reaches it" hint={f.adapter === 'TERMINAL_BRIDGE' ? 'Fallback when the SDK is behind a broker: the official MT5 terminal logs in and COREI reads from it through the bridge program' : 'The licensed mtapi SDK talks to the broker server itself, as institutional platforms do; keep its update subscription current'}>
-            <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK (recommended)'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (fallback)']]} onChange={v => set({ adapter: v })} /></Field>
+            <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK'], ['TERMINAL_PUSH', 'Terminal push (COREI EA in MT5)'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (fallback)']]} onChange={v => set({ adapter: v })} /></Field>
+          {f.adapter === 'TERMINAL_PUSH' && <p className="cfg-note">The COREI EA in an MT5 terminal logged in to this account sends its prices to COREI over HTTPS. No password is needed here.
+            After adding, open the account's server › <b>Create push token</b> and follow the steps there.</p>}
           {f.adapter === 'TERMINAL_BRIDGE' && <>
             <BridgeFields settings={f.server} change={server => set({ server })} />
             <Field label="Bridge token" hint="Contents of corei-bridge.token on the bridge machine; stored encrypted on the connection"><input aria-label="Bridge token" type="password" autoComplete="new-password" maxLength={200}
               value={f.bridge_token} onChange={e => set({ bridge_token: e.target.value.trim() })} /></Field></>}
         </div>}
-        {match && <p className="cfg-note">Reached through {match.adapter === 'TERMINAL_BRIDGE' ? 'the MT5 terminal bridge' : 'the direct SDK'} (set on the connection).</p>}
+        {match && <p className="cfg-note">Reached through {match.adapter === 'TERMINAL_BRIDGE' ? 'the MT5 terminal bridge' : match.adapter === 'TERMINAL_PUSH' ? 'terminal push (COREI EA)' : 'the direct SDK'} (set on the connection).</p>}
       </Section>
       <Section n={4} title="Addresses for this account">
         {serverPoints.length ? <AccountAddresses mode={f.access_mode} own={f.access_points} serverPoints={serverPoints} connectionId={match?.id}
@@ -1581,6 +1614,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       </form>
       {canEdit && selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'MT4') && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX' || selected.platform === 'CTRADER') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
+      {selected && entity === 'connections' && selected.platform === 'MT5' && selected.adapter === 'TERMINAL_PUSH' && <PushPanel conn={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'FIX') && <BrokerRead account={selected} canEdit={canEdit} platform={selected.platform} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
       {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}

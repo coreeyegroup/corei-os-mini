@@ -255,8 +255,12 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
         data.append('ACCOUNT_INACTIVE')
     if row['trading_permission'] == 'DISABLED':
         data.append('ACCOUNT_PERMISSION_DISABLED')
-    if row['platform'] in ('MT5', 'MT4') and not row.get('credential_kind'):
+    pushed = row['platform'] == 'MT5' and row.get('adapter') == 'TERMINAL_PUSH'
+    if row['platform'] in ('MT5', 'MT4') and not row.get('credential_kind') and not pushed:
+        # Terminal push: the terminal is logged in where it runs; COREI needs no password.
         data.append('ACCOUNT_CREDENTIAL_MISSING')
+    if pushed and row.get('connection_credential_kind') != 'BRIDGE_TOKEN':
+        data.append('PUSH_TOKEN_MISSING')
     if row['platform'] == 'REST_API' and not row.get('connection_credential_kind'):
         data.append('CONNECTION_CREDENTIAL_MISSING')
     routing = row.get('routing')
@@ -267,7 +271,7 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
             data.append('BRIDGE_NOT_CONFIGURED')
         elif row.get('connection_credential_kind') != 'BRIDGE_TOKEN':
             data.append('BRIDGE_TOKEN_MISSING')
-    elif routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings']:
+    elif routing and 'NO_ADDRESS_AVAILABLE' in routing['warnings'] and not pushed:
         data.append('NO_ADDRESS_AVAILABLE')
     if row.get('connection_state') == 'FAILED':
         data.append('CONNECTION_FAILED')
@@ -725,8 +729,8 @@ def _credential_owner(db, owner: str, owner_id: UUID, credential: BaseModel) -> 
             raise HTTPException(422, 'A FIX connection takes the session login (username and password).')
         return 'connection_id', connection
     if connection['platform'] == 'MT5':
-        if connection['adapter'] != 'TERMINAL_BRIDGE' or not isinstance(credential, BridgeTokenCredential):
-            raise HTTPException(422, 'An MT5 connection takes only the terminal bridge token (when its method is Terminal bridge). '
+        if connection['adapter'] not in ('TERMINAL_BRIDGE', 'TERMINAL_PUSH') or not isinstance(credential, BridgeTokenCredential):
+            raise HTTPException(422, 'An MT5 connection takes only the terminal bridge or push token (when its method is Terminal bridge or Terminal push). '
                                      'MT5 logins are saved on each account.')
         return 'connection_id', connection
     if connection['platform'] == 'MT4':

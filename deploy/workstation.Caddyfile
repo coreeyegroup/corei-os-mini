@@ -24,6 +24,14 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
+    # MT5 terminal push (the COREI EA): token-authenticated; batches of quotes, bars and the symbol list.
+    @terminal_push path /api/md/push
+    handle @terminal_push {
+        request_body {
+            max_size 8MB
+        }
+        reverse_proxy 127.0.0.1:18786
+    }
     @operational path /api/operator/* /api/config/* /api/admin/* /api/oauth/* /api/infra/* /api/md/*
     handle @operational {
         request_body {

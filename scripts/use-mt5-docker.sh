@@ -46,7 +46,12 @@ fi
 echo "Bridge for COREI: 127.0.0.1:$PORT   ·   Terminal view: 127.0.0.1:$VIEW"
 
 step "3/6 Image corei-mt5:local (first build ~5-10 minutes)"
-docker build -q -t corei-mt5:local -f "$ROOT/connectors/mt5-docker/Dockerfile" "$ROOT"
+# Registries refuse now and then ("429 Too Many Requests"): wait and try again.
+for try in 1 2 3 4 5 6; do
+  if docker build -q -t corei-mt5:local -f "$ROOT/connectors/mt5-docker/Dockerfile" "$ROOT"; then break; fi
+  (( try == 6 )) && { echo "The image could not be built after 6 tries (see the error above)."; false; }
+  echo "Build failed (try $try of 6); waiting $((try * 30)) s and trying again…"; sleep $((try * 30))
+done
 
 step "4/6 Bridge certificate, token and terminal-view password (made here, kept in $BASE)"
 install -d -m 750 "$BASE" "$BASE/config" "$STATE"

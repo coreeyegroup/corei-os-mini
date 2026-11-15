@@ -176,6 +176,17 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
         raise HTTPException(409, 'Reading from the broker is available for MT5 and FIX accounts; other platforms use their own login.')
     if not str(account['external_account_id']).isdigit():
         raise HTTPException(409, 'The MT5 login must be a number.')
+    if account.get('adapter') == 'TERMINAL_PUSH':
+        # Read through the COREI EA in the terminal: report what it last sent; the symbol list comes with its pushes.
+        from .md import push
+        seen = push.last_push(account_id)
+        if not seen:
+            raise HTTPException(409, 'Nothing received from the COREI EA yet. In the MT5 terminal logged in to this account, attach COREI_Push '
+                                     'with this account code and the server\'s push token, and allow WebRequest to the COREI address.')
+        age = (store._now() - seen['last_push_at']).total_seconds()
+        return {'connected': age < 60, 'host': seen.get('server'), 'port': None, 'connect_ms': None, 'via': 'COREI EA (terminal push)',
+                'last_push_seconds_ago': round(age, 1), 'terminal_build': seen.get('build'), 'company': seen.get('company'),
+                'symbols_stored': None, 'note': 'Account facts and symbols are sent by the EA; collection runs in the collector.'}
     if account.get('access_mode') == 'FASTEST' and store.refresh_latency_if_stale(account['connection_id'], actor):
         with store.transaction('read') as db:  # the address order follows the new measurement
             account = store.get_record(db, 'accounts', account_id)

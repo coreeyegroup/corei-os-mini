@@ -349,3 +349,5 @@ button.cfg-tile { cursor: pointer; }
 .dbx-new input { min-width: 90px; }
 .dbx-colform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 5px; margin-bottom: 6px; }
 .cfg-remove-help { margin: 0; font-size: 11.5px; line-height: 1.45; }
+.cfg-steps-list { margin: 4px 0 8px 18px; padding: 0; line-height: 1.6; }
+.cfg-secret-once { user-select: all; word-break: break-all; padding: 1px 4px; border: 1px dashed var(--accent); }

@@ -244,7 +244,7 @@ class MaintenanceWindow(_Strict):
     note: Text(120) = ''
 
 
-ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE'}, 'MT4': {'DEFAULT'}, 'CTRADER': {'DEFAULT', 'NATIVE'},
+ADAPTERS = {'MT5': {'DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE', 'TERMINAL_PUSH'}, 'MT4': {'DEFAULT'}, 'CTRADER': {'DEFAULT', 'NATIVE'},
             'REST_API': {'DEFAULT', 'NATIVE'}, 'FIX': {'DEFAULT', 'NATIVE'}}
 
 
@@ -258,7 +258,7 @@ class ConnectionIn(_Strict):
     settings: dict
     status: RecordStatus = 'ACTIVE'
     # How COREI reaches the platform. Both MT5 methods stay available (DEC-29).
-    adapter: Literal['DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE', 'NATIVE'] = 'DEFAULT'
+    adapter: Literal['DEFAULT', 'MTAPI_DIRECT', 'TERMINAL_BRIDGE', 'TERMINAL_PUSH', 'NATIVE'] = 'DEFAULT'
     # Broker server clock: base offset from UTC (minutes) and daylight-saving rule.
     server_utc_offset_minutes: Annotated[int, Field(ge=-720, le=840)] | None = None
     dst_rule: Literal['UNKNOWN', 'NONE', 'US', 'EU'] = 'UNKNOWN'
@@ -462,7 +462,7 @@ class Mt5AccountSetupIn(_Strict):
     credential: Mt5LoginCredential | None = None
     # How COREI reaches the server: through the official MT5 terminal (server.bridge set, bridge_token given)
     # or the direct SDK. Applies when the connection is created; an existing connection keeps its method.
-    adapter: Literal['TERMINAL_BRIDGE', 'MTAPI_DIRECT', 'DEFAULT'] = 'DEFAULT'
+    adapter: Literal['TERMINAL_BRIDGE', 'TERMINAL_PUSH', 'MTAPI_DIRECT', 'DEFAULT'] = 'DEFAULT'
     bridge_token: Secret | None = None
 
     @model_validator(mode='after')

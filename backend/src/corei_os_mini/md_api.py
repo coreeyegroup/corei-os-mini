@@ -186,3 +186,60 @@ def files(response: Response, _: str = Depends(require_operator)):
 def backups(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
     return {'items': store.backups()}
+
+
+# ----- MT5 terminal push (the COREI EA) -----
+from pathlib import Path as _Path
+import secrets as _secrets
+
+from fastapi import Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+
+from . import config_store as _cfg
+from .config_models import BridgeTokenCredential as _Token
+from .md import push as _push
+from .operator_auth import require_reauth as _reauth
+
+EA_FILE = _Path(__file__).parent / 'md' / 'ea' / 'COREI_Push.mq5'
+
+
+@router.post('/push', response_class=PlainTextResponse)
+async def terminal_push(request: Request, authorization: str = Header(''), x_corei_account: str = Header('')):
+    """From the COREI EA in an MT5 terminal: quotes, bars, login facts, symbol list. Token = the server's push token."""
+    if not authorization.startswith('Bearer ') or not x_corei_account:
+        raise HTTPException(401, 'Send Authorization: Bearer <push token> and X-COREI-Account: <account code>.')
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(422, 'The body must be JSON: {"lines": [...]}') from None
+    lines = body.get('lines') if isinstance(body, dict) else None
+    if not isinstance(lines, list):
+        raise HTTPException(422, 'The body must be JSON: {"lines": [...]}')
+    ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip() or None
+    return PlainTextResponse(_push.receive(x_corei_account.strip(), authorization[7:].strip(), lines, ip), headers={'Cache-Control': 'no-store'})
+
+
+@router.post('/push-token/{connection_id}')
+def new_push_token(connection_id: UUID, response: Response, user: Principal = Depends(_ops), __: Principal = Depends(_reauth)):
+    """Issue a new push token for an MT5 server (method: terminal push). Shown once; saved encrypted; the old one stops."""
+    _no_store(response)
+    token = _secrets.token_urlsafe(32)
+    result = _cfg.set_credential(user.username, 'connections', connection_id, _Token(kind='BRIDGE_TOKEN', token=token),
+                                 reason='New MT5 terminal push token')
+    _push.forget()
+    if isinstance(result, dict) and result.get('change_request'):
+        return {'change_request': result['change_request'], 'token': None}
+    return {'token': token, 'note': 'Paste it into the COREI EA (input Token). It is shown only now.'}
+
+
+@router.get('/push/ea', response_class=PlainTextResponse)
+def ea_source(_: str = Depends(require_operator)):
+    """The COREI EA source (MQL5). Open it in MetaEditor and compile (F7), or copy it to MQL5/Experts."""
+    return PlainTextResponse(EA_FILE.read_text(encoding='utf-8'), headers={'Content-Disposition': 'attachment; filename="COREI_Push.mq5"'})
+
+
+@router.get('/push/terminals')
+def push_terminals(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with _cfg.transaction('read') as db:
+        return {'items': db.execute('SELECT t.*, a.code AS account_code FROM md_push_terminals t JOIN cfg_accounts a ON a.id=t.account_id ORDER BY a.code').fetchall()}

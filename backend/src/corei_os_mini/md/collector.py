@@ -224,6 +224,10 @@ class SourceWorker(threading.Thread):
             self._sync_subscriptions()
 
     def _send(self, message: dict) -> None:
+        if getattr(self, 'push_mode', False):
+            from . import push
+            push.send(self.account_id, message)
+            return
         with self.write_lock:
             if self.bridge is not None:
                 try:
@@ -334,6 +338,9 @@ class SourceWorker(threading.Thread):
             return ([sys.executable, '-m', 'corei_os_mini.md.upstox_reader'],
                     {'token': token, 'api_base': settings.get('api_base_url'), 'symbols': sorted(self.wanted()),
                      'heartbeat_seconds': 5, 'poll_ms': 1000})
+        if account.get('adapter') == 'TERMINAL_PUSH':
+            # The COREI EA in the terminal sends; nothing to start or log in to here.
+            return ['push'], {}
         bridge = bridge_of(account.get('connection_settings')) if account.get('adapter') == 'TERMINAL_BRIDGE' else None
         if account.get('adapter') == 'TERMINAL_BRIDGE' and bridge is None:
             self.state, self.error = 'FAILED', 'BRIDGE_NOT_CONFIGURED: the connection uses the MT5 terminal bridge but has no bridge host and fingerprint.'
@@ -369,7 +376,7 @@ class SourceWorker(threading.Thread):
 
     def _session(self) -> bool:
         # FASTEST routing: measure the server's addresses again first when the last measurement is old.
-        if self.platform == 'MT5':
+        if self.platform == 'MT5' and getattr(self, 'adapter', None) != 'TERMINAL_PUSH':
             cfg.refresh_latency_if_stale(self.connection_id, 'collector')
         with cfg.transaction('read') as db:
             account = cfg.get_record(db, 'accounts', UUID(self.account_id))
@@ -383,6 +390,8 @@ class SourceWorker(threading.Thread):
         if started is None:
             return False
         command, request = started
+        if command[0] == 'push':
+            return self._push_session()
         if command[0] == 'bridge':
             return self._bridge_session(command, request)
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -405,6 +414,37 @@ class SourceWorker(threading.Thread):
             # The reader has answered; a process that lingers is killed rather than reported as an error.
             self.proc.kill()
             self.proc.wait(timeout=5)
+        return connected
+
+    PUSH_SILENCE = 30.0  # seconds without anything from the terminal before the source counts as disconnected
+
+    def _push_session(self) -> bool:
+        """MT5 terminal push: the COREI EA's lines arrive through the database inbox (see md/push.py) and go through
+        exactly the same handling as a reader's or bridge's lines. Commands go back through the outbox."""
+        from . import push
+        self.adapter, self.push_mode = 'TERMINAL_PUSH', True
+        push.reset(self.account_id)
+        self.subscribed = set()
+        self.state, self.error = 'WAITING_FOR_TERMINAL', 'Waiting for the COREI EA in the MT5 terminal to send.'
+        connected, last = False, time.monotonic()
+        self._sync_subscriptions()
+        try:
+            while not self.stopping.is_set():
+                lines = push.take(self.account_id)
+                if lines:
+                    last = time.monotonic()
+                    for raw in lines:
+                        if self._on_line(raw) == 'connected':
+                            # The EA (re)started: it knows no subscriptions yet.
+                            connected, self.subscribed = True, set()
+                            self._sync_subscriptions()
+                elif connected and time.monotonic() - last > self.PUSH_SILENCE:
+                    self._on_line(json.dumps({'t': 'disconnected'}).encode())
+                    connected = False
+                    self.state, self.error = 'WAITING_FOR_TERMINAL', f'Nothing from the terminal for {int(self.PUSH_SILENCE)} s: is the PC or VPS on and the COREI EA running?'
+                self.stopping.wait(0.25)
+        finally:
+            self.push_mode = False
         return connected
 
     def _bridge_session(self, command: list[str], request: dict) -> bool:
