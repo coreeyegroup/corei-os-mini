@@ -22,9 +22,16 @@ diagnose() {
   say "Diagnostics:"; uname -a; id; echo "WINEARCH=${WINEARCH:-} WINEPREFIX=$WINEPREFIX"
   dpkg -l 'wine*' 'winehq*' 2>/dev/null | awk '/^ii/{print "  "$2" "$3}'
   ls /opt/wine-stable/lib/wine 2>&1 | sed 's/^/  lib\/wine: /'
+  ls /opt/wine-stable/lib/wine/x86_64-windows/kernel32.dll /opt/wine-stable/lib/wine/i386-windows/kernel32.dll 2>&1 | sed 's/^/  builtin: /'
   findmnt -no SOURCE,FSTYPE,OPTIONS -T /config 2>&1 | sed 's/^/  \/config mount: /'
   cat /proc/sys/vm/mmap_min_addr 2>/dev/null | sed 's/^/  vm.mmap_min_addr: /'
-  timeout 60 wine cmd /c ver 2>&1 | head -5 | sed 's/^/  wine cmd: /'
+  grep -E '^Seccomp:' /proc/self/status | sed 's/^/  /'
+  env | grep -E '^(LD_|WINE|PATH=)' | sed 's/^/  env: /'
+  # A throw-away prefix outside /config: if this one works, the problem is the /config folder, not Wine.
+  rm -rf /tmp/corei-winetest
+  WINEPREFIX=/tmp/corei-winetest timeout 120 wine cmd /c ver 2>&1 | tail -3 | sed 's/^/  wine in \/tmp: /'
+  WINEPREFIX=/tmp/corei-winetest wineserver -k 2>/dev/null; rm -rf /tmp/corei-winetest
+  WINEDEBUG=err+all,warn+module timeout 60 wine cmd /c exit 0 2>&1 | head -15 | sed 's/^/  wine in \/config: /'
 }
 if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then
   say "The Wine folder does not work (left half-written by an earlier set-up); creating it again"
@@ -32,7 +39,7 @@ if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -f "$WINEPREFIX/drive_c/Program Fi
 fi
 if ! prefix_ok; then
   say "1/5 Creating the Wine prefix (Windows 10 mode)"
-  wineboot --init; wineserver -w
+  timeout 300 wineboot --init; timeout 120 wineserver -w || wineserver -k
   prefix_ok || { say "Wine cannot run in its new Windows folder."; diagnose; \
                  say "Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
   say "Wine folder ready"
