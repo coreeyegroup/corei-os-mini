@@ -1,4 +1,8 @@
-# MT5 terminal push — the COREI EA (DEC-68)
+# MT5 terminal push — the COREI EA (DEC-68) — optional method
+
+One of COREI's MT5 connection methods, not the main route. The main architecture is the direct SDK, the terminal
+bridge and the Docker terminal; an EA has limits (one terminal per account, it runs inside the terminal's event loop,
+WebRequest only, the terminal must stay open) that do not fit every COREI requirement.
 
 The COREI EA (`backend/src/corei_os_mini/md/ea/COREI_Push.mq5`, downloadable from the server's panel) runs inside any
 MT5 terminal and sends what that terminal sees to COREI over HTTPS. Read-only: it never trades.

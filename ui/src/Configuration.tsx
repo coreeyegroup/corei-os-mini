@@ -736,9 +736,9 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
       <Section n={4} title="Method, clock and limits">
         <div className="cfg-pair">
           {pick('adapter', 'Connection method', draft.platform === 'MT5'
-            ? [['MTAPI_DIRECT', 'Direct (mtapi SDK)'], ['DEFAULT', 'Default (direct)'], ['TERMINAL_PUSH', 'Terminal push (COREI EA in MT5)'], ['TERMINAL_BRIDGE', 'Terminal bridge (fallback)']]
+            ? [['MTAPI_DIRECT', 'Direct (mtapi SDK)'], ['DEFAULT', 'Default (direct)'], ['TERMINAL_BRIDGE', 'Terminal bridge (official terminal)'], ['TERMINAL_PUSH', 'Terminal push — COREI EA (optional)']]
             : draft.platform === 'FIX' ? [['NATIVE', 'FIX session']] : [['DEFAULT', 'Default'], ['NATIVE', 'Broker API']],
-            draft.platform === 'MT5' ? 'Direct: the licensed SDK speaks the MT5 protocol. Terminal push: the COREI EA in an MT5 terminal (your PC, a Windows VPS or the Docker container) sends prices over HTTPS — no SDK, no password in COREI. Terminal bridge: COREI reads from a terminal through the bridge program' : undefined)}
+            draft.platform === 'MT5' ? 'Direct: the licensed SDK speaks the MT5 protocol. Terminal bridge: COREI reads from the official terminal through the bridge program (Docker or a Windows machine). Terminal push (optional): the COREI EA inside a terminal sends prices over HTTPS' : undefined)}
           {pick('clock_source', 'Clock set from', [['UNKNOWN', 'Not set'], ['MANUAL', 'Entered by hand'], ['SERVER_FILE', 'servers.dat'], ['BROKER_LOGIN', 'Broker at login']])}
         </div>
         <div className="cfg-pair">
@@ -1147,7 +1147,7 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
         {!match && f.server.server_name && f.provider_id && <p className="cfg-note">A new connection will be created for this server.</p>}
         {!match && <div className="cfg-method">
           <Field label="How COREI reaches it" hint={f.adapter === 'TERMINAL_BRIDGE' ? 'Fallback when the SDK is behind a broker: the official MT5 terminal logs in and COREI reads from it through the bridge program' : 'The licensed mtapi SDK talks to the broker server itself, as institutional platforms do; keep its update subscription current'}>
-            <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK'], ['TERMINAL_PUSH', 'Terminal push (COREI EA in MT5)'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (fallback)']]} onChange={v => set({ adapter: v })} /></Field>
+            <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (official terminal)'], ['TERMINAL_PUSH', 'Terminal push — COREI EA (optional)']]} onChange={v => set({ adapter: v })} /></Field>
           {f.adapter === 'TERMINAL_PUSH' && <p className="cfg-note">The COREI EA in an MT5 terminal logged in to this account sends its prices to COREI over HTTPS. No password is needed here.
             After adding, open the account's server › <b>Create push token</b> and follow the steps there.</p>}
           {f.adapter === 'TERMINAL_BRIDGE' && <>

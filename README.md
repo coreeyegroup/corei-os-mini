@@ -888,7 +888,9 @@ container (Debian + WineHQ, so the host's packages never conflict) with COREI's 
 127.0.0.1 only, restarts on boot; then the account is switched to it. View the terminal in a browser through an SSH
 tunnel (printed at the end). Replaces the host-Wine route (`use-mt5-terminal.sh`, kept as a fallback).
 
-## MT5 terminal push (COREI EA) — release 0.37.0
+## MT5 terminal push (COREI EA), an optional method — release 0.37.0
+
+Kept as one option beside Direct SDK and Terminal bridge / Docker (the main route).
 
 Set an MT5 server's method to **Terminal push (COREI EA in MT5)**, create its push token, and attach the read-only
 **COREI_Push** EA in any MT5 terminal logged in to the account (your PC, a Windows VPS or the Docker container). Prices,
