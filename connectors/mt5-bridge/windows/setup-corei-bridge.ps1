@@ -98,12 +98,17 @@ goto loop
 
 Step '5/6 Keep it running (scheduled task at log-on; the terminal needs a desktop session)'
 $user = "$env:USERDOMAIN\$env:USERNAME"
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $user),
+    # Every 5 minutes: starts it again if it stopped (a running copy is left alone).
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650))
+)
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -Force -TaskName "COREI MT5 bridge $Name" -Action (New-ScheduledTaskAction -Execute $runBridge) -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
 Start-ScheduledTask -TaskName "COREI MT5 bridge $Name"
-Write-Host "Task 'COREI MT5 bridge $Name' registered and started. Set this Windows user to sign in automatically after a reboot."
+Write-Host "Task 'COREI MT5 bridge $Name' registered and started; it is started again every 5 minutes if it stops."
+Write-Host 'Leave Remote Desktop by closing its window (do not Sign out), and set this user to sign in automatically after a reboot (Sysinternals Autologon).'
 
 Step "6/6 How COREI reaches this machine: $Mode"
 if ($Mode -eq 'Direct') {
