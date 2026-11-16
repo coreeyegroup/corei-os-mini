@@ -526,7 +526,9 @@ def _market_data_health(add) -> None:
         add('Market data', 'Collection', 'WARN', 'Paused for everything (Market data › Controls)')
     else:
         add('Market data', 'Collection', 'OK', f'{active} active plan{"" if active == 1 else "s"}')
-    if active and not collectors:
+    if active and not collectors and paused_all and paused_all['paused']:
+        add('Market data', 'Collector service', 'WARN', 'Idle: all collection is paused, so no source reports (resume it on Market data › Dashboard)')
+    elif active and not collectors:
         add('Market data', 'Collector service', 'FAIL', 'No collector has reported — start corei-os-mini-collector')
     for c in collectors:
         age = _age(c['heartbeat_at'])
