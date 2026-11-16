@@ -203,6 +203,7 @@ from .operator_auth import require_reauth as _reauth
 EA_FILE = _Path(__file__).parent / 'md' / 'ea' / 'COREI_Push.mq5'
 _REPO = _Path(__file__).resolve().parents[3]
 BRIDGE_FILES = {'setup-corei-bridge.ps1': _REPO / 'connectors' / 'mt5-bridge' / 'windows' / 'setup-corei-bridge.ps1',
+                'update-corei-bridge.ps1': _REPO / 'connectors' / 'mt5-bridge' / 'windows' / 'update-corei-bridge.ps1',
                 'corei_mt5_bridge.py': _REPO / 'connectors' / 'mt5-bridge' / 'corei_mt5_bridge.py'}
 
 

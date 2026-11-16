@@ -58,6 +58,8 @@ class AccountRoutes(tmd.MarketData):
         self.assertEqual(ps1.status_code, 200)
         self.assertIn('-Mode Tunnel', ps1.text)
         self.assertEqual(self.alice.get('/api/md/bridge/files/..%2Fsecret').status_code, 404)
+        self.assertIn('Get-BridgeVersion', self.alice.get('/api/md/bridge/files/update-corei-bridge.ps1').text)
+        self.assertIn("BRIDGE_VERSION = '", self.alice.get('/api/md/bridge/files/corei_mt5_bridge.py').text)
         # The EA push route's token authenticates the push for this account (no server-level push method needed).
         r = self.alice.post('/api/md/push', json={'lines': []}, headers={'Authorization': 'Bearer ' + issued['token'], 'X-COREI-Account': a['code']})
         self.assertEqual(r.status_code, 200, r.text)

@@ -447,7 +447,10 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
         <li><strong>EA push</strong> (optional): add a Terminal push route, issue its token, attach COREI_Push to a chart in the terminal with this account code and the token, and allow WebRequest to the COREI address.</li>
         <li><strong>Direct SDK</strong>: needs an SDK as new as the broker's server; useful as a last route.</li>
       </ul>
+      <p className="cfg-note">Save every file into <code>C:\corei-setup</code> with exactly these names, replacing the old ones (if the browser adds “(1)” to a name, delete the old file and download again).
+        First installation: <code>setup-corei-bridge.ps1</code>. Updating an installed bridge: <code>update-corei-bridge.ps1 -Name &lt;name&gt;</code>.</p>
       <p className="cfg-actions"><a href="/api/md/bridge/files/setup-corei-bridge.ps1" download>Download setup-corei-bridge.ps1</a>
+        <a href="/api/md/bridge/files/update-corei-bridge.ps1" download>Download update-corei-bridge.ps1</a>
         <a href="/api/md/bridge/files/corei_mt5_bridge.py" download>Download corei_mt5_bridge.py</a>
         <a href="/api/md/push/ea" download>Download COREI_Push.mq5 (EA)</a></p>
       <p className="cfg-note">Put the two files in one folder on the Windows machine. One bridge serves every account: for each login it makes a portable copy of the installed terminal (once) and runs it, so add the same host, port, fingerprint and token as a route on every account that should use that machine.</p>

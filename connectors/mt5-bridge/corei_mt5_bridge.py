@@ -55,6 +55,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
+BRIDGE_VERSION = '0.38.2'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -436,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--state', default=str(HERE), help='folder for the certificate and token')
     parser.add_argument('--init', action='store_true', help='make the certificate and token, print what COREI needs, and exit')
     parser.add_argument('--terminals-root', help='serve every account: one portable terminal copy per login under this folder')
+    parser.add_argument('--version', action='version', version=f'corei_mt5_bridge {BRIDGE_VERSION}')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)  # internal: one login, plain TCP on 127.0.0.1
     args = parser.parse_args(argv)
     global PORTABLE
@@ -462,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(state / 'corei-bridge.crt'), str(state / 'corei-bridge.key'))
     terminals = Terminals(args.terminal, Path(args.terminals_root)) if args.terminals_root and args.terminal else None
-    print(f'COREI MT5 bridge listening on {args.bind}:{args.port}' + (f' · every account, terminal copies under {args.terminals_root}' if terminals else ''))
+    print(f'{now_iso()} COREI MT5 bridge {BRIDGE_VERSION} listening on {args.bind}:{args.port}' + (f' · every account, terminal copies under {args.terminals_root}' if terminals else ''))
     print(f'Certificate fingerprint (SHA-256): {fingerprint}')
     print(f'Token file: {state / "corei-bridge.token"} (paste its contents into COREI; keep it secret)')
     with socket.create_server((args.bind, args.port), reuse_port=False) as server:
