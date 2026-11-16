@@ -279,6 +279,7 @@ function SourceSection({ s, c, paused, rows, total, collapsed, cols, ctx, ws, ca
         ['Server / session', s.server_name ?? s.connection_code], ['Environment', s.environment], ['Role', String(s.purpose ?? '').replace('_', ' ').toLowerCase()],
         ['Collector', c ? `${String(c.state).toLowerCase()}${c.started_at ? ` since ${new Date(c.started_at).toLocaleString()}` : ''}` : 'not running'],
         ...(c?.route ? [['Route', String(c.route)] as [string, string]] : []),
+        ...(c?.clock_skew_ms != null ? [['Reader clock', `${c.clock_skew_ms > 0 ? '+' : ''}${c.clock_skew_ms} ms vs COREI${Math.abs(c.clock_skew_ms) > 500 ? ' - off: sync it (w32tm /resync); latency corrected' : ''}`] as [string, string]] : []),
         ['Heartbeat', c ? `${ago(c.heartbeat_age_seconds)} ago` : '—'], ['Subscribed', c ? `${c.subscribed} symbols` : '—'], ['Prices collected', c ? Number(c.ticks_total).toLocaleString() : '—'],
         ['Backlog', c ? String(c.backlog) : '—'], ['Server clock', c?.server_offset_minutes != null ? `UTC${c.server_offset_minutes >= 0 ? '+' : ''}${c.server_offset_minutes / 60}` : '—'],
         ['Active plans', String(s.active_plans)], ['Last error', c?.last_error ?? '—']] as [string, string][]).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}

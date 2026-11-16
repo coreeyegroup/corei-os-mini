@@ -189,6 +189,9 @@ class SourceWorker(threading.Thread):
         self.job_requests: deque = deque()
         self.reported_error: str | None = None
         self.failures = 0
+        self.clock_samples: deque = deque(maxlen=20)
+        self.clock_skew_ms: float | None = None
+        self.clock_skew_reported = False
         # Routes (DEC-69): the account's ordered ways in; empty = the server's method.
         self.routes: list[dict] = []
         self.route_idx = 0
@@ -203,7 +206,7 @@ class SourceWorker(threading.Thread):
                 'subscribed': len(self.subscribed), 'ticks_total': self.ticks_total, 'lag_ms': lag, 'backlog': self.sink.backlog(),
                 'server_offset_minutes': int(self.offset.total_seconds() // 60), 'started_at': self.started_at, 'last_error': self.error,
                 'route': (self.active_route or {}).get('label'), 'route_method': (self.active_route or {}).get('method'),
-                'routes': len(self.routes)}
+                'routes': len(self.routes), 'clock_skew_ms': round(self.clock_skew_ms) if self.clock_skew_ms is not None else None}
 
     def _event(self, kind: str, severity: str = 'INFO', symbol: str | None = None, plan_id: Any = None, **detail) -> None:
         with self.sink.lock:
@@ -553,9 +556,10 @@ class SourceWorker(threading.Thread):
         if kind == 'q':
             self._quote(m)
         elif kind == 'hb':
-            pass
+            self._clock_sample(m)
         elif kind == 'connected':
             self.client_build = m.get('client_build') or self.client_build
+            self._clock_sample(m)
             self._connected(m)
             return 'connected'
         elif kind == 'subscribed':
@@ -612,10 +616,30 @@ class SourceWorker(threading.Thread):
                     store.queue_gap_backfill(st.plan['id'], 'M1', floor(outage, 60) - timedelta(minutes=1), floor(now, 60) + timedelta(minutes=1))
         self.outage_since = None
 
+    CLOCK_SKEW_WARN_MS = 500
+
+    def _clock_sample(self, m: dict) -> None:
+        """How far the reader's (bridge machine's) clock is from COREI's. Each heartbeat gives one sample
+        (their clock minus ours at receipt, which is skew minus the network delay); the largest of the last 20 is the
+        closest to the true skew. A clock that is off makes every latency figure wrong by that much."""
+        theirs = parse_time(m.get('utc_now'))
+        if not theirs or '.' not in str(m.get('utc_now')):
+            return  # whole-second stamps cannot measure sub-second skew
+        self.clock_samples.append((theirs - self.clock()).total_seconds() * 1000)
+        skew = max(self.clock_samples)
+        self.clock_skew_ms = skew
+        if abs(skew) > self.CLOCK_SKEW_WARN_MS and not self.clock_skew_reported:
+            self.clock_skew_reported = True
+            self._event('CLOCK_SKEW', 'WARNING', clock_skew_ms=round(skew), message=(
+                f'The clock of the machine reading prices is {abs(round(skew))} ms {"ahead of" if skew > 0 else "behind"} COREI\'s. '
+                'Latency figures are corrected by this amount; synchronise its clock (Windows: w32tm /resync).'))
+
     def _quote(self, m: dict) -> None:
         symbol = m.get('s')
         st = self.plans.get(symbol)
         rx = parse_time(m.get('rx')) or self.clock()
+        if self.clock_skew_ms and abs(self.clock_skew_ms) > self.CLOCK_SKEW_WARN_MS:
+            rx = rx - timedelta(milliseconds=self.clock_skew_ms)
         self.last_rx = rx
         if st is None:
             return

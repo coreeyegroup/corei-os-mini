@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 
 from .. import config_store as store
 
-ALERT_KINDS = {'DISCONNECTED', 'FEED_SWITCH', 'FEED_RESTORED', 'STALE', 'GAP', 'DEVIATION', 'BACKLOG', 'ERROR'}
+ALERT_KINDS = {'DISCONNECTED', 'FEED_SWITCH', 'FEED_RESTORED', 'STALE', 'GAP', 'DEVIATION', 'BACKLOG', 'ERROR', 'CLOCK_SKEW'}
 INTEGRITY_KINDS = {'VERIFY', 'BACKUP', 'DISK', 'ARCHIVE'}
 
 
@@ -80,13 +80,14 @@ def write(batch: dict) -> None:
             record_event(db, **e)
         for account_id, s in (status or {}).items():
             db.execute('''INSERT INTO md_collector_status(account_id, state, host, port, pid, subscribed, ticks_total, lag_ms, backlog,
-                    server_offset_minutes, started_at, heartbeat_at, last_error, route)
+                    server_offset_minutes, started_at, heartbeat_at, last_error, route, clock_skew_ms)
                 VALUES (%(account_id)s,%(state)s,%(host)s,%(port)s,%(pid)s,%(subscribed)s,%(ticks_total)s,%(lag_ms)s,%(backlog)s,
-                    %(server_offset_minutes)s,%(started_at)s,now(),%(last_error)s,%(route)s)
+                    %(server_offset_minutes)s,%(started_at)s,now(),%(last_error)s,%(route)s,%(clock_skew_ms)s)
                 ON CONFLICT (account_id) DO UPDATE SET state=EXCLUDED.state, host=EXCLUDED.host, port=EXCLUDED.port, pid=EXCLUDED.pid,
                     subscribed=EXCLUDED.subscribed, ticks_total=EXCLUDED.ticks_total, lag_ms=EXCLUDED.lag_ms, backlog=EXCLUDED.backlog,
                     server_offset_minutes=EXCLUDED.server_offset_minutes, started_at=EXCLUDED.started_at, heartbeat_at=now(),
-                    last_error=EXCLUDED.last_error, route=EXCLUDED.route''', {'account_id': account_id, 'route': None, **s})
+                    last_error=EXCLUDED.last_error, route=EXCLUDED.route, clock_skew_ms=EXCLUDED.clock_skew_ms''',
+                       {'account_id': account_id, 'route': None, 'clock_skew_ms': None, **s})
 
 
 def save_bars(db, bars: list[dict]) -> None:

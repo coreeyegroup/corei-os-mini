@@ -3,6 +3,7 @@ pinned certificate, COREI's transport, session and stream replies, a refused tok
 never leaving the first line."""
 import importlib.util
 import io
+import os
 import json
 import socket
 import sys
@@ -207,3 +208,83 @@ class CollectorThroughBridge(test_market_data.MarketData):
         self.assertLess(abs((tick['received_at'] - tick['source_time']).total_seconds()), 5, 'broker time stored as UTC')
         self.assertEqual((status['state'], status['host'], status['port']), ('CONNECTED', '127.0.0.1', TerminalBridge.port))
         self.assertEqual(event['client_build'], 6241)
+        with self.connect() as db:
+            skew = db.execute('SELECT clock_skew_ms FROM md_collector_status').fetchone()['clock_skew_ms']
+        self.assertIsNotNone(skew)
+        self.assertLess(abs(skew), 500, 'the bridge runs on this machine: its clock is ours')
+
+
+class MultiAccountBridge(unittest.TestCase):
+    """--terminals-root: the supervisor checks the token, makes a portable terminal copy per login and hands the
+    session to that login's worker (a second process with its own MetaTrader5 package)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        # A fake "installed terminal" to copy, and a fake MetaTrader5 package the worker process imports.
+        master = Path(cls.tmp) / 'MetaTrader 5'
+        master.mkdir()
+        (master / 'terminal64.exe').write_bytes(b'MZ')
+        (master / 'logs').mkdir()
+        fake_pkg = Path(cls.tmp) / 'site'
+        fake_pkg.mkdir()
+        src = Path(__file__).read_text().split('def fake_mt5():')[1].split('class TerminalBridge')[0]
+        (fake_pkg / 'MetaTrader5.py').write_text(
+            'import time, types\nfrom collections import namedtuple\n'
+            "Acc = namedtuple('Acc', 'login balance equity currency leverage margin_mode margin_so_so limit_orders company server trade_allowed')\n"
+            "Sym = namedtuple('Sym', 'name digits volume_min volume_max volume_step filling_mode trade_mode trade_exemode trade_stops_level "
+            "trade_freeze_level trade_contract_size currency_margin description path spread')\n"
+            "Tick = namedtuple('Tick', 'time time_msc bid ask last volume')\nTerm = namedtuple('Term', 'build connected')\n"
+            'def fake_mt5():' + src + '\n_m = fake_mt5()\nglobals().update({k: v for k, v in vars(_m).items() if not k.startswith("__")})\n')
+        cls.env_patch = {'PYTHONPATH': str(fake_pkg) + os.pathsep + os.environ.get('PYTHONPATH', '')}
+        os.environ.update(cls.env_patch)
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            cls.port = s.getsockname()[1]
+        cls.state = tempfile.mkdtemp()
+        threading.Thread(target=lambda: TerminalBridge.bridge.main(['--bind', '127.0.0.1', '--port', str(cls.port), '--state', cls.state,
+                                                                    '--terminal', str(master / 'terminal64.exe'), '--terminals-root', str(Path(cls.tmp) / 'terminals')]),
+                         daemon=True).start()
+        for _ in range(100):
+            time.sleep(0.05)
+            try:
+                socket.create_connection(('127.0.0.1', cls.port), timeout=0.2).close()
+                break
+            except OSError:
+                continue
+        cls.fingerprint = TerminalBridge.bridge.ensure_cert(Path(cls.state) / 'corei-bridge.crt', Path(cls.state) / 'corei-bridge.key')
+        cls.token = (Path(cls.state) / 'corei-bridge.token').read_text().strip()
+
+    def session(self, login, password='secret', token=None):
+        t = BridgeTransport('127.0.0.1', self.port, self.fingerprint)
+        t.send({'token': token or self.token, 'mode': 'session', 'login': login, 'password': password, 'server': 'VTMarkets-Live 3', 'symbols': ['XAUUSD']})
+        reply = json.loads(next(t.lines()))
+        t.close()
+        return reply
+
+    def test_two_logins_get_their_own_terminal_copies_and_workers(self):
+        self.assertIn('BRIDGE_TOKEN_REJECTED', json.dumps(self.session(35822869, token='nope')))
+        a = self.session(35822869)
+        b = self.session(5056977914)
+        self.assertTrue(a['connected'] and b['connected'], (a, b))
+        self.assertEqual(a['client_build'], 6241)
+        copies = sorted(p.name for p in (Path(self.tmp) / 'terminals').iterdir())
+        self.assertEqual(copies, ['35822869', '5056977914'])
+        self.assertTrue((Path(self.tmp) / 'terminals' / '35822869' / 'terminal64.exe').exists())
+        self.assertFalse((Path(self.tmp) / 'terminals' / '35822869' / 'logs').exists(), 'logs are not copied')
+        refused = self.session(35822869, password='bad')
+        self.assertFalse(refused['connected'])
+        self.assertIn('Authorization failed', refused['attempts'][0]['error'])
+        # A stream through the supervisor, with a command and a stop.
+        t = BridgeTransport('127.0.0.1', self.port, self.fingerprint)
+        t.send({'token': self.token, 'mode': 'stream', 'login': 5056977914, 'password': 'secret', 'server': 'X', 'symbols': ['EURUSD'], 'heartbeat_seconds': 1})
+        lines = t.lines()
+        self.assertEqual(json.loads(next(lines))['t'], 'connected')
+        seen = 0
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and seen < 3:
+            if json.loads(next(lines))['t'] == 'q':
+                seen += 1
+        t.send({'cmd': 'stop'})
+        t.close()
+        self.assertGreaterEqual(seen, 3)

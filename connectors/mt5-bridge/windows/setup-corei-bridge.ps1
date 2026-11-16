@@ -18,8 +18,9 @@ Run in PowerShell as Administrator, in the folder holding this script and corei_
   VPS:  powershell -ExecutionPolicy Bypass -File setup-corei-bridge.ps1 -Name metaquotes-demo -Mode Direct -CoreiIp 203.0.113.10
   PC:   powershell -ExecutionPolicy Bypass -File setup-corei-bridge.ps1 -Name metaquotes-demo -Mode Tunnel -SshTarget coreeye@corei-os-mini.coreeye.in -TunnelPort 9450
 
-One terminal holds one login: for several accounts at once, install the terminal in portable copies (one folder per
-account) and run this script once per account with its own -Name, -Terminal, -Port (and -TunnelPort).
+Every account of the firm can use this one bridge: for each login COREI sends, the bridge makes a portable copy of the
+installed terminal (once, under C:\corei-bridge\<Name>\terminals\<login>) and runs it, so several accounts stream at
+the same time through the same host and port. The installed terminal itself is only the template.
 At the end it prints the host, port, fingerprint and token to enter in COREI (Setup > the account > Routes > Add route).
 #>
 param(
@@ -91,10 +92,18 @@ $runBridge = Join-Path $dir 'run-bridge.cmd'
 @echo off
 rem COREI MT5 bridge ($Name): restarts itself if it stops.
 :loop
-"$pyExe" "$dir\corei_mt5_bridge.py" --terminal "$Terminal" --bind $bind --port $Port --state "$dir" >> "$dir\bridge.log" 2>&1
+"$pyExe" "$dir\corei_mt5_bridge.py" --terminal "$Terminal" --terminals-root "$dir\terminals" --bind $bind --port $Port --state "$dir" >> "$dir\bridge.log" 2>&1
 timeout /t 10 /nobreak >nul
 goto loop
 "@ | Set-Content -Encoding ASCII $runBridge
+
+Step '4b Clock: Windows time service synchronised (latency figures depend on this clock)'
+try {
+    & w32tm /config /manualpeerlist:"time.windows.com,0x9 pool.ntp.org,0x9" /syncfromflags:manual /update | Out-Null
+    Set-Service w32time -StartupType Automatic; Restart-Service w32time
+    & w32tm /resync /nowait | Out-Null
+    Write-Host (& w32tm /query /status | Select-String 'Source|Last Successful' | ForEach-Object { $_.Line.Trim() }) -Separator ' - '
+} catch { Write-Host "Time sync could not be configured: $_" }
 
 Step '5/6 Keep it running (scheduled task at log-on; the terminal needs a desktop session)'
 $user = "$env:USERDOMAIN\$env:USERNAME"

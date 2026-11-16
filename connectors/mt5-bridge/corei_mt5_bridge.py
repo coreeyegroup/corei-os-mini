@@ -17,8 +17,9 @@ per session (never stored here), and then speaks the same line protocol as COREI
   stream : lines {"t":"connected"|"q"|"subscribed"|"hb"|"bars"|"history_error"|"error"|"disconnected"|"stopped"}
            commands from COREI {"cmd":"subscribe"|"unsubscribe"|"history"|"stop"}
 
-One terminal holds one login at a time, so run one bridge (and one portable terminal copy) per account
-that must stream at the same time. Standard library only, apart from MetaTrader5.
+One terminal holds one login at a time. With --terminals-root the bridge serves any number of accounts on one
+machine: for each login it makes a portable copy of the installed terminal (once) and runs a worker for it, so
+every account of the firm can use the same bridge host and port. Standard library only, apart from MetaTrader5.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import socket
 import ssl
 import subprocess
@@ -53,8 +55,11 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
+PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
+
+
 def now_iso() -> str:
-    return dt.datetime.now(UTC).replace(tzinfo=None).isoformat(timespec='seconds')
+    return dt.datetime.now(UTC).replace(tzinfo=None).isoformat(timespec='milliseconds')
 
 
 def _make_cert_python(cert: Path, key: Path) -> None:
@@ -125,6 +130,8 @@ def login(request: dict, terminal: str | None) -> tuple[bool, str]:
     # A terminal that is starting, updating itself or loading history (slow under Wine) can take longer than the
     # package's default 60 s to answer: wait up to 3 minutes, and try once more if its pipe still did not answer.
     kwargs = {'path': terminal, 'timeout': 180000} if terminal else {'timeout': 180000}
+    if PORTABLE:
+        kwargs['portable'] = True
     for attempt in (1, 2):
         if mt5.initialize(**kwargs):
             break
@@ -264,8 +271,102 @@ class Stream:
             if time.monotonic() - beat >= self.heartbeat:
                 beat = time.monotonic()
                 self.send({'t': 'hb', 'utc_now': now_iso()})
-            self.stop.wait(0.2)
+            self.stop.wait(0.1)
         self.send({'t': 'stopped'})
+
+
+# ----- several accounts on one machine: one portable terminal copy and one worker per login -----
+
+class Terminals:
+    def __init__(self, master: str, root: Path):
+        self.master, self.root = Path(master), root
+        self.workers: dict[str, dict] = {}
+        self.lock = threading.Lock()
+
+    def copy_for(self, login: str) -> Path:
+        folder = self.root / login
+        exe = folder / 'terminal64.exe'
+        if not exe.exists():
+            print(f'{now_iso()} login {login}: making a portable terminal copy in {folder} (once; about a minute)')
+            shutil.copytree(self.master.parent, folder, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns('logs', 'Tester', 'Bases', '*.log', 'Config'))
+        return exe
+
+    def port_for(self, login: str) -> int:
+        """The local port of this login's worker, starting it (and its terminal copy) when needed."""
+        with self.lock:
+            w = self.workers.get(login)
+            if w and w['proc'].poll() is None:
+                return w['port']
+            exe = self.copy_for(login)
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                port = probe.getsockname()[1]
+            proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--worker', '--terminal', str(exe), '--port', str(port)])
+            for _ in range(300):
+                time.sleep(0.1)
+                try:
+                    socket.create_connection(('127.0.0.1', port), timeout=0.2).close()
+                    break
+                except OSError:
+                    continue
+            self.workers[login] = {'port': port, 'proc': proc}
+            print(f'{now_iso()} login {login}: worker on 127.0.0.1:{port} (pid {proc.pid})')
+            return port
+
+
+def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> None:
+    """Token check here; then the whole session is passed line by line to the login's worker and back."""
+    reader = conn.makefile('r', encoding='utf-8', newline='\n')
+    writer = conn.makefile('w', encoding='utf-8', newline='\n')
+    worker = None
+    try:
+        first = reader.readline()
+        try:
+            request = json.loads(first or '')
+        except ValueError:
+            request = {}
+        if not isinstance(request, dict) or not secrets.compare_digest(str(request.get('token', '')), token):
+            writer.write(json.dumps({'t': 'failed', 'attempts': [{'host': 'bridge', 'port': 0, 'ok': False,
+                                     'error': 'BRIDGE_TOKEN_REJECTED: the bridge token does not match.', 'refused': True}]}) + '\n')
+            writer.flush()
+            return
+        login = str(int(request.get('login') or 0))
+        worker = socket.create_connection(('127.0.0.1', terminals.port_for(login)), timeout=30)
+        worker.settimeout(None)
+        wr = worker.makefile('r', encoding='utf-8', newline='\n')
+        ww = worker.makefile('w', encoding='utf-8', newline='\n')
+        ww.write(first)
+        ww.flush()
+
+        def upstream() -> None:  # COREI's commands → worker
+            try:
+                for line in reader:
+                    ww.write(line)
+                    ww.flush()
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    worker.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+        threading.Thread(target=upstream, daemon=True).start()
+        for line in wr:  # worker's lines → COREI
+            writer.write(line)
+            writer.flush()
+    except (OSError, ValueError) as exc:
+        try:
+            writer.write(json.dumps({'t': 'error', 'msg': f'{type(exc).__name__}: {exc}'[:200]}) + '\n')
+            writer.flush()
+        except OSError:
+            pass
+    finally:
+        for part in (worker, writer, reader, conn):
+            try:
+                part.close()
+            except (OSError, AttributeError):
+                pass
 
 
 # ----- the TLS server -----
@@ -292,7 +393,8 @@ def serve_client(conn: socket.socket, token: str, terminal: str | None) -> None:
             request = json.loads(reader.readline() or '')
         except ValueError:
             request = {}
-        if not isinstance(request, dict) or not secrets.compare_digest(str(request.get('token', '')), token):
+        # A worker (token '') serves the supervisor on 127.0.0.1 only; the supervisor has already checked the token.
+        if not isinstance(request, dict) or (token and not secrets.compare_digest(str(request.get('token', '')), token)):
             send({'t': 'failed', 'attempts': [{'host': 'bridge', 'port': 0, 'ok': False, 'error': 'BRIDGE_TOKEN_REJECTED: the bridge token does not match.', 'refused': True}]})
             return
         mode = request.get('mode') or 'stream'
@@ -333,7 +435,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--port', type=int, default=9443)
     parser.add_argument('--state', default=str(HERE), help='folder for the certificate and token')
     parser.add_argument('--init', action='store_true', help='make the certificate and token, print what COREI needs, and exit')
+    parser.add_argument('--terminals-root', help='serve every account: one portable terminal copy per login under this folder')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)  # internal: one login, plain TCP on 127.0.0.1
     args = parser.parse_args(argv)
+    global PORTABLE
+    if args.worker:
+        PORTABLE = True
+        with socket.create_server(('127.0.0.1', args.port), reuse_port=False) as server:
+            while True:
+                raw, _ = server.accept()
+                threading.Thread(target=serve_client, args=(raw, '', args.terminal), daemon=True).start()
     if args.init:
         state = Path(args.state)
         state.mkdir(parents=True, exist_ok=True)
@@ -350,7 +461,8 @@ def main(argv: list[str] | None = None) -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(state / 'corei-bridge.crt'), str(state / 'corei-bridge.key'))
-    print(f'COREI MT5 bridge listening on {args.bind}:{args.port}')
+    terminals = Terminals(args.terminal, Path(args.terminals_root)) if args.terminals_root and args.terminal else None
+    print(f'COREI MT5 bridge listening on {args.bind}:{args.port}' + (f' · every account, terminal copies under {args.terminals_root}' if terminals else ''))
     print(f'Certificate fingerprint (SHA-256): {fingerprint}')
     print(f'Token file: {state / "corei-bridge.token"} (paste its contents into COREI; keep it secret)')
     with socket.create_server((args.bind, args.port), reuse_port=False) as server:
@@ -368,7 +480,10 @@ def main(argv: list[str] | None = None) -> int:
                 raw.close()
                 continue
             print(f'{now_iso()} connection from {peer[0]}')
-            threading.Thread(target=serve_client, args=(conn, token, args.terminal), daemon=True).start()
+            if terminals:
+                threading.Thread(target=proxy_to_worker, args=(conn, token, terminals), daemon=True).start()
+            else:
+                threading.Thread(target=serve_client, args=(conn, token, args.terminal), daemon=True).start()
 
 
 if __name__ == '__main__':

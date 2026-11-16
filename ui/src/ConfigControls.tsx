@@ -450,7 +450,7 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
       <p className="cfg-actions"><a href="/api/md/bridge/files/setup-corei-bridge.ps1" download>Download setup-corei-bridge.ps1</a>
         <a href="/api/md/bridge/files/corei_mt5_bridge.py" download>Download corei_mt5_bridge.py</a>
         <a href="/api/md/push/ea" download>Download COREI_Push.mq5 (EA)</a></p>
-      <p className="cfg-note">Put the two files in one folder on the Windows machine. One terminal holds one login: for several accounts at once use a portable terminal copy per account, each with its own -Name and -Port.</p>
+      <p className="cfg-note">Put the two files in one folder on the Windows machine. One bridge serves every account: for each login it makes a portable copy of the installed terminal (once) and runs it, so add the same host, port, fingerprint and token as a route on every account that should use that machine.</p>
     </details>
     {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
     {edit && <FloatingWindow storageKey="corei-os-mini.route-window.v1" title={edit.id ? `Route · ${edit.label}` : `New route · ${account.code}`} onClose={() => setEdit(null)}

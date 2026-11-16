@@ -915,3 +915,8 @@ Windows set-up (VPS or PC) in one run, as Administrator, with the two files down
 It installs Python and MetaQuotes' MetaTrader5 package, sets up the bridge, its certificate and token, a scheduled task
 that keeps it running, and either a firewall rule open to COREI's IP only or the SSH tunnel; it prints the host, port,
 fingerprint and token for *Add route*. See docs/MT5_TERMINAL_BRIDGE.md. Migration 024.
+
+- 0.38.1: one Windows bridge serves every account (portable terminal copy + worker per login, made on demand);
+  the bridge stamps receipts in milliseconds and polls every 100 ms; the collector measures the reader machine's
+  clock skew from heartbeats, corrects latency by it and warns above 0.5 s (migration 026; the Windows set-up also
+  turns on time sync); the bridge task is restarted every 5 minutes if it stops.

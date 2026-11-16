@@ -18,8 +18,12 @@
      start the task it names. COREI then reaches the bridge at `127.0.0.1:9450`.
 4. The script prints host, port, fingerprint and token: Setup › the account › *Add route* › Terminal bridge, then
    *Enter token*, then *Test*.
-5. Several accounts at once: one portable terminal copy per account, the script once per account with its own
-   `-Name`, `-Terminal`, `-Port` (and `-TunnelPort`).
+5. Several accounts at once: nothing more to do. The bridge runs with `--terminals-root`, so for each login COREI
+   sends it makes a portable copy of the installed terminal (once, `C:\corei-bridge\<name>\terminals\<login>`) and a
+   worker process for it; every account gets the same host, port, fingerprint and token as its route. The installed
+   terminal is only the template (log it in once so it has the server list).
+   Clock: the script sets Windows time sync; COREI also measures the bridge machine's clock against its own from the
+   heartbeats, corrects latency by the skew and warns (event *clock skew*) when it is more than 0.5 s.
 6. Sign the Windows user in automatically after a reboot (the terminal needs a desktop session).
 
 > Since 0.24.0 (DEC-55) the direct SDK, kept current on its update subscription, is the primary MT5 method; use this bridge for a broker the SDK has not caught up with.
