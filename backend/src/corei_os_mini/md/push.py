@@ -103,6 +103,9 @@ def receive(code: str, token: str, lines: list[Any], remote_ip: str | None) -> s
         if keep:
             with db.cursor() as cur:
                 cur.executemany('INSERT INTO md_push_inbox(account_id, line) VALUES (%s, %s)', [(account['id'], json.dumps(x)) for x in keep])
+        # A standby EA (its route is not the one in use) keeps pushing: lines nobody reads for 2 minutes are dropped,
+        # so the inbox stays small; when the collector switches to this route it starts from current prices.
+        db.execute("DELETE FROM md_push_inbox WHERE account_id=%s AND received_at < now() - interval '2 minutes'", (account['id'],))
         db.execute(
             """INSERT INTO md_push_terminals(account_id, login, server, company, build, ea_version, remote_ip, last_push_at, pushes)
                VALUES (%s,%s,%s,%s,%s,%s,%s,now(),1)
