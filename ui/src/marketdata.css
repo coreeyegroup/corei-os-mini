@@ -211,3 +211,20 @@
 .sb-inst { height: 18px; width: 110px; font-size: 11px; font-family: var(--mono, ui-monospace, monospace); }
 .sb-pager { display: flex; align-items: center; gap: 6px; justify-content: flex-end; padding: 4px 10px; font-size: 11.5px; color: var(--muted); }
 .sb-pager button { height: 20px; font-size: 11px; }
+
+/* Stage 2 · Market intelligence */
+.intel-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.intel-tfs { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.intel-tfs button { border: 0; border-radius: 0; padding: 2px 9px; background: transparent; }
+.intel-tfs button[aria-pressed="true"] { background: var(--accent); color: var(--bg, #000); }
+.intel-table td { white-space: nowrap; }
+.intel-table tr.clickable { cursor: pointer; }
+.intel-table tr.selected td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.intel-table th.sortable { cursor: pointer; user-select: none; }
+.intel-table td.up { color: var(--ready); } .intel-table td.down { color: var(--danger); }
+.intel-chart { margin: 12px 0; } .intel-chart svg { width: 100%; height: auto; background: var(--panel, transparent); border: 1px solid var(--line); border-radius: 6px; }
+.intel-chart polyline { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.intel-chart .close { stroke: var(--text, #ddd); stroke-width: 1.8; } .intel-chart .ema20 { stroke: var(--accent); } .intel-chart .ema50 { stroke: var(--cfg-warn); }
+.intel-chart .bb { stroke: var(--muted); stroke-dasharray: 3 3; } .intel-chart .rsi { stroke: var(--accent); } .intel-chart .guide { stroke: var(--line); stroke-dasharray: 2 4; }
+.intel-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.intel-now { font-size: 1.1em; }

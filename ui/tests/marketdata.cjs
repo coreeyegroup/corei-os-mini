@@ -70,6 +70,14 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/jobs'))return ok({items:[]});
    if(url.endsWith('/md/files'))return ok({items:[{id:1,day:'2026-10-20',kind:'TICKS',account_code:'VTM_A',broker_symbol:'XAUUSD.r',rows:180000,bytes:2400000,sha256:'a'.repeat(64),verify_status:'OK',verified_at:now}]});
    if(url.endsWith('/md/backups'))return ok({items:[{id:1,kind:'DATABASE',ok:true,started_at:now,path:'/backup/db/corei.dump',bytes:5e6,files:1}]});
+   if(url.includes('/intel/screener'))return ok({timeframe:'H1',engine:{last_run_at:now,instruments:2,duration_ms:40,errors:[]},session:{label:'London + New York'},items:[
+     {rank:1,account_id:'a1',broker_symbol:'XAUUSD.r',instrument:'XAUUSD',account_code:'VTM_A',provider_name:'VT Markets',timeframe:'H1',bar_time:now,bars:300,bars_source:'M1',regime:'TREND_UP',volatility:'HIGH',confidence:0.8,reasons:['ADX 31.0'],
+      features:{close:2401.2,ema20:2400,ema50:2390,ema200:2350,rsi14:62.3,atr14:4.1,atr_pct:0.17,adx14:31,er20:0.4,ret_20_pct:0.8,range_pos20:88},bid:2401.1,ask:2401.3,spread:0.2,spread_atr_pct:4.9,quality:96,attention:71.2,attention_parts:{quality:0.96}},
+     {rank:2,account_id:'a2',broker_symbol:'XAUUSD',instrument:'XAUUSD',account_code:'ICM_B',provider_name:'IC Markets',timeframe:'H1',bar_time:now,bars:40,bars_source:'M1',regime:'WARMING_UP',volatility:null,confidence:0,reasons:['40 of 60 bars needed'],
+      features:{close:2401},bid:null,ask:null,spread:null,quality:null,attention:null,attention_parts:{}}]});
+   if(url.includes('/intel/instrument/'))return ok({timeframe:'H1',snapshots:['M1','H1'].map(tf=>({timeframe:tf,regime:'TREND_UP',volatility:'HIGH',confidence:0.8,bars:300,bars_source:'M1',bar_time:now,session:'London',reasons:['ADX 31.0'],features:{adx14:31,rsi14:62,atr_pct:0.17,ema20:2400,ema50:2390,close:2401}})),
+     history:Array.from({length:40},(_,i)=>({bar_time:new Date(Date.parse(now)-(40-i)*3600000).toISOString(),regime:i<20?'RANGE':'TREND_UP',features:{close:2390+i,ema20:2389+i,ema50:2385+i,bb_upper:2395+i,bb_lower:2385+i,rsi14:40+i}}))});
+   if(url.includes('/intel/sessions'))return ok({now:{label:'London + New York',market_open:true,sessions:['London','New York'],rollover:false},next:[{at:now,label:'New York'}],table:[{name:'London',zone:'Europe/London',local:'08:00–17:00',utc_today:'08:00–17:00'}]});
    return fail(404,'Not mocked: '+url);
  };
  w.eval(js);await settle();
@@ -135,8 +143,22 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(prefPuts.filter(p=>p.key==='md.sources.v1').at(-1).value.length,2,'source workspaces saved for the user');
  console.log('PASS: stage 1 dashboard: workspaces › sources › instruments; pause source and instrument, chart drill-down, backfill, add instrument, new workspace.');
 
- // Stage 2 · Market intelligence: the comparison board.
+ // Stage 2 · Market intelligence: the screener (default), an instrument across timeframes, sessions.
  w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Intelligence'}}));await settle(12);
+ const intelRows=()=>$$('.intel-table tbody tr');
+ assert.equal(intelRows().length,2,'every collected instrument is listed');
+ assert.match(intelRows()[0].textContent,/XAUUSD\.r.*Trend up.*80%/);
+ assert.match(intelRows()[1].textContent,/Warming up/);
+ fill($('.intel-bar [aria-label="Regime"]'),'TREND_UP');await settle();
+ assert.equal(intelRows().length,1,'regime filter');
+ intelRows()[0].click();await settle(6);
+ assert.match($('.intel-table').textContent,/H1.*Trend up/);
+ assert.equal($$('.intel-chart rect').length,40,'regime strip, one mark per bar');
+ nav('Sessions').click();await settle(4);
+ assert.match($('.intel-now').textContent,/London \+ New York/);
+ console.log('PASS: stage 2 screener (rank, regime filter), instrument across timeframes with chart, sessions.');
+ // Select & compare: the comparison board.
+ nav('Select & compare').click();await settle(12);
  // Dashboard (default): one workspace with every source and instrument; pickers, filters, grouping, columns, panes.
  const tabs=()=>$$('.mb-tabs [role=tab]').map(b=>b.textContent);
  const pickBtn=l=>$$('.mb-pickbtn').find(b=>b.textContent.startsWith(l));

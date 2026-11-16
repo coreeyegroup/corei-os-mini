@@ -157,6 +157,16 @@ def health() -> dict:
         age = time.time() - beat if beat else None
         add('Services', 'Alert loop', 'OK' if age is not None and age < 120 else 'WARN',
             f'last cycle {int(age)} s ago' if age is not None else 'no cycle yet' + (' (last cycle failed)' if failed else ''))
+    from .intel import engine as intel_engine
+    if os.getenv('COREI_INTEL', '').lower() == 'off':
+        add('Services', 'Market intelligence', 'UNKNOWN', 'Turned off (COREI_INTEL=off)')
+    else:
+        st = intel_engine.STATUS
+        ran = datetime.fromisoformat(st['last_run_at']) if st.get('last_run_at') else None
+        age = (datetime.now(timezone.utc) - ran).total_seconds() if ran else None
+        add('Services', 'Market intelligence', 'WARN' if st.get('errors') or age is None or age > 300 else 'OK',
+            (f"last run {int(age)} s ago · {st['instruments']} instruments · {st['duration_ms']} ms" if age is not None else 'no run yet (first run 15 s after start)')
+            + (f" · {len(st['errors'])} errors: {st['errors'][0]}" if st.get('errors') else ''))
 
     # Host
     for path in ('/', '/var/lib/postgresql', '/opt/corei-os-mini'):

@@ -6,6 +6,7 @@ import os
 import pytest
 
 os.environ.setdefault('COREI_ALERTS', 'off')
+os.environ.setdefault('COREI_INTEL', 'off')
 os.environ.setdefault('COREI_EGRESS_IP', '203.0.113.200')
 
 

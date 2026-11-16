@@ -1,10 +1,11 @@
-/* Stage 2 · Market intelligence: select the collected data for analysis and compare it.
- * Analysis board (every source × instrument, pickers, filters, 26 columns, grouping, 1/2/4 charts with compare,
+/* Stage 2 · Market intelligence: the screener (ranked universe from the feature store), one instrument across every
+ * timeframe, the session map, and select & compare. Analysis board (every source × instrument, pickers, filters, 26 columns, grouping, 1/2/4 charts with compare,
  * time & sales, the same instrument from every source, CSV) · Stage map (components and build state). */
 import { useEffect, useState } from 'react';
 import { addReauthHandler, api } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import { SignIn } from './Infrastructure';
+import { InstrumentView, Screener, SessionsView } from './IntelBoard';
 import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
@@ -13,15 +14,20 @@ import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
-type Tab = 'compare' | 'stage';
+type Tab = 'screener' | 'instrument' | 'sessions' | 'compare' | 'stage';
 const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: 'screener', label: 'Screener', hint: 'Every collected instrument ranked for attention: regime, volatility, trend, momentum, cost against ATR and feed quality, from the shared feature store (closed bars, recomputed every minute).' },
+  { id: 'instrument', label: 'Instrument', hint: 'One instrument across every timeframe: regime and the reasons, indicators, chart with EMA and Bollinger bands, regime strip and RSI; CSV of the feature history.' },
+  { id: 'sessions', label: 'Sessions', hint: 'Which trading centres are open now, overlaps, rollover and the weekend close, and the next changes.' },
   { id: 'compare', label: 'Select & compare', hint: 'Choose sources and instruments for analysis, compare them side by side, chart and overlay sources. Data comes from Stage 1 · Market data.' },
   { id: 'stage', label: 'Stage map', hint: 'What this stage does, its components and how far each is built.' },
 ];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
-  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'compare', TABS.map(t => t.id));
+  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'screener', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
+  const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
+  useEffect(() => { if (tab === 'instrument') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
@@ -35,7 +41,12 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     <Tabs tab={tab} setTab={setTab} user={user.username} />
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
-      <div className="cfg-pane"><MarketBoard /></div>
+      <div className="cfg-pane">
+        {tab === 'screener' && <Screener canRefresh={(user.roles ?? []).includes('TRADING_OPS') || (user.roles ?? []).includes('ADMIN')} openInstrument={r => { setPick(r); setTab('instrument'); }} />}
+        {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}
+        {tab === 'sessions' && <SessionsView />}
+        {tab === 'compare' && <MarketBoard />}
+      </div>
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;

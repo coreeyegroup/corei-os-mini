@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from .operator_auth import admin_router, current_user, require_operator, router as operator_router
 from .config_api import router as config_router
 from .routes_api import router as routes_router
+from .intel_api import router as intel_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
 from .infra_api import router as infra_router
@@ -45,13 +46,16 @@ async def lifespan(_: FastAPI):
     import asyncio
     import os
     from . import alerts
-    task = None
+    from .intel import engine as intel_engine
+    tasks = []
     if os.getenv('COREI_ALERTS', 'on') != 'off' and settings.database_url:
-        task = asyncio.create_task(alerts.run_forever(config_store.transaction))
+        tasks.append(asyncio.create_task(alerts.run_forever(config_store.transaction)))
+    if os.getenv('COREI_INTEL', 'on') != 'off' and settings.database_url:
+        tasks.append(asyncio.create_task(intel_engine.run_forever()))  # Stage 2 feature store, every minute
     try:
         yield
     finally:
-        if task:
+        for task in tasks:
             task.cancel()
 
 
@@ -74,6 +78,7 @@ app.include_router(db_admin_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
 app.include_router(routes_router)
+app.include_router(intel_router)
 app.include_router(config_router)
 
 @app.get("/health")
@@ -172,7 +177,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.38.1-multi-account-bridge",
+        "release": "0.39.0-market-intelligence",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

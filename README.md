@@ -920,3 +920,13 @@ fingerprint and token for *Add route*. See docs/MT5_TERMINAL_BRIDGE.md. Migratio
   the bridge stamps receipts in milliseconds and polls every 100 ms; the collector measures the reader machine's
   clock skew from heartbeats, corrects latency by it and warns above 0.5 s (migration 026; the Windows set-up also
   turns on time sync); the bridge task is restarted every 5 minutes if it stops.
+
+## Stage 2 · Market intelligence — release 0.39.0
+
+Intelligence (second icon in the left bar) now opens on the **Screener**: every collected instrument ranked for
+attention per timeframe (M1…D1) with its regime (trend up/down, range, transition), volatility state, ADX, RSI, ATR%,
+EMA trend, 20-bar return, range position, spread against ATR and feed quality; filters, sorting, hover for the
+reasons. **Instrument** shows one instrument across every timeframe with the reasons, a chart (close, EMA 20/50,
+Bollinger bands, regime strip, RSI) and a CSV of its feature history. **Sessions** shows which centres are open,
+overlaps, rollover, the weekend close and the next changes. The feature store recomputes every minute from closed
+bars only (migration 027; health board: *Market intelligence*). Higher timeframes need history: backfill the source.
