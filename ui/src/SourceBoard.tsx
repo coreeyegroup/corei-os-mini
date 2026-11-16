@@ -224,7 +224,7 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
         sort={id => update({ sort: { col: id, dir: ws.sort.col === id ? (-ws.sort.dir as 1 | -1) : (TABLE_COLS.find(x => x.id === id)?.num ? -1 : 1) } })}
         move={d => move(s.account_id, d)} remove={() => update({ all: false, sources: (ws.all ? sources.map(x => x.account_id) : ws.sources).filter(x => x !== s.account_id) })}
         addInstrument={() => setEditing({ ...BLANK, account_id: s.account_id })} edit={r => r.plan ? setEditing(r.plan) : setEditing({ ...BLANK, account_id: s.account_id, broker_symbol: r.broker_symbol })}
-        setPaused={p => void setSourcePaused(s, p)} planStatus={(r, st, reason) => void setPlanStatus(r, st, reason)}
+        setPaused={p => void (!p && !paused && ctl.ALL?.paused ? setAllPaused(false) : setSourcePaused(s, p))} planStatus={(r, st, reason) => void setPlanStatus(r, st, reason)}
         changed={refresh} backfill={(planIds, form) => void act(`Backfill ${s.account_name || s.account_code}`, async () => {
           for (const id of planIds) await api('md/jobs', 'POST', { plan_id: id, ...form });
           return `Backfill queued for ${planIds.length} instrument${planIds.length === 1 ? '' : 's'} (Market data › Backfill shows progress).`; })} />;
