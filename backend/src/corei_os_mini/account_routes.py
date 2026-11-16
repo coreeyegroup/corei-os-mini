@@ -82,8 +82,18 @@ def _account(db, account_id: UUID) -> dict:
 def list_routes(account_id: UUID) -> list[dict]:
     with store.transaction('read') as db:
         _account(db, account_id)
-        return [_public(r) for r in db.execute('SELECT * FROM cfg_account_routes WHERE account_id=%s ORDER BY priority, created_at',
+        rows = [_public(r) for r in db.execute('SELECT * FROM cfg_account_routes WHERE account_id=%s ORDER BY priority, created_at',
                                                (account_id,)).fetchall()]
+        if any(r['method'] == 'TERMINAL_PUSH' for r in rows):
+            try:
+                ea = db.execute('SELECT login, server, company, build, ea_version, remote_ip, last_push_at, pushes FROM md_push_terminals '
+                                'WHERE account_id=%s', (account_id,)).fetchone()
+            except Exception:  # noqa: BLE001 - table missing on an old schema
+                ea = None
+            for r in rows:
+                if r['method'] == 'TERMINAL_PUSH':
+                    r['terminal'] = store.clean(ea) if ea else None
+        return rows
 
 
 def create(actor: str, account_id: UUID, data: RouteIn) -> dict:

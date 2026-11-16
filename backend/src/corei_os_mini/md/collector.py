@@ -622,6 +622,8 @@ class SourceWorker(threading.Thread):
         """How far the reader's (bridge machine's) clock is from COREI's. Each heartbeat gives one sample
         (their clock minus ours at receipt, which is skew minus the network delay); the largest of the last 20 is the
         closest to the true skew. A clock that is off makes every latency figure wrong by that much."""
+        if getattr(self, 'adapter', None) == 'TERMINAL_PUSH':
+            return  # pushed quotes are stamped with COREI's own receipt time: no other clock is involved
         theirs = parse_time(m.get('utc_now'))
         if not theirs or '.' not in str(m.get('utc_now')):
             return  # whole-second stamps cannot measure sub-second skew

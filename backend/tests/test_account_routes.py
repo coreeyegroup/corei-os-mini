@@ -108,3 +108,65 @@ class PlanSymbols(tmd.MarketData):
         self.assertIn('not in this source', bad['detail'])
         p = self.ok(self.alice.post('/api/md/plans', json={'code': 'X2', 'account_id': a['id'], 'broker_symbol': 'EUrUSD', 'instrument_id': instrument['id']}), 201)
         self.assertEqual(p['broker_symbol'], 'EURUSD')
+
+
+class PushRoute(tmd.MarketData):
+    """The COREI EA as a route on the account (the server keeps its own method): its own token, the collector's push
+    session, quotes stamped with COREI's receipt time, and the EA's status on the route."""
+    test_plans_estimate_controls_and_jobs = None
+    test_collector_end_to_end = None
+    test_refused_login_reported_once_and_on_overview = None
+
+    def rurl(self, a, rest=''):
+        return f"/api/config/accounts/{a['id']}/routes{rest}"
+
+    def test_ea_push_through_a_route(self):
+        import threading
+        import time
+        from datetime import datetime, timedelta, timezone
+        from fastapi.testclient import TestClient
+        from corei_os_mini.api import app
+        _, (a, _b, _c), instrument = self.setup_accounts()
+        route = self.ok(self.alice.post(self.rurl(a), json={'label': 'EA push', 'method': 'TERMINAL_PUSH', 'location': 'WINDOWS_PC', 'priority': 1}), 201)
+        token = self.ok(self.alice.post(self.rurl(a, f"/{route['id']}/new-token")))['token']
+        self.start(self.plan(a, instrument, 'EU_EA'))
+        self.collector = Collector(self.root)
+        ea = TestClient(app, base_url='https://testserver')
+        hdr = {'Authorization': 'Bearer ' + token, 'X-COREI-Account': a['code']}
+        iso = lambda t: t.replace(tzinfo=None).isoformat(timespec='milliseconds')
+        stop, seen = threading.Event(), []
+
+        def loop():
+            n = 0
+            lines = [{'t': 'connected', 'login': a['external_account_id'], 'host': 'Srv', 'port': 0, 'client_build': 5400,
+                      'server_time': iso(datetime.now(timezone.utc)), 'utc_now': iso(datetime.now(timezone.utc)), 'ea_version': '1.01'}]
+            while not stop.is_set():
+                if any(c.startswith('subscribe') for c in seen):
+                    for _ in range(3):
+                        n += 1
+                        lines.append({'t': 'q', 's': 'EURUSD', 'st': iso(datetime.now(timezone.utc) - timedelta(milliseconds=30)),
+                                      'rx': '2001-01-01T00:00:00.000', 'b': 1.1 + n * 1e-5, 'a': 1.1001 + n * 1e-5, 'l': 0, 'v': 1, 'n': n})
+                r = ea.post('/api/md/push', json={'lines': lines}, headers=hdr)
+                assert r.status_code == 200, r.text
+                lines = []
+                seen.extend(x for x in r.text.split('\n') if x)
+                if 'hello' in seen and not any(c.startswith('subscribe') for c in seen):
+                    lines.append({'t': 'connected', 'login': a['external_account_id'], 'host': 'Srv', 'port': 0, 'client_build': 5400,
+                                  'server_time': iso(datetime.now(timezone.utc)), 'utc_now': iso(datetime.now(timezone.utc))})
+                time.sleep(0.1)
+        t = threading.Thread(target=loop, daemon=True)
+        t.start()
+        try:
+            self.run_collector(4.0)
+        finally:
+            stop.set()
+            t.join(5)
+        with self.connect() as db:
+            tick = db.execute('SELECT * FROM md_ticks WHERE account_id=%s ORDER BY received_at DESC LIMIT 1', (a['id'],)).fetchone()
+            status = db.execute('SELECT state, route FROM md_collector_status WHERE account_id=%s', (a['id'],)).fetchone()
+        self.assertIsNotNone(tick, 'quotes pushed through the route are stored')
+        self.assertEqual((status['state'], status['route']), ('CONNECTED', 'EA push'))
+        self.assertGreater(tick['received_at'].year, 2020, "the EA's own receipt stamp is ignored: COREI's receipt time is used")
+        self.assertLess((tick['received_at'] - tick['source_time']).total_seconds(), 2)
+        listed = self.ok(self.alice.get(self.rurl(a)))['items'][0]
+        self.assertEqual((listed['terminal']['build'], listed['terminal']['ea_version']), (5400, '1.01'))

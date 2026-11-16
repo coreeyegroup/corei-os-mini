@@ -19,7 +19,7 @@
 //|  3. Keep the terminal logged in to that account and running.      |
 //+------------------------------------------------------------------+
 #property copyright   "COREI-OS-MINI"
-#property version     "1.00"
+#property version     "1.01"
 #property description "Sends this terminal's quotes, bars and symbol list to COREI over HTTPS. Read-only: never trades."
 
 input string CoreiUrl    = "https://corei-os-mini.coreeye.in"; // COREI address (also allow it under Tools > Options > Expert Advisors)
@@ -28,7 +28,7 @@ input string PushToken   = "";                                  // Push token fr
 input int    PushEveryMs = 250;                                 // Send interval in milliseconds (100 or more)
 input bool   SendSymbolList = true;                             // Send the broker's symbol list on start
 
-#define EA_VERSION   "1.00"
+#define EA_VERSION   "1.01"
 #define MAX_PENDING  60000      // lines kept while COREI cannot be reached
 #define MAX_PER_POST 4000       // lines per request
 #define MAX_BODY     3000000    // bytes per request
@@ -193,6 +193,8 @@ void Unsubscribe(const string csv)
    int n = StringSplit(csv, ',', names);
    for(int i = 0; i < n; i++)
      {
+      StringTrimLeft(names[i]);
+      StringTrimRight(names[i]);
       int k = Find(names[i]);
       if(k < 0)
          continue;
@@ -427,7 +429,7 @@ void OnTimer()
    Collect();
    if(ArraySize(g_lines) == 0 && GetTickCount() - g_last_hb > 5000)
      {
-      Add("{\"t\":\"hb\"}");
+      Add("{\"t\":\"hb\",\"utc_now\":" + Q(Iso(TimeGMT(), 0)) + ",\"subscribed\":" + IntegerToString(ArraySize(g_subs)) + "}");
       g_last_hb = GetTickCount();
      }
    Flush();

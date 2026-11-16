@@ -424,7 +424,9 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
       {routes.map((r, i) => <tr key={r.id}>
         <td>{i + 1}</td>
         <td><strong>{r.label}</strong><br /><small className="cfg-note">{methodName(r.method)} · {locationName(r.location)}{r.notes ? ` · ${r.notes}` : ''}</small></td>
-        <td>{r.method === 'TERMINAL_BRIDGE' ? `${r.host}:${r.port}` : r.method === 'DIRECT' ? 'server addresses' : 'EA sends to COREI'}</td>
+        <td>{r.method === 'TERMINAL_BRIDGE' ? `${r.host}:${r.port}` : r.method === 'DIRECT' ? 'server addresses'
+          : r.terminal ? <span title={`pushes: ${r.terminal.pushes} · from ${r.terminal.remote_ip ?? '?'}`}>EA {r.terminal.ea_version ?? '?'} · {r.terminal.login}@{r.terminal.server ?? '?'} · build {r.terminal.build ?? '?'}<br /><small className="cfg-note">last push {when(r.terminal.last_push_at)}</small></span>
+          : <small className="cfg-note">EA not seen yet</small>}</td>
         <td>{state(r)}<br /><small className="cfg-note">{r.last_ok_at ? `OK ${when(r.last_ok_at)}` : 'never OK'}</small>
           {r.last_error && <><br /><small className="cfg-error-text" title={r.last_error}>{when(r.last_error_at)}: {String(r.last_error).slice(0, 70)}</small></>}</td>
         <td><div className="cfg-route-actions">

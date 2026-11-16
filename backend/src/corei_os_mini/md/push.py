@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import timezone
 from typing import Any
 from uuid import UUID
 
@@ -128,8 +129,15 @@ def receive(code: str, token: str, lines: list[Any], remote_ip: str | None) -> s
 def take(account_id: UUID | str, limit: int = 5000) -> list[bytes]:
     with cfg.transaction('write') as db:
         rows = db.execute('DELETE FROM md_push_inbox WHERE id IN (SELECT id FROM md_push_inbox WHERE account_id=%s ORDER BY id LIMIT %s) '
-                          'RETURNING id, line', (str(account_id), limit)).fetchall()
-    return [json.dumps(r['line']).encode() for r in sorted(rows, key=lambda r: r['id'])]
+                          'RETURNING id, line, received_at', (str(account_id), limit)).fetchall()
+    out = []
+    for r in sorted(rows, key=lambda r: r['id']):
+        line = r['line']
+        if isinstance(line, dict) and line.get('t') == 'q':
+            # Receipt = when COREI received the batch (its own clock, milliseconds), not the terminal PC's clock.
+            line = {**line, 'rx': r['received_at'].astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec='milliseconds')}
+        out.append(json.dumps(line).encode())
+    return out
 
 
 def send(account_id: UUID | str, message: dict) -> None:
