@@ -92,8 +92,12 @@ if ! wine python --version >/dev/null 2>&1; then
   say "3/5 Installing Python for Windows"
   curl -fsSL -o /tmp/python.exe "$PYTHON_URL" && wine /tmp/python.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0; timeout 600 wineserver -w || wineserver -k; rm -f /tmp/python.exe
 fi
-say "4/5 MetaTrader5 package (latest)"
-wine python -m pip install --quiet --disable-pip-version-check --upgrade MetaTrader5 || say "pip failed; using what is installed"
+say "4/5 MetaTrader5 package (latest) with numpy 1.26"
+# numpy 2.x calls ucrtbase.dll.crealf, which Wine 10 does not have ("Unimplemented function ucrtbase.dll.crealf"):
+# keep numpy 1.26.4 (MetaTrader5 needs numpy>=1.7).
+wine python -m pip install --quiet --disable-pip-version-check --upgrade MetaTrader5 "numpy==1.26.4" || say "pip failed; using what is installed"
+if wine python -c "import numpy, MetaTrader5; print('numpy', numpy.__version__, '· MetaTrader5', MetaTrader5.__version__)" 2>/dev/null; then :
+else say "Python cannot load numpy/MetaTrader5 (see above)"; fi
 
 say "5/5 Starting the terminal and the COREI bridge on port $PORT"
 wine "$MT5" >/dev/null 2>&1 &
