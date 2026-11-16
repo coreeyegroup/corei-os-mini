@@ -91,3 +91,18 @@ class AccountRoutes(tmd.MarketData):
         self.assertEqual((out['adapter'], out['connection_settings']['bridge']['host'], out['connection_settings']['server_name']), ('TERMINAL_BRIDGE', 'h', 'S'))
         out = account_routes.apply(acc, {'id': 'r', 'label': 'D', 'method': 'DIRECT', 'host': None, 'port': None, 'fingerprint': None})
         self.assertEqual((out['adapter'], out['connection_settings']['bridge']), ('MTAPI_DIRECT', None))
+
+
+class PlanSymbols(tmd.MarketData):
+    test_plans_estimate_controls_and_jobs = None
+    test_collector_end_to_end = None
+    test_refused_login_reported_once_and_on_overview = None
+
+    def test_plan_symbol_is_spelled_as_the_source_lists_it(self):
+        _, (a, _b, _c), instrument = self.setup_accounts()
+        with self.connect() as db:
+            db.execute("INSERT INTO md_symbol_catalog(account_id, broker_symbol, source) VALUES (%s,'EURUSD','MT5_LOGIN'), (%s,'EURUSD.m','MT5_LOGIN')", (a['id'], a['id']))
+        bad = self.ok(self.alice.post('/api/md/plans', json={'code': 'X1', 'account_id': a['id'], 'broker_symbol': 'EURUSX', 'instrument_id': instrument['id']}), 422)
+        self.assertIn('not in this source', bad['detail'])
+        p = self.ok(self.alice.post('/api/md/plans', json={'code': 'X2', 'account_id': a['id'], 'broker_symbol': 'EUrUSD', 'instrument_id': instrument['id']}), 201)
+        self.assertEqual(p['broker_symbol'], 'EURUSD')

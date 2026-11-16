@@ -177,9 +177,26 @@ def _values(data: PlanIn) -> dict:
     return {k: getattr(data, k) for k in COLUMNS}
 
 
+def _broker_symbol(db, data: PlanIn) -> None:
+    """The symbol must be one the source lists, spelled as the source spells it (MT5 symbols are case-sensitive:
+    'EUrUSD' never receives a price). A source with no symbol list yet (never logged in) accepts what is typed."""
+    if not db.execute('SELECT 1 FROM md_symbol_catalog WHERE account_id=%s LIMIT 1', (data.account_id,)).fetchone():
+        return
+    row = db.execute('SELECT broker_symbol FROM md_symbol_catalog WHERE account_id=%s AND lower(broker_symbol)=lower(%s) '
+                     'ORDER BY (broker_symbol=%s) DESC LIMIT 1', (data.account_id, data.broker_symbol, data.broker_symbol)).fetchone()
+    if not row:
+        near = [r['broker_symbol'] for r in db.execute(
+            "SELECT broker_symbol FROM md_symbol_catalog WHERE account_id=%s AND broker_symbol ILIKE %s ORDER BY broker_symbol LIMIT 5",
+            (data.account_id, f'%{data.broker_symbol[:6]}%')).fetchall()]
+        raise HTTPException(422, f"{data.broker_symbol} is not in this source's symbol list." + (f" Did you mean: {', '.join(near)}?" if near else '')
+                                 + ' Pick symbols from Market data › the source › Available.')
+    data.broker_symbol = row['broker_symbol']
+
+
 def create(actor: str, data: PlanIn) -> dict:
     with store.transaction('create') as db:
         _check(db, data, None)
+        _broker_symbol(db, data)
         values = _values(data)
         plan_id = uuid4()
         cols = ', '.join(['id', *values, 'status', 'created_by', 'updated_by'])

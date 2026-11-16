@@ -145,6 +145,9 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
     const scope = `account:${s.account_id}`;
     await api(`md/controls/${encodeURIComponent(scope)}`, 'PUT', { paused, version: ctl[scope]?.version ?? 0, reason: paused ? 'Paused from the market data dashboard' : 'Resumed from the market data dashboard' });
   });
+  const setAllPaused = (paused: boolean) => act(paused ? 'All collection paused' : 'All collection resumed', async () => {
+    await api('md/controls/ALL', 'PUT', { paused, version: ctl.ALL?.version ?? 0, reason: paused ? 'Paused from the market data dashboard' : 'Resumed from the market data dashboard' });
+  });
   const move = (id: string, d: number) => { const order = ws.all ? sources.map(s => s.account_id) : [...ws.sources]; const i = order.indexOf(id), j = i + d;
     if (i < 0 || j < 0 || j >= order.length) return; [order[i], order[j]] = [order[j], order[i]]; update({ all: false, sources: order }); };
 
@@ -195,6 +198,9 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
     </div>
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {actionError && <p role="alert" className="cfg-error">{actionError}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+    {ctl.ALL?.paused && <div className="mb-problem" role="alert"><b>All market-data collection is paused</b> since {new Date(ctl.ALL.updated_at).toLocaleString()} by {ctl.ALL.updated_by}
+      {ctl.ALL.reason ? ` (“${ctl.ALL.reason}”)` : ''}. No source collects until it is resumed, whatever each source shows.
+      {canEdit && <> <button className="primary" onClick={() => setAllPaused(false)}>▶ Resume all collection</button></>}</div>}
     <div className="mb-kpis">
       <Kpi label="Sources live" value={`${live}/${shown.length}`} tone={shown.length && live === shown.length ? 'ok' : live ? 'warn' : 'bad'} />
       <Kpi label="Instruments live" value={`${allRows.filter(r => !r.noData && !isStale(r)).length}/${allRows.length}`} />
@@ -211,7 +217,7 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
       const c = coll[s.account_id], paused = ctl[`account:${s.account_id}`]?.paused, rows = sortRows((rowsBySource[s.account_id] ?? []).filter(keep));
       const all = rowsBySource[s.account_id] ?? [], collapsed = ws.collapsed.includes(s.account_id);
       const q2 = all.filter(r => r.score != null).map(r => Number(r.score));
-      return <SourceSection key={s.account_id} s={s} c={c} paused={!!paused} rows={rows} total={all.length} collapsed={collapsed} cols={cols} ctx={ctx} ws={ws} canEdit={canEdit}
+      return <SourceSection key={s.account_id} s={s} c={c} paused={!!paused || !!ctl.ALL?.paused} rows={rows} total={all.length} collapsed={collapsed} cols={cols} ctx={ctx} ws={ws} canEdit={canEdit}
         avgQ={q2.length ? Math.round(q2.reduce((a, b) => a + b, 0) / q2.length) : null} first={i === 0} last={i === shown.length - 1}
         expanded={expanded} setExpanded={setExpanded} allRows={allRows}
         toggle={() => update({ collapsed: collapsed ? ws.collapsed.filter(x => x !== s.account_id) : [...ws.collapsed, s.account_id] })}
