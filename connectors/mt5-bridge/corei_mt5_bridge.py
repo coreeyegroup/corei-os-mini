@@ -55,7 +55,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.38.2'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.38.3'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -132,14 +132,18 @@ def login(request: dict, terminal: str | None) -> tuple[bool, str]:
     # package's default 60 s to answer: wait up to 3 minutes, and try once more if its pipe still did not answer.
     kwargs = {'path': terminal, 'timeout': 180000} if terminal else {'timeout': 180000}
     if PORTABLE:
-        kwargs['portable'] = True
-    for attempt in (1, 2):
+        # A new portable copy starts with no account: give it the login at start (MetaQuotes' documented way), so it
+        # opens logged in instead of showing its "open an account" window, which blocks the package's pipe.
+        kwargs.update(portable=True, login=int(request['login']), password=request['password'], server=request.get('server') or '')
+    for attempt in (1, 2, 3):
         if mt5.initialize(**kwargs):
             break
         error = mt5.last_error()
         mt5.shutdown()
-        if attempt == 2 or error[0] != -10003:
+        # -10003 no answer yet, -10001/-10002 pipe not ready: a terminal still starting or updating itself.
+        if attempt == 3 or error[0] not in (-10001, -10002, -10003):
             return False, f'Terminal did not start: {error}'
+        time.sleep(10)
     ok = mt5.login(int(request['login']), password=request['password'], server=request.get('server') or '')
     if not ok:
         code, text = mt5.last_error()
@@ -291,7 +295,25 @@ class Terminals:
             print(f'{now_iso()} login {login}: making a portable terminal copy in {folder} (once; about a minute)')
             shutil.copytree(self.master.parent, folder, dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns('logs', 'Tester', 'Bases', '*.log', 'Config'))
+            self._server_list(folder)
         return exe
+
+    def _server_list(self, folder: Path) -> None:
+        """The installed terminal's broker server list (servers.dat, no passwords) from its data folder, so the copy
+        knows the broker's servers as the installed terminal does."""
+        appdata = Path(os.environ.get('APPDATA', '')) / 'MetaQuotes' / 'Terminal'
+        for origin in appdata.glob('*/origin.txt') if appdata.exists() else []:
+            try:
+                text = origin.read_text(encoding='utf-16', errors='ignore').strip() or origin.read_text(errors='ignore').strip()
+            except OSError:
+                continue
+            if Path(text.strip('\ufeff').strip()).resolve() == self.master.parent.resolve():
+                servers = origin.parent / 'config' / 'servers.dat'
+                if servers.exists():
+                    (folder / 'Config').mkdir(exist_ok=True)
+                    shutil.copy2(servers, folder / 'Config' / 'servers.dat')
+                    print(f'{now_iso()} copied the broker server list from {servers}', flush=True)
+                return
 
     def port_for(self, login: str) -> int:
         """The local port of this login's worker, starting it (and its terminal copy) when needed."""
@@ -440,6 +462,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--version', action='version', version=f'corei_mt5_bridge {BRIDGE_VERSION}')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)  # internal: one login, plain TCP on 127.0.0.1
     args = parser.parse_args(argv)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # the log file shows each line at once
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
     global PORTABLE
     if args.worker:
         PORTABLE = True
