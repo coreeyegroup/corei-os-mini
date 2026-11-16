@@ -22,6 +22,9 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
   const [tf, setTf] = useState(() => { try { return localStorage.getItem('corei.intel.tf') || 'H1'; } catch { return 'H1'; } });
   const [data, setData] = useState<Row | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [regimeF, setRegimeF] = useState(''), [volF, setVolF] = useState(''), [q, setQ] = useState('');
+  const [srcF, setSrcF] = useState(''), [classF, setClassF] = useState(''), [wlF, setWlF] = useState(''), [lists, setLists] = useState<Row[]>([]);
+  useEffect(() => { void api('intel/watchlists').then(d => setLists(d.items)).catch(() => undefined); }, []);
+  const wl = lists.find(w => w.id === wlF);
   const [sort, setSort] = useState<[string, number]>(['rank', 1]);
   const load = async () => { try { setData(await api(`intel/screener?timeframe=${tf}`)); setError(''); } catch (e) { setError((e as Error).message); } };
   useEffect(() => { try { localStorage.setItem('corei.intel.tf', tf); } catch { /* no storage */ } void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, [tf]);
@@ -30,9 +33,13 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
     const key = (r: Row): any => ({ rank: r.rank, symbol: r.broker_symbol, adx: r.features.adx14, rsi: r.features.rsi14, atr: r.features.atr_pct,
       ret: r.features.ret_20_pct, quality: r.quality, attention: r.attention, conf: r.confidence } as Row)[sort[0]];
     return (data?.items ?? []).filter((r: Row) => (!regimeF || r.regime === regimeF) && (!volF || r.volatility === volF)
+      && (!srcF || r.account_id === srcF) && (!classF || (r.asset_class ?? 'OTHER') === classF)
+      && (!wl || wl.items.some((x: Row) => x.account_id === r.account_id && x.broker_symbol === r.broker_symbol))
       && (!q || `${r.broker_symbol} ${r.instrument ?? ''} ${r.account_code} ${r.provider_name}`.toLowerCase().includes(q.toLowerCase())))
       .sort((a: Row, b: Row) => { const x = key(a), y = key(b); return x == null ? 1 : y == null ? -1 : (x < y ? -1 : x > y ? 1 : 0) * sort[1]; });
-  }, [data, regimeF, volF, q, sort]);
+  }, [data, regimeF, volF, q, sort, srcF, classF, wlF, lists]);
+  const sources = Array.from(new Map((data?.items ?? []).map((r: Row) => [r.account_id, `${r.provider_name} · ${r.account_code}`])).entries());
+  const classes = Array.from(new Set((data?.items ?? []).map((r: Row) => r.asset_class ?? 'OTHER'))) as string[];
   const th = (id: string, label: string, title?: string) => <th title={title} className="sortable" onClick={() => setSort([id, sort[0] === id ? -sort[1] : (id === 'rank' || id === 'symbol' ? 1 : -1)])}>
     {label}{sort[0] === id ? (sort[1] > 0 ? ' ▲' : ' ▼') : ''}</th>;
   const st = data?.engine;
@@ -42,6 +49,9 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
       <span className="intel-tfs" role="group" aria-label="Timeframe">{TFS.map(t => <button key={t} aria-pressed={t === tf} onClick={() => setTf(t)}>{t}</button>)}</span>
       <select aria-label="Regime" value={regimeF} onChange={e => setRegimeF(e.target.value)}>{REGIMES.map(([v, l]) => <option key={v} value={v}>{l}{v && counts[v] ? ` (${counts[v]})` : ''}</option>)}</select>
       <select aria-label="Volatility" value={volF} onChange={e => setVolF(e.target.value)}><option value="">All volatility</option><option value="HIGH">High</option><option value="NORMAL">Normal</option><option value="LOW">Low</option></select>
+      <select aria-label="Source" value={srcF} onChange={e => setSrcF(e.target.value)}><option value="">All brokers & accounts</option>{sources.map(([id, l]) => <option key={id as string} value={id as string}>{l as string}</option>)}</select>
+      <select aria-label="Asset class" value={classF} onChange={e => setClassF(e.target.value)}><option value="">All asset classes</option>{classes.map(c => <option key={c}>{c}</option>)}</select>
+      <select aria-label="Watchlist" value={wlF} onChange={e => setWlF(e.target.value)}><option value="">No watchlist</option>{lists.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
       <input aria-label="Search" placeholder="Symbol, source…" value={q} onChange={e => setQ(e.target.value)} />
       {data?.session && <span className="cfg-pill demo" title="Session now (UTC-based map; see Sessions)">{data.session.label}</span>}
       {canRefresh && <button onClick={() => void recompute()} disabled={busy}>{busy ? 'Computing…' : 'Recompute now'}</button>}
@@ -54,7 +64,7 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
     {rows.length > 0 && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr>
       {th('rank', '#')}{th('symbol', 'Instrument')}<th>Source</th><th>Last</th><th title="Spread now, and as % of ATR">Spread</th>{th('quality', 'Quality', 'Feed quality score, last 60 min')}
       {th('conf', 'Regime')}<th>Vol.</th>{th('adx', 'ADX')}{th('rsi', 'RSI')}{th('atr', 'ATR %')}<th>Trend (EMA)</th>{th('ret', '20-bar %')}<th title="Close within the 20-bar range (0 low, 100 high)">Range pos.</th>
-      {th('attention', 'Attention', 'Rank 0–100: quality × spread vs ATR × (movement + direction)')}<th>Bars</th><th>Bar (UTC)</th></tr></thead><tbody>
+      {th('attention', 'Attention', 'Rank 0–100: quality × spread vs ATR × (movement + direction)')}<th title="Timeframes agreeing: trend up minus trend down over those past warming up">Align</th><th title="High-impact event or holiday for its currencies within the window">Event</th><th>Bars</th><th>Bar (UTC)</th></tr></thead><tbody>
       {rows.map((r: Row) => { const f = r.features; const mid = r.bid != null && r.ask != null ? (r.bid + r.ask) / 2 : f.close;
         return <tr key={r.account_id + r.broker_symbol} className="clickable" onClick={() => openInstrument(r)} title={(r.reasons ?? []).join(' · ')}>
           <td>{r.rank}</td><td><strong>{r.broker_symbol}</strong>{r.instrument && r.instrument !== r.broker_symbol ? <small className="cfg-note"> {r.instrument}</small> : null}</td>
@@ -64,6 +74,9 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
           <td>{r.volatility ? r.volatility.toLowerCase() : '–'}</td><td>{num(f.adx14, 1)}</td><td>{num(f.rsi14, 1)}</td><td>{num(f.atr_pct, 3)}</td><td>{trend(f)}</td>
           <td className={f.ret_20_pct > 0 ? 'up' : f.ret_20_pct < 0 ? 'down' : ''}>{num(f.ret_20_pct, 2)}</td><td>{num(f.range_pos20, 0)}</td>
           <td title={Object.entries(r.attention_parts ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ')}><strong>{num(r.attention, 0)}</strong></td>
+          <td title={r.alignment ? `${r.alignment.up} up, ${r.alignment.down} down of ${r.alignment.of}` : ''}><small>{r.alignment?.label ?? '–'}</small></td>
+          <td>{r.event_risk?.length ? <span className="cfg-pill live" title={r.event_risk.map((e: Row) => `${e.currency} ${e.title} ${new Date(e.at).toLocaleTimeString()}`).join(' · ')}>event risk</span>
+            : r.next_event ? <small className="cfg-note" title={r.next_event.title}>{r.next_event.currency} {new Date(r.next_event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small> : '–'}</td>
           <td><small>{r.bars} · {r.bars_source === 'BROKER' ? 'broker' : 'from M1'}</small></td><td><small>{new Date(r.bar_time).toISOString().slice(5, 16).replace('T', ' ')}</small></td>
         </tr>; })}
     </tbody></table></div>}
@@ -168,7 +181,8 @@ export function IntelDashboard({ openInstrument, canEdit, gotoScreener }: { open
   if (!data) return error ? <p role="alert" className="cfg-error">{error}</p> : <p>Loading…</p>;
   const st = data.engine ?? {}, s = data.settings ?? {}, mix = data.by_timeframe?.[tf] ?? { regime: {}, volatility: {}, total: 0 };
   const age = st.last_run_at ? Math.round((Date.now() - Date.parse(st.last_run_at)) / 1000) : null;
-  const f = form ?? { enabled: s.enabled, interval_seconds: s.interval_seconds, timeframes: s.timeframes ?? TFS, excluded: s.excluded ?? [] };
+  const f = form ?? { enabled: s.enabled, interval_seconds: s.interval_seconds, timeframes: s.timeframes ?? TFS, excluded: s.excluded ?? [],
+    retention_days: s.retention_days ?? 365, event_window_minutes: s.event_window_minutes ?? 30 };
   const isOut = (r: Row) => (f.excluded ?? []).some((x: Row) => x.account_id === r.account_id && x.broker_symbol === r.broker_symbol);
   const kpi = (label: string, value: any, hint?: string, cls = '') => <div className={`intel-kpi ${cls}`} title={hint}><small>{label}</small><b>{value}</b></div>;
   const small = (rows: Row[], cols: [string, (r: Row) => any][]) => rows.length ? <table className="cfg-table compact intel-table"><thead><tr>{cols.map(c => <th key={c[0]}>{c[0]}</th>)}</tr></thead>
@@ -214,10 +228,21 @@ export function IntelDashboard({ openInstrument, canEdit, gotoScreener }: { open
       <div><h4>Top attention ({tf})</h4>{small(data.top, [['Instrument', r => <strong>{r.broker_symbol}</strong>], ['Regime', r => pill(r.regime)], ['ADX', r => num(r.adx14, 1)], ['Attention', r => <b>{num(r.attention, 0)}</b>]])}</div>
       <div><h4>Biggest 20-bar moves ({tf})</h4>{small(data.movers, [['Instrument', r => <strong>{r.broker_symbol}</strong>], ['20-bar %', r => <span className={r.ret_20_pct > 0 ? 'up' : 'down'}>{num(r.ret_20_pct, 2)}</span>], ['RSI', r => num(r.rsi14, 1)], ['Regime', r => pill(r.regime)]])}</div>
     </div>
+    <div className="intel-cols">
+      <div><h4>High-impact events, next 24 h</h4>{(data.events_next_24h ?? []).filter((e: Row) => e.impact === 'HIGH' || e.impact === 'HOLIDAY').length
+        ? <table className="cfg-table compact intel-table"><tbody>{data.events_next_24h.filter((e: Row) => e.impact === 'HIGH' || e.impact === 'HOLIDAY').map((e: Row) =>
+          <tr key={e.id}><td>{new Date(e.at).toLocaleString()}</td><td><strong>{e.currency}</strong></td><td>{e.title}</td></tr>)}</tbody></table>
+        : <p className="cfg-note">None in the calendar (Intelligence › Calendar).</p>}</div>
+      <div><h4>Rules fired recently ({data.rules ?? 0} rules · {data.watchlists ?? 0} watchlists)</h4>{(data.recent_fires ?? []).length
+        ? <table className="cfg-table compact intel-table"><tbody>{data.recent_fires.map((f: Row) => <tr key={f.id}><td><small>{when(f.fired_at)}</small></td><td>{f.rule_name}</td><td>{f.message}</td></tr>)}</tbody></table>
+        : <p className="cfg-note">Nothing fired yet (Intelligence › Rules & alerts).</p>}</div>
+    </div>
     <details className="cfg-more intel-engine" open={!s.enabled}><summary>Engine controls</summary>
       <div className="cfg-form">
         <label><input type="checkbox" disabled={!canEdit} checked={!!f.enabled} onChange={e => setForm({ ...f, enabled: e.target.checked })} /> Engine on (recomputes every cycle)</label>
         <label>Cycle (seconds) <input type="number" min={15} max={3600} disabled={!canEdit} value={f.interval_seconds} onChange={e => setForm({ ...f, interval_seconds: Number(e.target.value) })} /></label>
+        <label>Keep feature history (days) <input type="number" min={7} max={3650} disabled={!canEdit} value={f.retention_days} onChange={e => setForm({ ...f, retention_days: Number(e.target.value) })} /></label>
+        <label>Event-risk window (± minutes) <input type="number" min={0} max={720} disabled={!canEdit} value={f.event_window_minutes} onChange={e => setForm({ ...f, event_window_minutes: Number(e.target.value) })} /></label>
         <div>Timeframes {TFS.map(t => <label key={t} className="intel-check"><input type="checkbox" disabled={!canEdit} checked={(f.timeframes ?? []).includes(t)}
           onChange={e => setForm({ ...f, timeframes: e.target.checked ? TFS.filter(x => x === t || (f.timeframes ?? []).includes(x)) : (f.timeframes ?? []).filter((x: string) => x !== t) })} /> {t}</label>)}</div>
         <div>Instruments in the screen {all.length === 0 && <small className="cfg-note">none yet</small>}

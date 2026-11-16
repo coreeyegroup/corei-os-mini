@@ -235,3 +235,10 @@
 .intel h4 { margin: 10px 0 6px; } .intel span.up { color: var(--ready); } .intel span.down { color: var(--danger); }
 .intel-check { margin-right: 10px; white-space: nowrap; } .intel-checks { display: flex; flex-wrap: wrap; gap: 4px; max-height: 160px; overflow: auto; }
 .intel-engine { margin-top: 14px; }
+.intel-corr td { text-align: center; min-width: 54px; } .intel-corr th { white-space: nowrap; }
+.intel-strength { display: grid; gap: 6px; max-width: 720px; }
+.intel-strength-row { display: grid; grid-template-columns: 50px 1fr 90px 60px; gap: 8px; align-items: center; }
+.intel-strength-row .bar { position: relative; height: 12px; border: 1px solid var(--line); border-radius: 3px; }
+.intel-strength-row .bar i { position: absolute; top: 0; bottom: 0; } .intel-strength-row .bar i.up { background: var(--ready); } .intel-strength-row .bar i.down { background: var(--danger); }
+.intel-edit { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+.intel tr.muted td { opacity: .6; }

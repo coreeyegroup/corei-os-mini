@@ -24,10 +24,10 @@ export const PIPELINE: Stage[] = [
   { view: 'Intelligence', n: 2, short: 'Intelligence', title: 'Market intelligence', question: 'What state is each market in, and which instruments are worth attention?', feeds: 'Features and the ranked universe to signals and strategies',
     components: [
       { step: 2, name: 'Feature store', does: 'EMA 20/50/200, RSI, ATR, Bollinger, ADX ±DI, efficiency, realised vol, range position — computed once from closed stored bars (M1…D1), kept per bar, shared by every strategy', state: 'BUILT', where: ['Intelligence', 'instrument'] },
-      { step: 2, name: 'Sessions and calendar', does: 'Sessions, overlaps, rollover and weekend close (built); holidays and economic events (next)', state: 'PARTIAL', where: ['Intelligence', 'sessions'] },
+      { step: 2, name: 'Sessions and calendar', does: 'Sessions, overlaps, rollover, weekend close; economic events and holidays (added or imported as CSV) with event-risk flags per instrument. Automatic calendar feed: next', state: 'BUILT', where: ['Intelligence', 'calendar'] },
       { step: 2, name: 'Volatility and regime', does: 'Trend up/down, range, transition and high/normal/low volatility per instrument and timeframe, with reasons', state: 'BUILT', where: ['Intelligence', 'screener'] },
-      { step: 3, name: 'Instrument screening', does: 'Rank the universe by attention: quality, spread vs ATR, movement, direction (built); correlation (next)', state: 'PARTIAL', where: ['Intelligence', 'screener'] },
-      { step: 3, name: 'Correlation and cross-asset', does: 'DXY, gold, indices, yields relationships', state: 'PLANNED' },
+      { step: 3, name: 'Instrument screening', does: 'Rank the universe across brokers and accounts: attention (quality, spread vs ATR, movement, direction), timeframe alignment, event risk; filters by broker, asset class, watchlist; watchlists and rules on features with alerts', state: 'BUILT', where: ['Intelligence', 'screener'] },
+      { step: 3, name: 'Correlation and cross-asset', does: 'Correlation matrix of collected instruments, currency strength, the same instrument compared across sources (deviation, spread, latency, quality)', state: 'BUILT', where: ['Intelligence', 'correlation'] },
       { step: 4, name: 'News and sentiment', does: 'Headlines and scheduled events tagged to instruments', state: 'PLANNED' },
     ] },
   { view: 'Signals', n: 3, short: 'Signals', title: 'Signal intelligence', question: 'Is there a trade, how strong, and does it agree with the others?', feeds: 'Trade intents (instrument, side, strength, horizon) to risk',

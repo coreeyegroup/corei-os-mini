@@ -76,6 +76,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      settings:{enabled:true,interval_seconds:60,timeframes:['M1','M5','M15','H1','H4','D1'],excluded:[],version:1,updated_by:'system',updated_at:now},session:{label:'London + New York'}});
    if(url.endsWith('/intel/history')){intelCalls.push(body);return ok({jobs:[{timeframe:'M1'},{timeframe:'H4'},{timeframe:'D1'}]});}
    if(url.endsWith('/intel/settings')){intelCalls.push(body);return ok({...body,version:2});}
+   if(url.includes('/intel/watchlists'))return ok({items:[{id:'w1',name:'Gold',items:[{account_id:'a1',broker_symbol:'XAUUSD.r'}],notes:'',version:1,updated_at:now,updated_by:'ops'}]});
+   if(url.endsWith('/intel/rules')&&method==='POST'){intelCalls.push(body);return ok({id:'r9',...body});}
+   if(url.includes('/intel/rules'))return ok({items:[],fields:['rsi14','adx14','regime','volatility','close']});
+   if(url.includes('/intel/fires'))return ok({items:[]});
+   if(url.includes('/intel/events'))return ok({items:[{id:'e1',at:new Date(Date.now()+3600e3).toISOString(),currency:'USD',impact:'HIGH',title:'CPI y/y',forecast:'3.1%',previous:'3.0%',actual:'',source:'CSV'}]});
+   if(url.includes('/intel/instruments'))return ok({items:[{id:'i1',symbol:'XAUUSD',name:'Gold',asset_class:'METAL',sources:2}]});
+   if(url.includes('/intel/sources/'))return ok({instrument:{id:'i1',symbol:'XAUUSD'},reference_mid:2401.2,best:{cheapest:'VTM_A',fastest:'ICM_B',cleanest:'VTM_A'},items:[
+     {account_id:'a1',broker_symbol:'XAUUSD.r',account_code:'VTM_A',provider_name:'VT Markets',environment:'LIVE',bid:2401.1,ask:2401.3,spread:0.2,deviation_bp:-0.4,quality:97,latency_p50_ms:80,latency_p95_ms:140,ticks:900,received_at:now,regime:'TREND_UP'},
+     {account_id:'a2',broker_symbol:'XAUUSD',account_code:'ICM_B',provider_name:'IC Markets',environment:'DEMO',bid:2401.2,ask:2401.6,spread:0.4,deviation_bp:0.4,quality:90,latency_p50_ms:60,latency_p95_ms:120,ticks:800,received_at:now,regime:'TREND_UP'}]});
    if(url.includes('/intel/screener'))return ok({timeframe:'H1',engine:{last_run_at:now,instruments:2,duration_ms:40,errors:[]},session:{label:'London + New York'},items:[
      {rank:1,account_id:'a1',broker_symbol:'XAUUSD.r',instrument:'XAUUSD',account_code:'VTM_A',provider_name:'VT Markets',timeframe:'H1',bar_time:now,bars:300,bars_source:'M1',regime:'TREND_UP',volatility:'HIGH',confidence:0.8,reasons:['ADX 31.0'],
       features:{close:2401.2,ema20:2400,ema50:2390,ema200:2350,rsi14:62.3,atr14:4.1,atr_pct:0.17,adx14:31,er20:0.4,ret_20_pct:0.8,range_pos20:88},bid:2401.1,ask:2401.3,spread:0.2,spread_atr_pct:4.9,quality:96,attention:71.2,attention_parts:{quality:0.96}},
@@ -171,6 +180,20 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal($$('.intel-chart rect').length,40,'regime strip, one mark per bar');
  nav('Sessions').click();await settle(4);
  assert.match($('.intel-now').textContent,/London \+ New York/);
+ nav('Screener').click();await settle(6);
+ fill($('.intel-bar [aria-label="Regime"]'),'');fill($('.intel-bar [aria-label="Watchlist"]'),'w1');await settle();
+ assert.equal(intelRows().length,1,'watchlist filter');
+ assert.match(intelRows()[0].textContent,/XAUUSD\.r/);
+ nav('Sources').click();await settle(6);
+ assert.match($('.intel-table').textContent,/VT Markets.*VTM_A.*IC Markets.*ICM_B/);
+ nav('Rules & alerts').click();await settle(4);
+ button('New rule').click();await settle();
+ fill($('[aria-label="Rule name"]'),'RSI oversold');await settle();
+ button('Save rule').click();await settle(4);
+ assert.equal(intelCalls.at(-1).name,'RSI oversold');
+ assert.equal(intelCalls.at(-1).op,'CROSSES_BELOW');
+ nav('Calendar').click();await settle(4);
+ assert.match($('.intel-table').textContent,/USD.*high.*CPI y\/y/);
  console.log('PASS: stage 2 dashboard (KPIs, get history, engine controls), screener (rank, regime filter), instrument across timeframes with chart, sessions.');
  // Select & compare: the comparison board.
  nav('Select & compare').click();await settle(12);

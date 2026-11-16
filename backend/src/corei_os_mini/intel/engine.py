@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 
 from .. import config_store as store
 from . import indicators as ind
-from . import regime, sessions
+from . import regime, sessions, workspace
 
 log = logging.getLogger('corei.intel')
 TIMEFRAMES = ('M1', 'M5', 'M15', 'H1', 'H4', 'D1')
@@ -35,7 +35,8 @@ HISTORY_TIMEFRAMES = ('M5', 'M15', 'H1', 'H4', 'D1')  # per-bar history kept; M1
 WINDOW = 300            # bars per computation
 M1_LIMIT = 20000        # M1 bars read per instrument for building higher timeframes (~14 days)
 BARS_PER_YEAR = {tf: 252 * 1440 / m for tf, m in MINUTES.items()}  # FX trading minutes per year, by timeframe
-DEFAULTS = {'enabled': True, 'interval_seconds': 60, 'timeframes': list(TIMEFRAMES), 'excluded': [], 'version': 0}
+DEFAULTS = {'enabled': True, 'interval_seconds': 60, 'timeframes': list(TIMEFRAMES), 'excluded': [], 'version': 0, 'retention_days': 365,
+            'event_window_minutes': 30}
 STATUS: dict[str, Any] = {'last_run_at': None, 'duration_ms': None, 'instruments': 0, 'snapshots': 0, 'history_rows': 0, 'errors': []}
 
 
@@ -82,6 +83,10 @@ def features(bars: list[dict], tf: str) -> list[dict]:
     rv = ind.realised_vol(c, 20, BARS_PER_YEAR[tf])
     rp = ind.range_position(h, lo, c, 20)
     atr_pct = [None if a is None or not c[i] else 100 * a / c[i] for i, a in enumerate(a14)]
+    m_line, m_sig, m_hist = ind.macd(c)
+    st_k, st_d = ind.stochastic(h, lo, c)
+    dc_up, dc_dn = ind.donchian(h, lo, 20)
+    z20 = ind.zscore(c, 20)
     rows = []
     for i, b in enumerate(bars):
         window = [x for x in atr_pct[max(0, i - 99):i + 1] if x is not None]
@@ -93,6 +98,8 @@ def features(bars: list[dict], tf: str) -> list[dict]:
             'adx14': adx[i], 'plus_di': pdi[i], 'minus_di': mdi[i], 'er20': er[i], 'rv20_pct': rv[i], 'range_pos20': rp[i],
             'ret_1_pct': None if i < 1 or not c[i - 1] else 100 * (c[i] / c[i - 1] - 1),
             'ret_20_pct': None if i < 20 or not c[i - 20] else 100 * (c[i] / c[i - 20] - 1),
+            'macd': m_line[i], 'macd_signal': m_sig[i], 'macd_hist': m_hist[i], 'stoch_k': st_k[i], 'stoch_d': st_d[i],
+            'donchian_high20': dc_up[i], 'donchian_low20': dc_dn[i], 'zscore20': z20[i],
         })
     return rows
 
@@ -126,7 +133,11 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
     with store.transaction('read') as db:
         m1 = _load(db, account_id, symbol, 'M1')
         native = {tf: _load(db, account_id, symbol, tf) for tf in TIMEFRAMES if tf != 'M1'}
+        # History is per feature version: a new version starts its own history from the stored bars.
         last = {r['timeframe']: r['bar_time'] for r in db.execute(
+            'SELECT timeframe, max(bar_time) AS bar_time FROM intel_features WHERE account_id=%s AND broker_symbol=%s AND version=%s GROUP BY 1',
+            (account_id, symbol, ind.FEATURE_VERSION)).fetchall()}
+        snap_last = {r['timeframe']: r['bar_time'] for r in db.execute(
             'SELECT timeframe, bar_time FROM intel_snapshot WHERE account_id=%s AND broker_symbol=%s', (account_id, symbol)).fetchall()}
     snaps = hist = 0
     for tf in timeframes:
@@ -142,6 +153,12 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
         cls = regime.classify(f, len(bars))
         bar_time = bars[-1]['bar_time']
         with store.transaction('write') as db:
+            if snap_last.get(tf) is not None and bar_time > snap_last[tf] and len(rows) >= 2:
+                # A newly closed bar: check the condition rules (once per bar; backfilled history never fires).
+                prev = _round(rows[-2])
+                pc = regime.classify(prev, len(bars) - 1)
+                workspace.evaluate(db, account_id, symbol, tf, bar_time, {**f, 'regime': cls['regime'], 'volatility': cls['volatility']},
+                                   {**prev, 'regime': pc['regime'], 'volatility': pc['volatility']})
             db.execute("""INSERT INTO intel_snapshot(account_id, broker_symbol, timeframe, bar_time, version, bars, bars_source, features, regime,
                               volatility, confidence, reasons, session, computed_at)
                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
@@ -185,9 +202,26 @@ def refresh_all(force: bool = False) -> dict:
         except Exception as exc:  # noqa: BLE001 - one instrument must not stop the others
             log.exception('Feature refresh failed for %s', it['broker_symbol'])
             errors.append(f"{it['broker_symbol']}: {type(exc).__name__}: {exc}"[:300])
+    _prune(cfg)
     STATUS.update(paused=False, excluded=len(skip), timeframes=list(tfs), last_run_at=datetime.now(timezone.utc).isoformat(), duration_ms=round(1000 * (time.monotonic() - started)),
                   instruments=len(items), snapshots=snaps, history_rows=hist, errors=errors[:20])
     return dict(STATUS)
+
+
+_last_prune = 0.0
+
+
+def _prune(cfg: dict) -> None:
+    """Feature history older than the retention setting is deleted, at most once an hour."""
+    global _last_prune
+    if time.monotonic() - _last_prune < 3600:
+        return
+    _last_prune = time.monotonic()
+    try:
+        with store.transaction('write') as db:
+            db.execute('DELETE FROM intel_features WHERE bar_time < now() - make_interval(days => %s)', (int(cfg.get('retention_days') or 365),))
+    except Exception:  # noqa: BLE001 - pruning must not stop the cycle
+        log.exception('Feature history pruning failed')
 
 
 async def run_forever() -> None:

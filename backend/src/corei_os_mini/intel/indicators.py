@@ -4,7 +4,7 @@ Why it exists: every strategy needs the same handful of measures (trend, momentu
 once, the same way, from stored bars removes "my RSI differs from yours" and makes every later decision replayable.
 Purpose: pure functions from a list of closed bars to indicator series.
 Responsibilities: SMA, EMA, Wilder RSI, Wilder ATR, Bollinger bands, Wilder ADX with +DI/−DI, Kaufman efficiency ratio,
-realised volatility, returns and range position. Same inputs give the same outputs (no clock, no randomness).
+realised volatility, returns, range position, MACD, stochastic, Donchian channel and z-score. Same inputs give the same outputs (no clock, no randomness).
 Must never: read the database or the clock, or be used for money, quantity or P&L (analytics only; prices arrive as
 the stored double-precision bar values and the results are descriptive measures, not order values).
 Dependencies: standard library only. Consumers: intel.engine, tests.
@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-FEATURE_VERSION = 1  # bump when any definition below changes; stored with every feature row
+FEATURE_VERSION = 2  # 2: + MACD, stochastic, Donchian, z-score. Bump when any definition below changes; stored with every feature row
 
 
 def sma(values: Sequence[float], n: int) -> list[float | None]:
@@ -149,4 +149,54 @@ def range_position(highs: Sequence[float], lows: Sequence[float], closes: Sequen
     for i in range(n - 1, len(closes)):
         hi, lo = max(highs[i - n + 1:i + 1]), min(lows[i - n + 1:i + 1])
         out[i] = 50.0 if hi == lo else 100.0 * (closes[i] - lo) / (hi - lo)
+    return out
+
+
+def macd(closes: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """(MACD line, signal line, histogram)."""
+    f, sl = ema(closes, fast), ema(closes, slow)
+    line = [None if a is None or b is None else a - b for a, b in zip(f, sl)]
+    start = next((i for i, v in enumerate(line) if v is not None), None)
+    sig: list[float | None] = [None] * len(closes)
+    if start is not None:
+        tail = ema([v for v in line[start:]], signal)  # type: ignore[misc]
+        sig[start:] = tail
+    hist = [None if a is None or b is None else a - b for a, b in zip(line, sig)]
+    return line, sig, hist
+
+
+def stochastic(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], n: int = 14, k_smooth: int = 3, d: int = 3) -> tuple[list[float | None], list[float | None]]:
+    """Slow stochastic (%K smoothed over k_smooth, %D = SMA of %K over d), 0–100."""
+    raw: list[float | None] = [None] * len(closes)
+    for i in range(n - 1, len(closes)):
+        hi, lo = max(highs[i - n + 1:i + 1]), min(lows[i - n + 1:i + 1])
+        raw[i] = 50.0 if hi == lo else 100.0 * (closes[i] - lo) / (hi - lo)
+
+    def smooth(series: list[float | None], m: int) -> list[float | None]:
+        out: list[float | None] = [None] * len(series)
+        for i in range(len(series)):
+            window = series[i - m + 1:i + 1] if i >= m - 1 else []
+            if window and all(v is not None for v in window):
+                out[i] = sum(window) / m  # type: ignore[arg-type]
+        return out
+    k = smooth(raw, k_smooth)
+    return k, smooth(k, d)
+
+
+def donchian(highs: Sequence[float], lows: Sequence[float], n: int = 20) -> tuple[list[float | None], list[float | None]]:
+    up: list[float | None] = [None] * len(highs)
+    dn: list[float | None] = [None] * len(highs)
+    for i in range(n - 1, len(highs)):
+        up[i], dn[i] = max(highs[i - n + 1:i + 1]), min(lows[i - n + 1:i + 1])
+    return up, dn
+
+
+def zscore(closes: Sequence[float], n: int = 20) -> list[float | None]:
+    """(close − mean) / standard deviation over n bars."""
+    out: list[float | None] = [None] * len(closes)
+    for i in range(n - 1, len(closes)):
+        w = closes[i - n + 1:i + 1]
+        m = sum(w) / n
+        sd = math.sqrt(sum((x - m) ** 2 for x in w) / n)
+        out[i] = 0.0 if sd == 0 else (closes[i] - m) / sd
     return out

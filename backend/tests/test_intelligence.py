@@ -178,3 +178,91 @@ class PublicShell(unittest.TestCase):
         internal = {'/api/workstation', '/api/market-data', '/api/paper-runs', '/api/demo'}  # deliberately not on the public shell
         missing = sorted(p for p in prefixes if p not in internal and f'{p}/*' not in allowed)
         self.assertEqual(missing, [], f'add these to @operational in deploy/workstation.Caddyfile: {missing}')
+
+
+class IndicatorsV2(unittest.TestCase):
+    def test_macd_stochastic_donchian_zscore(self):
+        c = [float(i) for i in range(1, 61)]
+        line, sig, hist = ind.macd(c)
+        self.assertIsNone(line[24])
+        self.assertAlmostEqual(line[-1], 7.0, places=6, msg='a straight line: EMA12 − EMA26 = (26−12)/2')
+        self.assertAlmostEqual(hist[-1], 0.0, places=6)
+        k, d = ind.stochastic([x + 1 for x in c], [x - 1 for x in c], c)
+        self.assertAlmostEqual(k[-1], 100 * 14 / 15, places=6)  # close 1 below the 14-bar high, range 15
+        up, dn = ind.donchian([1, 5, 3, 2], [0, 2, 1, -1], 3)
+        self.assertEqual((up[-1], dn[-1]), (5, -1))
+        self.assertAlmostEqual(ind.zscore([1, 2, 3, 4, 5], 5)[-1], 2 / math.sqrt(2))
+
+
+class Workspace(tmd.MarketData):
+    """Watchlists, condition rules (fire once per new bar, cooldown, alert queued), calendar with CSV import and the
+    event-risk flag, multi-source comparison, correlation, currency strength and timeframe alignment."""
+    test_plans_estimate_controls_and_jobs = None
+    test_collector_end_to_end = None
+    test_refused_login_reported_once_and_on_overview = None
+
+    def bars(self, account_id, symbol, n, start, step=lambda i: 1e-5, base=1.1):
+        rows, p = [], base
+        for i in range(n):
+            p *= 1 + step(i)
+            rows.append((account_id, symbol, 'M1', start + timedelta(minutes=i), p, p * 1.0002, p * 0.9998, p, 5))
+        with self.connect() as db:
+            with db.cursor() as cur:
+                cur.executemany('INSERT INTO md_bars(account_id, broker_symbol, timeframe, bar_time, open, high, low, close, ticks) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)', rows)
+
+    def test_workspace(self):
+        _, (a, b, _c), instrument = self.setup_accounts()
+        self.start(self.plan(a, instrument, 'EU_A'))
+        self.start(self.plan(b, instrument, 'EU_B', role='BACKUP'))
+        t0 = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=3000)
+        self.bars(a['id'], 'EURUSD', 3000, t0, lambda i: 0.00002 + 0.0001 * math.sin(i / 9))
+        self.bars(b['id'], 'EURUSD', 3000, t0, lambda i: 0.00002 + 0.0001 * math.sin(i / 9 + 0.3))
+        with self.connect() as db:
+            db.execute("INSERT INTO md_latest(account_id, broker_symbol, bid, ask, source_time, received_at, seq) VALUES "
+                       "(%s,'EURUSD',1.10000,1.10010,now(),now(),1), (%s,'EURUSD',1.10020,1.10025,now(),now(),1)", (a['id'], b['id']))
+        engine.refresh_all()
+        # Watchlist across two broker accounts.
+        wl = self.ok(self.alice.post('/api/intel/watchlists', json={'name': 'Majors', 'items': [{'account_id': a['id'], 'broker_symbol': 'EURUSD'},
+                                                                                                  {'account_id': b['id'], 'broker_symbol': 'EURUSD'}, {'account_id': a['id'], 'broker_symbol': 'EURUSD'}]}), 201)
+        self.assertEqual(len(wl['items']), 2, 'duplicates removed')
+        self.ok(self.alice.post('/api/intel/watchlists', json={'name': 'Majors'}), 409)
+        # Rules: validation, then one that fires on the next new bar.
+        self.ok(self.alice.post('/api/intel/rules', json={'name': 'bad', 'field': 'rsi14', 'op': 'BECOMES', 'value': 'x'}), 422)
+        self.ok(self.alice.post('/api/intel/rules', json={'name': 'bad2', 'field': 'nope', 'op': '>', 'value': '1'}), 422)
+        rule = self.ok(self.alice.post('/api/intel/rules', json={'name': 'Any close', 'timeframe': 'M1', 'field': 'close', 'op': '>', 'value': '0',
+                                                                 'scope': {'watchlist_id': wl['id']}, 'cooldown_minutes': 0}), 201)
+        self.bars(a['id'], 'EURUSD', 2, t0 + timedelta(minutes=3000))
+        engine.refresh_all()
+        fires = self.ok(self.alice.get('/api/intel/fires'))['items']
+        self.assertEqual([f['broker_symbol'] for f in fires], ['EURUSD'], 'fired once, for the new bar of source A only')
+        engine.refresh_all()
+        self.assertEqual(len(self.ok(self.alice.get('/api/intel/fires'))['items']), 1, 'never twice for the same bar')
+        self.assertEqual(self.ok(self.alice.get('/api/intel/rules'))['items'][0]['fires'], 1)
+        # Calendar: CSV all-or-nothing, event risk on EURUSD.
+        soon = (datetime.now(UTC) + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M')
+        bad = self.ok(self.alice.post('/api/intel/events/import', json={'csv': f'datetime_utc,currency,impact,title\n{soon},USD,HUGE,CPI'}), 422)
+        self.assertIn('line 2', bad['detail'])
+        self.assertEqual(self.ok(self.alice.post('/api/intel/events/import', json={'csv': f'datetime_utc,currency,impact,title,forecast\n{soon},USD,HIGH,CPI,3.1%\n{soon},JPY,LOW,Other,'}))['added'], 2)
+        screen = self.ok(self.alice.get('/api/intel/screener?timeframe=H1'))['items']
+        self.assertEqual(screen[0]['event_risk'][0]['title'], 'CPI')
+        self.assertIn(screen[0]['alignment']['label'], ('aligned up', 'mixed', 'aligned down', None))
+        o = self.ok(self.alice.get('/api/intel/overview'))
+        self.assertEqual([e['title'] for e in o['events_next_24h']], ['CPI', 'Other'])
+        self.assertEqual((o['rules'], o['watchlists']), (1, 1))
+        # Two sources of one instrument: deviation, best.
+        src = self.ok(self.alice.get(f"/api/intel/sources/{instrument['id']}"))
+        self.assertEqual(len(src['items']), 2)
+        self.assertEqual(src['best']['cheapest'], b['code'])
+        self.assertEqual(sorted(x['deviation_bp'] for x in src['items']), [-0.8, 0.8])
+        self.assertEqual(self.ok(self.alice.get('/api/intel/instruments'))['items'][0]['sources'], 2)
+        # Correlation (one source per instrument) and strength.
+        corr = self.ok(self.alice.get('/api/intel/correlation?timeframe=M5&window=200'))
+        self.assertEqual(len(corr['labels']), 1)
+        self.assertEqual(corr['matrix'][0][0]['r'], 1.0)
+        st = self.ok(self.alice.get('/api/intel/strength?timeframe=M5&bars=20'))
+        self.assertEqual({c['currency'] for c in st['currencies']}, {'EUR', 'USD'})
+        self.assertIsNotNone(st['note'])
+        self.ok(self.alice.delete(f"/api/intel/rules/{rule['id']}"), 204)
+        with self.connect() as db:
+            actions = {r['action'] for r in db.execute("SELECT action FROM cfg_audit_log WHERE action LIKE 'INTEL_%'").fetchall()}
+        self.assertTrue({'INTEL_WATCHLIST', 'INTEL_RULE', 'INTEL_RULE_DELETE', 'INTEL_EVENTS'} <= actions)

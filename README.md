@@ -930,3 +930,14 @@ reasons. **Instrument** shows one instrument across every timeframe with the rea
 Bollinger bands, regime strip, RSI) and a CSV of its feature history. **Sessions** shows which centres are open,
 overlaps, rollover, the weekend close and the next changes. The feature store recomputes every minute from closed
 bars only (migration 027; health board: *Market intelligence*). Higher timeframes need history: backfill the source.
+
+## Market intelligence workspace — release 0.40.0
+
+Intelligence now has: Dashboard (coverage, regime mix, needs history, top attention, biggest moves, high-impact events
+next 24 h, rules fired, engine controls incl. history retention and event window) · Screener (filters by broker
+account, asset class and watchlist; timeframe alignment and event-risk columns) · Instrument · **Sources** (the same
+instrument from every broker account: deviation, spread, latency, quality, best source) · **Correlation** · **Strength**
+(FX) · **Watchlists** · **Rules & alerts** (conditions on any feature, checked on each closed bar; alert event
+INTEL_RULE for Setup › Alerts channels) · **Calendar** (add or import CSV) · Sessions · Select & compare. Feature
+version 2 adds MACD, stochastic, Donchian and z-score. Migration 029. The COREI EA 1.01 (terminal push) works as an
+account route with its own token; quotes are stamped with COREI's receipt time.
