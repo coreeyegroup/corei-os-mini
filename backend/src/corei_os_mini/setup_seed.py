@@ -93,7 +93,13 @@ class Run:
         diff = {k: (current.get(k), v) for k, v in wanted.items() if k in fields and _norm(current.get(k)) != _norm(v)}
         if not diff:
             return existing
-        self.say('update', label, ', '.join(f'{k} {a!r} → {b!r}' for k, (a, b) in diff.items()))
+        def change(k: str, a: Any, b: Any) -> str:
+            # Settings are large (the server's access-point list): show only the keys that change.
+            if isinstance(a, dict) and isinstance(b, dict):
+                keys = [x for x in sorted(set(a) | set(b)) if _norm(a.get(x)) != _norm(b.get(x))]
+                return ', '.join(f'{k}.{x} {a.get(x)!r} → {b.get(x)!r}' for x in keys)
+            return f'{k} {a!r} → {b!r}'
+        self.say('update', label, ', '.join(change(k, a, b) for k, (a, b) in diff.items()))
         if not self.apply:
             return existing
         result = store.update(self.actor, entity, existing['id'], model.model_validate({**current, **wanted}), existing['version'], reason=REASON)
