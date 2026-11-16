@@ -129,3 +129,52 @@ class Engine(tmd.MarketData):
         self.assertGreater(len(detail['history']), 90)
         self.assertIn('label', self.ok(self.alice.get('/api/intel/sessions'))['now'])
         self.ok(self.alice.get('/api/intel/screener?timeframe=W1'), 422)
+
+
+class Controls(tmd.MarketData):
+    test_plans_estimate_controls_and_jobs = None
+    test_collector_end_to_end = None
+    test_refused_login_reported_once_and_on_overview = None
+
+    def test_overview_settings_and_history(self):
+        _, (a, _b, _c), instrument = self.setup_accounts()
+        plan = self.plan(a, instrument, 'EU_RT')
+        self.start(plan)
+        t0 = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=600)
+        with self.connect() as db:
+            with db.cursor() as cur:
+                cur.executemany('INSERT INTO md_bars(account_id, broker_symbol, timeframe, bar_time, open, high, low, close, ticks) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                                [(a['id'], 'EURUSD', 'M1', t0 + timedelta(minutes=i), 1.1, 1.1002, 1.0998, 1.1 + i * 1e-6, 5) for i in range(600)])
+        engine.refresh_all()
+        o = self.ok(self.alice.get('/api/intel/overview?timeframe=H1'))
+        self.assertEqual((o['collected'], o['covered']), (1, 1))
+        self.assertEqual(o['by_timeframe']['H1']['regime'], {'WARMING_UP': 1})
+        self.assertEqual(o['warming_up'][0]['plan_id'], plan['id'])
+        s = o['settings']
+        bad = self.ok(self.alice.put('/api/intel/settings', json={**s, 'interval_seconds': 5, 'reason': 'test cycle'}), 422)
+        self.assertIn('interval_seconds', str(bad))
+        done = self.ok(self.alice.put('/api/intel/settings', json={**s, 'enabled': False, 'timeframes': ['H1'], 'reason': 'pause for test',
+                                                                     'excluded': [{'account_id': a['id'], 'broker_symbol': 'EURUSD'}]}))
+        self.assertEqual((done['enabled'], done['timeframes'], done['version']), (False, ['H1'], s['version'] + 1))
+        self.ok(self.alice.put('/api/intel/settings', json={**s, 'reason': 'stale version'}), 409)
+        self.assertTrue(engine.refresh_all()['paused'], 'paused: the cycle does nothing')
+        forced = self.ok(self.alice.post('/api/intel/refresh'))
+        self.assertEqual(forced['instruments'], 0, 'the excluded instrument is left out even when forced')
+        jobs = self.ok(self.alice.post('/api/intel/history', json={'plan_id': plan['id'], 'reason': 'warm up EURUSD'}))
+        self.assertEqual([j['timeframe'] for j in jobs['jobs']], ['M1', 'H4', 'D1'])
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) AS n FROM cfg_audit_log WHERE action='INTEL_SETTINGS'").fetchone()['n'], 1)
+
+
+class PublicShell(unittest.TestCase):
+    def test_every_api_router_is_reachable_through_caddy(self):
+        """The public shell forwards only listed /api prefixes; a router missing there answers 403 in production."""
+        import re
+        from pathlib import Path
+        from corei_os_mini.api import app
+        caddy = (Path(__file__).resolve().parents[2] / 'deploy' / 'workstation.Caddyfile').read_text()
+        allowed = re.search(r'@operational path ([^\n]+)', caddy).group(1).split()
+        prefixes = {'/'.join(r.path.split('/')[:3]) for r in app.routes if getattr(r, 'path', '').startswith('/api/')}
+        internal = {'/api/workstation', '/api/market-data', '/api/paper-runs', '/api/demo'}  # deliberately not on the public shell
+        missing = sorted(p for p in prefixes if p not in internal and f'{p}/*' not in allowed)
+        self.assertEqual(missing, [], f'add these to @operational in deploy/workstation.Caddyfile: {missing}')

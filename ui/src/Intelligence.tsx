@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { addReauthHandler, api } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import { SignIn } from './Infrastructure';
-import { InstrumentView, Screener, SessionsView } from './IntelBoard';
+import { IntelDashboard, InstrumentView, Screener, SessionsView } from './IntelBoard';
 import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
@@ -14,8 +14,9 @@ import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
-type Tab = 'screener' | 'instrument' | 'sessions' | 'compare' | 'stage';
+type Tab = 'dashboard' | 'screener' | 'instrument' | 'sessions' | 'compare' | 'stage';
 const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: 'dashboard', label: 'Dashboard', hint: 'Coverage, regime mix per timeframe, what needs history (one click), top attention, biggest moves, and the engine controls.' },
   { id: 'screener', label: 'Screener', hint: 'Every collected instrument ranked for attention: regime, volatility, trend, momentum, cost against ATR and feed quality, from the shared feature store (closed bars, recomputed every minute).' },
   { id: 'instrument', label: 'Instrument', hint: 'One instrument across every timeframe: regime and the reasons, indicators, chart with EMA and Bollinger bands, regime strip and RSI; CSV of the feature history.' },
   { id: 'sessions', label: 'Sessions', hint: 'Which trading centres are open now, overlaps, rollover and the weekend close, and the next changes.' },
@@ -24,7 +25,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
 ];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
-  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'screener', TABS.map(t => t.id));
+  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'dashboard', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
   useEffect(() => { if (tab === 'instrument') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
@@ -42,6 +43,8 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       <div className="cfg-pane">
+        {tab === 'dashboard' && <IntelDashboard canEdit={(user.roles ?? []).includes('TRADING_OPS') || (user.roles ?? []).includes('ADMIN')}
+          openInstrument={r => { setPick(r); setTab('instrument'); }} gotoScreener={() => setTab('screener')} />}
         {tab === 'screener' && <Screener canRefresh={(user.roles ?? []).includes('TRADING_OPS') || (user.roles ?? []).includes('ADMIN')} openInstrument={r => { setPick(r); setTab('instrument'); }} />}
         {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}
         {tab === 'sessions' && <SessionsView />}

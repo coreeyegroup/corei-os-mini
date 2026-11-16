@@ -35,6 +35,7 @@ HISTORY_TIMEFRAMES = ('M5', 'M15', 'H1', 'H4', 'D1')  # per-bar history kept; M1
 WINDOW = 300            # bars per computation
 M1_LIMIT = 20000        # M1 bars read per instrument for building higher timeframes (~14 days)
 BARS_PER_YEAR = {tf: 252 * 1440 / m for tf, m in MINUTES.items()}  # FX trading minutes per year, by timeframe
+DEFAULTS = {'enabled': True, 'interval_seconds': 60, 'timeframes': list(TIMEFRAMES), 'excluded': [], 'version': 0}
 STATUS: dict[str, Any] = {'last_run_at': None, 'duration_ms': None, 'instruments': 0, 'snapshots': 0, 'history_rows': 0, 'errors': []}
 
 
@@ -111,7 +112,16 @@ def _load(db, account_id, symbol: str, tf: str) -> list[dict]:
     return [dict(r) for r in reversed(rows)]
 
 
-def refresh_instrument(account_id, symbol: str) -> tuple[int, int]:
+def settings() -> dict:
+    try:
+        with store.transaction('read') as db:
+            row = db.execute('SELECT * FROM intel_settings WHERE id=1').fetchone()
+        return dict(row) if row else dict(DEFAULTS)
+    except Exception:  # noqa: BLE001 - not migrated yet: defaults
+        return dict(DEFAULTS)
+
+
+def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TIMEFRAMES) -> tuple[int, int]:
     """Recompute every timeframe of one instrument; returns (snapshots written, history rows written)."""
     with store.transaction('read') as db:
         m1 = _load(db, account_id, symbol, 'M1')
@@ -119,7 +129,7 @@ def refresh_instrument(account_id, symbol: str) -> tuple[int, int]:
         last = {r['timeframe']: r['bar_time'] for r in db.execute(
             'SELECT timeframe, bar_time FROM intel_snapshot WHERE account_id=%s AND broker_symbol=%s', (account_id, symbol)).fetchall()}
     snaps = hist = 0
-    for tf in TIMEFRAMES:
+    for tf in timeframes:
         built = resample(m1, tf)
         nat = native.get(tf) or []
         use_native = bool(nat) and len(nat) >= len(built)
@@ -156,30 +166,39 @@ def refresh_instrument(account_id, symbol: str) -> tuple[int, int]:
     return snaps, hist
 
 
-def refresh_all() -> dict:
+def refresh_all(force: bool = False) -> dict:
+    cfg = settings()
+    if not cfg['enabled'] and not force:
+        STATUS.update(paused=True)
+        return dict(STATUS)
     started = time.monotonic()
     errors: list[str] = []
     snaps = hist = 0
+    skip = {(str(x.get('account_id')), x.get('broker_symbol')) for x in cfg.get('excluded') or []}
+    tfs = tuple(tf for tf in TIMEFRAMES if tf in (cfg.get('timeframes') or TIMEFRAMES))
     with store.transaction('read') as db:
-        items = _instruments(db)
+        items = [it for it in _instruments(db) if (str(it['account_id']), it['broker_symbol']) not in skip]
     for it in items:
         try:
-            s, h = refresh_instrument(it['account_id'], it['broker_symbol'])
+            s, h = refresh_instrument(it['account_id'], it['broker_symbol'], tfs)
             snaps, hist = snaps + s, hist + h
         except Exception as exc:  # noqa: BLE001 - one instrument must not stop the others
             log.exception('Feature refresh failed for %s', it['broker_symbol'])
             errors.append(f"{it['broker_symbol']}: {type(exc).__name__}: {exc}"[:300])
-    STATUS.update(last_run_at=datetime.now(timezone.utc).isoformat(), duration_ms=round(1000 * (time.monotonic() - started)),
+    STATUS.update(paused=False, excluded=len(skip), timeframes=list(tfs), last_run_at=datetime.now(timezone.utc).isoformat(), duration_ms=round(1000 * (time.monotonic() - started)),
                   instruments=len(items), snapshots=snaps, history_rows=hist, errors=errors[:20])
     return dict(STATUS)
 
 
-async def run_forever(interval: float = 60.0) -> None:
-    """The background cycle in the API process (COREI_INTEL=off turns it off)."""
+async def run_forever() -> None:
+    """The background cycle in the API process (COREI_INTEL=off turns it off; Intelligence › Dashboard › Engine
+    pauses it and sets its cycle)."""
     import asyncio
     await asyncio.sleep(15)
     while True:
+        interval = 60
         try:
+            interval = (await asyncio.to_thread(settings)).get('interval_seconds') or 60
             await asyncio.to_thread(refresh_all)
         except Exception:  # noqa: BLE001 - keep the loop alive (database restarting, …)
             log.exception('Feature refresh cycle failed')

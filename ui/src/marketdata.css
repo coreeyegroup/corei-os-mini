@@ -228,3 +228,10 @@
 .intel-chart .bb { stroke: var(--muted); stroke-dasharray: 3 3; } .intel-chart .rsi { stroke: var(--accent); } .intel-chart .guide { stroke: var(--line); stroke-dasharray: 2 4; }
 .intel-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
 .intel-now { font-size: 1.1em; }
+.intel-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin: 8px 0 14px; }
+.intel-kpi { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; display: flex; flex-direction: column; }
+.intel-kpi small { color: var(--muted); } .intel-kpi b { font-size: 1.25em; }
+.intel-kpi.up b { color: var(--ready); } .intel-kpi.down b { color: var(--danger); } .intel-kpi.warn { border-color: var(--cfg-warn); }
+.intel h4 { margin: 10px 0 6px; } .intel span.up { color: var(--ready); } .intel span.down { color: var(--danger); }
+.intel-check { margin-right: 10px; white-space: nowrap; } .intel-checks { display: flex; flex-wrap: wrap; gap: 4px; max-height: 160px; overflow: auto; }
+.intel-engine { margin-top: 14px; }

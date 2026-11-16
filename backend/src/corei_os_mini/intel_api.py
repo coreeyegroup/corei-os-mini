@@ -12,10 +12,13 @@ Architectural position: Stage 2 boundary.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from psycopg.types.json import Jsonb
+from pydantic import BaseModel, Field
 
 from . import config_store as store
 from .intel import engine, regime, sessions
@@ -37,13 +40,13 @@ def screener(response: Response, timeframe: str = 'H1', _: str = Depends(require
     with store.transaction('read') as db:
         rows = db.execute("""
             SELECT s.*, a.code AS account_code, a.name AS account_name, pr.name AS provider_name, c.settings->>'server_name' AS server_name,
-                   i.symbol AS instrument, l.bid, l.ask, l.received_at AS price_at,
+                   i.symbol AS instrument, p.plan_id, l.bid, l.ask, l.received_at AS price_at,
                    q.score AS quality, q.latency_p95_ms, q.spread_avg
             FROM intel_snapshot s
             JOIN cfg_accounts a ON a.id = s.account_id
             JOIN cfg_connections c ON c.id = a.connection_id
             JOIN cfg_providers pr ON pr.id = c.provider_id
-            LEFT JOIN LATERAL (SELECT instrument_id FROM md_collection_plans p WHERE p.account_id = s.account_id
+            LEFT JOIN LATERAL (SELECT id AS plan_id, instrument_id FROM md_collection_plans p WHERE p.account_id = s.account_id
                                AND p.broker_symbol = s.broker_symbol AND p.status <> 'ARCHIVED' ORDER BY p.created_at LIMIT 1) p ON true
             LEFT JOIN cfg_instruments i ON i.id = p.instrument_id
             LEFT JOIN md_latest l ON l.account_id = s.account_id AND l.broker_symbol = s.broker_symbol
@@ -97,5 +100,87 @@ def status(response: Response, _: str = Depends(require_operator)):
 
 @router.post('/refresh')
 async def refresh(_: Principal = Depends(_ops)):
-    """Recompute every instrument now (the engine also runs every minute)."""
-    return await asyncio.to_thread(engine.refresh_all)
+    """Recompute every instrument now (also when the engine is paused)."""
+    return await asyncio.to_thread(engine.refresh_all, True)
+
+
+# ----- Dashboard: overview and controls -----
+
+@router.get('/overview')
+def overview(response: Response, timeframe: str = 'H1', _: str = Depends(require_operator)):
+    """Coverage, regime mix per timeframe, what is still warming up (and what history it needs), the top of the
+    screen, the biggest moves, stale features, the engine and its settings, and the session now."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        mix = db.execute('SELECT timeframe, regime, volatility, count(*) AS n FROM intel_snapshot GROUP BY 1, 2, 3').fetchall()
+        collected = db.execute("SELECT count(DISTINCT (account_id, broker_symbol)) AS n FROM md_collection_plans WHERE status <> 'ARCHIVED'").fetchone()['n']
+        covered = db.execute('SELECT count(DISTINCT (account_id, broker_symbol)) AS n FROM intel_snapshot').fetchone()['n']
+        stale = db.execute("SELECT count(*) AS n FROM intel_snapshot WHERE computed_at < now() - interval '10 minutes'").fetchone()['n']
+        history = db.execute('SELECT count(*) AS n, min(bar_time) AS since FROM intel_features').fetchone()
+    by_tf: dict = {}
+    for r in mix:
+        t = by_tf.setdefault(r['timeframe'], {'total': 0, 'regime': {}, 'volatility': {}})
+        t['total'] += r['n']
+        t['regime'][r['regime']] = t['regime'].get(r['regime'], 0) + r['n']
+        if r['volatility']:
+            t['volatility'][r['volatility']] = t['volatility'].get(r['volatility'], 0) + r['n']
+    screen = screener(Response(), timeframe, '')['items']
+    warming = [{k: x[k] for k in ('account_id', 'account_code', 'provider_name', 'broker_symbol', 'instrument', 'plan_id', 'bars', 'reasons')}
+               for x in screen if x['regime'] == 'WARMING_UP']
+    ranked = [x for x in screen if x['attention'] is not None]
+    movers = sorted((x for x in screen if x['features'].get('ret_20_pct') is not None), key=lambda x: -abs(x['features']['ret_20_pct']))
+    slim = lambda x: {k: x.get(k) for k in ('account_id', 'broker_symbol', 'instrument', 'account_code', 'provider_name', 'regime', 'volatility',
+                                            'confidence', 'attention', 'attention_parts', 'reasons')} | {'ret_20_pct': x['features'].get('ret_20_pct'),
+                                                                                                         'adx14': x['features'].get('adx14'), 'rsi14': x['features'].get('rsi14')}
+    return {'timeframe': timeframe, 'collected': collected, 'covered': covered, 'stale': stale, 'history_rows': history['n'],
+            'history_since': history['since'], 'by_timeframe': by_tf, 'warming_up': warming, 'top': [slim(x) for x in ranked[:8]],
+            'movers': [slim(x) for x in movers[:8]], 'engine': engine.STATUS, 'settings': store.clean(engine.settings()),
+            'session': sessions.sessions_at(datetime.now(timezone.utc))}
+
+
+class SettingsIn(BaseModel):
+    enabled: bool
+    interval_seconds: int = Field(ge=15, le=3600)
+    timeframes: list[Literal['M1', 'M5', 'M15', 'H1', 'H4', 'D1']] = Field(min_length=1)
+    excluded: list[dict] = Field(default_factory=list, max_length=2000)
+    version: int
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.put('/settings')
+def put_settings(payload: dict, user: Principal = Depends(_ops)):
+    from .config_api import parse
+    data = parse(SettingsIn, payload)
+    excluded = [{'account_id': str(x.get('account_id')), 'broker_symbol': str(x.get('broker_symbol'))} for x in data.excluded
+                if x.get('account_id') and x.get('broker_symbol')]
+    with store.transaction('write') as db:
+        before = db.execute('SELECT * FROM intel_settings WHERE id=1 FOR UPDATE').fetchone()
+        if not before:
+            raise HTTPException(503, 'Run scripts/deploy-workstation.sh to apply migrations (intel_settings is missing).')
+        if before['version'] != data.version:
+            raise HTTPException(409, 'The engine settings were changed by someone else: reload and try again.')
+        db.execute('UPDATE intel_settings SET enabled=%s, interval_seconds=%s, timeframes=%s, excluded=%s, version=version+1, '
+                   'updated_by=%s, updated_at=now() WHERE id=1',
+                   (data.enabled, data.interval_seconds, list(data.timeframes), Jsonb(excluded), user.username))
+        after = db.execute('SELECT * FROM intel_settings WHERE id=1').fetchone()
+        store.audit(db, user.username, 'INTEL_SETTINGS', 'intel_settings', '1', store.clean(before), store.clean(after), data.reason)
+    return store.clean(after)
+
+
+class HistoryIn(BaseModel):
+    plan_id: UUID
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post('/history')
+def get_history(payload: dict, user: Principal = Depends(_ops)):
+    """One click for a warming-up instrument: backfill 14 days of M1 (builds M5…H1) and a year of H4 and D1 from the broker."""
+    from .config_api import parse
+    from .md import plans
+    data = parse(HistoryIn, payload)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    jobs = []
+    for tf, days in (('M1', 14), ('H4', 365), ('D1', 365)):
+        jobs.append(plans.create_job(user.username, plans.BackfillIn(plan_id=data.plan_id, timeframe=tf, range_from=now - timedelta(days=days),
+                                                                      range_to=now, reason=data.reason)))
+    return {'jobs': jobs}

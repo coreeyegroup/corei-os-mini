@@ -151,3 +151,85 @@ export function SessionsView() {
     <p className="cfg-note">FX week: Sunday 17:00 to Friday 17:00 New York. Daylight-saving changes follow each centre's time zone. Exchange holidays and economic events are the next component (calendar).</p>
   </section>;
 }
+
+/* Dashboard: coverage, regime mix, what needs history (one click), the top of the screen, the biggest moves, and the
+ * engine's controls (pause, cycle, timeframes, instruments left out), each change with a reason and audited. */
+export function IntelDashboard({ openInstrument, canEdit, gotoScreener }: { openInstrument: (r: Row) => void; canEdit: boolean; gotoScreener: () => void }) {
+  const [tf, setTf] = useState('H1'), [data, setData] = useState<Row | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [form, setForm] = useState<Row | null>(null), [reason, setReason] = useState(''), [busy, setBusy] = useState('');
+  const [all, setAll] = useState<Row[]>([]);
+  const load = async () => { try { const d = await api(`intel/overview?timeframe=${tf}`); setData(d); setError(''); if (!form) setForm(null); } catch (e) { setError((e as Error).message); } };
+  useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, [tf]);
+  useEffect(() => { void api('intel/screener?timeframe=H1').then(d => setAll(d.items)).catch(() => undefined); }, [data?.covered]);
+  const act = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label); setError(''); setNotice('');
+    try { await fn(); setNotice(label); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
+  };
+  if (!data) return error ? <p role="alert" className="cfg-error">{error}</p> : <p>Loading…</p>;
+  const st = data.engine ?? {}, s = data.settings ?? {}, mix = data.by_timeframe?.[tf] ?? { regime: {}, volatility: {}, total: 0 };
+  const age = st.last_run_at ? Math.round((Date.now() - Date.parse(st.last_run_at)) / 1000) : null;
+  const f = form ?? { enabled: s.enabled, interval_seconds: s.interval_seconds, timeframes: s.timeframes ?? TFS, excluded: s.excluded ?? [] };
+  const isOut = (r: Row) => (f.excluded ?? []).some((x: Row) => x.account_id === r.account_id && x.broker_symbol === r.broker_symbol);
+  const kpi = (label: string, value: any, hint?: string, cls = '') => <div className={`intel-kpi ${cls}`} title={hint}><small>{label}</small><b>{value}</b></div>;
+  const small = (rows: Row[], cols: [string, (r: Row) => any][]) => rows.length ? <table className="cfg-table compact intel-table"><thead><tr>{cols.map(c => <th key={c[0]}>{c[0]}</th>)}</tr></thead>
+    <tbody>{rows.map(r => <tr key={r.account_id + r.broker_symbol} className="clickable" onClick={() => openInstrument(r)} title={(r.reasons ?? []).join(' · ')}>{cols.map(c => <td key={c[0]}>{c[1](r)}</td>)}</tr>)}</tbody></table>
+    : <p className="cfg-note">Nothing yet.</p>;
+  return <section className="intel">
+    <div className="intel-bar">
+      <span className="intel-tfs" role="group" aria-label="Timeframe">{TFS.map(t => <button key={t} aria-pressed={t === tf} onClick={() => setTf(t)}>{t}</button>)}</span>
+      <span className="cfg-pill demo">{data.session?.label}</span>
+      <button onClick={gotoScreener}>Open the screener</button>
+      {canEdit && <button disabled={!!busy} onClick={() => void act('Recomputed every instrument.', () => api('intel/refresh', 'POST'))}>{busy.startsWith('Recomputed') ? 'Computing…' : 'Recompute now'}</button>}
+    </div>
+    {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+    <div className="intel-kpis">
+      {kpi('Instruments covered', `${data.covered}/${data.collected}`, 'Instruments with features / instruments being collected')}
+      {kpi('Trend up', mix.regime.TREND_UP ?? 0, `${tf}`, 'up')}{kpi('Trend down', mix.regime.TREND_DOWN ?? 0, tf, 'down')}
+      {kpi('Range', mix.regime.RANGE ?? 0, tf)}{kpi('Transition', mix.regime.TRANSITION ?? 0, tf)}
+      {kpi('Warming up', mix.regime.WARMING_UP ?? 0, 'Fewer than 60 closed bars on this timeframe', (mix.regime.WARMING_UP ?? 0) ? 'warn' : '')}
+      {kpi('High volatility', mix.volatility.HIGH ?? 0, 'ATR% in the top 20% of its last 100 bars')}
+      {kpi('Engine', st.paused || s.enabled === false ? 'Paused' : age == null ? 'Not run yet' : `${age} s ago`, st.last_run_at ? `${st.instruments} instruments · ${st.duration_ms} ms` : '', st.errors?.length ? 'warn' : '')}
+      {kpi('Feature history', Number(data.history_rows ?? 0).toLocaleString(), data.history_since ? `since ${when(data.history_since)}` : '')}
+      {kpi('Stale', data.stale, 'Snapshots not recomputed for 10 minutes', data.stale ? 'warn' : '')}
+    </div>
+    {st.errors?.length ? <p className="cfg-error">Engine errors: {st.errors.join(' · ')}</p> : null}
+    <div className="intel-cols">
+      <div><h4>Regime mix by timeframe</h4>
+        <table className="cfg-table compact intel-table"><thead><tr><th>TF</th><th>Up</th><th>Down</th><th>Range</th><th>Transition</th><th>Warming</th><th>High vol</th><th>Low vol</th></tr></thead><tbody>
+          {TFS.map(t => { const m = data.by_timeframe?.[t] ?? { regime: {}, volatility: {} }; return <tr key={t} className={t === tf ? 'selected clickable' : 'clickable'} onClick={() => setTf(t)}>
+            <td><strong>{t}</strong></td><td>{m.regime.TREND_UP ?? 0}</td><td>{m.regime.TREND_DOWN ?? 0}</td><td>{m.regime.RANGE ?? 0}</td><td>{m.regime.TRANSITION ?? 0}</td>
+            <td>{m.regime.WARMING_UP ?? 0}</td><td>{m.volatility.HIGH ?? 0}</td><td>{m.volatility.LOW ?? 0}</td></tr>; })}
+        </tbody></table></div>
+      <div><h4>Needs history ({tf})</h4>
+        {data.warming_up.length ? <>
+          <p className="cfg-note">Fewer than 60 closed {tf} bars. <em>Get history</em> backfills 14 days of M1 (builds M5–H1) and a year of H4 and D1 from the broker.</p>
+          {canEdit && <input aria-label="Reason for history" placeholder="Reason (e.g. warm up features)" value={reason} onChange={e => setReason(e.target.value)} />}
+          <table className="cfg-table compact intel-table"><tbody>{data.warming_up.map((r: Row) => <tr key={r.account_id + r.broker_symbol}>
+            <td><strong>{r.broker_symbol}</strong> <small className="cfg-note">{r.provider_name} · {r.account_code}</small></td><td><small>{r.bars} bars</small></td>
+            <td>{canEdit && r.plan_id && <button disabled={!!busy || reason.trim().length < 5} title={reason.trim().length < 5 ? 'Enter a reason first' : ''}
+              onClick={() => void act(`History requested for ${r.broker_symbol}.`, () => api('intel/history', 'POST', { plan_id: r.plan_id, reason }))}>Get history</button>}</td></tr>)}</tbody></table>
+        </> : <p className="cfg-note">Every instrument has enough {tf} bars.</p>}</div>
+    </div>
+    <div className="intel-cols">
+      <div><h4>Top attention ({tf})</h4>{small(data.top, [['Instrument', r => <strong>{r.broker_symbol}</strong>], ['Regime', r => pill(r.regime)], ['ADX', r => num(r.adx14, 1)], ['Attention', r => <b>{num(r.attention, 0)}</b>]])}</div>
+      <div><h4>Biggest 20-bar moves ({tf})</h4>{small(data.movers, [['Instrument', r => <strong>{r.broker_symbol}</strong>], ['20-bar %', r => <span className={r.ret_20_pct > 0 ? 'up' : 'down'}>{num(r.ret_20_pct, 2)}</span>], ['RSI', r => num(r.rsi14, 1)], ['Regime', r => pill(r.regime)]])}</div>
+    </div>
+    <details className="cfg-more intel-engine" open={!s.enabled}><summary>Engine controls</summary>
+      <div className="cfg-form">
+        <label><input type="checkbox" disabled={!canEdit} checked={!!f.enabled} onChange={e => setForm({ ...f, enabled: e.target.checked })} /> Engine on (recomputes every cycle)</label>
+        <label>Cycle (seconds) <input type="number" min={15} max={3600} disabled={!canEdit} value={f.interval_seconds} onChange={e => setForm({ ...f, interval_seconds: Number(e.target.value) })} /></label>
+        <div>Timeframes {TFS.map(t => <label key={t} className="intel-check"><input type="checkbox" disabled={!canEdit} checked={(f.timeframes ?? []).includes(t)}
+          onChange={e => setForm({ ...f, timeframes: e.target.checked ? TFS.filter(x => x === t || (f.timeframes ?? []).includes(x)) : (f.timeframes ?? []).filter((x: string) => x !== t) })} /> {t}</label>)}</div>
+        <div>Instruments in the screen {all.length === 0 && <small className="cfg-note">none yet</small>}
+          <div className="intel-checks">{all.map(r => <label key={r.account_id + r.broker_symbol} className="intel-check"><input type="checkbox" disabled={!canEdit} checked={!isOut(r)}
+            onChange={e => setForm({ ...f, excluded: e.target.checked ? (f.excluded ?? []).filter((x: Row) => !(x.account_id === r.account_id && x.broker_symbol === r.broker_symbol))
+              : [...(f.excluded ?? []), { account_id: r.account_id, broker_symbol: r.broker_symbol }] })} /> {r.broker_symbol} <small className="cfg-note">{r.account_code}</small></label>)}</div></div>
+        {canEdit && <><input aria-label="Reason for the change" placeholder="Reason for the change" value={reason} onChange={e => setReason(e.target.value)} />
+          <div className="cfg-actions"><button className="primary" disabled={!!busy || !form || reason.trim().length < 5}
+            onClick={() => void act('Engine settings saved.', async () => { await api('intel/settings', 'PUT', { ...f, version: s.version, reason }); setForm(null); })}>Save engine settings</button>
+            {form && <button onClick={() => setForm(null)}>Undo changes</button>}</div></>}
+        <p className="cfg-note">Last changed {when(s.updated_at)} by {s.updated_by}. Every change is in the audit log with its reason.</p>
+      </div>
+    </details>
+  </section>;
+}

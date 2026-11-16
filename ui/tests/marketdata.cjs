@@ -27,7 +27,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    data_types:['QUOTES','BARS'],bar_timeframes:['M1'],schedule:'ALWAYS',window_days:[1,2,3,4,5],hot_days:14,bars_hot_days:365,archive:true,status:'ACTIVE',status_reason:'Start',version:3,
    environment:'LIVE',active_feed:true,score:96,stale_seconds:10,max_latency_ms:1500,max_gap_seconds:60,conflate_ms:0,depth_levels:0,backfill_per_minute:30,on_breach:'SWITCH',pending_changes:0}];
  const controls=[{scope:'ALL',paused:false,reason:'Initial state',version:1,updated_by:'system',updated_at:now}];
- const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[],p1Status=[],jobs=[],catalogCalls=[];
+ const created=[],statusCalls=[],switches=[],estimates=[],tickCalls=[],prefPuts=[],p1Status=[],jobs=[],catalogCalls=[],intelCalls=[];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
@@ -70,6 +70,12 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/jobs'))return ok({items:[]});
    if(url.endsWith('/md/files'))return ok({items:[{id:1,day:'2026-10-20',kind:'TICKS',account_code:'VTM_A',broker_symbol:'XAUUSD.r',rows:180000,bytes:2400000,sha256:'a'.repeat(64),verify_status:'OK',verified_at:now}]});
    if(url.endsWith('/md/backups'))return ok({items:[{id:1,kind:'DATABASE',ok:true,started_at:now,path:'/backup/db/corei.dump',bytes:5e6,files:1}]});
+   if(url.includes('/intel/overview'))return ok({timeframe:'H1',collected:2,covered:2,stale:0,history_rows:1200,history_since:now,
+     by_timeframe:{H1:{total:2,regime:{TREND_UP:1,WARMING_UP:1},volatility:{HIGH:1}}},warming_up:[{account_id:'a2',account_code:'ICM_B',provider_name:'IC Markets',broker_symbol:'XAUUSD',plan_id:'p1',bars:40,reasons:[]}],
+     top:[{account_id:'a1',broker_symbol:'XAUUSD.r',regime:'TREND_UP',adx14:31,attention:71}],movers:[],engine:{last_run_at:now,instruments:2,duration_ms:40,errors:[]},
+     settings:{enabled:true,interval_seconds:60,timeframes:['M1','M5','M15','H1','H4','D1'],excluded:[],version:1,updated_by:'system',updated_at:now},session:{label:'London + New York'}});
+   if(url.endsWith('/intel/history')){intelCalls.push(body);return ok({jobs:[{timeframe:'M1'},{timeframe:'H4'},{timeframe:'D1'}]});}
+   if(url.endsWith('/intel/settings')){intelCalls.push(body);return ok({...body,version:2});}
    if(url.includes('/intel/screener'))return ok({timeframe:'H1',engine:{last_run_at:now,instruments:2,duration_ms:40,errors:[]},session:{label:'London + New York'},items:[
      {rank:1,account_id:'a1',broker_symbol:'XAUUSD.r',instrument:'XAUUSD',account_code:'VTM_A',provider_name:'VT Markets',timeframe:'H1',bar_time:now,bars:300,bars_source:'M1',regime:'TREND_UP',volatility:'HIGH',confidence:0.8,reasons:['ADX 31.0'],
       features:{close:2401.2,ema20:2400,ema50:2390,ema200:2350,rsi14:62.3,atr14:4.1,atr_pct:0.17,adx14:31,er20:0.4,ret_20_pct:0.8,range_pos20:88},bid:2401.1,ask:2401.3,spread:0.2,spread_atr_pct:4.9,quality:96,attention:71.2,attention_parts:{quality:0.96}},
@@ -145,6 +151,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Stage 2 · Market intelligence: the screener (default), an instrument across timeframes, sessions.
  w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Intelligence'}}));await settle(12);
+ assert.match($('.intel-kpis').textContent,/Instruments covered2\/2.*Trend up1.*Warming up1/);
+ fill($('[aria-label="Reason for history"]'),'warm up gold');await settle();
+ button('Get history').click();await settle(4);
+ assert.deepEqual(intelCalls.at(-1),{plan_id:'p1',reason:'warm up gold'});
+ $$('.intel-engine input[type=checkbox]').find(x=>x.parentElement.textContent.trim()==='D1').click();await settle();
+ button('Save engine settings').click();await settle(4);
+ assert.deepEqual(intelCalls.at(-1).timeframes,['M1','M5','M15','H1','H4'],'engine timeframes saved with a reason');
+ assert.equal(intelCalls.at(-1).reason,'warm up gold');
+ nav('Screener').click();await settle(6);
  const intelRows=()=>$$('.intel-table tbody tr');
  assert.equal(intelRows().length,2,'every collected instrument is listed');
  assert.match(intelRows()[0].textContent,/XAUUSD\.r.*Trend up.*80%/);
@@ -156,7 +171,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal($$('.intel-chart rect').length,40,'regime strip, one mark per bar');
  nav('Sessions').click();await settle(4);
  assert.match($('.intel-now').textContent,/London \+ New York/);
- console.log('PASS: stage 2 screener (rank, regime filter), instrument across timeframes with chart, sessions.');
+ console.log('PASS: stage 2 dashboard (KPIs, get history, engine controls), screener (rank, regime filter), instrument across timeframes with chart, sessions.');
  // Select & compare: the comparison board.
  nav('Select & compare').click();await settle(12);
  // Dashboard (default): one workspace with every source and instrument; pickers, filters, grouping, columns, panes.

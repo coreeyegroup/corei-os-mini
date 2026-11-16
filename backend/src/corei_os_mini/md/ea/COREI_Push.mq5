@@ -24,7 +24,7 @@
 
 input string CoreiUrl    = "https://corei-os-mini.coreeye.in"; // COREI address (also allow it under Tools > Options > Expert Advisors)
 input string AccountCode = "";                                  // COREI account code, e.g. METAQUOTES_DEMO_5056977914
-input string PushToken   = "";                                  // Push token from COREI (Setup > the account's server > New push token)
+input string PushToken   = "";                                  // Push token from COREI (Setup > the account > Routes > EA push > Issue token)
 input int    PushEveryMs = 250;                                 // Send interval in milliseconds (100 or more)
 input bool   SendSymbolList = true;                             // Send the broker's symbol list on start
 
