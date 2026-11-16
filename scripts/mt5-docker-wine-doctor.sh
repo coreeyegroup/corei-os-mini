@@ -15,7 +15,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHOICE=/var/lib/corei-mt5-docker/wine-choice-v4
 LOG=/var/log/corei-mt5-wine-doctor.log
-read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-kron4ek-11.22 devel}"
+read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-kron4ek-11.22}"
 mkdir -p "$(dirname "$CHOICE")"
 if [[ -f "$CHOICE" && -z "${COREI_WINE_RECHECK:-}" ]]; then cat "$CHOICE"; exit 0; fi
 
@@ -42,10 +42,11 @@ wine_runs() {  # $1 = image, $2 = extra docker option or empty
   [[ $rc -eq 0 ]] && echo "$out" | grep -qi 'windows'
 }
 
-FIRST_FAIL=""
+FIRST_FAIL=""; BUILT=0
 for c in "${CANDIDATES[@]}"; do
   printf '  Wine %-7s build… ' "$c"
   if ! build "$c"; then echo "could not be built:"; grep -E 'ERROR|E: |error|Unable|404|curl' "$LOG" | tail -n 6 | sed 's/^/      /'; continue; fi
+  BUILT=1
   ver=$(docker run --rm --entrypoint wine "corei-mt5-wine:$c" --version 2>/dev/null)
   printf '%s · test… ' "$ver"
   if wine_runs "corei-mt5-wine:$c" ""; then
@@ -59,7 +60,11 @@ for c in "${CANDIDATES[@]}"; do
   echo "fails"
 done
 echo
-echo "No Wine build runs in Docker on this server, so the cause is the server itself. Wine's own report (first candidate):"
+if [[ $BUILT -eq 0 ]]; then
+  echo "No Wine image could be built (see the build errors above). Nothing is wrong with the server; send me those lines."
+  exit 1
+fi
+echo "No Wine build runs in Docker on this server. Wine's own report (first candidate):"
 echo "$FIRST_FAIL" | tail -n 25 | sed 's/^/  /'
 echo "Send me this output and: sudo tail -n 120 $LOG"
 exit 1

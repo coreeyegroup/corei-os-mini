@@ -16,7 +16,7 @@ ARG WINE=kron4ek-11.22
 ENV PATH="/opt/wine-k/bin:${PATH}"
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl xz-utils; \
     dpkg --add-architecture i386; \
     if [ "$WINE" = debian ]; then \
       apt-get update; \
