@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
 from .operator_auth import admin_router, current_user, require_operator, router as operator_router
 from .config_api import router as config_router
+from .routes_api import router as routes_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
 from .infra_api import router as infra_router
@@ -72,6 +73,7 @@ app.include_router(md_router)
 app.include_router(db_admin_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
+app.include_router(routes_router)
 app.include_router(config_router)
 
 @app.get("/health")
@@ -170,7 +172,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.37.0-terminal-push",
+        "release": "0.38.0-routes-failover",
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

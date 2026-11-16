@@ -351,3 +351,11 @@ button.cfg-tile { cursor: pointer; }
 .cfg-remove-help { margin: 0; font-size: 11.5px; line-height: 1.45; }
 .cfg-steps-list { margin: 4px 0 8px 18px; padding: 0; line-height: 1.6; }
 .cfg-secret-once { user-select: all; word-break: break-all; padding: 1px 4px; border: 1px dashed var(--accent); }
+
+/* Routes (failover) */
+.cfg-scroll { overflow-x: auto; }
+.cfg-routes-table td { vertical-align: top; }
+.cfg-route-actions { display: flex; flex-wrap: wrap; gap: 4px; min-width: 230px; }
+.cfg-route-actions button { padding: 0 6px; }
+.cfg-error-text { color: var(--danger, #e5534b); }
+.cfg-routes code { white-space: normal; word-break: break-word; }

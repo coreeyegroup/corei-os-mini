@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { AccountAddresses, api, BLOCKERS, Choice, Env, envOfServer, Field, FIX_BLANK, FixFields, pendingMessage, PURPOSE_LABEL, ROLE_OPTIONS,
   toPayload, type Navigate, type Row } from './Configuration';
-import { BrokerLogin, BrokerRead } from './ConfigControls';
+import { AccountRoutes, BrokerLogin, BrokerRead } from './ConfigControls';
 import { goto } from './nav';
 
 type Node = { key: string; kind: 'tech' | 'type' | 'who' | 'conn' | 'acct' | 'none' | 'new'; label: string; meta?: string; dot?: string; state?: string;
@@ -316,6 +316,7 @@ function AcctPanel({ account: a, conn, data, canEdit, navigate, reload }: { acco
       {a.warnings?.length > 0 && <div><h3 className="ct-sub">Warnings</h3><ul>{a.warnings.map((w: string) => <li key={w}>{why(w)}</li>)}</ul></div>}
     </div>
     {conn.platform === 'MT5' && <ServerRoute key={a.id + a.version} account={a} conn={conn} provider={provider} canEdit={canEdit} reload={reload} />}
+    {conn.platform === 'MT5' && <AccountRoutes account={a} canEdit={canEdit} onChange={reload} />}
     {oauth ? <BrokerLogin account={a} canEdit={canEdit} reload={reload} /> : <BrokerRead account={a} canEdit={canEdit} onRead={reload} platform={conn.platform} inTree />}
   </>;
 }

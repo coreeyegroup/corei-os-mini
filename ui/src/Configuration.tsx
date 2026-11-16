@@ -12,7 +12,7 @@ import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import ConnectTree from './ConnectTree';
-import { Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
 type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database';
@@ -1616,6 +1616,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX' || selected.platform === 'CTRADER') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'connections' && selected.platform === 'MT5' && selected.adapter === 'TERMINAL_PUSH' && <PushPanel conn={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && selected.platform === 'REST_API' && selected.auth_method === 'OAUTH2' && <BrokerLogin account={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}
+      {selected && entity === 'accounts' && selected.platform === 'MT5' && <AccountRoutes account={selected} canEdit={canEdit} onChange={() => void load(selected.id)} />}
       {selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'FIX') && <BrokerRead account={selected} canEdit={canEdit} platform={selected.platform} onRead={() => { setSpecsVersion(v => v + 1); void load(selected.id); }} />}
       {selected && entity === 'accounts' && <SymbolSpecs account={selected} canEdit={canEdit} refresh={specsVersion} />}
       {selected && (entity === 'accounts' || entity === 'connections') && <CredentialUse owner={entity} id={selected.id} />}

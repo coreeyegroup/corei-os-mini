@@ -201,6 +201,9 @@ from .md import push as _push
 from .operator_auth import require_reauth as _reauth
 
 EA_FILE = _Path(__file__).parent / 'md' / 'ea' / 'COREI_Push.mq5'
+_REPO = _Path(__file__).resolve().parents[3]
+BRIDGE_FILES = {'setup-corei-bridge.ps1': _REPO / 'connectors' / 'mt5-bridge' / 'windows' / 'setup-corei-bridge.ps1',
+                'corei_mt5_bridge.py': _REPO / 'connectors' / 'mt5-bridge' / 'corei_mt5_bridge.py'}
 
 
 @router.post('/push', response_class=PlainTextResponse)
@@ -236,6 +239,15 @@ def new_push_token(connection_id: UUID, response: Response, user: Principal = De
 def ea_source(_: str = Depends(require_operator)):
     """The COREI EA source (MQL5). Open it in MetaEditor and compile (F7), or copy it to MQL5/Experts."""
     return PlainTextResponse(EA_FILE.read_text(encoding='utf-8'), headers={'Content-Disposition': 'attachment; filename="COREI_Push.mq5"'})
+
+
+@router.get('/bridge/files/{name}', response_class=PlainTextResponse)
+def bridge_file(name: str, _: str = Depends(require_operator)):
+    """The Windows set-up for a terminal bridge (VPS or PC): the PowerShell script and the bridge itself."""
+    path = BRIDGE_FILES.get(name)
+    if not path or not path.exists():
+        raise HTTPException(404, 'Unknown file.')
+    return PlainTextResponse(path.read_text(encoding='utf-8'), headers={'Content-Disposition': f'attachment; filename="{name}"'})
 
 
 @router.get('/push/terminals')

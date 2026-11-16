@@ -57,11 +57,30 @@ def now_iso() -> str:
     return dt.datetime.now(UTC).replace(tzinfo=None).isoformat(timespec='seconds')
 
 
+def _make_cert_python(cert: Path, key: Path) -> None:
+    import datetime as _dt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'corei-mt5-bridge')])
+    now = _dt.datetime.now(_dt.timezone.utc)
+    certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(private.public_key())
+                   .serial_number(x509.random_serial_number()).not_valid_before(now - _dt.timedelta(days=1))
+                   .not_valid_after(now + _dt.timedelta(days=3650)).sign(private, hashes.SHA256()))
+    key.write_bytes(private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+
+
 def ensure_cert(cert: Path, key: Path) -> str:
     """Self-signed certificate for this bridge; COREI pins its SHA-256 fingerprint, so no CA is needed."""
     if not cert.exists() or not key.exists():
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3650', '-subj', '/CN=corei-mt5-bridge',
-                        '-keyout', str(key), '-out', str(cert)], check=True, capture_output=True)
+        try:
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3650', '-subj', '/CN=corei-mt5-bridge',
+                            '-keyout', str(key), '-out', str(cert)], check=True, capture_output=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            _make_cert_python(cert, key)  # Windows without OpenSSL: the cryptography package (pip install cryptography)
     der = ssl.PEM_cert_to_DER_cert(cert.read_text())
     digest = hashlib.sha256(der).hexdigest().upper()
     return ':'.join(digest[i:i + 2] for i in range(0, len(digest), 2))
@@ -313,7 +332,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--bind', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=9443)
     parser.add_argument('--state', default=str(HERE), help='folder for the certificate and token')
+    parser.add_argument('--init', action='store_true', help='make the certificate and token, print what COREI needs, and exit')
     args = parser.parse_args(argv)
+    if args.init:
+        state = Path(args.state)
+        state.mkdir(parents=True, exist_ok=True)
+        print(json.dumps({'fingerprint': ensure_cert(state / 'corei-bridge.crt', state / 'corei-bridge.key'),
+                          'token_file': str(state / 'corei-bridge.token'), 'token': ensure_token(state / 'corei-bridge.token')}))
+        return 0
     if mt5 is None:
         print('MetaTrader5 package missing: pip install MetaTrader5 (Windows, or Wine with a Windows Python)', file=sys.stderr)
         return 2

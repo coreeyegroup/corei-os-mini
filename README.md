@@ -896,3 +896,22 @@ Set an MT5 server's method to **Terminal push (COREI EA in MT5)**, create its pu
 **COREI_Push** EA in any MT5 terminal logged in to the account (your PC, a Windows VPS or the Docker container). Prices,
 bars and the broker's symbol list arrive over HTTPS; no SDK version, Wine or password in COREI is involved. Database
 update 023. See `docs/MT5_TERMINAL_PUSH.md`. `use-mt5-docker.sh` now retries registry refusals.
+
+## MT5 routes with automatic failover — release 0.38.0
+
+Every MT5 account can have several **routes** (Setup › Connectivity › the account › *Connection routes · failover*),
+tried in order: Terminal bridge on a **Windows VPS**, Terminal bridge on a **Windows PC** (SSH tunnel out to COREI, no
+open port), Terminal bridge in **Docker** on the COREI server, **EA push** (optional) and the **Direct SDK**. When the
+route in use fails twice, the collector moves to the next one (event *feed switch*, alert *route fallback*) and returns
+to the first after 5 minutes at the next reconnect. Each route has its own encrypted, write-only token, its last
+success and last error, and a **Test** button (one login through that route). An account without routes keeps its
+server's method.
+
+Windows set-up (VPS or PC) in one run, as Administrator, with the two files downloaded from the routes panel:
+
+    powershell -ExecutionPolicy Bypass -File setup-corei-bridge.ps1 -Name <account> -Mode Direct -CoreiIp <COREI server IP>
+    powershell -ExecutionPolicy Bypass -File setup-corei-bridge.ps1 -Name <account> -Mode Tunnel -SshTarget <user>@<COREI server> -TunnelPort 9450
+
+It installs Python and MetaQuotes' MetaTrader5 package, sets up the bridge, its certificate and token, a scheduled task
+that keeps it running, and either a firewall rule open to COREI's IP only or the SSH tunnel; it prints the host, port,
+fingerprint and token for *Add route*. See docs/MT5_TERMINAL_BRIDGE.md. Migration 024.

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from .. import account_routes
 from .. import config_store as cfg
 from . import store
 from .bars import BarBuilder, FRAMES, floor
@@ -188,13 +189,21 @@ class SourceWorker(threading.Thread):
         self.job_requests: deque = deque()
         self.reported_error: str | None = None
         self.failures = 0
+        # Routes (DEC-69): the account's ordered ways in; empty = the server's method.
+        self.routes: list[dict] = []
+        self.route_idx = 0
+        self.route_failures = 0
+        self.active_route: dict | None = None
+        self.left_first_route_at: float | None = None
 
     # ----- status -----
     def status(self) -> dict:
         lag = (self.clock() - self.last_rx).total_seconds() * 1000 if self.last_rx and self.state == 'CONNECTED' else None
         return {'state': self.state, 'host': self.host, 'port': self.port, 'pid': self.proc.pid if self.proc else None,
                 'subscribed': len(self.subscribed), 'ticks_total': self.ticks_total, 'lag_ms': lag, 'backlog': self.sink.backlog(),
-                'server_offset_minutes': int(self.offset.total_seconds() // 60), 'started_at': self.started_at, 'last_error': self.error}
+                'server_offset_minutes': int(self.offset.total_seconds() // 60), 'started_at': self.started_at, 'last_error': self.error,
+                'route': (self.active_route or {}).get('label'), 'route_method': (self.active_route or {}).get('method'),
+                'routes': len(self.routes)}
 
     def _event(self, kind: str, severity: str = 'INFO', symbol: str | None = None, plan_id: Any = None, **detail) -> None:
         with self.sink.lock:
@@ -267,7 +276,8 @@ class SourceWorker(threading.Thread):
             with cfg.transaction('read') as db:
                 row = db.execute(
                     'SELECT a.version AS av, a.updated_at AS au, c.version AS cv, c.updated_at AS cu, c.adapter, '
-                    '(SELECT max(updated_at) FROM cfg_credentials k WHERE k.account_id=a.id OR k.connection_id=c.id) AS ku '
+                    '(SELECT max(updated_at) FROM cfg_credentials k WHERE k.account_id=a.id OR k.connection_id=c.id) AS ku, '
+                    '(SELECT max(updated_at)::text || count(*) FROM cfg_account_routes r WHERE r.account_id=a.id) AS ru '
                     'FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id WHERE a.id=%s', (self.account_id,)).fetchone()
             return tuple(row.values()) if row else None
         except Exception:  # noqa: BLE001 - database briefly unavailable: just keep waiting
@@ -304,6 +314,10 @@ class SourceWorker(threading.Thread):
             attempt = 0 if connected else attempt + 1
             self.outage_since = self.outage_since or self.clock()
             reason = explain(self.error)
+            if self._next_route(connected, bool(reason and reason['permanent'])):
+                attempt = 0
+                self._wait_or_config_change(2)
+                continue
             if reason and reason['permanent']:
                 # Retrying every few seconds cannot fix a refused version or password; check every 5 minutes.
                 # An SDK older than the server cannot fix itself either: each try is a real login at the broker,
@@ -317,6 +331,33 @@ class SourceWorker(threading.Thread):
         self.state = 'STOPPED'
         self.flush_journal()
         self.journal.close()
+
+    def _next_route(self, connected: bool, permanent: bool) -> bool:
+        """After a session on a route: record it, and move to the next route when this one keeps failing.
+        True when the worker switched route (retry at once on the new one)."""
+        route = self.active_route
+        if not route:
+            return False
+        if connected:
+            self.route_failures = 0
+            account_routes.record(route['id'], True)
+            # Back on a lower route long enough: the next reconnect tries the first route again.
+            if self.route_idx and self.left_first_route_at and time.monotonic() - self.left_first_route_at >= account_routes.FAILBACK_SECONDS:
+                self.route_idx = 0
+            return False
+        self.route_failures += 1
+        account_routes.record(route['id'], False, self.error)
+        if len(self.routes) < 2 or (self.route_failures < account_routes.SWITCH_AFTER_FAILURES and not permanent):
+            return False
+        self.route_idx = (self.route_idx + 1) % len(self.routes)
+        self.route_failures = 0
+        new = self.routes[self.route_idx]
+        self.left_first_route_at = time.monotonic() if self.route_idx else None
+        self.state = 'SWITCHING_ROUTE'
+        self._event('FEED_SWITCH', 'WARNING', message=f"Route {route['label']} failed: switching to {new['label']}.",
+                    from_route=route['label'], to_route=new['label'], error=(self.error or '')[:300])
+        account_routes.fallback_alert(self.account_code, route, new, self.error)
+        return True
 
     def _command(self, account: dict) -> tuple[list[str], dict] | None:
         """The reader to run and its first stdin line, per platform; None when it cannot start (error set)."""
@@ -347,9 +388,10 @@ class SourceWorker(threading.Thread):
             return None
         if bridge:
             try:
-                token = cfg.use_credential('connections', UUID(str(self.connection_id)), 'collector', 'Open the MT5 terminal bridge')
+                token = account_routes.bridge_token(account, 'collector', 'Open the MT5 terminal bridge')
             except Exception as exc:  # noqa: BLE001 - HTTPException: no token saved
-                self.state, self.error = 'FAILED', 'BRIDGE_NOT_CONFIGURED: no bridge token saved on the connection (' + str(getattr(exc, 'detail', exc)) + ').'
+                where = f"route {account['route']['label']}" if account.get('route') else 'the connection'
+                self.state, self.error = 'FAILED', f'BRIDGE_NOT_CONFIGURED: no bridge token saved on {where} (' + str(getattr(exc, 'detail', exc)) + ').'
                 return None
             level = 'READ_ONLY' if account.get('investor_credential_kind') else 'FULL'
             secret = cfg.use_credential('accounts', UUID(self.account_id), 'collector', 'Stream market data through the terminal bridge', level)
@@ -386,6 +428,17 @@ class SourceWorker(threading.Thread):
         if not account:
             self.state, self.error = 'FAILED', 'The account no longer exists.'
             return False
+        self.routes = account_routes.enabled_routes(self.account_id) if self.platform == 'MT5' else []
+        if self.routes:
+            self.route_idx %= len(self.routes)
+            route = self.routes[self.route_idx]
+            if (self.active_route or {}).get('id') != route['id']:
+                account_routes.mark_active(route['id'])
+            self.active_route = route
+            account = account_routes.apply(account, route)
+            self.adapter = account['adapter']
+        else:
+            self.active_route = None
         started = self._command(account)
         if started is None:
             return False
@@ -417,6 +470,7 @@ class SourceWorker(threading.Thread):
         return connected
 
     PUSH_SILENCE = 30.0  # seconds without anything from the terminal before the source counts as disconnected
+    PUSH_WAIT = 90.0     # with other routes: seconds to wait for a first push before trying the next route
 
     def _push_session(self) -> bool:
         """MT5 terminal push: the COREI EA's lines arrive through the database inbox (see md/push.py) and go through
@@ -442,6 +496,11 @@ class SourceWorker(threading.Thread):
                     self._on_line(json.dumps({'t': 'disconnected'}).encode())
                     connected = False
                     self.state, self.error = 'WAITING_FOR_TERMINAL', f'Nothing from the terminal for {int(self.PUSH_SILENCE)} s: is the PC or VPS on and the COREI EA running?'
+                    if len(self.routes) > 1:
+                        return False  # another route can take over
+                elif not connected and len(self.routes) > 1 and time.monotonic() - last > self.PUSH_WAIT:
+                    self.error = f'PUSH_SILENT: nothing from the COREI EA for {int(self.PUSH_WAIT)} s on route {(self.active_route or {}).get("label")}.'
+                    return False
                 self.stopping.wait(0.25)
         finally:
             self.push_mode = False
@@ -533,6 +592,8 @@ class SourceWorker(threading.Thread):
 
     def _connected(self, m: dict) -> None:
         self.state, self.host, self.port, self.error = 'CONNECTED', m.get('host'), m.get('port'), None
+        if self.active_route:
+            account_routes.record(self.active_route['id'], True)
         self.reported_error, self.failures = None, 0
         self.offset = server_offset(m.get('server_time'), m.get('utc_now'))
         # A source that cannot state its clock (the terminal bridge on a closed market) sends no server_time:

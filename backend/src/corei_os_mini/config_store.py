@@ -70,6 +70,7 @@ UNIQUE_MESSAGES = {
     'cfg_symbol_mappings_symbol_scope': 'This broker symbol is already mapped on this connection (or for this account).',
     'cfg_symbol_mappings_instrument_scope': 'This instrument is already mapped on this connection (or for this account).',
     'cfg_account_groups_code_key': 'An account group with this code already exists.',
+    'cfg_account_routes_label': 'This account already has a route with this name.',
 }
 
 

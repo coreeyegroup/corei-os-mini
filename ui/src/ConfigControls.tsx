@@ -359,6 +359,131 @@ export function BrokerRead({ account, canEdit, onRead, platform = 'MT5', inTree 
   </section>;
 }
 
+/* ---------- routes: the account's ordered ways in, with automatic failover (DEC-69) ---------- */
+
+const ROUTE_METHODS: [string, string][] = [['TERMINAL_BRIDGE', 'Terminal bridge (official MT5 terminal)'], ['DIRECT', 'Direct SDK'], ['TERMINAL_PUSH', 'Terminal push - COREI EA (optional)']];
+const ROUTE_LOCATIONS: [string, string][] = [['WINDOWS_VPS', 'Windows VPS'], ['WINDOWS_PC', 'Windows PC (office/home)'], ['DOCKER', 'Docker on the COREI server'], ['COREI_SERVER', 'COREI server'], ['OTHER', 'Other']];
+const methodName = (m: string) => ({ TERMINAL_BRIDGE: 'Terminal bridge', DIRECT: 'Direct SDK', TERMINAL_PUSH: 'EA push' } as Row)[m] ?? m;
+const locationName = (l: string) => (ROUTE_LOCATIONS.find(x => x[0] === l) ?? [l, l])[1];
+const ROUTE_BLANK: Row = { label: '', method: 'TERMINAL_BRIDGE', location: 'WINDOWS_VPS', host: '', port: 9443, fingerprint: '', priority: 10, enabled: true, notes: '' };
+
+export function AccountRoutes({ account, canEdit, onChange }: { account: Row; canEdit: boolean; onChange?: () => void }) {
+  const [data, setData] = useState<Row | null>(null), [edit, setEdit] = useState<Row | null>(null), [token, setToken] = useState<Row | null>(null);
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState('');
+  const base = `config/accounts/${account.id}/routes`;
+  const load = async () => { try { setData(await api(base)); } catch (e) { setError((e as Error).message); } };
+  useEffect(() => { void load(); const t = window.setInterval(() => void load(), 20_000); return () => window.clearInterval(t); }, [account.id]);
+  const routes: Row[] = data?.items ?? [];
+  const done = async (message: string) => { setNotice(message); setError(''); await load(); onChange?.(); };
+  const fail = (e: unknown) => { setError((e as Error).message); setNotice(''); };
+  const body = (r: Row) => ({ label: r.label, method: r.method, location: r.location, host: r.host || null, port: r.port ? Number(r.port) : null,
+    fingerprint: r.fingerprint || null, priority: Number(r.priority), enabled: Boolean(r.enabled), notes: r.notes ?? '' });
+  async function save(e: FormEvent) {
+    e.preventDefault(); if (!edit) return;
+    try { if (edit.id) await api(`${base}/${edit.id}`, 'PUT', { ...body(edit), version: edit.version }); else await api(base, 'POST', body(edit));
+      setEdit(null); await done('Route saved.'); } catch (err) { fail(err); }
+  }
+  async function remove(r: Row) {
+    if (!window.confirm(`Delete route "${r.label}"? Its token is deleted with it.`)) return;
+    try { await api(`${base}/${r.id}`, 'DELETE'); await done('Route deleted.'); } catch (e) { fail(e); }
+  }
+  async function toggle(r: Row) { try { await api(`${base}/${r.id}`, 'PUT', { ...body(r), enabled: !r.enabled, version: r.version }); await done(r.enabled ? 'Route switched off.' : 'Route switched on.'); } catch (e) { fail(e); } }
+  async function move(r: Row, dir: -1 | 1) {
+    const i = routes.findIndex(x => x.id === r.id), other = routes[i + dir]; if (!other) return;
+    try {
+      // Re-number so the order is explicit: 10, 20, 30… with the two swapped.
+      const order = routes.map(x => x.id); [order[i], order[i + dir]] = [order[i + dir], order[i]];
+      for (const [n, id] of order.entries()) { const x = routes.find(y => y.id === id)!; if (x.priority !== (n + 1) * 10) await api(`${base}/${id}`, 'PUT', { ...body(x), priority: (n + 1) * 10, version: x.version }); }
+      await done('Order changed.');
+    } catch (e) { fail(e); await load(); }
+  }
+  async function test(r: Row) {
+    setBusy(r.id); setError(''); setNotice('');
+    try { const res = await api(`config/accounts/${account.id}/read-from-broker`, 'POST', { route_id: r.id, max_symbols: 0 });
+      if (res.connected) await done(`${r.label}: logged in${res.host ? ` (${res.host}${res.port ? ':' + res.port : ''})` : ''}.`); else { setError(`${r.label}: ${res.error ?? 'login failed'}`); await load(); } }
+    catch (e) { fail(e); } finally { setBusy(''); }
+  }
+  async function saveToken(e: FormEvent) {
+    e.preventDefault(); if (!token) return;
+    try { await api(`${base}/${token.id}/token`, 'PUT', { token: token.value }); setToken(null); await done('Token saved (encrypted; it is not shown again).'); } catch (err) { fail(err); }
+  }
+  async function newToken(r: Row) {
+    if (r.token_saved && !window.confirm('Issue a new push token? The EA keeps working only after you paste the new one.')) return;
+    try { const res = await api(`${base}/${r.id}/new-token`, 'POST'); setToken({ ...r, issued: res.token }); await load(); } catch (e) { fail(e); }
+  }
+  const state = (r: Row) => r.active_since ? <span className="cfg-pill ok">In use</span>
+    : !r.enabled ? <span className="cfg-pill off">Off</span>
+    : r.needs_token && !r.token_saved ? <span className="cfg-pill warn">Token missing</span> : <span className="cfg-pill">Standby</span>;
+  return <section className="cfg-panel cfg-routes" aria-label="Connection routes">
+    <header><strong>Connection routes · failover</strong>
+      {canEdit && <button type="button" className="primary" onClick={() => setEdit({ ...ROUTE_BLANK, priority: (routes.length + 1) * 10 })}>Add route</button>}</header>
+    <p className="cfg-note">COREI uses the first route that is on. If it fails {data?.switch_after_failures ?? 2} times in a row it moves to the next one
+      (alert: route fallback) and goes back to the first after {Math.round((data?.failback_seconds ?? 300) / 60)} minutes at the next reconnect.
+      {routes.length === 0 && ' No routes yet: the server\'s own method is used.'}</p>
+    {routes.length > 0 && <div className="cfg-scroll"><table className="cfg-table compact cfg-routes-table"><thead><tr><th>#</th><th>Route</th><th>Address</th><th>State</th><th /></tr></thead><tbody>
+      {routes.map((r, i) => <tr key={r.id}>
+        <td>{i + 1}</td>
+        <td><strong>{r.label}</strong><br /><small className="cfg-note">{methodName(r.method)} · {locationName(r.location)}{r.notes ? ` · ${r.notes}` : ''}</small></td>
+        <td>{r.method === 'TERMINAL_BRIDGE' ? `${r.host}:${r.port}` : r.method === 'DIRECT' ? 'server addresses' : 'EA sends to COREI'}</td>
+        <td>{state(r)}<br /><small className="cfg-note">{r.last_ok_at ? `OK ${when(r.last_ok_at)}` : 'never OK'}</small>
+          {r.last_error && <><br /><small className="cfg-error-text" title={r.last_error}>{when(r.last_error_at)}: {String(r.last_error).slice(0, 70)}</small></>}</td>
+        <td><div className="cfg-route-actions">
+          <button type="button" disabled={busy === r.id || (r.needs_token && !r.token_saved)} onClick={() => void test(r)}>{busy === r.id ? 'Testing...' : 'Test'}</button>
+          {canEdit && <>
+            <button type="button" aria-label="Move up" title="Try earlier" disabled={i === 0} onClick={() => void move(r, -1)}>↑</button>
+            <button type="button" aria-label="Move down" title="Try later" disabled={i === routes.length - 1} onClick={() => void move(r, 1)}>↓</button>
+            {r.method === 'TERMINAL_BRIDGE' && <button type="button" onClick={() => setToken({ ...r, value: '' })}>{r.token_saved ? 'Replace token' : 'Enter token'}</button>}
+            {r.method === 'TERMINAL_PUSH' && <button type="button" onClick={() => void newToken(r)}>{r.token_saved ? 'New token' : 'Issue token'}</button>}
+            <button type="button" onClick={() => void toggle(r)}>{r.enabled ? 'Switch off' : 'Switch on'}</button>
+            <button type="button" onClick={() => setEdit({ ...r, host: r.host ?? '', port: r.port ?? '', fingerprint: r.fingerprint ?? '' })}>Edit</button>
+            <button type="button" onClick={() => void remove(r)}>Delete</button></>}
+        </div></td></tr>)}</tbody></table></div>}
+    <details className="cfg-more"><summary>How to set up each route</summary>
+      <ul className="cfg-note">
+        <li><strong>Windows VPS</strong> (recommended primary): install the broker's MT5 terminal and log in once, then run the set-up script as Administrator:{' '}
+          <code>setup-corei-bridge.ps1 -Name {String(account.code).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)} -Mode Direct -CoreiIp &lt;COREI server IP&gt;</code>. It prints host, port, fingerprint and token for <em>Add route</em>.</li>
+        <li><strong>Windows PC</strong> (office/home, no open port): same script with <code>-Mode Tunnel -SshTarget user@&lt;COREI server&gt; -TunnelPort 9450</code>; the PC opens an SSH tunnel out to COREI. Route host <code>127.0.0.1</code>, port <code>9450</code>.</li>
+        <li><strong>Docker on the COREI server</strong>: <code>sudo bash scripts/use-mt5-docker.sh {account.code}</code> (Wine; least stable, keep it as a lower route).</li>
+        <li><strong>EA push</strong> (optional): add a Terminal push route, issue its token, attach COREI_Push to a chart in the terminal with this account code and the token, and allow WebRequest to the COREI address.</li>
+        <li><strong>Direct SDK</strong>: needs an SDK as new as the broker's server; useful as a last route.</li>
+      </ul>
+      <p className="cfg-actions"><a href="/api/md/bridge/files/setup-corei-bridge.ps1" download>Download setup-corei-bridge.ps1</a>
+        <a href="/api/md/bridge/files/corei_mt5_bridge.py" download>Download corei_mt5_bridge.py</a>
+        <a href="/api/md/push/ea" download>Download COREI_Push.mq5 (EA)</a></p>
+      <p className="cfg-note">Put the two files in one folder on the Windows machine. One terminal holds one login: for several accounts at once use a portable terminal copy per account, each with its own -Name and -Port.</p>
+    </details>
+    {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
+    {edit && <FloatingWindow storageKey="corei-os-mini.route-window.v1" title={edit.id ? `Route · ${edit.label}` : `New route · ${account.code}`} onClose={() => setEdit(null)}
+      footer={<div className="cfg-actions"><button className="primary" form="cfg-route-form">Save route</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>}>
+      <form id="cfg-route-form" className="cfg-form" onSubmit={save}>
+        <Field label="Name" hint="e.g. Windows VPS London, Office PC, Docker, EA push"><input aria-label="Route name" required maxLength={80} value={edit.label} onChange={e => setEdit({ ...edit, label: e.target.value })} /></Field>
+        <Field label="Method"><Choice label="Method" value={edit.method} options={ROUTE_METHODS} onChange={v => setEdit({ ...edit, method: v })} /></Field>
+        <Field label="Where it runs"><Choice label="Where it runs" value={edit.location} options={ROUTE_LOCATIONS} onChange={v => setEdit({ ...edit, location: v })} /></Field>
+        {edit.method === 'TERMINAL_BRIDGE' && <>
+          <Field label="Bridge host" hint="The VPS's IP or name; 127.0.0.1 for an SSH tunnel or Docker on this server"><input aria-label="Bridge host" required maxLength={253} value={edit.host} onChange={e => setEdit({ ...edit, host: e.target.value })} /></Field>
+          <Field label="Bridge port"><input aria-label="Bridge port" required type="number" min={1} max={65535} value={edit.port} onChange={e => setEdit({ ...edit, port: e.target.value })} /></Field>
+          <Field label="Certificate fingerprint (SHA-256)" hint="Printed by the set-up script or the bridge at start"><input aria-label="Fingerprint" required value={edit.fingerprint} onChange={e => setEdit({ ...edit, fingerprint: e.target.value })} /></Field>
+        </>}
+        <Field label="Order" hint="Lower is tried first"><input aria-label="Order" type="number" min={0} max={1000} value={edit.priority} onChange={e => setEdit({ ...edit, priority: e.target.value })} /></Field>
+        <Field label="On"><input aria-label="Route on" type="checkbox" checked={Boolean(edit.enabled)} onChange={e => setEdit({ ...edit, enabled: e.target.checked })} /></Field>
+        <Field label="Notes"><input aria-label="Notes" maxLength={500} value={edit.notes ?? ''} onChange={e => setEdit({ ...edit, notes: e.target.value })} /></Field>
+        {error && <p role="alert" className="cfg-error">{error}</p>}
+      </form>
+    </FloatingWindow>}
+    {token && <FloatingWindow storageKey="corei-os-mini.route-token.v1" title={`Token · ${token.label}`} onClose={() => setToken(null)}
+      footer={token.issued ? <div className="cfg-actions"><button type="button" onClick={() => setToken(null)}>Done</button></div>
+        : <div className="cfg-actions"><button className="primary" form="cfg-route-token">Save token</button></div>}>
+      {token.issued ? <div className="cfg-form"><p className="cfg-note">Paste this into the COREI EA's Token input. It is shown only now.</p>
+          <input aria-label="Issued token" readOnly value={token.issued} onFocus={e => e.target.select()} /></div>
+        : <form id="cfg-route-token" className="cfg-form" onSubmit={saveToken}>
+          <Field label="Bridge token" hint="The contents of corei-bridge.token on the Windows machine (the set-up script prints it). Stored encrypted; never shown again.">
+            <input aria-label="Bridge token" type="password" autoComplete="new-password" required minLength={16} value={token.value} onChange={e => setToken({ ...token, value: e.target.value })} /></Field>
+          {error && <p role="alert" className="cfg-error">{error}</p>}
+        </form>}
+    </FloatingWindow>}
+  </section>;
+}
+
 /* ---------- credential-use log ---------- */
 
 export function CredentialUse({ owner, id }: { owner: string; id: string }) {

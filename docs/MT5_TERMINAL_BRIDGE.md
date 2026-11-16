@@ -1,5 +1,27 @@
 # MT5 terminal bridge — fallback route to MetaTrader 5
 
+> **Since 0.38.0 (DEC-69):** each MT5 account has ordered *routes* with automatic failover — Windows VPS, Windows PC
+> (SSH tunnel), Docker, EA push, Direct SDK. Set up a Windows machine with
+> `connectors/mt5-bridge/windows/setup-corei-bridge.ps1` (below), then add the route in Setup › the account ›
+> *Connection routes · failover*. The manual steps in section A remain valid.
+
+## Windows set-up in one run (VPS or PC)
+
+1. Install the broker's MT5 terminal and log in to the account once by hand.
+2. From COREI (routes panel › *How to set up each route*) download `setup-corei-bridge.ps1` and `corei_mt5_bridge.py`
+   into one folder.
+3. PowerShell as Administrator in that folder:
+   - **VPS with a public IP:** `powershell -ExecutionPolicy Bypass -File setup-corei-bridge.ps1 -Name <account> -Mode Direct -CoreiIp <COREI server IP>`
+     — port 9443 opens to COREI's IP only (also allow it in the VPS provider's firewall).
+   - **PC (or VPS) without an open port:** `… -Mode Tunnel -SshTarget <user>@<COREI server> -TunnelPort 9450` — it prints
+     one line to add to `~/.ssh/authorized_keys` on the COREI server (the key may only open that one tunnel), then
+     start the task it names. COREI then reaches the bridge at `127.0.0.1:9450`.
+4. The script prints host, port, fingerprint and token: Setup › the account › *Add route* › Terminal bridge, then
+   *Enter token*, then *Test*.
+5. Several accounts at once: one portable terminal copy per account, the script once per account with its own
+   `-Name`, `-Terminal`, `-Port` (and `-TunnelPort`).
+6. Sign the Windows user in automatically after a reboot (the terminal needs a desktop session).
+
 > Since 0.24.0 (DEC-55) the direct SDK, kept current on its update subscription, is the primary MT5 method; use this bridge for a broker the SDK has not caught up with.
 
 **Why.** COREI's first MT5 route (`connectors/mt5-direct-check`, the licensed mtapi SDK) speaks MetaQuotes'

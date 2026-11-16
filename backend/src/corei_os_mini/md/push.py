@@ -35,12 +35,15 @@ TOKEN_CACHE_SECONDS = 60
 def _account(code: str) -> dict:
     with cfg.transaction('read') as db:
         row = db.execute(
-            """SELECT a.id, a.code, a.external_account_id, a.status, a.connection_id, c.adapter, c.platform
+            """SELECT a.id, a.code, a.external_account_id, a.status, a.connection_id, c.adapter, c.platform,
+                      (SELECT r.id FROM cfg_account_routes r WHERE r.account_id=a.id AND r.method='TERMINAL_PUSH' AND r.enabled
+                         AND r.token IS NOT NULL ORDER BY r.priority LIMIT 1) AS push_route_id
                FROM cfg_accounts a JOIN cfg_connections c ON c.id = a.connection_id WHERE a.code = %s""", (code,)).fetchone()
     if not row or row['status'] == 'ARCHIVED':
         raise HTTPException(401, 'Unknown account or token.')
-    if row['platform'] != 'MT5' or row['adapter'] != 'TERMINAL_PUSH':
-        raise HTTPException(409, f"{code} is not set to receive from a terminal: set its server's connection method to MT5 terminal push.")
+    if row['platform'] != 'MT5' or (row['adapter'] != 'TERMINAL_PUSH' and not row['push_route_id']):
+        raise HTTPException(409, f"{code} is not set to receive from a terminal: add a Terminal push route to the account "
+                                 "(or set its server's connection method to MT5 terminal push).")
     return row
 
 
@@ -54,9 +57,13 @@ def authenticate(code: str, token: str) -> dict:
         raise HTTPException(401, 'Unknown account or token.')
     account = _account(code)
     try:
-        saved = cfg.use_credential('connections', account['connection_id'], 'terminal-push', 'Check the MT5 terminal push token')
+        if account.get('push_route_id'):
+            from .. import account_routes
+            saved = account_routes.use_token({'id': account['push_route_id'], 'label': 'push'}, 'terminal-push', 'Check the MT5 terminal push token')
+        else:
+            saved = cfg.use_credential('connections', account['connection_id'], 'terminal-push', 'Check the MT5 terminal push token')
     except HTTPException:
-        raise HTTPException(401, 'No push token is saved on this account\'s server yet (Setup › the server › Push token).') from None
+        raise HTTPException(401, 'No push token is saved for this account yet (Setup › the account › Routes › Terminal push › New token).') from None
     expected = hashlib.sha256(saved.get('token', '').encode()).hexdigest()
     saved.clear()
     _tokens[code] = (now, expected, account)

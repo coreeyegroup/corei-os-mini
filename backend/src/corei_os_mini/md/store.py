@@ -80,13 +80,13 @@ def write(batch: dict) -> None:
             record_event(db, **e)
         for account_id, s in (status or {}).items():
             db.execute('''INSERT INTO md_collector_status(account_id, state, host, port, pid, subscribed, ticks_total, lag_ms, backlog,
-                    server_offset_minutes, started_at, heartbeat_at, last_error)
+                    server_offset_minutes, started_at, heartbeat_at, last_error, route)
                 VALUES (%(account_id)s,%(state)s,%(host)s,%(port)s,%(pid)s,%(subscribed)s,%(ticks_total)s,%(lag_ms)s,%(backlog)s,
-                    %(server_offset_minutes)s,%(started_at)s,now(),%(last_error)s)
+                    %(server_offset_minutes)s,%(started_at)s,now(),%(last_error)s,%(route)s)
                 ON CONFLICT (account_id) DO UPDATE SET state=EXCLUDED.state, host=EXCLUDED.host, port=EXCLUDED.port, pid=EXCLUDED.pid,
                     subscribed=EXCLUDED.subscribed, ticks_total=EXCLUDED.ticks_total, lag_ms=EXCLUDED.lag_ms, backlog=EXCLUDED.backlog,
                     server_offset_minutes=EXCLUDED.server_offset_minutes, started_at=EXCLUDED.started_at, heartbeat_at=now(),
-                    last_error=EXCLUDED.last_error''', {'account_id': account_id, **s})
+                    last_error=EXCLUDED.last_error, route=EXCLUDED.route''', {'account_id': account_id, 'route': None, **s})
 
 
 def save_bars(db, bars: list[dict]) -> None:

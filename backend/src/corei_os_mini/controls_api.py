@@ -252,6 +252,7 @@ class BrokerReadIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     symbols: list[str] | None = Field(default=None, max_length=500)
     max_symbols: int = Field(default=2000, ge=0, le=5000)
+    route_id: UUID | None = None  # test one route (Setup › account › Routes › Test)
 
 
 @router.post('/accounts/{account_id}/read-from-broker')
@@ -261,7 +262,7 @@ async def read_from_broker(account_id: UUID, response: Response, payload: dict |
     _no_store(response)
     data = _parse(BrokerReadIn, payload or {})
     from . import broker_session
-    return await run_in_threadpool(broker_session.read_account, user.username, account_id, data.symbols, data.max_symbols)
+    return await run_in_threadpool(broker_session.read_account, user.username, account_id, data.symbols, data.max_symbols, data.route_id)
 
 
 @router.get('/accounts/{account_id}/broker-reads')

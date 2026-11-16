@@ -165,7 +165,7 @@ def _run_bridge_session(bridge: dict, request: dict) -> dict:
     return reply or {'connected': False, 'attempts': [], 'error': 'The bridge closed without answering.'}
 
 
-def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None, max_symbols: int = 2000) -> dict:
+def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None, max_symbols: int = 2000, route_id: UUID | None = None) -> dict:
     with store.transaction('read') as db:
         account = store.get_record(db, 'accounts', account_id)
     if not account:
@@ -176,6 +176,16 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
         raise HTTPException(409, 'Reading from the broker is available for MT5 and FIX accounts; other platforms use their own login.')
     if not str(account['external_account_id']).isdigit():
         raise HTTPException(409, 'The MT5 login must be a number.')
+    # Routes (DEC-69): read through the chosen route, or the account's first route when it has any.
+    from . import account_routes
+    routes = account_routes.enabled_routes(account_id) if route_id is None else [
+        r for r in account_routes.list_routes(account_id) if r['id'] == str(route_id)]
+    if route_id is not None and not routes:
+        raise HTTPException(404, 'Route not found on this account.')
+    if routes:
+        with store.transaction('read') as db:
+            account['connection_settings'] = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}).get('settings') or {}
+        account = account_routes.apply(account, routes[0])
     if account.get('adapter') == 'TERMINAL_PUSH':
         # Read through the COREI EA in the terminal: report what it last sent; the symbol list comes with its pushes.
         from .md import push
@@ -194,8 +204,11 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
         raise HTTPException(409, 'Save the investor (read-only) or master password first.')
     addresses = (account.get('routing') or {}).get('addresses') or []
     if account.get('adapter') == 'TERMINAL_BRIDGE':
-        with store.transaction('read') as db:
-            settings = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}).get('settings') or {}
+        if account.get('route'):
+            settings = account['connection_settings']
+        else:
+            with store.transaction('read') as db:
+                settings = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}).get('settings') or {}
         if not bridge_of(settings):
             raise HTTPException(409, 'This connection uses the MT5 terminal bridge: set the bridge host, port and certificate fingerprint on it first.')
         account['connection_settings'] = settings
@@ -248,7 +261,8 @@ def _read(actor: str, account: dict, addresses: list[dict], symbols: list[str] |
     timeout = 20
     if account.get('adapter') == 'TERMINAL_BRIDGE':
         bridge = account['connection_settings']['bridge']
-        token = store.use_credential('connections', account['connection_id'], actor, 'Open the MT5 terminal bridge')
+        from . import account_routes
+        token = account_routes.bridge_token(account, actor, 'Open the MT5 terminal bridge')
         request = {'token': token['token'], 'mode': 'session', 'login': int(account['external_account_id']), 'password': secret['password'],
                    'server': account['connection_settings'].get('server_name'), 'symbols': symbols or None, 'max_symbols': max_symbols}
         result = _run_bridge_session(bridge, request)
