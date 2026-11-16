@@ -47,8 +47,8 @@ echo "Bridge for COREI: 127.0.0.1:$PORT   ·   Terminal view: 127.0.0.1:$VIEW"
 
 step "3/6 Wine that runs on this server, and the image corei-mt5:local (first time ~5-20 minutes)"
 bash "$ROOT/scripts/mt5-docker-wine-doctor.sh" || { echo "Stopped: no Wine build runs here (see above)."; exit 1; }
-WINE_CHOICE=$(sed -n 's/^WINE=//p' /var/lib/corei-mt5-docker/wine-choice-v3)
-SECCOMP_CHOICE=$(sed -n 's/^SECCOMP=//p' /var/lib/corei-mt5-docker/wine-choice-v3)
+WINE_CHOICE=$(sed -n 's/^WINE=//p' /var/lib/corei-mt5-docker/wine-choice-v4)
+SECCOMP_CHOICE=$(sed -n 's/^SECCOMP=//p' /var/lib/corei-mt5-docker/wine-choice-v4)
 echo "Using Wine: $WINE_CHOICE · system-call filter: $SECCOMP_CHOICE"
 # Registries refuse now and then ("429 Too Many Requests"): wait and try again.
 for try in 1 2 3 4 5 6; do

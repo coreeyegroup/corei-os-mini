@@ -8,9 +8,12 @@ ENV TITLE="COREI MT5" \
     WINEDEBUG=-all \
     WINEDLLOVERRIDES="mscoree=;mshtml="
 
-# Which Wine: "latest" = WineHQ's newest stable; "devel" = WineHQ's development release; a version such as "10.0" or "9.0" = that WineHQ stable release;
-# "debian" = Debian's own Wine. scripts/mt5-docker-wine-doctor.sh picks the one that runs on the server.
-ARG WINE=devel
+# Which Wine: "kron4ek-<version>" = that upstream Wine release as built by Kron4ek/Wine-Builds (GitHub), on top of
+# WineHQ 10.0's packages for its libraries; "latest" = WineHQ's newest stable; "devel" = WineHQ's development release;
+# "10.0", "9.0" = that WineHQ stable release; "debian" = Debian's own Wine. scripts/mt5-docker-wine-doctor.sh picks one.
+# Current MT5 builds need a recent Wine 11 (11.6+): older ones show "A debugger has been found running in your system".
+ARG WINE=kron4ek-11.22
+ENV PATH="/opt/wine-k/bin:${PATH}"
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl; \
@@ -28,10 +31,17 @@ RUN set -eux; \
       elif [ "$WINE" = devel ]; then \
         apt-get install -y --install-recommends winehq-devel; \
       else \
-        V=$(apt-cache madison wine-stable | awk -v v="$WINE" 'index($3, v ".") == 1 {print $3; exit}'); \
+        W="$WINE"; case "$W" in kron4ek-*) W=10.0;; esac; \
+        V=$(apt-cache madison wine-stable | awk -v v="$W" 'index($3, v ".") == 1 {print $3; exit}'); \
         test -n "$V"; \
         apt-get install -y --install-recommends "winehq-stable=$V" "wine-stable=$V" "wine-stable-amd64=$V" "wine-stable-i386:i386=$V"; \
       fi; \
+      case "$WINE" in kron4ek-*) \
+        K="${WINE#kron4ek-}"; mkdir -p /opt/wine-k; \
+        curl -fL --retry 5 -o /tmp/wine-k.tar.xz "https://github.com/Kron4ek/Wine-Builds/releases/download/$K/wine-$K-amd64.tar.xz"; \
+        tar -xJf /tmp/wine-k.tar.xz -C /opt/wine-k --strip-components=1; \
+        test -x /opt/wine-k/bin/wine;; \
+      esac; \
     fi; \
     wine --version; \
     apt-get clean; rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

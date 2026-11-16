@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Order: WineHQ's development release first. Current MT5 builds refuse late Wine 10 and early Wine 11 ("A debugger has
+# Order: a recent upstream Wine 11 (Kron4ek's build), then WineHQ's development release. Wine 10.0 is not a candidate:
+# it runs, but the current MT5 terminal refuses it.
+# History: WineHQ's development release first. Current MT5 builds refuse late Wine 10 and early Wine 11 ("A debugger has
 # been found running in your system", MQL5 forum threads 503128 and 518725: the installer passed on 10.0, the updated
 # terminal did not); MetaQuotes pairs its own macOS MT5 with Wine 11.7, so the newest Wine is the one to use.
 # Finds a Wine build that actually runs on this server inside Docker, once, and remembers it for every MT5 container.
 # Each candidate is built and tested in a throw-away container (fresh Windows folder, `wine cmd /c ver`), first with
 # Docker's normal system-call filter, then without it. The first one that works is written to
-# /var/lib/corei-mt5-docker/wine-choice-v3. Full output: /var/log/corei-mt5-wine-doctor.log
+# /var/lib/corei-mt5-docker/wine-choice-v4. Full output: /var/log/corei-mt5-wine-doctor.log
 #   sudo bash scripts/mt5-docker-wine-doctor.sh            (called by use-mt5-docker.sh; skipped once a choice exists)
 #   sudo COREI_WINE_RECHECK=1 bash scripts/mt5-docker-wine-doctor.sh   (test again)
 set -uo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo."; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CHOICE=/var/lib/corei-mt5-docker/wine-choice-v3
+CHOICE=/var/lib/corei-mt5-docker/wine-choice-v4
 LOG=/var/log/corei-mt5-wine-doctor.log
-read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-devel 10.0}"
+read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-kron4ek-11.22 devel}"
 mkdir -p "$(dirname "$CHOICE")"
 if [[ -f "$CHOICE" && -z "${COREI_WINE_RECHECK:-}" ]]; then cat "$CHOICE"; exit 0; fi
 
@@ -43,7 +45,7 @@ wine_runs() {  # $1 = image, $2 = extra docker option or empty
 FIRST_FAIL=""
 for c in "${CANDIDATES[@]}"; do
   printf '  Wine %-7s build… ' "$c"
-  if ! build "$c"; then echo "could not be built (see log)"; continue; fi
+  if ! build "$c"; then echo "could not be built:"; grep -E 'ERROR|E: |error|Unable|404|curl' "$LOG" | tail -n 6 | sed 's/^/      /'; continue; fi
   ver=$(docker run --rm --entrypoint wine "corei-mt5-wine:$c" --version 2>/dev/null)
   printf '%s · test… ' "$ver"
   if wine_runs "corei-mt5-wine:$c" ""; then
