@@ -34,6 +34,13 @@ diagnose() {
   WINEPREFIX=$d/wine wineserver -k 2>/dev/null; rm -rf "$d"
   WINEDEBUG=err+all,warn+module timeout 60 wine cmd /c exit 0 2>&1 | head -15 | sed 's/^/  wine in \/config: /'
 }
+WINE_NOW=$(wine --version 2>/dev/null)
+# A Windows folder made by another Wine version (an older or newer image): start it again while MT5 is not installed.
+if [ -d "$WINEPREFIX" ] && [ "$(cat "$WINEPREFIX/.corei-wine-version" 2>/dev/null)" != "$WINE_NOW" ] \
+   && [ ! -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then
+  say "The Wine folder was made by another Wine version ($(cat "$WINEPREFIX/.corei-wine-version" 2>/dev/null || echo unknown)); creating it again for $WINE_NOW"
+  wineserver -k 2>/dev/null; rm -rf "$WINEPREFIX"
+fi
 if [ -d "$WINEPREFIX" ] && ! prefix_ok && [ ! -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then
   say "The Wine folder does not work (left half-written by an earlier set-up); creating it again"
   wineserver -k 2>/dev/null; rm -rf "$WINEPREFIX"
@@ -43,6 +50,7 @@ if ! prefix_ok; then
   timeout 300 wineboot --init; timeout 120 wineserver -w || wineserver -k
   prefix_ok || { say "Wine cannot run in its new Windows folder."; diagnose; \
                  say "Retrying in 60 s"; sleep 60; exec 9>&-; exec /corei/start.sh; }
+  echo "$WINE_NOW" > "$WINEPREFIX/.corei-wine-version"
   say "Wine folder ready"
 fi
 wine reg add 'HKCU\Software\Wine' /v Version /t REG_SZ /d win10 /f >/dev/null 2>&1

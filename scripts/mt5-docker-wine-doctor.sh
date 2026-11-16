@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
+# Order: WineHQ 10.0 first. Wine 11.0 stable runs, but the MT5 installer and terminal refuse it ("A debugger has been
+# found running in your system", MQL5 forum thread 503128); 10.0 is the version MetaTrader users confirm works.
 # Finds a Wine build that actually runs on this server inside Docker, once, and remembers it for every MT5 container.
 # Each candidate is built and tested in a throw-away container (fresh Windows folder, `wine cmd /c ver`), first with
 # Docker's normal system-call filter, then without it. The first one that works is written to
-# /var/lib/corei-mt5-docker/wine-choice. Full output: /var/log/corei-mt5-wine-doctor.log
+# /var/lib/corei-mt5-docker/wine-choice-v2. Full output: /var/log/corei-mt5-wine-doctor.log
 #   sudo bash scripts/mt5-docker-wine-doctor.sh            (called by use-mt5-docker.sh; skipped once a choice exists)
 #   sudo COREI_WINE_RECHECK=1 bash scripts/mt5-docker-wine-doctor.sh   (test again)
 set -uo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo."; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CHOICE=/var/lib/corei-mt5-docker/wine-choice
+CHOICE=/var/lib/corei-mt5-docker/wine-choice-v2
 LOG=/var/log/corei-mt5-wine-doctor.log
-read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-latest 10.0 9.0 debian}"
+read -ra CANDIDATES <<<"${COREI_WINE_CANDIDATES:-10.0 devel 9.0 debian}"
 mkdir -p "$(dirname "$CHOICE")"
 if [[ -f "$CHOICE" && -z "${COREI_WINE_RECHECK:-}" ]]; then cat "$CHOICE"; exit 0; fi
 

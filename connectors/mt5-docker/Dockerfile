@@ -8,9 +8,9 @@ ENV TITLE="COREI MT5" \
     WINEDEBUG=-all \
     WINEDLLOVERRIDES="mscoree=;mshtml="
 
-# Which Wine: "latest" = WineHQ's newest stable; a version such as "10.0" or "9.0" = that WineHQ stable release;
+# Which Wine: "latest" = WineHQ's newest stable; "devel" = WineHQ's development release; a version such as "10.0" or "9.0" = that WineHQ stable release;
 # "debian" = Debian's own Wine. scripts/mt5-docker-wine-doctor.sh picks the one that runs on the server.
-ARG WINE=latest
+ARG WINE=10.0
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl; \
@@ -25,6 +25,8 @@ RUN set -eux; \
       apt-get update; \
       if [ "$WINE" = latest ]; then \
         apt-get install -y --install-recommends winehq-stable; \
+      elif [ "$WINE" = devel ]; then \
+        apt-get install -y --install-recommends winehq-devel; \
       else \
         V=$(apt-cache madison wine-stable | awk -v v="$WINE" 'index($3, v ".") == 1 {print $3; exit}'); \
         test -n "$V"; \
