@@ -100,12 +100,13 @@ if wine python -c "import numpy, MetaTrader5; print('numpy', numpy.__version__, 
 else say "Python cannot load numpy/MetaTrader5 (see above)"; fi
 
 say "5/5 Starting the terminal and the COREI bridge on port $PORT"
+wineserver -k 2>/dev/null; sleep 2   # no terminal or error dialog left from an earlier start
 wine "$MT5" >/dev/null 2>&1 &
 # Watchdog: start the terminal again if it exits; log the open windows when they change (a dialog shows up here).
 (
   last=""
   while sleep 30; do
-    pgrep -f terminal64.exe >/dev/null || { say "terminal not running; starting it again"; wine "$MT5" >/dev/null 2>&1 & }
+    pgrep -fi "terminal64\.exe" >/dev/null || { say "terminal not running; starting it again"; wine "$MT5" >/dev/null 2>&1 & }
     now=$(wmctrl -l 2>/dev/null | cut -d' ' -f5- | paste -sd'|' -)
     [ "$now" != "$last" ] && say "windows: ${now:-none}" && last=$now
   done

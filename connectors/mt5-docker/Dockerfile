@@ -10,7 +10,7 @@ ENV TITLE="COREI MT5" \
 
 # Which Wine: "latest" = WineHQ's newest stable; "devel" = WineHQ's development release; a version such as "10.0" or "9.0" = that WineHQ stable release;
 # "debian" = Debian's own Wine. scripts/mt5-docker-wine-doctor.sh picks the one that runs on the server.
-ARG WINE=10.0
+ARG WINE=devel
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg2 wget wmctrl; \
