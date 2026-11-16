@@ -101,7 +101,16 @@ else say "Python cannot load numpy/MetaTrader5 (see above)"; fi
 
 say "5/5 Starting the terminal and the COREI bridge on port $PORT"
 wine "$MT5" >/dev/null 2>&1 &
-sleep 20
+# Watchdog: start the terminal again if it exits; log the open windows when they change (a dialog shows up here).
+(
+  last=""
+  while sleep 30; do
+    pgrep -f terminal64.exe >/dev/null || { say "terminal not running; starting it again"; wine "$MT5" >/dev/null 2>&1 & }
+    now=$(wmctrl -l 2>/dev/null | cut -d' ' -f5- | paste -sd'|' -)
+    [ "$now" != "$last" ] && say "windows: ${now:-none}" && last=$now
+  done
+) &
+sleep 60
 WIN_MT5=$(winepath -w "$MT5")
 while true; do
   wine python /corei/corei_mt5_bridge.py --terminal "$WIN_MT5" --bind 0.0.0.0 --port "$PORT" --state 'Z:\config\corei-state'

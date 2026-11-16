@@ -103,9 +103,16 @@ def symbol_dict(info) -> dict:
 
 
 def login(request: dict, terminal: str | None) -> tuple[bool, str]:
-    kwargs = {'path': terminal} if terminal else {}
-    if not mt5.initialize(**kwargs):
-        return False, f'Terminal did not start: {mt5.last_error()}'
+    # A terminal that is starting, updating itself or loading history (slow under Wine) can take longer than the
+    # package's default 60 s to answer: wait up to 3 minutes, and try once more if its pipe still did not answer.
+    kwargs = {'path': terminal, 'timeout': 180000} if terminal else {'timeout': 180000}
+    for attempt in (1, 2):
+        if mt5.initialize(**kwargs):
+            break
+        error = mt5.last_error()
+        mt5.shutdown()
+        if attempt == 2 or error[0] != -10003:
+            return False, f'Terminal did not start: {error}'
     ok = mt5.login(int(request['login']), password=request['password'], server=request.get('server') or '')
     if not ok:
         code, text = mt5.last_error()
