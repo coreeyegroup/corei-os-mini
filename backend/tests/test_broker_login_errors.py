@@ -49,3 +49,17 @@ class BrokerLoginErrors(unittest.TestCase):
         self.assertTrue(result['blocked'])
         with patch('urllib.request.urlopen', side_effect=OSError('timed out')):
             self.assertIn('No route', broker_login.api_check(settings)['detail'])
+
+
+class EmptyRefusal(unittest.TestCase):
+    def test_403_without_message_shows_the_reply_and_what_to_check(self):
+        import io
+        import urllib.error
+        from corei_os_mini import broker_login
+        exc = urllib.error.HTTPError('https://api.upstox.com/v2/login/authorization/token', 403, 'Forbidden',
+                                     {'Content-Type': 'application/json'}, io.BytesIO(b'{"status":"error"}'))
+        msg = broker_login._explain_http_error(exc).broker_message
+        self.assertIn('HTTP 403', msg)
+        self.assertIn('"status": "error"', msg)
+        self.assertIn('redirect URL', msg)
+        self.assertTrue(broker_login.USER_AGENT.startswith('COREI-OS-MINI'))

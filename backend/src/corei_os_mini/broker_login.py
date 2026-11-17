@@ -61,6 +61,10 @@ class BrokerRefused(HTTPException):
         super().__init__(502, message)
 
 
+# A named client: some broker edges (Cloudflare) refuse Python's default "Python-urllib" agent with 403.
+USER_AGENT = 'COREI-OS-MINI/1.0 (+https://corei-os-mini.coreeye.in)'
+
+
 def _explain_http_error(exc: urllib.error.HTTPError) -> BrokerRefused:
     raw = b''
     try:
@@ -76,7 +80,12 @@ def _explain_http_error(exc: urllib.error.HTTPError) -> BrokerRefused:
     if isinstance(body, dict):
         parts = [f"{e.get('errorCode') or e.get('error_code') or ''} {e.get('message', '')}".strip() for e in body.get('errors') or [] if isinstance(e, dict)]
         message = '; '.join(p for p in parts if p) or body.get('message') or body.get('error_description') or body.get('error') or ''
-        return BrokerRefused(exc.code, f'The broker refused the login (HTTP {exc.code}){": " + str(message)[:300] if message else ""}.')
+        if not message:
+            # No message: show what the broker did send (it never holds our secret; the code is single-use and spent).
+            message = 'reply ' + json.dumps(body)[:300]
+        hint = (' Upstox answers 403 when the app does not allow this server: check in the Upstox developer console that the app is '
+                'active, the redirect URL matches exactly, and (if the app has an IP allow list) that this server\'s IP is on it.') if exc.code == 403 else ''
+        return BrokerRefused(exc.code, f'The broker refused the login (HTTP {exc.code}): {str(message)[:300]}.{hint}')
     lower = text.lower()
     if exc.code in (403, 503) and ('cloudflare' in lower or 'you have been blocked' in lower or 'cf-ray' in lower or 'attention required' in lower):
         from . import network
@@ -89,7 +98,7 @@ def _explain_http_error(exc: urllib.error.HTTPError) -> BrokerRefused:
 
 
 def _http(url: str, data: bytes, headers: dict) -> dict:
-    request = urllib.request.Request(url, data=data, headers={'accept': 'application/json', **headers}, method='POST')
+    request = urllib.request.Request(url, data=data, headers={'accept': 'application/json', 'User-Agent': USER_AGENT, **headers}, method='POST')
     try:
         with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310 - https enforced on the connection
             return json.loads(response.read(1_000_000))
@@ -104,7 +113,7 @@ def api_check(settings: dict) -> dict:
     answer 401 as JSON; an HTML 403 means an edge block (Cloudflare) of this server's IP, a network error means
     no route. Nothing secret is sent."""
     url = f"{_api_base(settings)}/user/profile"
-    request = urllib.request.Request(url, headers={'accept': 'application/json'})
+    request = urllib.request.Request(url, headers={'accept': 'application/json', 'User-Agent': USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
             return {'reachable': True, 'status': response.status, 'detail': 'The broker API answered.'}

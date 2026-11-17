@@ -787,7 +787,7 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
         </div>
         <div className="cfg-pair">
           {text('base_currency', 'Account currency', { required: true, maxLength: 10 }, 'e.g. USD, INR')}
-          {pick('trading_permission', 'Trading permission', [['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading']],
+          {pick('trading_permission', 'Trading permission', [['DISABLED', 'Disabled'], ['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading (orders allowed once order sending is on)']],
             'Orders also need order sending on for the environment')}
         </div>
         <details className="cfg-more"><summary>More options</summary>{status}</details>
@@ -1053,8 +1053,8 @@ function AddUpstoxAccount({ close, created }: { close: () => void; created: (acc
         </div>
         <div className="cfg-pair">
           <Field label="Currency"><input aria-label="Currency" required maxLength={10} value={f.base_currency} onChange={e => set({ base_currency: e.target.value })} /></Field>
-          <Field label="Trading permission" hint="Read only: market data and account reads; order sending is not built"><Choice label="Trading permission" value={f.trading_permission}
-            options={[['READ_ONLY', 'Read only'], ['DISABLED', 'Disabled']]} onChange={v => set({ trading_permission: v })} /></Field>
+          <Field label="Trading permission" hint="What this account is authorised for. Trading records the permission; no order is sent until order sending is built (Stage 7) and switched on in Setup › Controls › Order sending."><Choice label="Trading permission" value={f.trading_permission}
+            options={[['READ_ONLY', 'Read only (data and account state)'], ['TRADING', 'Trading (orders allowed once order sending is on)'], ['DISABLED', 'Disabled']]} onChange={v => set({ trading_permission: v })} /></Field>
         </div>
       </Section>
       <Section n={3} title="After saving">

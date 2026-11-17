@@ -50,7 +50,7 @@ class Client:
 
     def get(self, path: str, params: dict | None = None) -> dict:
         url = self.base + path + ('?' + urllib.parse.urlencode(params, safe='|,') if params else '')
-        request = urllib.request.Request(url, headers={'Accept': 'application/json', 'Authorization': self._auth})
+        request = urllib.request.Request(url, headers={'Accept': 'application/json', 'Authorization': self._auth, 'User-Agent': 'COREI-OS-MINI/1.0'})
         try:
             with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - https base from the connection
                 return json.loads(response.read(20_000_000))
