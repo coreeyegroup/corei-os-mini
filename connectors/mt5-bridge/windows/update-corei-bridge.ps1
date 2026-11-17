@@ -11,6 +11,7 @@ Standard layout:
 Run in PowerShell as Administrator:
   cd C:\corei-setup
   powershell -ExecutionPolicy Bypass -File .\update-corei-bridge.ps1 -Name metaquotes-demo
+  (optional: -MaxTerminals 40 on a server with more memory; about 150-300 MB per terminal)
 
 It shows the old and new version, stops the bridge, keeps a backup of the old file, installs the new one, turns on
 "every account" mode if it is not on, starts the bridge, checks the port and prints the last lines of its log.
@@ -18,7 +19,8 @@ The certificate and token do not change, so nothing changes in COREI.
 #>
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9][a-z0-9-]{1,40}$')][string]$Name,
-    [string]$Root = 'C:\corei-bridge'
+    [string]$Root = 'C:\corei-bridge',
+    [ValidateRange(1, 500)][int]$MaxTerminals = 20
 )
 $ErrorActionPreference = 'Stop'
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
@@ -75,6 +77,11 @@ if ($start -notmatch 'terminals-root') {
     Set-Content -Path $cmd -Value $start -Encoding ASCII
     Write-Host 'Turned on: one terminal copy per account under' "$dir\terminals"
 } else { Write-Host 'Already on.' }
+if ($start -notmatch 'max-terminals') {
+    $start = $start -replace ' --bind ', " --max-terminals $MaxTerminals --bind "
+    Set-Content -Path $cmd -Value $start -Encoding ASCII
+    Write-Host "Terminal pool: at most $MaxTerminals terminals open at once (least-recently-used idle one closed first)"
+} else { Write-Host 'Terminal pool already set:' ([regex]::Match($start, '--max-terminals \d+').Value) }
 
 Step '5/5 Start and check'
 Start-ScheduledTask -TaskName $task
