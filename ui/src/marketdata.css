@@ -251,3 +251,13 @@
 .md-suggest li { padding: 5px 10px; cursor: pointer; line-height: 1.3; }
 .md-suggest li:hover { background: var(--hover, rgba(127,127,127,.15)); }
 .md-popular { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0 10px; }
+.st-head .st-flow { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 4px; font-size: .9em; }
+.st-head .st-question { color: var(--muted); font-size: .9em; margin: 4px 0 0; }
+.st-reasons { margin: 4px 0; padding-left: 18px; } .st-reasons code { font-size: .85em; }
+.st-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 12px; }
+.st-spark { width: 100%; height: 120px; border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; }
+.st-short { max-height: 360px; }
+.st-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.st-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.st-big { font-size: 1.5em; font-weight: 600; }
+.st-timeline { padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }

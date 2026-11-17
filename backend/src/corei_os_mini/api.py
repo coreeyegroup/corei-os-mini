@@ -10,6 +10,7 @@ from .operator_auth import admin_router, current_user, require_operator, router 
 from .config_api import router as config_router
 from .routes_api import router as routes_router
 from .bridge_api import enrol_router as bridge_enrol_router, router as bridge_router
+from .trading_api import router as trading_router
 from .intel_api import router as intel_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
@@ -82,6 +83,7 @@ app.include_router(routes_router)
 app.include_router(bridge_router)
 app.include_router(bridge_enrol_router)
 app.include_router(intel_router)
+app.include_router(trading_router)
 app.include_router(config_router)
 
 @app.get("/health")

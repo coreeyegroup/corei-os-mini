@@ -16,6 +16,8 @@ Alignment: M5/M15/M30/H1/H4 buckets start at multiples of their length from 00:0
 """
 from __future__ import annotations
 
+import os
+
 import logging
 import time
 from bisect import bisect_left
@@ -315,4 +317,11 @@ async def run_forever() -> None:
             await asyncio.to_thread(refresh_all)
         except Exception:  # noqa: BLE001 - keep the loop alive (database restarting, …)
             log.exception('Feature refresh cycle failed')
+        if os.getenv('COREI_TRADING', 'on') != 'off':
+            try:
+                # Stages 3–7 on the bars just closed: strategies → signals → risk → orders (paper) → portfolio.
+                from ..trading import runtime
+                await asyncio.to_thread(runtime.cycle)
+            except Exception:  # noqa: BLE001
+                log.exception('Trading cycle failed')
         await asyncio.sleep(interval)

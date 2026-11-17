@@ -35,24 +35,8 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
-class MaCrossoverParameters(_Strict):
-    """Buy when the fast simple moving average is above the slow one, sell when below."""
-    timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = Field(description='Bar period the averages are computed on')
-    fast_window: int = Field(ge=1, le=500, description='Bars in the fast moving average')
-    slow_window: int = Field(ge=2, le=1000, description='Bars in the slow moving average')
-
-    @model_validator(mode='after')
-    def fast_below_slow(self) -> 'MaCrossoverParameters':
-        if self.fast_window >= self.slow_window:
-            raise ValueError('fast_window must be smaller than slow_window')
-        return self
-
-
-# New rule sets are added here once their logic is implemented and tested in strategy.py.
-ALGORITHMS: dict[str, dict] = {
-    'MA_CROSSOVER': {'label': 'Moving-average crossover', 'model': MaCrossoverParameters,
-                     'description': MaCrossoverParameters.__doc__},
-}
+# The algorithms (pure functions shared by the live runtime and the backtest) and their parameter models.
+from .trading.algorithms import ALGORITHMS  # noqa: E402
 
 
 def validate_parameters(algorithm: str, parameters: object) -> dict:
@@ -87,6 +71,25 @@ class VersionIn(_Strict):
     notes: Text = ''
 
 
+class Sizing(_Strict):
+    """How big each order is (risk rounds it down to the lot step and checks it against limits)."""
+    method: Literal['FIXED_QTY', 'RISK_PCT', 'FIXED_NOTIONAL'] = 'FIXED_QTY'
+    quantity: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,12})?$')] | None = '1'   # FIXED_QTY: contracts / lots
+    risk_pct: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,6})?$')] | None = None   # RISK_PCT: % of equity at risk per trade
+    atr_multiple: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,6})?$')] | None = None  # RISK_PCT: stop distance in ATRs
+    notional: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,2})?$')] | None = None     # FIXED_NOTIONAL: value per order, account currency
+
+    @model_validator(mode='after')
+    def _complete(self) -> 'Sizing':
+        need = {'FIXED_QTY': ('quantity',), 'RISK_PCT': ('risk_pct', 'atr_multiple'), 'FIXED_NOTIONAL': ('notional',)}[self.method]
+        missing = [n for n in need if not getattr(self, n) or float(getattr(self, n)) <= 0]
+        if missing:
+            raise ValueError(f"sizing {self.method} needs {', '.join(missing)} above zero")
+        if self.method == 'RISK_PCT' and float(self.risk_pct) > 10:
+            raise ValueError('risk_pct above 10% per trade is refused')
+        return self
+
+
 class DeploymentIn(_Strict):
     strategy_id: UUID
     strategy_version_id: UUID
@@ -95,6 +98,10 @@ class DeploymentIn(_Strict):
     data_mapping_id: UUID
     allocation_weight_bps: int = Field(10_000, ge=1, le=10_000)
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ''
+    # PAPER: simulated by COREI at live prices. BROKER: real orders to the account (needs the order adapter and order sending on).
+    mode: Literal['PAPER', 'BROKER'] = 'PAPER'
+    sizing: Sizing = Field(default_factory=Sizing)
+    signal_expiry_bars: int = Field(2, ge=1, le=500)
 
 
 class Versioned(_Strict):
@@ -303,7 +310,9 @@ def readiness(row: dict, account: dict, controls: dict) -> list[str]:
         blockers.append('NO_TRADING_SYMBOL_ON_ACCOUNT_CONNECTION')
     elif row['trading_mapping_status'] != 'ACTIVE':
         blockers.append('TRADING_SYMBOL_INACTIVE')
-    blockers.extend(b for b in store.account_readiness(account, controls)['trading_blockers'] if b not in blockers)
+    if row.get('mode', 'PAPER') == 'BROKER':
+        # Real orders need everything the account needs to trade (adapter, order sending, margin mode, clock…).
+        blockers.extend(b for b in store.account_readiness(account, controls)['trading_blockers'] if b not in blockers)
     return blockers
 
 
@@ -369,9 +378,10 @@ def create_deployment(payload: dict, response: Response, user: Principal = Depen
                       (data.strategy_id, data.instrument_id, data.account_id)).fetchone():
             raise HTTPException(409, 'This strategy is already deployed on this instrument and account.')
         row = db.execute('INSERT INTO cfg_deployments(id, strategy_id, strategy_version_id, instrument_id, account_id, data_mapping_id, '
-                         'allocation_weight_bps, note, proposed_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                         'allocation_weight_bps, note, proposed_by, mode, sizing, signal_expiry_bars) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                          (uuid4(), data.strategy_id, data.strategy_version_id, data.instrument_id, data.account_id,
-                          data.data_mapping_id, data.allocation_weight_bps, data.note, user.username)).fetchone()
+                          data.data_mapping_id, data.allocation_weight_bps, data.note, user.username, data.mode,
+                          Jsonb(data.sizing.model_dump()), data.signal_expiry_bars)).fetchone()
         store.audit(db, user.username, 'PROPOSE', 'deployment', row['id'], None, row)
         return _deployment(db, row['id'])
 
@@ -391,9 +401,11 @@ def update_deployment(deployment_id: UUID, payload: dict, response: Response, us
             raise HTTPException(422, 'This deployment has ended. Create a new one instead.')
         _check_links(db, data)
         after = db.execute("UPDATE cfg_deployments SET strategy_version_id=%s, data_mapping_id=%s, allocation_weight_bps=%s, note=%s, "
+                           "mode=%s, sizing=%s, signal_expiry_bars=%s, "
                            "status='PROPOSED', proposed_by=%s, activated_by=NULL, activated_at=NULL, version=version+1, updated_at=now() "
                            'WHERE id=%s RETURNING *', (data.strategy_version_id, data.data_mapping_id, data.allocation_weight_bps,
-                                                       data.note, user.username, deployment_id)).fetchone()
+                                                       data.note, data.mode, Jsonb(data.sizing.model_dump()), data.signal_expiry_bars,
+                                                       user.username, deployment_id)).fetchone()
         store.audit(db, user.username, 'UPDATE', 'deployment', deployment_id, before, after,
                     'Returned to PROPOSED; needs activation' if before['status'] == 'ACTIVE' else '')
         return _deployment(db, deployment_id)

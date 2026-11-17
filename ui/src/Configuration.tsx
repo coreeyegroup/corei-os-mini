@@ -1802,6 +1802,12 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
 
 /* ---------- deployments ---------- */
 
+function sizingBody(s: Row | undefined): Row {
+  const m = s?.method ?? 'FIXED_QTY';
+  return m === 'RISK_PCT' ? { method: m, risk_pct: String(s?.risk_pct ?? '0.5'), atr_multiple: String(s?.atr_multiple ?? '2'), quantity: null }
+    : m === 'FIXED_NOTIONAL' ? { method: m, notional: String(s?.notional ?? '10000'), quantity: null } : { method: m, quantity: String(s?.quantity ?? '1') };
+}
+
 function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Row[]> }) {
   const canEdit = roles.includes('TRADING_OPS'), canApprove = roles.includes('RISK_APPROVER'), canStop = canEdit || canApprove;
   const [rows, setRows] = useState<Row[] | null>(null), [filters, setFilters] = useState<Row>({});
@@ -1822,7 +1828,8 @@ function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Ro
   })(); }, []);
   useEffect(() => { if (draft?.strategy_id) void (async () => setVersions((await api(`config/strategies/${draft.strategy_id}/versions`)).items))(); else setVersions([]); }, [draft?.strategy_id]);
   const body = (d: Row) => ({ strategy_id: d.strategy_id, strategy_version_id: d.strategy_version_id, instrument_id: d.instrument_id, account_id: d.account_id,
-    data_mapping_id: d.data_mapping_id, allocation_weight_bps: Number(d.allocation_weight_bps), note: d.note ?? '' });
+    data_mapping_id: d.data_mapping_id, allocation_weight_bps: Number(d.allocation_weight_bps), note: d.note ?? '', mode: d.mode ?? 'PAPER',
+    signal_expiry_bars: Number(d.signal_expiry_bars ?? 2), sizing: sizingBody(d.sizing) });
   async function run(task: () => Promise<any>, message: string) {
     setBusy(true); setError(''); setNotice('');
     try { const r = await task(); setNotice(message); setReason(''); await load(r?.id ?? draft?.id); }
@@ -1841,15 +1848,16 @@ function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Ro
         {filter('instrument_id', 'Instruments', refs.instruments.map(r => [r.id, r.symbol]))}
         {filter('strategy_id', 'Strategies', strategies.map(r => [r.id, r.code]))}
         {filter('status', 'Statuses', [['PROPOSED', 'Proposed'], ['ACTIVE', 'Active'], ['PAUSED', 'Paused'], ['ENDED', 'Ended']])}
-        {canEdit ? <button className="primary" onClick={() => { setError(''); setNotice(''); setDraft({ strategy_id: filters.strategy_id ?? '', strategy_version_id: '', instrument_id: filters.instrument_id ?? '', account_id: filters.account_id ?? '', data_mapping_id: '', allocation_weight_bps: 10000, note: '' }); }}>New deployment</button>
+        {canEdit ? <button className="primary" onClick={() => { setError(''); setNotice(''); setDraft({ strategy_id: filters.strategy_id ?? '', strategy_version_id: '', instrument_id: filters.instrument_id ?? '', account_id: filters.account_id ?? '', data_mapping_id: '', allocation_weight_bps: 10000, note: '',
+          mode: 'PAPER', signal_expiry_bars: 2, sizing: { method: 'FIXED_QTY', quantity: '1' } }); }}>New deployment</button>
           : <span className="cfg-note">Read only</span>}
       </div>
       {error && !draft && <p role="alert" className="cfg-error">{error}</p>}
       {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No deployments match. A strategy trades only where a deployment row exists and is active.</p> :
-        <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Account</th><th>Env</th><th>Market data from</th><th>Weight</th><th>Status</th><th>Ready</th></tr></thead><tbody>
+        <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Account</th><th>Env</th><th>Market data from</th><th>Weight</th><th>Mode</th><th>Status</th><th>Ready</th></tr></thead><tbody>
           {rows.map(r => <tr key={r.id} tabIndex={0} className={draft?.id === r.id ? 'selected' : ''} onClick={() => { setError(''); setNotice(''); setReason(''); setDraft({ ...r }); }}>
             <td>{r.strategy_code} v{r.version_number}</td><td>{r.instrument_symbol}</td><td>{r.provider_code} · {r.account_code}</td><td><Env value={r.environment} /></td>
-            <td>{r.data_provider_code} · {r.data_connection_code} · {r.data_symbol}</td><td>{(r.allocation_weight_bps / 100).toFixed(2)}%</td>
+            <td>{r.data_provider_code} · {r.data_connection_code} · {r.data_symbol}</td><td>{(r.allocation_weight_bps / 100).toFixed(2)}%</td><td>{r.mode === 'BROKER' ? 'Broker' : 'Paper'}</td>
             <td><span className={`cfg-pill ${r.status === 'ACTIVE' ? 'ok' : r.status === 'ENDED' ? 'off' : 'warn'}`}>{r.status}</span></td><td><Ready blockers={r.blockers} /></td></tr>)}
         </tbody></table></div>}
     </div>
@@ -1873,6 +1881,21 @@ function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Ro
             {dataSources.map(m => <option key={m.id} value={m.id}>{m.provider_code} · {m.connection_code} · {m.broker_symbol} · {m.environment}</option>)}</select></Field>
           <Field label="Allocation weight (%)" hint="Share of the strategy's target for this account when it is allocated across accounts"><input aria-label="Allocation weight" required type="number" min={0.01} max={100} step={0.01}
             value={Number(draft.allocation_weight_bps) / 100} onChange={e => setDraft({ ...draft, allocation_weight_bps: Math.round(Number(e.target.value) * 100) })} /></Field>
+          <Field label="How it trades" hint="Paper: COREI simulates fills at live prices (no broker order). Broker: real orders to this account (demo or live) — needs the order adapter and order sending on.">
+            <Choice label="Trading mode" value={draft.mode ?? 'PAPER'} options={[['PAPER', 'Paper (simulated by COREI)'], ['BROKER', 'Broker (real orders)']]} onChange={v => setDraft({ ...draft, mode: v })} /></Field>
+          <Field label="Order size" hint="Risk rounds it down to the lot step and checks it against every limit">
+            <Choice label="Sizing method" value={draft.sizing?.method ?? 'FIXED_QTY'} options={[['FIXED_QTY', 'Fixed quantity'], ['RISK_PCT', '% of equity at risk (ATR stop)'], ['FIXED_NOTIONAL', 'Fixed value']]}
+              onChange={v => setDraft({ ...draft, sizing: { ...(draft.sizing ?? {}), method: v } })} /></Field>
+          {(draft.sizing?.method ?? 'FIXED_QTY') === 'FIXED_QTY' && <Field label="Quantity (lots / contracts)"><input aria-label="Sizing quantity" inputMode="decimal" value={draft.sizing?.quantity ?? '1'}
+            onChange={e => setDraft({ ...draft, sizing: { ...draft.sizing, quantity: e.target.value } })} /></Field>}
+          {draft.sizing?.method === 'RISK_PCT' && <div className="cfg-pair"><Field label="Risk per trade (% of equity)"><input aria-label="Sizing risk percent" inputMode="decimal" value={draft.sizing?.risk_pct ?? '0.5'}
+            onChange={e => setDraft({ ...draft, sizing: { ...draft.sizing, risk_pct: e.target.value } })} /></Field>
+            <Field label="Stop distance (× ATR)"><input aria-label="Sizing ATR multiple" inputMode="decimal" value={draft.sizing?.atr_multiple ?? '2'}
+              onChange={e => setDraft({ ...draft, sizing: { ...draft.sizing, atr_multiple: e.target.value } })} /></Field></div>}
+          {draft.sizing?.method === 'FIXED_NOTIONAL' && <Field label="Value per order (account currency)"><input aria-label="Sizing notional" inputMode="decimal" value={draft.sizing?.notional ?? '10000'}
+            onChange={e => setDraft({ ...draft, sizing: { ...draft.sizing, notional: e.target.value } })} /></Field>}
+          <Field label="Signal valid for (bars)" hint="A signal not acted on within this many bars of its timeframe expires"><input aria-label="Signal expiry bars" type="number" min={1} max={500}
+            value={draft.signal_expiry_bars ?? 2} onChange={e => setDraft({ ...draft, signal_expiry_bars: e.target.value })} /></Field>
           <Field label="Note"><input aria-label="Note" maxLength={1000} value={draft.note ?? ''} onChange={e => setDraft({ ...draft, note: e.target.value })} /></Field>
         </fieldset>
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}

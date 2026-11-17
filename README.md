@@ -971,3 +971,20 @@ every exchange. Migration 031.
 VPS or PC; the machine installs the bridge (0.42.0) and registers itself, COREI checks it, and accounts use it with
 one click (or automatically, as the default node). Adding an MT5 account offers the node instead of a fingerprint and
 token. Tunnel-mode nodes: run `sudo bash scripts/enable-bridge-tunnels.sh` once on the COREI server. Migration 032.
+
+## Trading core on paper and the system map — release 0.44.0
+
+**How COREI works** (DEC-77): Home shows the eight stages a trade passes through, each with a live figure, and the path
+a new user follows. Every stage screen has the same frame: Overview · Work · Monitor · Configure, plus its stage map.
+See docs/ARCHITECTURE.md.
+
+**Stages 3–7 run end to end on paper** (DEC-76, migration 033):
+- **Strategies**: six algorithms (SMA and EMA cross, RSI and Bollinger reversion, Donchian breakout, rule builder on
+  any feature); runtime on every closed bar; backtest with costs and no look-ahead; performance per strategy.
+- **Signals**: board with reasons and history, manual signals, decisions, signal quality (hit rate).
+- **Risk**: kill switches per scope (automatic on loss limits), limits per scope, decision log, exposure.
+- **Portfolio**: accounts (equity, today, drawdown), positions at live prices with Flatten, performance, exposure.
+- **Orders**: blotter with every step, paper order ticket, fills with slippage, UNKNOWN resolution.
+
+Deployments now have a mode (Paper, the default, or Broker), an order size and a signal validity. Broker orders stay
+refused until the MT5 order adapter is built and Setup › Order sending is on.

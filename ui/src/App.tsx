@@ -3,12 +3,13 @@ import Configuration from "./Configuration";
 import Infrastructure, { Health, SignIn } from "./Infrastructure";
 import MarketData from "./MarketData";
 import Intelligence from "./Intelligence";
+import { OrdersView, PortfolioView, RiskView, SignalsView, StrategiesView } from "./TradingViews";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
 import Toolbox from "./Toolbox";
 import Stage from "./Pipeline";
-import { stageOf } from "./flow";
+import { PIPELINE, stageOf } from "./flow";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
 import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
@@ -388,6 +389,11 @@ export default function App() {
     if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
     if (view === "Operations") return <Monitor overview={overview} signedOut={signedOut}/>;
     if (view === "Intelligence") return <Intelligence open={v=>goto(v)}/>;
+    if (view === "Signals") return <SignalsView/>;
+    if (view === "Strategies") return <StrategiesView/>;
+    if (view === "Risk") return <RiskView/>;
+    if (view === "Portfolio") return <PortfolioView/>;
+    if (view === "Execution") return <OrdersView/>;
     if (stageOf(view)) return <Stage view={view} open={v=>goto(v)}/>;
     return null;
   }
@@ -563,6 +569,7 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
       <span className="dense-steps" aria-hidden="true">{overview.setup.steps.map((st, i) => <i key={i} className={st.done ? 'on' : ''} title={st.step} />)}</span>
       <b>Next:</b> <span>{overview.setup.next.step}</span>
       <button onClick={() => goto(overview.setup!.next!.goto.view, overview.setup!.next!.goto.section)}>Open →</button></div>}
+    <SystemMap overview={overview} />
     <div className="dense-grid">
       <section className="dense-box wide"><header>Problems <span className="muted">{problems.length}</span></header>
         <table className="dense-table"><tbody>{problems.map((a, n) => <tr key={n} title={`${a.title}\n${a.detail}`} onClick={() => goto(a.goto.view, a.goto.section)}>
@@ -577,6 +584,44 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
       <section className="dense-box"><header>Market watch</header><MarketWatch /></section>
     </div>
   </div>;
+}
+
+/* How COREI works, on the home page: the eight stages in the order a trade passes through them, each with what it
+ * answers and a live figure, and the path a new user follows. Click a stage to open it. */
+function SystemMap({ overview }: { overview: OverviewData | null }) {
+  const [t, setT] = useState<Record<string, any> | null>(null), [intel, setIntel] = useState<Record<string, any> | null>(null);
+  useEffect(() => {
+    const load = () => { void api('trading/overview').then(setT).catch(() => setT(null)); void api('intel/overview?timeframe=H1').then(setIntel).catch(() => setIntel(null)); };
+    load(); const id = setInterval(load, 30000); return () => clearInterval(id);
+  }, []);
+  const sum = (o?: Record<string, number>) => Object.values(o ?? {}).reduce((a, b) => a + Number(b), 0);
+  const figure: Record<string, string> = {
+    'Market data': overview ? `${overview.feeds.live}/${overview.feeds.collectors} feeds live` : '',
+    Intelligence: intel ? `${intel.covered ?? intel.instruments ?? 0} instruments analysed` : '',
+    Signals: t ? `${sum(t.signals_today)} signals today` : '',
+    Strategies: t ? `${t.deployments?.ACTIVE ?? 0} running · ${t.backtests} backtests` : '',
+    Risk: t ? `${t.kill_switches} kill switches · ${t.limits} limits` : '',
+    Portfolio: t ? `${t.positions} open positions` : '',
+    Execution: t ? `${sum(t.orders_today)} orders today · ${t.open_orders} working` : '',
+    'Post-trade': 'audit trail',
+  };
+  const steps: [string, boolean, View, string?][] = [
+    ['Connect a broker account', (overview?.setup?.done ?? 0) > 0, 'Configuration', 'brokers'],
+    ['Collect its market data', (overview?.feeds.active_plans ?? 0) > 0, 'Market data', 'plans'],
+    ['Read the market', !!intel && Number(intel.covered ?? 0) > 0, 'Intelligence', 'dashboard'],
+    ['Write and approve a strategy', !!t && sum(t.deployments) > 0, 'Configuration', 'strategies'],
+    ['Backtest it', !!t && t.backtests > 0, 'Strategies', 'backtest'],
+    ['Set risk limits', !!t && t.limits > 0, 'Risk', 'limits'],
+    ['Deploy on paper and activate', !!t && (t.deployments?.ACTIVE ?? 0) > 0, 'Configuration', 'deployments'],
+    ['Watch signals, orders and P&L', !!t && sum(t.orders_today) > 0, 'Signals', 'overview'],
+  ];
+  return <section className="dense-box wide sysmap" aria-label="How COREI works">
+    <header>How COREI works <span className="muted">a trade passes through eight stages, left to right; Setup feeds them all, Monitor watches them all</span></header>
+    <ol className="sysmap-flow">{PIPELINE.map(st => <li key={st.view}><button onClick={() => goto(st.view)} title={`${st.question}\nHands on: ${st.feeds}`}>
+      <span className="sysmap-n">{st.n}</span><b>{st.title}</b><small>{st.question}</small><em>{figure[st.view] ?? ''}</em></button></li>)}</ol>
+    <div className="sysmap-path"><b>Your path</b>{steps.map(([label, done, v, sec], i) => <button key={label} className={done ? 'done' : ''} onClick={() => goto(v, sec)}>
+      <span>{done ? '✓' : i + 1}</span>{label}</button>)}</div>
+  </section>;
 }
 
 function Monitor({ overview, signedOut }: { overview: OverviewData | null; signedOut: boolean }) {

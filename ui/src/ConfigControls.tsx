@@ -141,7 +141,8 @@ export function Policies({ roles, changed }: { roles: string[]; changed: () => v
 
 const EVENTS: [string, string][] = [['LIVE_CHANGE', 'LIVE changes'], ['APPROVAL_NEEDED', 'Approval needed'], ['ORDER_SENDING', 'Order sending switched'],
   ['LOGIN_FAILED', 'Connection or login failed'], ['ROUTE_FALLBACK', 'Moved to another address'], ['EXPIRY', 'Account or mandate expiring'],
-  ['MARKET_DATA', 'Market data: outage, quality or feed switch'], ['DATA_INTEGRITY', 'Data integrity: file check, backup or disk']];
+  ['MARKET_DATA', 'Market data: outage, quality or feed switch'], ['DATA_INTEGRITY', 'Data integrity: file check, backup or disk'],
+  ['INTEL_RULE', 'Market intelligence rule fired'], ['KILL_SWITCH', 'Kill switch engaged (by a person or a loss limit)'], ['TRADING', 'Orders: refused, unknown outcome, filled']];
 
 export function Alerts({ canEdit }: { canEdit: boolean }) {
   const [channels, setChannels] = useState<Row[] | null>(null), [outbox, setOutbox] = useState<Row[]>([]), [edit, setEdit] = useState<Row | null>(null);

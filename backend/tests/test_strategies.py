@@ -112,7 +112,11 @@ class StrategyDeploymentTests(unittest.TestCase):
         self.assertEqual(d_demo['status'], 'PROPOSED')
         self.assertEqual(d_demo['data_connection_code'], 'FEED_C')  # data from another connection than the account
         self.assertIn('VERSION_NOT_APPROVED', d_demo['blockers'])
-        self.assertIn('ORDER_SENDING_OFF_DEMO', d_demo['blockers'])
+        self.assertNotIn('ORDER_SENDING_OFF_DEMO', d_demo['blockers'], 'PAPER (the default) is simulated by COREI: order sending does not apply')
+        self.assertEqual(d_demo['mode'], 'PAPER')
+        broker = self.ok(trader.put(f"/api/config/deployments/{d_demo['id']}", json={**deploy, 'mode': 'BROKER', 'version': d_demo['version']}))
+        self.assertIn('ORDER_SENDING_OFF_DEMO', broker['blockers'], 'BROKER mode needs everything the account needs to trade')
+        d_demo = self.ok(trader.put(f"/api/config/deployments/{d_demo['id']}", json={**deploy, 'version': broker['version']}))
         post('deployments', deploy, 409)
         # Activation refused while the pinned version is a draft.
         tr = lambda client, d, action, status=200: self.ok(client.post(f"/api/config/deployments/{d['id']}/{action}",

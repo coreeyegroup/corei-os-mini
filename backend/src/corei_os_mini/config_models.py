@@ -515,7 +515,7 @@ class DecisionIn(_Strict):
     note: Text(500) = ''
 
 
-ALERT_EVENTS = ('LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING', 'MARKET_DATA', 'DATA_INTEGRITY', 'TEST')
+ALERT_EVENTS = ('LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING', 'MARKET_DATA', 'DATA_INTEGRITY', 'INTEL_RULE', 'KILL_SWITCH', 'TRADING', 'TEST')
 
 
 class AlertChannelIn(_Strict):
@@ -523,7 +523,7 @@ class AlertChannelIn(_Strict):
     name: Name
     # EMAIL: address; TELEGRAM: chat id; WEBHOOK: https URL.
     target: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
-    events: Annotated[list[Literal['LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING', 'MARKET_DATA', 'DATA_INTEGRITY']],
+    events: Annotated[list[Literal['LIVE_CHANGE', 'APPROVAL_NEEDED', 'ROUTE_FALLBACK', 'LOGIN_FAILED', 'EXPIRY', 'ORDER_SENDING', 'MARKET_DATA', 'DATA_INTEGRITY', 'INTEL_RULE', 'KILL_SWITCH', 'TRADING']],
                       Field(min_length=1)]
     status: Status = 'ACTIVE'
     # TELEGRAM bot token or WEBHOOK signing secret; write-only, stored encrypted.
