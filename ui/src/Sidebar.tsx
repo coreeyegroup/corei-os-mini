@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
-import { current, digitsOf, DESTINATIONS, goto, gotoTable, SETUP_GROUPS, setupRowOf, type Overview } from './nav';
+import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, SETUP_GROUPS, setupRowOf, type Overview } from './nav';
 import { FlowList } from './Pipeline';
 import { stageOf } from './flow';
 
@@ -108,6 +108,13 @@ function SetupTree() {
   </>;
 }
 
+function IntelTree() {
+  const section = useCurrent('Intelligence') ?? 'dashboard';
+  return <>{INTEL_GROUPS.map(([g, items]) => <div key={g}><div className="sb-group">{g}</div>
+    {items.map(([id, label]) => <button key={id} className={`sb-row sb-indent ${section === id ? 'selected' : ''}`} onClick={() => goto('Intelligence', id)}>
+      <span className="sb-grow">{label}</span></button>)}</div>)}</>;
+}
+
 function TablesList() {
   const data = usePoll<{ tables: Row[] }>('infra/database', 60000);
   const [filter, setFilter] = useState('');
@@ -131,6 +138,11 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
   if (view === 'Infrastructure') return <>
     <Pane title="System"><Sections view="Infrastructure" /></Pane>
     <Pane title="Tables"><TablesList /></Pane>
+  </>;
+  if (view === 'Intelligence') return <>
+    <Pane title="Market intelligence"><IntelTree /></Pane>
+    <Pane title="Market watch"><MarketWatch /></Pane>
+    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
   </>;
   if (stageOf(view)) return <>
     <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>

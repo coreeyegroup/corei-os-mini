@@ -242,3 +242,6 @@
 .intel-strength-row .bar i { position: absolute; top: 0; bottom: 0; } .intel-strength-row .bar i.up { background: var(--ready); } .intel-strength-row .bar i.down { background: var(--danger); }
 .intel-edit { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
 .intel tr.muted td { opacity: .6; }
+.intel-colpick { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; }
+.intel-colpick > div { display: flex; flex-direction: column; gap: 2px; }
+.intel-colpick b, .intel-cols > div > b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

@@ -162,6 +162,8 @@ class Controls(tmd.MarketData):
         self.assertEqual(forced['instruments'], 0, 'the excluded instrument is left out even when forced')
         jobs = self.ok(self.alice.post('/api/intel/history', json={'plan_id': plan['id'], 'reason': 'warm up EURUSD'}))
         self.assertEqual([j['timeframe'] for j in jobs['jobs']], ['M1', 'H4', 'D1'])
+        again = self.ok(self.alice.post('/api/intel/history', json={}))
+        self.assertEqual((again['plans'], again['jobs']), (0, []), 'for all: skips instruments with jobs already queued; reason defaults')
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) AS n FROM cfg_audit_log WHERE action='INTEL_SETTINGS'").fetchone()['n'], 1)
 
@@ -262,7 +264,52 @@ class Workspace(tmd.MarketData):
         st = self.ok(self.alice.get('/api/intel/strength?timeframe=M5&bars=20'))
         self.assertEqual({c['currency'] for c in st['currencies']}, {'EUR', 'USD'})
         self.assertIsNotNone(st['note'])
+        # Custom indicators: per-strategy lengths beside the standard set, computed and usable in rules.
+        ema9 = self.ok(self.alice.post('/api/intel/indicators', json={'kind': 'EMA', 'params': {'period': 9}, 'timeframes': ['M5', 'M5'], 'label': 'Scalper'}), 201)
+        self.assertEqual((ema9['key'], ema9['timeframes']), ('ema_9', ['M5']))
+        self.ok(self.alice.post('/api/intel/indicators', json={'kind': 'EMA', 'params': {'period': 9}}), 409)
+        self.ok(self.alice.post('/api/intel/indicators', json={'kind': 'MACD', 'params': {'fast': 30, 'slow': 20}}), 422)
+        self.ok(self.alice.post('/api/intel/indicators', json={'kind': 'EMA', 'params': {'period': 21}, 'timeframes': ['M5']}), 201)
+        listing = self.ok(self.alice.get('/api/intel/indicators'))
+        self.assertEqual([i['outputs'] for i in listing['items']], [['ema_21'], ['ema_9']])
+        self.assertIn('ema_9', self.ok(self.alice.get('/api/intel/rules'))['fields'])
+        self.ok(self.alice.post('/api/intel/rules', json={'name': 'Fast over slow', 'timeframe': 'M5', 'field': 'ema_9', 'op': 'CROSSES_ABOVE', 'value': 'ema_21'}), 201)
+        engine.refresh_all()
+        m5 = self.ok(self.alice.get(f"/api/intel/instrument/{a['id']}/EURUSD?timeframe=M5"))
+        self.assertIn('ema_9', m5['history'][-1]['features'])
+        self.assertNotIn('ema_9', self.ok(self.alice.get(f"/api/intel/instrument/{a['id']}/EURUSD?timeframe=H1"))['history'][-1]['features'])
+        self.ok(self.alice.delete(f"/api/intel/indicators/{ema9['id']}"), 204)
         self.ok(self.alice.delete(f"/api/intel/rules/{rule['id']}"), 204)
         with self.connect() as db:
             actions = {r['action'] for r in db.execute("SELECT action FROM cfg_audit_log WHERE action LIKE 'INTEL_%'").fetchall()}
-        self.assertTrue({'INTEL_WATCHLIST', 'INTEL_RULE', 'INTEL_RULE_DELETE', 'INTEL_EVENTS'} <= actions)
+        self.assertTrue({'INTEL_WATCHLIST', 'INTEL_RULE', 'INTEL_RULE_DELETE', 'INTEL_EVENTS', 'INTEL_INDICATOR', 'INTEL_INDICATOR_DELETE'} <= actions)
+
+
+class VolumeAndCustom(unittest.TestCase):
+    def test_volume_features_and_custom_indicators(self):
+        t0 = datetime(2026, 1, 5, tzinfo=UTC)
+        bars = [{'bar_time': t0 + timedelta(minutes=i), 'open': 1 + i / 100, 'high': 1.01 + i / 100, 'low': 0.99 + i / 100, 'close': 1 + i / 100,
+                 'ticks': 10, 'volume': 0, 'spread_avg': 2.0} for i in range(60)]
+        bars[-1]['ticks'] = 40
+        rows = engine.features(bars, 'M1', [{'kind': 'EMA', 'params': {'period': 9}}, {'kind': 'BOLLINGER', 'params': {'period': 20, 'deviations': 2.5}}])
+        last = rows[-1]
+        self.assertEqual(last['tick_volume'], 40)
+        self.assertIsNone(last['volume'], 'no real volume from this source: tick volume stands in')
+        self.assertAlmostEqual(last['rel_volume20'], 40 / ((19 * 10 + 40) / 20))
+        self.assertEqual(last['spread_bar'], 2.0)
+        self.assertGreater(last['obv'], 0, 'rising closes accumulate volume')
+        self.assertAlmostEqual(last['ema_9'], ind.ema([b['close'] for b in bars], 9)[-1])
+        self.assertIn('bollinger_20_2p5_upper', last)
+        self.assertEqual(engine.custom_key('MACD', {'fast': 8, 'slow': 21, 'signal': 5}), 'macd_8_21_5')
+        m5 = engine.resample(bars, 'M5')
+        self.assertEqual(m5[0]['spread_avg'], 2.0)
+        self.assertEqual(m5[0]['ticks'], 50)
+
+    def test_rule_against_another_feature(self):
+        from corei_os_mini.intel import workspace
+        self.assertTrue(workspace._hit('CROSSES_ABOVE', 'ema_21', 1.2, 1.0, {'ema_21': 1.1}, {'ema_21': 1.05}))
+        self.assertFalse(workspace._hit('CROSSES_ABOVE', 'ema_21', 1.2, 1.2, {'ema_21': 1.1}, {'ema_21': 1.15}), 'already above: no cross')
+        self.assertFalse(workspace._hit('>', 'ema_21', 1.2, None, {}, None), 'unknown reference: no fire')
+        workspace.RuleIn(name='x', field='ema_9', op='CROSSES_ABOVE', value='ema_21')
+        with self.assertRaises(ValueError):
+            workspace.RuleIn(name='x', field='ema_9', op='>', value='regime')

@@ -138,3 +138,20 @@ through the bridge and measures the broker's clock from the first tick.
   adapter for stage 7; nothing sends yet.
 - One login per terminal at a time; `symbol_info_tick` polling every 200 ms gives every tick for liquid
   symbols (the package returns all ticks since the last one, not just the latest).
+
+## Many accounts (100+): the terminal pool
+
+An MT5 terminal holds one login at a time, so the bridge does not try to keep one terminal open per account:
+
+1. **Market data once per broker server.** Every account on the same server sees the same prices, so one login
+   per server collects them (Market data › plans on that account). Other accounts of that server need no feed.
+2. **A pool for account reads.** Bridge 0.41.0 runs `--terminals-root` with `--max-terminals N` (set-up script
+   `-MaxTerminals`, default 20). A login is opened in a portable terminal copy when it is first used; when the pool is
+   full, the least-recently-used terminal that is not streaming is closed to make room. A terminal that streams market
+   data is never closed; if every slot streams, the bridge answers `BRIDGE_FULL` (raise N or add a node).
+3. **Dedicated terminals only for trading accounts** (stage 7), so orders never wait for a pool slot.
+4. **More capacity = more bridge nodes.** Each Windows VPS or server runs its own bridge and pool; add it in COREI as
+   another route. Size by memory: a terminal uses roughly 150–300 MB, so a 16 GB server holds about 40–60, a 32 GB
+   one about 100. The "5–7 terminals" limit is the size of a small VPS, not of MT5.
+5. **Hundreds of trading accounts** at one broker: ask the broker for its Manager / Gateway API (one connection for
+   all accounts), or license an MT5 protocol API. Both need the broker's or vendor's agreement.

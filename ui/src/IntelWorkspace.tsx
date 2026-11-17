@@ -2,7 +2,8 @@
  * Why: the multi-broker, multi-account, multi-instrument views of the module: Sources (one instrument from every
  * broker account side by side), Correlation (how collected instruments move together), Strength (FX currencies),
  * Watchlists (named groups across accounts), Rules (conditions on features that raise alerts) and Calendar
- * (economic events and holidays: manual or CSV, used for the screener's event-risk flag).
+ * (economic events and holidays: manual or CSV, used for the screener's event-risk flag), Indicators (the standard set,
+ * and custom indicators with the lengths each strategy needs).
  * Must never: change market data or orders; every change here is audited by the API. */
 import { FormEvent, useEffect, useState } from 'react';
 import { api } from './Configuration';
@@ -131,8 +132,21 @@ export function RulesView({ canEdit }: { canEdit: boolean }) {
       setEdit(null); setErr(''); reload(); } catch (x) { setErr((x as Error).message); }
   };
   const cat = edit && ['regime', 'volatility'].includes(edit.field);
+  const vsField = !!edit && !cat && edit.value !== '' && Number.isNaN(Number(edit.value));
+  const numeric = (data?.fields ?? []).filter((f: string) => !['regime', 'volatility'].includes(f));
+  const templates: [string, Row][] = [
+    ['RSI oversold', { name: 'RSI 14 crosses below 30', field: 'rsi14', op: 'CROSSES_BELOW', value: '30' }],
+    ['RSI overbought', { name: 'RSI 14 crosses above 70', field: 'rsi14', op: 'CROSSES_ABOVE', value: '70' }],
+    ['Trend starts', { name: 'Regime becomes trend up', field: 'regime', op: 'BECOMES', value: 'TREND_UP' }],
+    ['Volatility spike', { name: 'ATR rank above 90', field: 'atr_pct_rank100', op: '>', value: '90' }],
+    ['Volume surge', { name: 'Volume over 3× normal', field: 'rel_volume20', op: '>', value: '3' }],
+    ['EMA 20/50 cross', { name: 'EMA 20 crosses above EMA 50', field: 'ema20', op: 'CROSSES_ABOVE', value: 'ema50' }],
+    ['Stretch', { name: 'Z-score above 2', field: 'zscore20', op: '>', value: '2' }],
+  ];
   return <section className="intel">
-    <div className="intel-bar">{canEdit && <button className="primary" onClick={() => setEdit({ ...blank })}>New rule</button>}
+    <div className="intel-bar">{canEdit && <><button className="primary" onClick={() => setEdit({ ...blank })}>New rule</button>
+      <select aria-label="Start from a template" value="" onChange={e => { const t = templates.find(x => x[0] === e.target.value); if (t) setEdit({ ...blank, ...t[1] }); }}>
+        <option value="">From a template…</option>{templates.map(t => <option key={t[0]}>{t[0]}</option>)}</select></>}
       <small className="cfg-note">A rule is checked on every newly closed bar of its timeframe and fires once per bar (cooldown per instrument). Fired rules are listed below and queued to the alert channels subscribed to INTEL_RULE (Setup › Alerts).</small></div>
     <Err e={error || err} />
     <table className="cfg-table compact intel-table"><thead><tr><th>Rule</th><th>Condition</th><th>Scope</th><th>Severity</th><th>Cooldown</th><th>Fired</th><th>On</th><th /></tr></thead><tbody>
@@ -142,14 +156,19 @@ export function RulesView({ canEdit }: { canEdit: boolean }) {
         <td>{r.severity.toLowerCase()}</td><td>{r.cooldown_minutes} min</td><td>{r.fires}{r.last_fired_at ? <small className="cfg-note"> · {when(r.last_fired_at)}</small> : null}</td>
         <td>{r.enabled ? 'on' : 'off'}</td>
         <td>{canEdit && <><button onClick={() => setEdit({ ...r })}>Edit</button> <button onClick={() => { if (window.confirm(`Delete rule ${r.name}?`)) void api(`intel/rules/${r.id}`, 'DELETE').then(reload).catch(x => setErr((x as Error).message)); }}>Delete</button></>}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={8} className="cfg-note">No rules yet. Examples: RSI 14 on H1 crosses below 30 · regime on H4 becomes TREND_UP · ATR% rank on M15 is above 90 · z-score on H1 is above 2.</td></tr>}</tbody></table>
+      {data && !data.items.length && <tr><td colSpan={8} className="cfg-note">No rules yet. Start from a template, or e.g. RSI 14 on H1 crosses below 30 · regime on H4 becomes TREND_UP · ema_9 crosses above ema_21 on M5 · relative volume above 3.</td></tr>}</tbody></table>
     {edit && <form className="cfg-form intel-edit" onSubmit={save}>
       <label>Name <input aria-label="Rule name" required maxLength={80} value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} /></label>
       <label>Timeframe <select aria-label="Rule timeframe" value={edit.timeframe} onChange={e => setEdit({ ...edit, timeframe: e.target.value })}>{['M1', ...HTFS].map(t => <option key={t}>{t}</option>)}</select></label>
       <label>Feature <select aria-label="Rule feature" value={edit.field} onChange={e => setEdit({ ...edit, field: e.target.value, op: ['regime', 'volatility'].includes(e.target.value) ? 'BECOMES' : edit.op === 'BECOMES' ? '>' : edit.op })}>
-        {(data?.fields ?? []).map((f: string) => <option key={f}>{f}</option>)}</select></label>
+        {(data?.fields ?? []).map((f: string) => <option key={f}>{f}</option>)}</select>
+        <small className="cfg-note">Your own indicators (Configure › Indicators) are in this list too, e.g. ema_9.</small></label>
       <label>Condition <select aria-label="Rule condition" value={edit.op} onChange={e => setEdit({ ...edit, op: e.target.value })}>{OPS.filter(o => cat ? o[0] === 'BECOMES' : o[0] !== 'BECOMES').map(o => <option key={o[0]} value={o[0]}>{o[1]}</option>)}</select></label>
-      <label>Value {cat ? <select aria-label="Rule value" value={edit.value} onChange={e => setEdit({ ...edit, value: e.target.value })}>
+      {!cat && <label>Compare with <select aria-label="Compare with" value={vsField ? 'feature' : 'number'}
+        onChange={e => setEdit({ ...edit, value: e.target.value === 'feature' ? (numeric.find((f: string) => f !== edit.field) ?? 'ema50') : '0' })}>
+        <option value="number">a number</option><option value="feature">another feature of the same bar</option></select></label>}
+      <label>Value {vsField ? <select aria-label="Rule value feature" value={edit.value} onChange={e => setEdit({ ...edit, value: e.target.value })}>
+        {numeric.filter((f: string) => f !== edit.field).map((f: string) => <option key={f}>{f}</option>)}</select> : cat ? <select aria-label="Rule value" value={edit.value} onChange={e => setEdit({ ...edit, value: e.target.value })}>
         {(edit.field === 'regime' ? ['TREND_UP', 'TREND_DOWN', 'RANGE', 'TRANSITION'] : ['HIGH', 'NORMAL', 'LOW']).map(v => <option key={v}>{v}</option>)}</select>
         : <input aria-label="Rule value" required value={edit.value} onChange={e => setEdit({ ...edit, value: e.target.value })} />}</label>
       <label>Scope <select aria-label="Rule scope" value={edit.scope?.watchlist_id ?? ''} onChange={e => setEdit({ ...edit, scope: e.target.value ? { watchlist_id: e.target.value } : {} })}>
@@ -205,5 +224,65 @@ export function CalendarView({ canEdit }: { canEdit: boolean }) {
         <textarea aria-label="CSV text" rows={6} value={csv} onChange={e => setCsv(e.target.value)} placeholder="or paste the CSV here" />
         <div className="cfg-actions"><button className="primary" disabled={!csv.trim()} onClick={() => void importCsv()}>Import</button></div></div>
     </div>}
+  </section>;
+}
+
+/* Indicators: the standard set (fixed, shared by every screen, regime and rule, so everyone reads the same numbers) and
+ * custom indicators per strategy (kind + lengths + timeframes), computed by the engine and usable in rules and the
+ * screener. Same lengths are defined once (the key, e.g. ema_9, is unique). */
+const KIND_HELP: Record<string, string> = {
+  EMA: 'Exponential moving average of the close', SMA: 'Simple moving average of the close', RSI: 'Wilder RSI, 0–100', ATR: 'Wilder average true range (price units)',
+  ROC: 'Rate of change over the period, %', ZSCORE: 'Close against its mean, in standard deviations', DONCHIAN: 'Highest high and lowest low of the period',
+  VWAP: 'Rolling volume-weighted average price (tick volume where no real volume)', BOLLINGER: 'Bands: SMA ± deviations × standard deviation',
+  MACD: 'EMA fast − EMA slow, its signal EMA and the histogram', STOCH: 'Slow stochastic %K and %D',
+};
+export function IndicatorsView({ canEdit }: { canEdit: boolean }) {
+  const [data, error, reload] = useLoad<Row>('intel/indicators', [], 0);
+  const [edit, setEdit] = useState<Row | null>(null), [err, setErr] = useState(''), [notice, setNotice] = useState('');
+  const kinds: Row = data?.kinds ?? {};
+  const save = async (e: FormEvent) => {
+    e.preventDefault(); if (!edit) return;
+    const body = { kind: edit.kind, params: edit.params, timeframes: edit.timeframes, label: edit.label ?? '', enabled: edit.enabled };
+    try { if (edit.id) await api(`intel/indicators/${edit.id}`, 'PUT', { ...body, version: edit.version }); else await api('intel/indicators', 'POST', body);
+      setEdit(null); setErr(''); setNotice('Saved. The engine computes it on the next cycle (history is rewritten for the window, so it shows at once).'); reload(); } catch (x) { setErr((x as Error).message); }
+  };
+  const fresh = (kind: string) => ({ kind, params: { ...(kinds[kind]?.params ?? {}) }, timeframes: ['M1', ...HTFS], label: '', enabled: true });
+  const quick: [string, Row][] = [['EMA 9', { kind: 'EMA', params: { period: 9 } }], ['EMA 21', { kind: 'EMA', params: { period: 21 } }], ['EMA 100', { kind: 'EMA', params: { period: 100 } }],
+    ['SMA 200', { kind: 'SMA', params: { period: 200 } }], ['RSI 7', { kind: 'RSI', params: { period: 7 } }], ['Bollinger 20/2.5', { kind: 'BOLLINGER', params: { period: 20, deviations: 2.5 } }],
+    ['MACD 8/21/5', { kind: 'MACD', params: { fast: 8, slow: 21, signal: 5 } }], ['Donchian 55', { kind: 'DONCHIAN', params: { period: 55 } }], ['VWAP 50', { kind: 'VWAP', params: { period: 50 } }]];
+  return <section className="intel">
+    <Err e={error || err} />{notice && <p role="status" className="cfg-ok">{notice}</p>}
+    <div className="intel-cols">
+      <div><h4>Standard set (fixed)</h4>
+        <p className="cfg-note">Computed for every instrument and timeframe and used by the regime, the attention score and the screener, so every screen and every
+          strategy reads the same baseline: EMA 20/50/200, RSI 14, ATR 14 (and ATR %, its rank over 100 bars), Bollinger 20/2, ADX 14 with ±DI, efficiency 20,
+          realised volatility 20, MACD 12/26/9, stochastic 14/3/3, Donchian 20, z-score 20, returns 1/20, range position 20, and volume: tick and real volume,
+          relative volume 20, VWAP 20 and OBV, plus the bar's average spread. Changing a standard length would change every regime and history, so strategies
+          that need other lengths add them here instead.</p>
+        <p className="cfg-note"><b>Do all strategies need the same EMA?</b> No. A scalper may want EMA 9/21 on M1–M5, a swing strategy EMA 50/200 on H4–D1.
+          Each custom indicator below is computed once and shared by every strategy that names it (its key, e.g. <code>ema_9</code>).</p></div>
+      <div><h4>Add a custom indicator</h4>
+        {canEdit ? <div className="intel-bar">{quick.map(([l, q]) => <button key={l} onClick={() => setEdit({ ...fresh(q.kind), params: q.params, label: l })}>{l}</button>)}
+          <select aria-label="Indicator kind" value="" onChange={e => e.target.value && setEdit(fresh(e.target.value))}><option value="">Other kind…</option>
+            {Object.keys(kinds).map(k => <option key={k} value={k}>{k} · {KIND_HELP[k]}</option>)}</select></div>
+          : <p className="cfg-note">Trading operations or administrators can add indicators.</p>}</div>
+    </div>
+    {edit && <form className="cfg-form intel-edit" onSubmit={save}>
+      <p><b>{edit.kind}</b> <small className="cfg-note">{KIND_HELP[edit.kind]}</small></p>
+      {Object.keys(kinds[edit.kind]?.params ?? {}).map(p => <label key={p}>{p} <input aria-label={`Indicator ${p}`} type="number" step={p === 'deviations' ? 0.1 : 1}
+        value={edit.params[p] ?? ''} onChange={e => setEdit({ ...edit, params: { ...edit.params, [p]: Number(e.target.value) } })} /></label>)}
+      <div>Timeframes {['M1', ...HTFS].map(t => <label key={t} className="intel-check"><input type="checkbox" checked={edit.timeframes.includes(t)}
+        onChange={e => setEdit({ ...edit, timeframes: e.target.checked ? [...edit.timeframes, t] : edit.timeframes.filter((x: string) => x !== t) })} /> {t}</label>)}</div>
+      <label>Label (who uses it) <input aria-label="Indicator label" maxLength={80} value={edit.label ?? ''} placeholder="e.g. Scalper fast EMA" onChange={e => setEdit({ ...edit, label: e.target.value })} /></label>
+      <label><input type="checkbox" checked={!!edit.enabled} onChange={e => setEdit({ ...edit, enabled: e.target.checked })} /> Computed (off keeps the definition)</label>
+      <div className="cfg-actions"><button className="primary" disabled={!edit.timeframes.length}>Save indicator</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
+    </form>}
+    <h4>Custom indicators</h4>
+    <table className="cfg-table compact intel-table"><thead><tr><th>Key (use in rules)</th><th>Kind</th><th>Parameters</th><th>Outputs</th><th>Timeframes</th><th>Label</th><th>On</th><th>Changed</th><th /></tr></thead><tbody>
+      {(data?.items ?? []).map((i: Row) => <tr key={i.id} className={i.enabled ? '' : 'muted'}><td><code>{i.key}</code></td><td>{i.kind}</td>
+        <td>{Object.entries(i.params).map(([k, v]) => `${k} ${v}`).join(' · ')}</td><td><small>{i.outputs.join(', ')}</small></td><td>{i.timeframes.join(' ')}</td>
+        <td>{i.label}</td><td>{i.enabled ? 'on' : 'off'}</td><td><small>{when(i.updated_at)} · {i.updated_by}</small></td>
+        <td>{canEdit && <><button onClick={() => setEdit({ ...i })}>Edit</button> <button onClick={() => { if (window.confirm(`Delete ${i.key}? Rules that use it stop firing.`)) void api(`intel/indicators/${i.id}`, 'DELETE').then(reload).catch(x => setErr((x as Error).message)); }}>Delete</button></>}</td></tr>)}
+      {data && !data.items.length && <tr><td colSpan={9} className="cfg-note">None yet. Add the lengths your strategies need (quick buttons above).</td></tr>}</tbody></table>
   </section>;
 }

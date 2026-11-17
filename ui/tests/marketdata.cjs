@@ -74,7 +74,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      by_timeframe:{H1:{total:2,regime:{TREND_UP:1,WARMING_UP:1},volatility:{HIGH:1}}},warming_up:[{account_id:'a2',account_code:'ICM_B',provider_name:'IC Markets',broker_symbol:'XAUUSD',plan_id:'p1',bars:40,reasons:[]}],
      top:[{account_id:'a1',broker_symbol:'XAUUSD.r',regime:'TREND_UP',adx14:31,attention:71}],movers:[],engine:{last_run_at:now,instruments:2,duration_ms:40,errors:[]},
      settings:{enabled:true,interval_seconds:60,timeframes:['M1','M5','M15','H1','H4','D1'],excluded:[],version:1,updated_by:'system',updated_at:now},session:{label:'London + New York'}});
-   if(url.endsWith('/intel/history')){intelCalls.push(body);return ok({jobs:[{timeframe:'M1'},{timeframe:'H4'},{timeframe:'D1'}]});}
+   if(url.endsWith('/intel/history')){intelCalls.push(body);return ok({jobs:[{timeframe:'M1'},{timeframe:'H4'},{timeframe:'D1'}],plans:1,skipped:[]});}
+   if(url.endsWith('/intel/indicators')&&method==='POST'){intelCalls.push(body);return ok({id:'n1',key:'ema_9',...body});}
+   if(url.includes('/intel/indicators'))return ok({items:[],standard:['rsi14'],kinds:{EMA:{params:{period:9},outputs:['']},BOLLINGER:{params:{period:20,deviations:2.5},outputs:['_mid','_upper','_lower']}}});
    if(url.endsWith('/intel/settings')){intelCalls.push(body);return ok({...body,version:2});}
    if(url.includes('/intel/watchlists'))return ok({items:[{id:'w1',name:'Gold',items:[{account_id:'a1',broker_symbol:'XAUUSD.r'}],notes:'',version:1,updated_at:now,updated_by:'ops'}]});
    if(url.endsWith('/intel/rules')&&method==='POST'){intelCalls.push(body);return ok({id:'r9',...body});}
@@ -161,23 +163,41 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  // Stage 2 · Market intelligence: the screener (default), an instrument across timeframes, sessions.
  w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Intelligence'}}));await settle(12);
  assert.match($('.intel-kpis').textContent,/Instruments covered2\/2.*Trend up1.*Warming up1/);
- fill($('[aria-label="Reason for history"]'),'warm up gold');await settle();
  button('Get history').click();await settle(4);
- assert.deepEqual(intelCalls.at(-1),{plan_id:'p1',reason:'warm up gold'});
- $$('.intel-engine input[type=checkbox]').find(x=>x.parentElement.textContent.trim()==='D1').click();await settle();
+ assert.deepEqual(intelCalls.at(-1),{plan_id:'p1'},'one click, no reason to type (the server records a default reason)');
+ button('Get history for all').click();await settle(4);
+ assert.deepEqual(intelCalls.at(-1),{});
+ assert.match($('[role=status]').textContent,/3 jobs for 1 instruments/);
+ nav('Engine settings').click();await settle(6);
+ $$('.cfg-form input[type=checkbox]').find(x=>x.parentElement.textContent.trim()==='D1').click();await settle();
+ assert.ok(button('Save engine settings').disabled,'a reason is needed');
+ fill($('[aria-label="Reason for the change"]'),'drop D1 for now');await settle();
  button('Save engine settings').click();await settle(4);
  assert.deepEqual(intelCalls.at(-1).timeframes,['M1','M5','M15','H1','H4'],'engine timeframes saved with a reason');
- assert.equal(intelCalls.at(-1).reason,'warm up gold');
+ assert.equal(intelCalls.at(-1).reason,'drop D1 for now');
+ nav('Indicators').click();await settle(4);
+ assert.match($('.intel').textContent,/Do all strategies need the same EMA\?/);
+ button('EMA 9').click();await settle();
+ $$('.intel-edit input[type=checkbox]').find(x=>x.parentElement.textContent.trim()==='M1').click();await settle();
+ await submit($('.intel-edit'));
+ assert.deepEqual(intelCalls.at(-1),{kind:'EMA',params:{period:9},timeframes:['M5','M15','H1','H4','D1'],label:'EMA 9',enabled:true});
  nav('Screener').click();await settle(6);
  const intelRows=()=>$$('.intel-table tbody tr');
  assert.equal(intelRows().length,2,'every collected instrument is listed');
  assert.match(intelRows()[0].textContent,/XAUUSD\.r.*Trend up.*80%/);
  assert.match(intelRows()[1].textContent,/Warming up/);
+ button('Volume').click();await settle();
+ assert.match($('.intel-table thead').textContent,/Tick vol\..*Rel\. vol\..*vs VWAP %.*OBV/,'column preset: volume');
+ button('Standard').click();await settle();
+ button('Columns (17)').click();await settle();
+ $$('.intel-colpick label').find(l=>l.textContent.trim()==='MACD hist').querySelector('input').click();await settle();
+ assert.match($('.intel-table thead').textContent,/MACD hist/,'column chooser adds a column');
  fill($('.intel-bar [aria-label="Regime"]'),'TREND_UP');await settle();
  assert.equal(intelRows().length,1,'regime filter');
  intelRows()[0].click();await settle(6);
  assert.match($('.intel-table').textContent,/H1.*Trend up/);
- assert.equal($$('.intel-chart rect').length,40,'regime strip, one mark per bar');
+ assert.equal($$('.intel-chart rect').length,80,'regime strip and volume, one mark each per bar');
+ assert.match($('.intel').textContent,/Every feature on H1/);
  nav('Sessions').click();await settle(4);
  assert.match($('.intel-now').textContent,/London \+ New York/);
  nav('Screener').click();await settle(6);

@@ -60,17 +60,25 @@ def resample(m1: list[dict], tf: str) -> list[dict]:
             o = out[-1]
             o['high'], o['low'], o['close'] = max(o['high'], b['high']), min(o['low'], b['low']), b['close']
             o['ticks'] += b.get('ticks') or 0
+            o['volume'] = (o.get('volume') or 0) + (b.get('volume') or 0)
+            if b.get('spread_avg') is not None:
+                o['_spreads'].append(b['spread_avg'])
             o['_last'] = b['bar_time']
         else:
             out.append({'bar_time': start, 'open': b['open'], 'high': b['high'], 'low': b['low'], 'close': b['close'],
-                        'ticks': b.get('ticks') or 0, '_last': b['bar_time']})
+                        'ticks': b.get('ticks') or 0, 'volume': b.get('volume') or 0, '_last': b['bar_time'],
+                        '_spreads': [b['spread_avg']] if b.get('spread_avg') is not None else []})
     if out and out[-1]['_last'] + timedelta(minutes=1) < out[-1]['bar_time'] + timedelta(minutes=MINUTES[tf]):
         out.pop()  # still forming
+    for o in out:
+        sp = o.pop('_spreads')
+        o['spread_avg'] = sum(sp) / len(sp) if sp else None
     return out
 
 
-def features(bars: list[dict], tf: str) -> list[dict]:
-    """One feature row per bar (aligned to `bars`), version FEATURE_VERSION."""
+def features(bars: list[dict], tf: str, custom: list[dict] | None = None) -> list[dict]:
+    """One feature row per bar (aligned to `bars`), version FEATURE_VERSION, plus the custom indicators defined for
+    this timeframe (Intelligence › Indicators)."""
     h = [b['high'] for b in bars]
     lo = [b['low'] for b in bars]
     c = [b['close'] for b in bars]
@@ -87,6 +95,13 @@ def features(bars: list[dict], tf: str) -> list[dict]:
     st_k, st_d = ind.stochastic(h, lo, c)
     dc_up, dc_dn = ind.donchian(h, lo, 20)
     z20 = ind.zscore(c, 20)
+    ticks = [float(b.get('ticks') or 0) for b in bars]
+    real = [float(b.get('volume') or 0) for b in bars]
+    vol = real if any(real) else ticks  # real volume where the source has it (exchange instruments), else tick volume
+    vol_sma = ind.sma(vol, 20)
+    vw = ind.vwap(h, lo, c, vol, 20)
+    ob = ind.obv(c, vol)
+    extra = custom_values(bars, custom or [])
     rows = []
     for i, b in enumerate(bars):
         window = [x for x in atr_pct[max(0, i - 99):i + 1] if x is not None]
@@ -100,8 +115,65 @@ def features(bars: list[dict], tf: str) -> list[dict]:
             'ret_20_pct': None if i < 20 or not c[i - 20] else 100 * (c[i] / c[i - 20] - 1),
             'macd': m_line[i], 'macd_signal': m_sig[i], 'macd_hist': m_hist[i], 'stoch_k': st_k[i], 'stoch_d': st_d[i],
             'donchian_high20': dc_up[i], 'donchian_low20': dc_dn[i], 'zscore20': z20[i],
+            'tick_volume': ticks[i], 'volume': real[i] or None, 'rel_volume20': None if not vol_sma[i] else vol[i] / vol_sma[i],
+            'vwap20': vw[i], 'vwap_dev_pct': None if not vw[i] else 100 * (c[i] / vw[i] - 1), 'obv': ob[i],
+            'spread_bar': bars[i].get('spread_avg'),
+            **{k: v[i] for k, v in extra.items()},
         })
     return rows
+
+
+CUSTOM_KINDS = {  # kind: (parameter names, defaults, output suffixes)
+    'EMA': (('period',), (9,), ('',)), 'SMA': (('period',), (20,), ('',)), 'RSI': (('period',), (7,), ('',)),
+    'ATR': (('period',), (21,), ('',)), 'ROC': (('period',), (10,), ('',)), 'ZSCORE': (('period',), (50,), ('',)),
+    'DONCHIAN': (('period',), (55,), ('_high', '_low')), 'VWAP': (('period',), (50,), ('',)),
+    'BOLLINGER': (('period', 'deviations'), (20, 2.5), ('_mid', '_upper', '_lower')),
+    'MACD': (('fast', 'slow', 'signal'), (8, 21, 5), ('', '_signal', '_hist')),
+    'STOCH': (('period', 'smooth', 'signal'), (5, 3, 3), ('_k', '_d')),
+}
+
+
+def custom_key(kind: str, params: dict) -> str:
+    names, defaults, _ = CUSTOM_KINDS[kind]
+    vals = [params.get(n, d) for n, d in zip(names, defaults)]
+    def fmt(v) -> str:
+        v = float(v)
+        return str(int(v)) if v == int(v) else repr(v).rstrip('0').replace('.', 'p')  # 2.5 -> 2p5 (keys stay [a-z0-9_])
+    return kind.lower() + '_' + '_'.join(fmt(v) for v in vals)
+
+
+def custom_values(bars: list[dict], defs: list[dict]) -> dict[str, list]:
+    """Series for each custom indicator, keyed like ema_9, bollinger_20_2p5_upper, macd_8_21_5_hist."""
+    h = [b['high'] for b in bars]
+    lo = [b['low'] for b in bars]
+    c = [b['close'] for b in bars]
+    ticks = [float(b.get('ticks') or 0) for b in bars]
+    real = [float(b.get('volume') or 0) for b in bars]
+    vol = real if any(real) else ticks
+    out: dict[str, list] = {}
+    for d in defs:
+        kind, p = d['kind'], d.get('params') or {}
+        names, defaults, suffixes = CUSTOM_KINDS[kind]
+        v = [p.get(n, df) for n, df in zip(names, defaults)]
+        key = custom_key(kind, p)
+        series = {
+            'EMA': lambda: (ind.ema(c, int(v[0])),), 'SMA': lambda: (ind.sma(c, int(v[0])),), 'RSI': lambda: (ind.rsi(c, int(v[0])),),
+            'ATR': lambda: (ind.atr(h, lo, c, int(v[0])),), 'ROC': lambda: (ind.roc(c, int(v[0])),), 'ZSCORE': lambda: (ind.zscore(c, int(v[0])),),
+            'DONCHIAN': lambda: ind.donchian(h, lo, int(v[0])), 'VWAP': lambda: (ind.vwap(h, lo, c, vol, int(v[0])),),
+            'BOLLINGER': lambda: ind.bollinger(c, int(v[0]), float(v[1])), 'MACD': lambda: ind.macd(c, int(v[0]), int(v[1]), int(v[2])),
+            'STOCH': lambda: ind.stochastic(h, lo, c, int(v[0]), int(v[1]), int(v[2])),
+        }[kind]()
+        for suffix, values in zip(suffixes, series):
+            out[key + suffix] = values
+    return out
+
+
+def custom_definitions() -> list[dict]:
+    try:
+        with store.transaction('read') as db:
+            return [dict(r) for r in db.execute('SELECT kind, params, timeframes FROM intel_indicators WHERE enabled').fetchall()]
+    except Exception:  # noqa: BLE001 - not migrated yet
+        return []
 
 
 def _round(f: dict) -> dict:
@@ -114,7 +186,7 @@ def _instruments(db) -> list[dict]:
 
 
 def _load(db, account_id, symbol: str, tf: str) -> list[dict]:
-    rows = db.execute('SELECT bar_time, open, high, low, close, ticks FROM md_bars WHERE account_id=%s AND broker_symbol=%s AND timeframe=%s '
+    rows = db.execute('SELECT bar_time, open, high, low, close, ticks, volume, spread_avg FROM md_bars WHERE account_id=%s AND broker_symbol=%s AND timeframe=%s '
                       'AND complete ORDER BY bar_time DESC LIMIT %s', (account_id, symbol, tf, M1_LIMIT if tf == 'M1' else WINDOW)).fetchall()
     return [dict(r) for r in reversed(rows)]
 
@@ -128,18 +200,19 @@ def settings() -> dict:
         return dict(DEFAULTS)
 
 
-def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TIMEFRAMES) -> tuple[int, int]:
+def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TIMEFRAMES, custom: list[dict] | None = None) -> tuple[int, int]:
     """Recompute every timeframe of one instrument; returns (snapshots written, history rows written)."""
     with store.transaction('read') as db:
         m1 = _load(db, account_id, symbol, 'M1')
         native = {tf: _load(db, account_id, symbol, tf) for tf in TIMEFRAMES if tf != 'M1'}
         # History is per feature version: a new version starts its own history from the stored bars.
-        last = {r['timeframe']: r['bar_time'] for r in db.execute(
-            'SELECT timeframe, max(bar_time) AS bar_time FROM intel_features WHERE account_id=%s AND broker_symbol=%s AND version=%s GROUP BY 1',
-            (account_id, symbol, ind.FEATURE_VERSION)).fetchall()}
+        latest = {r['timeframe']: r for r in db.execute(
+            'SELECT DISTINCT ON (timeframe) timeframe, bar_time, features FROM intel_features WHERE account_id=%s AND broker_symbol=%s AND version=%s '
+            'ORDER BY timeframe, bar_time DESC', (account_id, symbol, ind.FEATURE_VERSION)).fetchall()}
         snap_last = {r['timeframe']: r['bar_time'] for r in db.execute(
             'SELECT timeframe, bar_time FROM intel_snapshot WHERE account_id=%s AND broker_symbol=%s', (account_id, symbol)).fetchall()}
     snaps = hist = 0
+    custom = custom_definitions() if custom is None else custom
     for tf in timeframes:
         built = resample(m1, tf)
         nat = native.get(tf) or []
@@ -148,7 +221,7 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
         source = 'BROKER' if use_native else 'M1'
         if not bars:
             continue
-        rows = features(bars, tf)
+        rows = features(bars, tf, [d for d in custom if tf in (d.get('timeframes') or TIMEFRAMES)])
         f = _round(rows[-1])
         cls = regime.classify(f, len(bars))
         bar_time = bars[-1]['bar_time']
@@ -170,12 +243,17 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
                         cls['confidence'], Jsonb(cls['reasons']), sessions.sessions_at(bar_time)['label']))
             snaps += 1
             if tf in HISTORY_TIMEFRAMES:
-                since = last.get(tf)
+                stored = latest.get(tf)
+                # A custom indicator added since the last run: rewrite the window so its history starts now, not at the next bar.
+                missing = stored is not None and not set(f) <= set(stored['features'] or {})
+                since = None if stored is None or missing else stored['bar_time']
                 new = [(b, r) for b, r in zip(bars, rows) if since is None or b['bar_time'] > since]
                 if new:
                     with db.cursor() as cur:
                         cur.executemany("""INSERT INTO intel_features(account_id, broker_symbol, timeframe, bar_time, version, features, regime)
-                                           VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                                           VALUES (%s,%s,%s,%s,%s,%s,%s)
+                                           ON CONFLICT (account_id, broker_symbol, timeframe, bar_time, version)
+                                           DO UPDATE SET features = intel_features.features || EXCLUDED.features""",
                                         [(account_id, symbol, tf, b['bar_time'], ind.FEATURE_VERSION, Jsonb(_round(r)),
                                           regime.classify(_round(r), k + 1 + (len(bars) - len(new)))['regime'])
                                          for k, (b, r) in enumerate(new)])
@@ -195,9 +273,10 @@ def refresh_all(force: bool = False) -> dict:
     tfs = tuple(tf for tf in TIMEFRAMES if tf in (cfg.get('timeframes') or TIMEFRAMES))
     with store.transaction('read') as db:
         items = [it for it in _instruments(db) if (str(it['account_id']), it['broker_symbol']) not in skip]
+    custom = custom_definitions()
     for it in items:
         try:
-            s, h = refresh_instrument(it['account_id'], it['broker_symbol'], tfs)
+            s, h = refresh_instrument(it['account_id'], it['broker_symbol'], tfs, custom)
             snaps, hist = snaps + s, hist + h
         except Exception as exc:  # noqa: BLE001 - one instrument must not stop the others
             log.exception('Feature refresh failed for %s', it['broker_symbol'])

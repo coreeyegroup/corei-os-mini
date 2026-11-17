@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-FEATURE_VERSION = 2  # 2: + MACD, stochastic, Donchian, z-score. Bump when any definition below changes; stored with every feature row
+FEATURE_VERSION = 3  # 2: + MACD, stochastic, Donchian, z-score; 3: + volume (tick and real), relative volume, VWAP, OBV, bar spread. Bump when any definition below changes; stored with every feature row
 
 
 def sma(values: Sequence[float], n: int) -> list[float | None]:
@@ -200,3 +200,30 @@ def zscore(closes: Sequence[float], n: int = 20) -> list[float | None]:
         sd = math.sqrt(sum((x - m) ** 2 for x in w) / n)
         out[i] = 0.0 if sd == 0 else (closes[i] - m) / sd
     return out
+
+
+def vwap(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], volumes: Sequence[float], n: int = 20) -> list[float | None]:
+    """Rolling volume-weighted average of the typical price (H+L+C)/3 over n bars (tick volume when the source has no
+    real volume)."""
+    out: list[float | None] = [None] * len(closes)
+    for i in range(n - 1, len(closes)):
+        v = sum(volumes[i - n + 1:i + 1])
+        if v > 0:
+            out[i] = sum((highs[j] + lows[j] + closes[j]) / 3 * volumes[j] for j in range(i - n + 1, i + 1)) / v
+    return out
+
+
+def obv(closes: Sequence[float], volumes: Sequence[float]) -> list[float | None]:
+    """On-balance volume: + volume on an up close, − on a down close, cumulative from the first bar of the window."""
+    out: list[float | None] = [None] * len(closes)
+    total = 0.0
+    for i in range(len(closes)):
+        if i:
+            total += volumes[i] if closes[i] > closes[i - 1] else -volumes[i] if closes[i] < closes[i - 1] else 0.0
+        out[i] = total
+    return out
+
+
+def roc(closes: Sequence[float], n: int) -> list[float | None]:
+    """Rate of change over n bars, percent."""
+    return [None if i < n or not closes[i - n] else 100 * (closes[i] / closes[i - n] - 1) for i in range(len(closes))]

@@ -5,7 +5,8 @@ when something happens on a feature ("RSI 14 on H1 crosses below 30", "regime be
 90"), and the scheduled events that move markets, so a screen can flag "event risk" before a release.
 Purpose: storage and checks for those three, every change audited in the same transaction, plus rule evaluation
 called by the engine after each closed bar.
-Responsibilities: watchlist CRUD; rule CRUD, evaluate() with cooldown and one fire per bar, alert queueing;
+Responsibilities: watchlist CRUD; custom indicator definitions CRUD (EMA 9, Bollinger 20/2.5… per strategy, beside the
+standard baseline); rule CRUD (a number or another feature as the threshold, e.g. ema_9 crosses above ema_21), evaluate() with cooldown and one fire per bar, alert queueing;
 calendar add/delete/CSV import, upcoming events and the per-instrument event-risk check.
 Must never: place or change orders, or fire twice for the same bar.
 Dependencies: config_store (database, audit), alerts (queueing), intel.analytics (currencies of a symbol).
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID, uuid4
@@ -29,7 +31,13 @@ from .analytics import currencies_of
 
 FIELDS = ('close', 'ema20', 'ema50', 'ema200', 'rsi14', 'atr14', 'atr_pct', 'atr_pct_rank100', 'bb_width_pct', 'adx14', 'plus_di', 'minus_di',
           'er20', 'rv20_pct', 'range_pos20', 'ret_1_pct', 'ret_20_pct', 'macd', 'macd_signal', 'macd_hist', 'stoch_k', 'stoch_d', 'zscore20',
+          'tick_volume', 'volume', 'rel_volume20', 'vwap20', 'vwap_dev_pct', 'obv', 'spread_bar',
           'regime', 'volatility')
+CUSTOM_FIELD = re.compile(r'^(ema|sma|rsi|atr|roc|zscore|donchian|vwap|bollinger|macd|stoch)(_[0-9p]+)+(_[a-z]+)?$')
+
+
+def known_field(v: str) -> bool:
+    return v in FIELDS or bool(CUSTOM_FIELD.match(v or ''))
 
 
 # ---------- watchlists ----------
@@ -84,6 +92,85 @@ def delete_watchlist(actor: str, wid: UUID) -> None:
         store.audit(db, actor, 'INTEL_WATCHLIST_DELETE', 'intel_watchlist', wid, store.clean(before), None)
 
 
+# ---------- custom indicators ----------
+
+KINDS = ('EMA', 'SMA', 'RSI', 'ATR', 'ROC', 'ZSCORE', 'DONCHIAN', 'VWAP', 'BOLLINGER', 'MACD', 'STOCH')
+LIMITS = {'period': (2, 500), 'fast': (2, 200), 'slow': (3, 500), 'signal': (2, 100), 'smooth': (1, 50), 'deviations': (0.5, 5)}
+
+
+class IndicatorIn(BaseModel):
+    kind: Literal['EMA', 'SMA', 'RSI', 'ATR', 'ROC', 'ZSCORE', 'DONCHIAN', 'VWAP', 'BOLLINGER', 'MACD', 'STOCH']
+    params: dict = Field(default_factory=dict)
+    timeframes: list[Literal['M1', 'M5', 'M15', 'H1', 'H4', 'D1']] = Field(default_factory=lambda: ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'], min_length=1)
+    label: str = Field(default='', max_length=80)   # e.g. "Scalper fast EMA"
+    enabled: bool = True
+
+    @model_validator(mode='after')
+    def _params(self) -> 'IndicatorIn':
+        from .engine import CUSTOM_KINDS
+        names, defaults, _ = CUSTOM_KINDS[self.kind]
+        clean = {}
+        for n, d in zip(names, defaults):
+            v = self.params.get(n, d)
+            try:
+                v = float(v) if n == 'deviations' else int(v)
+            except (TypeError, ValueError):
+                raise ValueError(f'{n} must be a number.') from None
+            lo, hi = LIMITS[n]
+            if not lo <= v <= hi:
+                raise ValueError(f'{n} must be between {lo} and {hi}.')
+            clean[n] = v
+        if self.kind == 'MACD' and clean['fast'] >= clean['slow']:
+            raise ValueError('MACD fast must be shorter than slow.')
+        self.params = clean
+        self.timeframes = sorted(set(self.timeframes), key=['M1', 'M5', 'M15', 'H1', 'H4', 'D1'].index)
+        return self
+
+
+def indicators() -> list[dict]:
+    from .engine import CUSTOM_KINDS, custom_key
+    with store.transaction('read') as db:
+        rows = [store.clean(r) for r in db.execute('SELECT * FROM intel_indicators ORDER BY kind, key').fetchall()]
+    for r in rows:
+        r['outputs'] = [r['key'] + s for s in CUSTOM_KINDS[r['kind']][2]]
+    return rows
+
+
+def save_indicator(actor: str, data: IndicatorIn, iid: UUID | None = None, version: int | None = None) -> dict:
+    from .engine import custom_key
+    key = custom_key(data.kind, data.params)
+    with store.transaction('write') as db:
+        clash = db.execute('SELECT id FROM intel_indicators WHERE key=%s', (key,)).fetchone()
+        if clash and (iid is None or clash['id'] != iid):
+            raise HTTPException(409, f'{key} is already defined: edit that one (add timeframes there) instead.')
+        if iid is None:
+            iid = uuid4()
+            db.execute('INSERT INTO intel_indicators(id, key, kind, params, timeframes, label, enabled, created_by, updated_by) '
+                       'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                       (iid, key, data.kind, Jsonb(data.params), Jsonb(data.timeframes), data.label, data.enabled, actor, actor))
+            before = None
+        else:
+            before = db.execute('SELECT * FROM intel_indicators WHERE id=%s FOR UPDATE', (iid,)).fetchone()
+            if not before:
+                raise HTTPException(404, 'Indicator not found.')
+            if version is not None and before['version'] != version:
+                raise HTTPException(409, 'This indicator was changed by someone else: reload and try again.')
+            db.execute('UPDATE intel_indicators SET key=%s, kind=%s, params=%s, timeframes=%s, label=%s, enabled=%s, version=version+1, '
+                       'updated_by=%s, updated_at=now() WHERE id=%s',
+                       (key, data.kind, Jsonb(data.params), Jsonb(data.timeframes), data.label, data.enabled, actor, iid))
+        after = db.execute('SELECT * FROM intel_indicators WHERE id=%s', (iid,)).fetchone()
+        store.audit(db, actor, 'INTEL_INDICATOR', 'intel_indicator', iid, store.clean(before) if before else None, store.clean(after))
+        return store.clean(after)
+
+
+def delete_indicator(actor: str, iid: UUID) -> None:
+    with store.transaction('delete') as db:
+        before = db.execute('DELETE FROM intel_indicators WHERE id=%s RETURNING *', (iid,)).fetchone()
+        if not before:
+            raise HTTPException(404, 'Indicator not found.')
+        store.audit(db, actor, 'INTEL_INDICATOR_DELETE', 'intel_indicator', iid, store.clean(before), None)
+
+
 # ---------- rules ----------
 
 class RuleIn(BaseModel):
@@ -101,8 +188,8 @@ class RuleIn(BaseModel):
     @field_validator('field')
     @classmethod
     def _field(cls, v: str) -> str:
-        if v not in FIELDS:
-            raise ValueError(f"Unknown feature. One of: {', '.join(FIELDS)}")
+        if not known_field(v):
+            raise ValueError(f"Unknown feature. One of: {', '.join(FIELDS)}, or a custom indicator key such as ema_9")
         return v
 
     @field_validator('scope')
@@ -125,7 +212,8 @@ class RuleIn(BaseModel):
             try:
                 float(self.value)
             except ValueError:
-                raise ValueError('The value must be a number for this feature.') from None
+                if not known_field(self.value) or self.value in ('regime', 'volatility'):
+                    raise ValueError('The value must be a number or another numeric feature (e.g. ema_21).') from None
         else:
             self.value = self.value.upper()
         return self
@@ -176,12 +264,22 @@ def fires(limit: int = 100) -> list[dict]:
                                                       ORDER BY f.fired_at DESC LIMIT %s""", (limit,)).fetchall()]
 
 
-def _hit(op: str, value: str, now, prev) -> bool:
+def _threshold(value: str, row: dict | None):
+    """A rule's threshold: a number, or another feature of the same bar (ema_9 crosses above ema_21)."""
+    try:
+        return float(value)
+    except ValueError:
+        return (row or {}).get(value)
+
+
+def _hit(op: str, value: str, now, prev, now_row: dict | None = None, prev_row: dict | None = None) -> bool:
     if op == 'BECOMES':
         return now == value and prev != value
     if now is None:
         return False
-    x = float(value)
+    x = _threshold(value, now_row)
+    if x is None:
+        return False
     if op == '>':
         return now > x
     if op == '<':
@@ -192,7 +290,10 @@ def _hit(op: str, value: str, now, prev) -> bool:
         return now <= x
     if prev is None:
         return False
-    return (prev <= x < now) if op == 'CROSSES_ABOVE' else (prev >= x > now)
+    px = _threshold(value, prev_row)
+    if px is None:
+        return False
+    return (prev <= px and now > x) if op == 'CROSSES_ABOVE' else (prev >= px and now < x)
 
 
 def evaluate(db, account_id, symbol: str, timeframe: str, bar_time, now: dict, prev: dict | None) -> int:
@@ -212,7 +313,7 @@ def evaluate(db, account_id, symbol: str, timeframe: str, bar_time, now: dict, p
             if not wl or not any(i['account_id'] == str(account_id) and i['broker_symbol'] == symbol for i in wl['items']):
                 continue
         cur, before = now.get(r['field']), (prev or {}).get(r['field'])
-        if not _hit(r['op'], r['value'], cur, before):
+        if not _hit(r['op'], r['value'], cur, before, now, prev):
             continue
         if r['cooldown_minutes']:
             recent = db.execute('SELECT 1 FROM intel_rule_fires WHERE rule_id=%s AND account_id=%s AND broker_symbol=%s '

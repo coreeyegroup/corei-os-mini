@@ -1,38 +1,47 @@
-/* Stage 2 · Market intelligence: the screener (ranked universe from the feature store), one instrument across every
- * timeframe, the session map, and select & compare. Analysis board (every source × instrument, pickers, filters, 26 columns, grouping, 1/2/4 charts with compare,
- * time & sales, the same instrument from every source, CSV) · Stage map (components and build state). */
-import { useEffect, useState } from 'react';
+/* Stage 2 · Market intelligence, the screen.
+ * Why: one place to look at, analyse, watch and configure what the collected market data says.
+ * Purpose: the grouped navigation (Overview · Analyse · Monitor · Configure, also in the side bar), the sign-in, and
+ * which section shows. Sections live in IntelBoard (dashboard, screener, instrument, sessions, engine settings),
+ * IntelWorkspace (sources, correlation, strength, watchlists, rules, calendar, indicators), MarketBoard (select &
+ * compare) and Pipeline (stage map).
+ * Must never: change market data or orders. */
+import { Fragment, useEffect, useState } from 'react';
 import { addReauthHandler, api } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import { SignIn } from './Infrastructure';
-import { IntelDashboard, InstrumentView, Screener, SessionsView } from './IntelBoard';
-import { CalendarView, CorrelationView, RulesView, SourcesView, StrengthView, WatchlistsView } from './IntelWorkspace';
+import { EngineSettings, IntelDashboard, InstrumentView, Screener, SessionsView } from './IntelBoard';
+import { CalendarView, CorrelationView, IndicatorsView, RulesView, SourcesView, StrengthView, WatchlistsView } from './IntelWorkspace';
 import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
-import { useSection } from './nav';
+import { INTEL_GROUPS, useSection } from './nav';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
-type Tab = 'dashboard' | 'screener' | 'instrument' | 'sources' | 'correlation' | 'strength' | 'watchlists' | 'rules' | 'calendar' | 'sessions' | 'compare' | 'stage';
-const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: 'dashboard', label: 'Dashboard', hint: 'Coverage, regime mix per timeframe, what needs history (one click), top attention, biggest moves, and the engine controls.' },
-  { id: 'screener', label: 'Screener', hint: 'Every collected instrument ranked for attention: regime, volatility, trend, momentum, cost against ATR and feed quality, from the shared feature store (closed bars, recomputed every minute).' },
-  { id: 'instrument', label: 'Instrument', hint: 'One instrument across every timeframe: regime and the reasons, indicators, chart with EMA and Bollinger bands, regime strip and RSI; CSV of the feature history.' },
-  { id: 'sources', label: 'Sources', hint: 'One instrument from every broker account side by side: price, deviation from the other sources, spread, feed quality, latency; the cheapest, fastest and cleanest source.' },
-  { id: 'correlation', label: 'Correlation', hint: 'How the collected instruments move together (correlation of returns), per timeframe and window.' },
-  { id: 'strength', label: 'Strength', hint: 'Currency strength: each currency\'s average move against the others, from every FX pair collected.' },
-  { id: 'watchlists', label: 'Watchlists', hint: 'Named groups of instruments across brokers and accounts; filter the screener and scope rules with them.' },
-  { id: 'rules', label: 'Rules & alerts', hint: 'Conditions on features (RSI crosses 30, regime becomes trend, ATR rank above 90…) checked on every closed bar; fired rules and alerts.' },
-  { id: 'calendar', label: 'Calendar', hint: 'Economic events and holidays (add or import CSV); high-impact events flag event risk on the instruments in those currencies.' },
-  { id: 'sessions', label: 'Sessions', hint: 'Which trading centres are open now, overlaps, rollover and the weekend close, and the next changes.' },
-  { id: 'compare', label: 'Select & compare', hint: 'Choose sources and instruments for analysis, compare them side by side, chart and overlay sources. Data comes from Stage 1 · Market data.' },
-  { id: 'stage', label: 'Stage map', hint: 'What this stage does, its components and how far each is built.' },
-];
+type Tab = 'dashboard' | 'screener' | 'instrument' | 'sources' | 'correlation' | 'strength' | 'watchlists' | 'rules' | 'calendar' | 'sessions' | 'compare'
+  | 'indicators' | 'settings' | 'stage';
+const HINTS: Record<Tab, string> = {
+  dashboard: 'Coverage, regime mix per timeframe, what needs history (one click, or all at once), top attention, biggest moves, events and fired rules.',
+  screener: 'Every collected instrument ranked for attention, from the shared feature store (closed bars). Choose the columns: trend, momentum, volatility, volume, cost, feed quality and your own indicators.',
+  instrument: 'One instrument across every timeframe: regime and the reasons, every feature (standard and custom) on the chosen timeframe, chart with price, EMAs, Bollinger, volume and RSI; CSV of the history.',
+  sources: 'One instrument from every broker account side by side: price, deviation from the other sources, spread, feed quality, latency; the cheapest, fastest and cleanest source.',
+  correlation: 'How the collected instruments move together (correlation of returns), per timeframe and window.',
+  strength: 'Currency strength: each currency\'s average move against the others, from every FX pair collected.',
+  sessions: 'Which trading centres are open now, overlaps, rollover and the weekend close, and the next changes.',
+  compare: 'Choose sources and instruments, compare them side by side, chart and overlay sources. Data comes from Stage 1 · Market data.',
+  watchlists: 'Named groups of instruments across brokers and accounts; filter the screener and scope rules with them.',
+  rules: 'Conditions on any feature, against a number or another feature (EMA 9 crosses above EMA 21, RSI below 30, regime becomes trend…), checked on every closed bar; fired rules and alerts.',
+  calendar: 'Economic events and holidays (add or import CSV); high-impact events flag event risk on the instruments in those currencies.',
+  indicators: 'The standard set every screen shares, and your own indicators with the lengths each strategy needs (EMA 9/21, Bollinger 20/2.5, MACD 8/21/5…), per timeframe.',
+  settings: 'The feature engine: on or paused, how often it runs, which timeframes, which instruments, how long history is kept, the event-risk window.',
+  stage: 'What this stage does, its components and how far each is built.',
+};
+const LABELS = Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) as Record<Tab, string>;
+const TABS = Object.keys(HINTS) as Tab[];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
-  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'dashboard', TABS.map(t => t.id));
+  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'dashboard', TABS);
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const canEdit = (user?.roles ?? []).includes('TRADING_OPS') || (user?.roles ?? []).includes('ADMIN');
   const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
@@ -42,36 +51,39 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check(); window.addEventListener('corei-session', check); return () => window.removeEventListener('corei-session', check);
   }, []);
-  if (tab === 'stage') return <div className="cfg md"><Tabs tab={tab} setTab={setTab} user={user?.username} /><Stage view="Intelligence" open={open} /></div>;
+  const nav = <Nav tab={tab} setTab={setTab} />;
+  if (tab === 'stage') return <div className="cfg md">{nav}<Stage view="Intelligence" open={open} /></div>;
   if (user === undefined) return <div className="content"><p>Checking sign-in…</p></div>;
   if (user === null) return <SignIn title="MARKET INTELLIGENCE" done={s => setUser(s)} />;
-  const current = TABS.find(t => t.id === tab)!;
+  const openInstrument = (r: Record<string, any>) => { setPick(r); setTab('instrument'); };
   return <div className="cfg md">
-    <Tabs tab={tab} setTab={setTab} user={user.username} />
+    {nav}
     <section className="cfg-main">
-      <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
+      <header className="cfg-head"><div><h1>{LABELS[tab]}</h1><p>{HINTS[tab]}</p></div></header>
       <div className="cfg-pane">
-        {tab === 'dashboard' && <IntelDashboard canEdit={(user.roles ?? []).includes('TRADING_OPS') || (user.roles ?? []).includes('ADMIN')}
-          openInstrument={r => { setPick(r); setTab('instrument'); }} gotoScreener={() => setTab('screener')} />}
-        {tab === 'screener' && <Screener canRefresh={(user.roles ?? []).includes('TRADING_OPS') || (user.roles ?? []).includes('ADMIN')} openInstrument={r => { setPick(r); setTab('instrument'); }} />}
+        {tab === 'dashboard' && <IntelDashboard canEdit={canEdit} openInstrument={openInstrument} gotoScreener={() => setTab('screener')} gotoSettings={() => setTab('settings')} />}
+        {tab === 'screener' && <Screener canRefresh={canEdit} openInstrument={openInstrument} />}
         {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}
         {tab === 'sources' && <SourcesView />}
         {tab === 'correlation' && <CorrelationView />}
         {tab === 'strength' && <StrengthView />}
+        {tab === 'sessions' && <SessionsView />}
+        {tab === 'compare' && <MarketBoard />}
         {tab === 'watchlists' && <WatchlistsView canEdit={canEdit} />}
         {tab === 'rules' && <RulesView canEdit={canEdit} />}
         {tab === 'calendar' && <CalendarView canEdit={canEdit} />}
-        {tab === 'sessions' && <SessionsView />}
-        {tab === 'compare' && <MarketBoard />}
+        {tab === 'indicators' && <IndicatorsView canEdit={canEdit} />}
+        {tab === 'settings' && <EngineSettings canEdit={canEdit} />}
       </div>
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }
 
-function Tabs({ tab, setTab, user }: { tab: Tab; setTab: (t: Tab) => void; user?: string }) {
-  return <div className="cfg-topbar"><span className="eyebrow">2 · MARKET INTELLIGENCE</span>
-    <nav className="cfg-nav" aria-label="Market intelligence sections">{TABS.map(t =>
-      <button key={t.id} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}><span>{t.label}</span></button>)}</nav>
-    <div className="cfg-user">{user ?? ''}</div></div>;
+/* One compact line, grouped like the side bar (which replaces it when the side bar is shown). */
+function Nav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
+  return <nav className="cfg-nav" aria-label="Market intelligence sections">
+    {INTEL_GROUPS.map(([g, items]) => <Fragment key={g}><span className="cfg-nav-group">{g}</span>
+      {items.map(([id, label]) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id as Tab)}><span>{label}</span></button>)}</Fragment>)}
+  </nav>;
 }

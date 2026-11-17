@@ -188,22 +188,65 @@ def put_settings(payload: dict, user: Principal = Depends(_ops)):
 
 
 class HistoryIn(BaseModel):
-    plan_id: UUID
-    reason: str = Field(min_length=5, max_length=500)
+    plan_id: UUID | None = None   # None: every collected instrument that is still warming up
+    reason: str = Field(default='Market intelligence: history for warming-up timeframes', min_length=5, max_length=500)
 
 
 @router.post('/history')
 def get_history(payload: dict, user: Principal = Depends(_ops)):
-    """One click for a warming-up instrument: backfill 14 days of M1 (builds M5…H1) and a year of H4 and D1 from the broker."""
+    """One click: backfill 14 days of M1 (builds M5…H1) and a year of H4 and D1 from the broker, for one plan or for
+    every instrument still warming up. Instruments that already have a queued or running job are skipped."""
     from .config_api import parse
     from .md import plans
     data = parse(HistoryIn, payload)
+    if data.plan_id:
+        plan_ids = [data.plan_id]
+    else:
+        with store.transaction('read') as db:
+            plan_ids = [r['plan_id'] for r in db.execute("""
+                SELECT DISTINCT p.id AS plan_id FROM md_collection_plans p
+                JOIN intel_snapshot s ON s.account_id = p.account_id AND s.broker_symbol = p.broker_symbol AND s.regime = 'WARMING_UP'
+                WHERE p.status <> 'ARCHIVED'
+                  AND NOT EXISTS (SELECT 1 FROM md_jobs j WHERE j.plan_id = p.id AND j.status IN ('QUEUED', 'RUNNING'))""").fetchall()]
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    jobs = []
-    for tf, days in (('M1', 14), ('H4', 365), ('D1', 365)):
-        jobs.append(plans.create_job(user.username, plans.BackfillIn(plan_id=data.plan_id, timeframe=tf, range_from=now - timedelta(days=days),
-                                                                      range_to=now, reason=data.reason)))
-    return {'jobs': jobs}
+    jobs, skipped = [], []
+    for pid in plan_ids:
+        for tf, days in (('M1', 14), ('H4', 365), ('D1', 365)):
+            try:
+                jobs.append(plans.create_job(user.username, plans.BackfillIn(plan_id=pid, timeframe=tf, range_from=now - timedelta(days=days),
+                                                                              range_to=now, reason=data.reason)))
+            except HTTPException as exc:
+                if data.plan_id:
+                    raise
+                skipped.append({'plan_id': str(pid), 'timeframe': tf, 'reason': exc.detail})
+    return {'jobs': jobs, 'plans': len(plan_ids), 'skipped': skipped}
+
+
+# ----- Custom indicators -----
+
+@router.get('/indicators')
+def list_indicators(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    kinds = {k: {'params': dict(zip(v[0], v[1])), 'outputs': list(v[2])} for k, v in engine.CUSTOM_KINDS.items()}
+    return {'items': workspace.indicators(), 'kinds': kinds, 'standard': list(workspace.FIELDS[:-2])}
+
+
+@router.post('/indicators', status_code=201)
+def create_indicator(payload: dict, user: Principal = Depends(_ops)):
+    from .config_api import parse
+    return workspace.save_indicator(user.username, parse(workspace.IndicatorIn, payload))
+
+
+@router.put('/indicators/{iid}')
+def update_indicator(iid: UUID, payload: dict, user: Principal = Depends(_ops)):
+    from .config_api import parse
+    version = payload.pop('version', None)
+    return workspace.save_indicator(user.username, parse(workspace.IndicatorIn, payload), iid, version)
+
+
+@router.delete('/indicators/{iid}', status_code=204)
+def remove_indicator(iid: UUID, user: Principal = Depends(_ops)):
+    workspace.delete_indicator(user.username, iid)
 
 
 # ----- Multi-source, correlation, currency strength -----
@@ -275,7 +318,8 @@ def remove_watchlist(wid: UUID, user: Principal = Depends(_ops)):
 @router.get('/rules')
 def list_rules(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
-    return {'items': workspace.rules(), 'fields': list(workspace.FIELDS)}
+    custom = [o for i in workspace.indicators() if i['enabled'] for o in i['outputs']]
+    return {'items': workspace.rules(), 'fields': list(workspace.FIELDS) + custom}
 
 
 @router.post('/rules', status_code=201)

@@ -941,3 +941,18 @@ instrument from every broker account: deviation, spread, latency, quality, best 
 INTEL_RULE for Setup › Alerts channels) · **Calendar** (add or import CSV) · Sessions · Select & compare. Feature
 version 2 adds MACD, stochastic, Donchian and z-score. Migration 029. The COREI EA 1.01 (terminal push) works as an
 account route with its own token; quotes are stamped with COREI's receipt time.
+
+## Market intelligence v3 and the terminal pool — release 0.42.0
+
+**Market intelligence** is grouped as Overview (Dashboard, Screener, Instrument) · Analyse (Sources, Correlation,
+Currency strength, Sessions, Select & compare) · Monitor (Watchlists, Rules & alerts, Calendar) · Configure
+(Indicators, Engine settings, Stage map), in the top line and in the side bar. Feature version 3 adds **volume**: tick
+and real volume, relative volume, VWAP 20 and deviation from it, OBV, and the bar's average spread (the chart has a
+volume panel). **Indicators** keeps the standard set fixed and adds custom indicators per strategy (EMA 9/21,
+Bollinger 20/2.5, MACD 8/21/5…) per timeframe; rules can compare a feature with another (ema_9 crosses above ema_21)
+and start from templates. The **Screener** has a column chooser with presets and CSV export. **Get history** needs no
+typed reason and has *Get history for all*. Plans have a *Collect everything* button. Migration 030.
+
+**Many accounts** (DEC-73): market data is collected once per broker server; account reads rotate through the bridge's
+terminal pool (`--max-terminals`, default 20, least-recently-used idle terminal closed first, streaming terminals never
+closed); dedicated terminals only for trading accounts; more bridge nodes for more capacity.

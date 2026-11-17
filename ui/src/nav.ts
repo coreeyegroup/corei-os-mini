@@ -81,6 +81,8 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Intelligence', section: 'strength', label: 'Intelligence › Strength', group: 'Trading flow', keywords: 'currency strength meter fx' },
   { view: 'Intelligence', section: 'watchlists', label: 'Intelligence › Watchlists', group: 'Trading flow', keywords: 'lists groups' },
   { view: 'Intelligence', section: 'rules', label: 'Intelligence › Rules & alerts', group: 'Trading flow', keywords: 'conditions alerts rsi cross regime' },
+  { view: 'Intelligence', section: 'indicators', label: 'Intelligence › Indicators', group: 'Trading flow', keywords: 'ema sma custom period bollinger macd vwap volume strategy' },
+  { view: 'Intelligence', section: 'settings', label: 'Intelligence › Engine settings', group: 'Trading flow', keywords: 'engine cycle pause timeframes retention exclude' },
   { view: 'Intelligence', section: 'calendar', label: 'Intelligence › Calendar', group: 'Trading flow', keywords: 'economic events news holidays cpi nfp csv' },
   { view: 'Signals', label: '3 Signals', group: 'Trading flow', keywords: 'signal decision intent' },
   { view: 'Strategies', label: '4 Strategies', group: 'Trading flow' },
@@ -128,6 +130,13 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
   ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],
   ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log'], ['database', 'Database']]],
+];
+/** Market intelligence, in the order an analyst works: look, analyse, watch, configure. */
+export const INTEL_GROUPS: [string, [string, string][]][] = [
+  ['Overview', [['dashboard', 'Dashboard'], ['screener', 'Screener'], ['instrument', 'Instrument']]],
+  ['Analyse', [['sources', 'Sources'], ['correlation', 'Correlation'], ['strength', 'Currency strength'], ['sessions', 'Sessions'], ['compare', 'Select & compare']]],
+  ['Monitor', [['watchlists', 'Watchlists'], ['rules', 'Rules & alerts'], ['calendar', 'Calendar']]],
+  ['Configure', [['indicators', 'Indicators'], ['settings', 'Engine settings'], ['stage', 'Stage map']]],
 ];
 export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
 /** The side-bar row a Setup section belongs to (the record lists highlight "Connectivity"). */

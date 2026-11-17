@@ -205,6 +205,9 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
         {account && account.platform !== 'MT5' && <p className="cfg-note">The collector for {account.platform} accounts is not built yet; the plan is kept and starts when it is.</p>}
       </div></section>
       <section className="cfg-section"><h4><span>2</span>Data</h4><div className="cfg-section-body">
+        <div className="cfg-actions"><button type="button" title="Every price update, bars on every timeframe (with tick and real volume and the bar spread), and order-book depth where the broker publishes it"
+          onClick={() => setF({ ...f, data_types: ['QUOTES', 'BARS', 'DEPTH'], bar_timeframes: [...FRAMES], depth_levels: f.depth_levels || 10, conflate_ms: 0 })}>Collect everything</button>
+          <small className="cfg-note">Bars always carry open, high, low, close, tick volume, real volume (exchange instruments) and the average spread.</small></div>
         <Field label="Collect"><div className="cfg-checks">{[['QUOTES', 'Every price update (bid/ask)'], ['BARS', 'Bars'], ['DEPTH', 'Order-book depth']].map(([v, l]) =>
           <label key={v}><input type="checkbox" checked={f.data_types.includes(v)} onChange={() => toggle('data_types', v)} /> {l}</label>)}</div></Field>
         {f.data_types.includes('BARS') && <Field label="Bar timeframes"><div className="cfg-checks">{FRAMES.map(t => <label key={t}><input type="checkbox" checked={f.bar_timeframes.includes(t)} onChange={() => toggle('bar_timeframes', t)} /> {t}</label>)}</div></Field>}
