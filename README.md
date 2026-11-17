@@ -1038,3 +1038,6 @@ command as above) so each deal reports why it happened.
 **0.45.3 — live audit fixes** (DEC-86, bridge 0.43.2): two bridges on one VPS port are resolved by the update script;
 certificate mismatches name the bridge that answered; orders and broker reads refuse a bridge older than 0.43 instead of
 waiting for it; paper-only accounts reconcile against their own fills; bridge nodes are checked every 5 minutes.
+
+**0.45.4 — everything on one page** (DEC-87): Market data, Market intelligence and every trading stage open on
+*Workspace (all)*: every panel — dashboards, work screens, monitors, settings — on one page, each closable, with an index.

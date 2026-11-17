@@ -15,13 +15,15 @@ import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
 import { INTEL_GROUPS, useSection } from './nav';
+import { Workspace } from './StageShell';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
-type Tab = 'dashboard' | 'screener' | 'instrument' | 'sources' | 'correlation' | 'strength' | 'watchlists' | 'rules' | 'calendar' | 'sessions' | 'compare'
+type Tab = 'workspace' | 'dashboard' | 'screener' | 'instrument' | 'sources' | 'correlation' | 'strength' | 'watchlists' | 'rules' | 'calendar' | 'sessions' | 'compare'
   | 'indicators' | 'settings' | 'stage';
 const HINTS: Record<Tab, string> = {
+  workspace: 'Every panel of market intelligence on one page — dashboard, screener, analysis, monitors and settings — each opens and closes.',
   dashboard: 'Coverage, regime mix per timeframe, what needs history (one click, or all at once), top attention, biggest moves, events and fired rules.',
   screener: 'Every collected instrument ranked for attention, from the shared feature store (closed bars). Choose the columns: trend, momentum, volatility, volume, cost, feed quality and your own indicators.',
   instrument: 'One instrument across every timeframe: regime and the reasons, every feature (standard and custom) on the chosen timeframe, chart with price, EMAs, Bollinger, volume and RSI; CSV of the history.',
@@ -37,15 +39,15 @@ const HINTS: Record<Tab, string> = {
   settings: 'The feature engine: on or paused, how often it runs, which timeframes, which instruments, how long history is kept, the event-risk window.',
   stage: 'What this stage does, its components and how far each is built.',
 };
-const LABELS = Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) as Record<Tab, string>;
+const LABELS = { workspace: 'Workspace (all)', ...Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) } as Record<Tab, string>;
 const TABS = Object.keys(HINTS) as Tab[];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
-  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'dashboard', TABS);
+  const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'workspace', TABS);
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const canEdit = (user?.roles ?? []).includes('TRADING_OPS') || (user?.roles ?? []).includes('ADMIN');
   const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
-  useEffect(() => { if (tab === 'instrument') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
+  useEffect(() => { if (tab === 'instrument' || tab === 'workspace') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
@@ -56,11 +58,18 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
   if (user === undefined) return <div className="content"><p>Checking sign-in…</p></div>;
   if (user === null) return <SignIn title="MARKET INTELLIGENCE" done={s => setUser(s)} />;
   const openInstrument = (r: Record<string, any>) => { setPick(r); setTab('instrument'); };
+  const panel = (t: Tab) => t === 'dashboard' ? <IntelDashboard canEdit={canEdit} openInstrument={openInstrument} gotoScreener={() => setTab('screener')} gotoSettings={() => setTab('settings')} />
+    : t === 'screener' ? <Screener canRefresh={canEdit} openInstrument={openInstrument} /> : t === 'instrument' ? <InstrumentView pick={pick} items={items} setPick={setPick} />
+    : t === 'sources' ? <SourcesView /> : t === 'correlation' ? <CorrelationView /> : t === 'strength' ? <StrengthView /> : t === 'sessions' ? <SessionsView />
+    : t === 'compare' ? <MarketBoard /> : t === 'watchlists' ? <WatchlistsView canEdit={canEdit} /> : t === 'rules' ? <RulesView canEdit={canEdit} />
+    : t === 'calendar' ? <CalendarView canEdit={canEdit} /> : t === 'indicators' ? <IndicatorsView canEdit={canEdit} /> : t === 'settings' ? <EngineSettings canEdit={canEdit} /> : null;
   return <div className="cfg md">
     {nav}
     <section className="cfg-main">
       <header className="cfg-head"><div><h1>{LABELS[tab]}</h1><p>{HINTS[tab]}</p></div></header>
       <div className="cfg-pane">
+        {tab === 'workspace' && <Workspace view="Intelligence" groups={INTEL_GROUPS.map(([g]) => g)} alone={id => setTab(id as Tab)} sections={INTEL_GROUPS.flatMap(([g, items]) =>
+          items.filter(([id]) => id !== 'stage').map(([id, label]) => ({ id, label, group: g, hint: HINTS[id as Tab], render: () => panel(id as Tab) })))} />}
         {tab === 'dashboard' && <IntelDashboard canEdit={canEdit} openInstrument={openInstrument} gotoScreener={() => setTab('screener')} gotoSettings={() => setTab('settings')} />}
         {tab === 'screener' && <Screener canRefresh={canEdit} openInstrument={openInstrument} />}
         {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}

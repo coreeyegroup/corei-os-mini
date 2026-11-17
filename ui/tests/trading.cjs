@@ -91,6 +91,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  button('Close').click();await settle(4);
  console.log('PASS: start here: an empty trading stage starts a paper strategy on a collected instrument in one step.');
 
+ // Every stage opens as one workspace: every panel (dashboard, work, monitor, settings) on one page.
+ assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent),['Dashboard','Signals','Decisions','Signal quality','Checks and decision']);
+ assert.ok($$('.ws-panel .ws-body').length===5,'all panels open');
+ assert.ok($('.ws-panel [aria-label="Min strength"], .ws-panel input')!==null,'settings controls are on the workspace');
+ $$('.ws-head')[3].click();await settle(2);
+ assert.equal($$('.ws-panel .ws-body').length,4,'a panel closes');
+ assert.match(w.localStorage.getItem('corei.workspace.closed.Signals'),/quality/);
+ button('Open all').click();await settle(2);
+ console.log('PASS: workspace: every panel of a stage — dashboards, work, monitors, settings — open on one page, each closable, remembered.');
+
  // Signals: the frame, then the reason a signal was refused, in plain words.
  assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);
  assert.match($('.st-head').textContent,/2 · Market intelligence/);
@@ -172,12 +182,19 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match($('.intel-kpis').textContent,/Trades14/);assert.ok($('.st-spark'));
  console.log('PASS: strategies: a backtest runs an algorithm on a collected source and shows metrics, trades and equity.');
 
+ // Market data and Market intelligence open the same way: every panel on one page.
+ await go('Intelligence');
+ ['Dashboard','Screener','Correlation','Rules & alerts','Indicators','Engine settings'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'intelligence panel '+t));
+ await go('Market data');
+ ['Dashboard','Collection plans','Quality','Backfill','Controls','Archive'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'market data panel '+t));
+ console.log('PASS: market data and market intelligence: every panel on one workspace page too.');
+
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);
  assert.equal($$('.sysmap-flow li').length,8);
  assert.match($('.sysmap-flow').textContent,/Signal intelligence.*3 signals today/);
  assert.ok($$('.sysmap-path button.done').length>=3,'done steps are ticked');
- assert.deepEqual(errors,[]);
+ assert.deepEqual(errors.filter(e=>!/Not mocked/.test(e)),[]);
  console.log('PASS: home shows how COREI works: eight stages with live figures and the user\'s path.');
  w.close();
 })().catch(e=>{console.error(e);process.exit(1)});

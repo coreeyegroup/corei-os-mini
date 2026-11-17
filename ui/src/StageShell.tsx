@@ -13,6 +13,7 @@ import { PIPELINE, stageOf } from './flow';
 import type { View } from './layout';
 import { goto, publishSections, useSection } from './nav';
 import { StartHere } from './QuickStart';
+import ErrorBoundary from './ErrorBoundary';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
@@ -22,9 +23,35 @@ export type Section = { id: string; label: string; group: 'Overview' | 'Work' | 
 export type Ctx = { user: Row; canOps: boolean; canRisk: boolean; open: (section: string) => void };
 const GROUPS = ['Overview', 'Work', 'Monitor', 'Configure'] as const;
 
+/* Every section of the stage on one page, each a panel that opens and closes (remembered per viewer), with an index:
+ * all features, options and controls in view at once. One section alone is still a click away. */
+export type Panel = { id: string; label: string; group: string; hint: string; render: () => ReactNode };
+export function Workspace({ view, sections, alone, groups = GROUPS }: { view: View; sections: Panel[]; alone: (id: string) => void; groups?: readonly string[] }) {
+  const storeKey = `corei.workspace.closed.${view}`;
+  const [closed, setClosed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(storeKey) ?? '[]'); } catch { return []; } });
+  const save = (next: string[]) => { setClosed(next); try { localStorage.setItem(storeKey, JSON.stringify(next)); } catch { /* private window */ } };
+  const toggle = (id: string) => save(closed.includes(id) ? closed.filter(x => x !== id) : [...closed, id]);
+  const jump = (id: string) => { if (closed.includes(id)) save(closed.filter(x => x !== id)); window.setTimeout(() => document.getElementById(`ws-${view}-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); };
+  return <div className="ws">
+    <nav className="ws-index" aria-label="Workspace index">
+      {groups.map(g => <span key={g} className="ws-index-group"><b>{g}</b>{sections.filter(s => s.group === g).map(s =>
+        <button key={s.id} className={closed.includes(s.id) ? 'off' : ''} onClick={() => jump(s.id)}>{s.label}</button>)}</span>)}
+      <span className="ws-index-all"><button onClick={() => save([])}>Open all</button><button onClick={() => save(sections.map(s => s.id))}>Close all</button></span>
+    </nav>
+    {sections.map(s => <section key={s.id} id={`ws-${view}-${s.id}`} className={`ws-panel ${closed.includes(s.id) ? 'closed' : ''}`} aria-label={s.label}>
+      <header className="ws-head" onClick={() => toggle(s.id)}>
+        <span className="ws-caret">{closed.includes(s.id) ? '▸' : '▾'}</span><b>{s.label}</b><small className="cfg-pill">{s.group}</small><small className="cfg-note">{s.hint}</small>
+        <button className="link" onClick={e => { e.stopPropagation(); alone(s.id); }}>Open alone</button>
+      </header>
+      {!closed.includes(s.id) && <div className="ws-body"><ErrorBoundary name={s.label}>{s.render()}</ErrorBoundary></div>}
+    </section>)}
+  </div>;
+}
+
 export default function StageShell({ view, sections }: { view: View; sections: Section[] }) {
-  const all = [...sections, { id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }];
-  const [tab, setTab] = useSection<string>(view, sections[0].id, all.map(s => s.id));
+  const all = [{ id: 'workspace', label: 'Workspace (all)', group: 'Overview' as const, hint: 'Every panel of this stage on one page — dashboards, work, monitors and settings — each opens and closes.', render: () => null },
+    ...sections, { id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }];
+  const [tab, setTab] = useSection<string>(view, 'workspace', all.map(s => s.id));
   useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
@@ -56,7 +83,7 @@ export default function StageShell({ view, sections }: { view: View; sections: S
         <h1>{current.label}</h1><p>{current.hint}</p>
         <p className="st-question"><b>This stage answers:</b> {stage.question} <b>It hands on:</b> {stage.feeds}.</p>
       </div></header>
-      <div className="cfg-pane"><StartHere ctx={ctx} />{current.render(ctx)}</div>
+      <div className="cfg-pane"><StartHere ctx={ctx} />{tab === 'workspace' ? <Workspace view={view} sections={sections.map(x => ({ ...x, render: () => x.render(ctx) }))} alone={setTab} /> : current.render(ctx)}</div>
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;

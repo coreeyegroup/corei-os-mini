@@ -170,7 +170,7 @@ function Intents() {
     <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Target</th><th>Held → wanted</th><th>Outcome</th><th>Reasons</th></tr></thead><tbody>
       {(data?.items ?? []).map((r: Row) => <tr key={r.id}><td><small>{when(r.created_at)}</small></td><td>{r.strategy_code ?? 'manual'}</td><td>{r.symbol}</td><td>{r.account_code}</td><td>{r.target}</td>
         <td>{num(r.current_qty, 2)} → {num(r.target_qty, 2)}</td><td>{statePill(r.outcome)}</td><td><small>{(r.reasons ?? []).join('; ')}</small></td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={8} className="cfg-note">No decisions yet.</td></tr>}</tbody></table></div></section>;
+      {data && !(data.items ?? []).length && <tr><td colSpan={8} className="cfg-note">No decisions yet.</td></tr>}</tbody></table></div></section>;
 }
 
 function Quality() {
@@ -180,7 +180,7 @@ function Quality() {
     <table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Timeframe</th><th>Signals</th><th>Acted</th><th>Refused</th><th>Measured</th><th>Hit rate</th><th>Average move %</th></tr></thead><tbody>
       {(data?.items ?? []).map((r: Row) => <tr key={r.strategy + r.symbol + r.timeframe}><td>{r.strategy}</td><td>{r.symbol}</td><td>{r.timeframe}</td><td>{r.signals}</td><td>{r.acted}</td><td>{r.rejected}</td>
         <td>{r.measured}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td className={Number(r.avg_return_pct) > 0 ? 'up' : 'down'}>{num(r.avg_return_pct, 3)}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={9} className="cfg-note">No signals measured yet.</td></tr>}</tbody></table></section>;
+      {data && !(data.items ?? []).length && <tr><td colSpan={9} className="cfg-note">No signals measured yet.</td></tr>}</tbody></table></section>;
 }
 
 export function SignalsView() {
@@ -207,7 +207,7 @@ function Runtime({ ctx }: { ctx: Ctx }) {
       {(data?.items ?? []).map((r: Row) => <tr key={r.deployment_id}><td>{r.strategy_code} v{r.version_number}</td><td><small>{r.algorithm}</small></td><td>{r.symbol}</td><td>{r.account_code}</td>
         <td>{(r.mode ?? 'PAPER').toLowerCase()}</td><td>{r.timeframe}</td><td><small>{r.source_symbol ?? '—'}</small></td><td><small>{r.last_bar_time ? new Date(r.last_bar_time).toISOString().slice(5, 16).replace('T', ' ') : '—'}</small></td>
         <td>{r.last_target ?? '—'}</td><td>{r.status !== 'ACTIVE' ? pill(r.status, 'off') : r.last_error ? <small className="cfg-error-text">{r.last_error}</small> : pill('running', 'ok')}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={10} className="cfg-note">No deployment has run yet. Setup › Strategies (add a version, approve it) › Deployments (instrument, account, Paper) › activate. The runtime picks it up at the next cycle.</td></tr>}
+      {data && !(data.items ?? []).length && <tr><td colSpan={10} className="cfg-note">No deployment has run yet. Setup › Strategies (add a version, approve it) › Deployments (instrument, account, Paper) › activate. The runtime picks it up at the next cycle.</td></tr>}
     </tbody></table></div>
     <p className="cfg-note">Each active deployment is evaluated once per newly closed bar of its timeframe, from its data source's bars and the same features as Market intelligence. The first bar after activation is only recorded; signals start from the next one.</p>
   </section>;
@@ -300,7 +300,7 @@ function Performance() {
       {(data?.items ?? []).map((r: Row, i: number) => <tr key={i}><td>{r.strategy}{r.version ? ` v${r.version}` : ''}</td><td>{(r.mode ?? '—').toLowerCase()}</td><td>{r.symbol}</td><td>{r.account_code}</td><td>{r.fills}</td>
         <td className={Number(r.realised) >= 0 ? 'up' : 'down'}>{money(r.realised, r.currency)}</td><td>{num(r.open_qty, 2)}</td><td className={Number(r.unrealised) >= 0 ? 'up' : 'down'}>{money(r.unrealised, r.currency)}</td>
         <td>{r.win_rate_pct == null ? '–' : `${r.win_rate_pct}%`}</td><td>{r.profit_factor ?? '–'}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={10} className="cfg-note">No fills yet.</td></tr>}</tbody></table>
+      {data && !(data.items ?? []).length && <tr><td colSpan={10} className="cfg-note">No fills yet.</td></tr>}</tbody></table>
     <p className="cfg-note">P&L in the instrument's quote currency (EURUSD in USD, NIFTY in INR). Win rate and profit factor count closing fills.</p></section>;
 }
 
@@ -372,7 +372,7 @@ function KillSwitches({ ctx }: { ctx: Ctx }) {
       {(data?.items ?? []).map((k: Row) => <tr key={k.id}><td>{k.scope.toLowerCase()}</td><td>{k.target_name}</td><td>{k.reason}</td><td>{k.automatic ? 'automatic (loss limit)' : k.engaged_by}</td><td><small>{when(k.engaged_at)}</small></td>
         <td>{k.engaged ? pill('on', 'live') : <small>released by {k.released_by}: {k.release_reason}</small>}</td>
         <td>{k.engaged && ctx.canRisk && <button onClick={() => { const r = window.prompt('Reason for releasing this kill switch'); if (r) void api(`trading/risk/kill-switches/${k.id}/release`, 'POST', { reason: r }).then(() => { setMsg('Released.'); reload(); }).catch(e => setErr((e as Error).message)); }}>Release</button>}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={7} className="cfg-note">No kill switch is on.</td></tr>}</tbody></table>
+      {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No kill switch is on.</td></tr>}</tbody></table>
     <p className="cfg-note">A kill switch stops new orders in its scope. An operator's Flatten (Portfolio › Positions) still closes positions. Releasing needs the Risk approver role and a reason; a loss-limit stop is engaged automatically and released by a person.</p>
   </section>;
 }
@@ -400,7 +400,7 @@ function Limits({ ctx }: { ctx: Ctx }) {
       {(data?.items ?? []).map((l: Row) => <tr key={l.id}><td>{l.scope.toLowerCase()}</td><td>{l.target_name}</td><td>{kinds[l.kind] ?? l.kind}</td><td><b>{num(l.value, l.kind.includes('QTY') ? 2 : 2)}</b></td>
         <td>{l.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(l.updated_at)} · {l.updated_by}</small></td>
         <td>{ctx.canRisk && <><button onClick={() => setF({ ...l, reason: '' })}>Edit</button> <button onClick={() => { const r = window.prompt('Reason for deleting this limit'); if (r) void api(`trading/risk/limits/${l.id}?reason=${encodeURIComponent(r)}`, 'DELETE').then(() => reload()).catch(e => setErr((e as Error).message)); }}>Delete</button></>}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={7} className="cfg-note">No limits yet. Start with a daily loss and a position limit per account.</td></tr>}</tbody></table>
+      {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No limits yet. Start with a daily loss and a position limit per account.</td></tr>}</tbody></table>
     <p className="cfg-note">The tightest limit of each kind applies. Orders that reduce a position skip the position, exposure and loss limits. Breaching a daily-loss or drawdown limit engages the account's kill switch automatically.</p>
   </section>;
 }
@@ -413,7 +413,7 @@ function Decisions() {
     <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Side</th><th>Quantity</th><th>Result</th><th>Reasons</th></tr></thead><tbody>
       {(data?.items ?? []).map((d: Row) => <tr key={d.id}><td><small>{when(d.at)}</small></td><td>{d.strategy_code ?? 'manual'}</td><td>{d.symbol}</td><td>{d.account_code}</td><td>{d.side}</td>
         <td>{num(d.requested_qty, 2)}</td><td>{d.approved ? pill('approved', 'ok') : pill('refused', 'live')}</td><td><Reasons list={d.reasons} /></td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={8} className="cfg-note">No risk decisions yet.</td></tr>}</tbody></table></section>;
+      {data && !(data.items ?? []).length && <tr><td colSpan={8} className="cfg-note">No risk decisions yet.</td></tr>}</tbody></table></section>;
 }
 
 function Exposure() {
@@ -421,7 +421,7 @@ function Exposure() {
   return <section className="intel"><Msg error={error} />
     <table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Instrument</th><th>Net</th><th>Gross</th></tr></thead><tbody>
       {(data?.instruments ?? []).map((e: Row) => <tr key={e.account_id + e.instrument_id}><td>{e.account_code}</td><td>{e.symbol}</td><td className={Number(e.net) >= 0 ? 'up' : 'down'}>{money(e.net, e.currency)}</td><td>{money(e.gross, e.currency)}</td></tr>)}
-      {data && !data.instruments.length && <tr><td colSpan={4} className="cfg-note">No open positions.</td></tr>}</tbody></table>
+      {data && !(data.instruments ?? []).length && <tr><td colSpan={4} className="cfg-note">No open positions.</td></tr>}</tbody></table>
     <p className="cfg-note">Position value at the live mid, converted to the account's currency with collected FX pairs. A position whose currency cannot be converted is listed under Portfolio with a warning and blocks exposure checks.</p></section>;
 }
 
@@ -455,7 +455,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
         <tr><td>Today</td><td className={Number(a.day_pnl) >= 0 ? 'up' : 'down'}>{money(a.day_pnl)}</td></tr><tr><td>Drawdown from peak</td><td>{a.drawdown_pct}%</td></tr></tbody></table>
       {a.missing_fx?.length > 0 && <p className="cfg-error">No FX rate for {a.missing_fx.join(', ')} → {a.currency}: collect that pair (e.g. USDINR).</p>}
       {ctx.canRisk && <button onClick={() => set(a)}>Set starting capital</button>}</div>)}
-      {data && !data.items.length && <p className="cfg-note">No account has a deployment or a position yet.</p>}</div>
+      {data && !(data.items ?? []).length && <p className="cfg-note">No account has a deployment or a position yet.</p>}</div>
     <p className="cfg-note">Paper equity = starting capital + realised + unrealised P&L, in the account's currency. Real accounts: the broker's own balance and equity are under Monitor › Broker positions; sizing of a real deployment uses the broker's equity.</p></section>;
 }
 
@@ -473,7 +473,7 @@ function Positions({ ctx }: { ctx: Ctx }) {
         <td className={Number(p.quantity) > 0 ? 'up' : Number(p.quantity) < 0 ? 'down' : ''}><b>{p.quantity}</b></td><td>{p.avg_price ?? '–'}</td><td>{p.mark ?? '–'}</td>
         <td className={Number(p.unrealised_pnl) >= 0 ? 'up' : 'down'}>{money(p.unrealised_pnl, p.quote_currency)}</td><td>{money(p.realised_pnl, p.quote_currency)}</td><td>{money(p.notional_account, p.account_currency)}</td>
         <td><small>{p.stop_loss ?? '–'} / {p.take_profit ?? '–'}</small></td><td><small>{when(p.opened_at)}</small></td><td>{(ctx.canOps || ctx.canRisk) && Number(p.quantity) !== 0 && <button onClick={() => flatten(p)}>Flatten</button>}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={13} className="cfg-note">No open positions.</td></tr>}</tbody></table></div>
+      {data && !(data.items ?? []).length && <tr><td colSpan={13} className="cfg-note">No open positions.</td></tr>}</tbody></table></div>
     <p className="cfg-note">Positions come only from fills (Orders). Each deployment keeps its own book; Flatten closes every book of that account in the instrument, also when a kill switch is on.</p></section>;
 }
 
@@ -604,7 +604,7 @@ function Fills() {
     <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Price</th><th>Bid / ask</th><th>Slippage</th><th>Latency</th><th>Realised</th></tr></thead><tbody>
       {(data?.items ?? []).map((f: Row) => <tr key={f.id}><td><small>{when(f.at)}</small></td><td>{f.strategy_code ?? 'manual'} <small className="cfg-note">{f.mode.toLowerCase()}</small></td><td>{f.account_code}</td><td>{f.symbol}</td><td>{f.side}</td>
         <td>{f.quantity}</td><td>{f.price}</td><td><small>{f.quote_bid ?? '–'} / {f.quote_ask ?? '–'}</small></td><td>{f.slippage ?? '–'}</td><td>{f.latency_ms != null ? `${f.latency_ms} ms` : '–'}</td><td className={Number(f.realised_pnl) >= 0 ? 'up' : 'down'}>{f.realised_pnl} {f.currency}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={11} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
+      {data && !(data.items ?? []).length && <tr><td colSpan={11} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
 }
 
 function OrdersOverview({ ctx }: { ctx: Ctx }) {

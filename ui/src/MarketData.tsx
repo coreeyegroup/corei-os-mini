@@ -8,13 +8,15 @@ import FloatingWindow from './FloatingWindow';
 import SourceBoard from './SourceBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
+import { Workspace } from './StageShell';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
 type Row = Record<string, any>;
-type Tab = 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
+type Tab = 'workspace' | 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
 const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: 'workspace', label: 'Workspace (all)', hint: 'Every panel of market data on one page — sources, live table, plans, quality, events, backfill, controls, archive — each opens and closes.' },
   { id: 'dashboard', label: 'Dashboard', hint: 'Stage 1 · collect and watch: workspaces › sources › instruments. Add instruments per source, pause, backfill, details. Comparing and charting across sources is Stage 2 · Market intelligence.' },
   { id: 'live', label: 'Table', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
   { id: 'plans', label: 'Collection plans', hint: 'What is collected, from which account, when, and how long it is kept.' },
@@ -32,7 +34,7 @@ const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Nu
 const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
 
 export default function MarketData() {
-  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'dashboard', TABS.map(t => t.id));
+  const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'workspace', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
@@ -45,6 +47,8 @@ export default function MarketData() {
   if (user === null) return <SignIn title="MARKET DATA" done={s => setUser(s)} />;
   const canEdit = (user.roles ?? []).includes('TRADING_OPS');
   const current = TABS.find(t => t.id === tab)!;
+  const panel = (t: Tab) => t === 'dashboard' ? <SourceBoard canEdit={canEdit} /> : t === 'live' ? <Live /> : t === 'plans' ? <Plans canEdit={canEdit} /> : t === 'quality' ? <Quality />
+    : t === 'events' ? <Events /> : t === 'backfill' ? <Backfill canEdit={canEdit} /> : t === 'controls' ? <Controls canEdit={canEdit} /> : <Archive />;
   return <div className="cfg md">
     <div className="cfg-topbar"><span className="eyebrow">MARKET DATA</span>
       <nav className="cfg-nav" aria-label="Market data sections">{TABS.map(t =>
@@ -53,8 +57,10 @@ export default function MarketData() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       <div className="cfg-pane">
-        {tab === 'dashboard' ? <SourceBoard canEdit={canEdit} /> : tab === 'live' ? <Live /> : tab === 'plans' ? <Plans canEdit={canEdit} /> : tab === 'quality' ? <Quality /> : tab === 'events' ? <Events />
-          : tab === 'backfill' ? <Backfill canEdit={canEdit} /> : tab === 'controls' ? <Controls canEdit={canEdit} /> : <Archive />}
+        {tab === 'workspace' ? <Workspace view="Market data" groups={['Watch', 'Collect', 'Check', 'Control']} alone={id => setTab(id as Tab)}
+          sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id),
+            group: ['dashboard', 'live'].includes(t.id) ? 'Watch' : ['plans', 'backfill'].includes(t.id) ? 'Collect' : ['quality', 'events'].includes(t.id) ? 'Check' : 'Control' }))} />
+          : panel(tab)}
       </div>
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}

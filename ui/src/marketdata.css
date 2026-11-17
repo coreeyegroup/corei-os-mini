@@ -269,3 +269,17 @@
 /* Start here (no strategy running yet) */
 .st-start { border: 1px solid var(--accent, #2ea043); border-radius: 6px; padding: 10px 14px; margin: 0 0 12px; background: color-mix(in srgb, var(--accent, #2ea043) 7%, transparent); }
 .st-start h3 { margin: 0 0 4px; font-size: 14px; }
+/* Stage workspace: every panel on one page */
+.ws-index { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 6px 8px; margin: 0 0 10px;
+  background: var(--chrome, var(--bg)); border: 1px solid var(--line); border-radius: 6px; }
+.ws-index-group { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ws-index-group b { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-right: 2px; }
+.ws-index button { padding: 2px 8px; font-size: 12px; }
+.ws-index button.off { opacity: .55; }
+.ws-index-all { margin-left: auto; display: inline-flex; gap: 4px; }
+.ws-panel { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; scroll-margin-top: 48px; }
+.ws-head { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; cursor: pointer; background: color-mix(in srgb, var(--line) 25%, transparent); border-radius: 6px 6px 0 0; }
+.ws-panel.closed .ws-head { border-radius: 6px; }
+.ws-head .cfg-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-caret { width: 1em; color: var(--muted); }
+.ws-body { padding: 8px 10px; }

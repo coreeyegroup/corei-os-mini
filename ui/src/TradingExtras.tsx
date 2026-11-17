@@ -38,7 +38,7 @@ export function VarMargin() {
       {!v.error && <Table cols={[['Instrument', r => r.symbol], ['Position value', r => money(r.value, v.currency)], ['Average loss in the worst bars', r => money(r.tail_loss, v.currency)]]}
         rows={v.positions ?? []} empty="No positions." rowKey={r => r.instrument_id} />}
     </div>)}
-    {data && !data.items.length && <p className="cfg-note">No open positions: nothing at risk.</p>}
+    {data && !(data.items ?? []).length && <p className="cfg-note">No open positions: nothing at risk.</p>}
     <p className="cfg-note">Historical simulation: today's positions × each past bar's price change, on the bars every held instrument shares (Execution settings › VaR sets the confidence,
       timeframe and look-back). Use the MAX_VAR_PCT, MAX_MARGIN_PCT and MAX_LEVERAGE limits to refuse orders that would go past them.</p></section>;
 }
