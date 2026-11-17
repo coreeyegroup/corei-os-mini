@@ -101,6 +101,43 @@ def capability(db, account_id) -> dict:
 
 # ---------- MT5 through the bridge ----------
 
+MIN_ORDER_BRIDGE = (0, 43, 0)
+_versions: dict = {}
+
+
+def _too_old(bridge: dict, token: str) -> str | None:
+    """Ask the bridge its version (ping: no login, no terminal) before an order or book request; cached 10 minutes.
+    None when it is new enough; else why not — nothing has been sent."""
+    import time
+    key = (bridge['host'], int(bridge['port']), bridge['fingerprint'])
+    hit = _versions.get(key)
+    if hit and time.monotonic() - hit[1] < 600:
+        version = hit[0]
+    else:
+        try:
+            t = BridgeTransport(bridge['host'], int(bridge['port']), bridge['fingerprint'], timeout=10)
+        except BridgeError as exc:
+            return str(exc)
+        try:
+            t.send({'token': token, 'mode': 'ping'})
+            t.sock.settimeout(10)
+            answer = json.loads(next(t.lines(), b'') or b'{}')
+        except (OSError, ValueError):
+            answer = {}
+        finally:
+            t.close()
+        if answer.get('t') == 'failed':
+            return next((a.get('error') for a in answer.get('attempts') or [] if a.get('error')), 'BRIDGE_REFUSED')
+        version = str(answer.get('version') or '0') if answer.get('t') == 'pong' else '0'
+        _versions[key] = (version, time.monotonic())
+    parts = tuple(int(x) for x in version.split('.')[:3] if x.isdigit())
+    if parts < MIN_ORDER_BRIDGE:
+        return (f"BRIDGE_TOO_OLD: the bridge at {bridge['host']}:{bridge['port']} is {version if version != '0' else 'older than 0.42'}; orders and "
+                f"broker reads need {'.'.join(map(str, MIN_ORDER_BRIDGE))} or later. Update it on the machine: "
+                'install-corei-bridge.ps1 -Update -Name <node> (Setup › Bridge nodes shows the command).')
+    return None
+
+
 def mt5_call(account_id, actor: str, mode: str, payload: dict, purpose: str, timeout: float = 30) -> dict:
     """One request to the bridge with the account's master password; routes in priority order on NotSent."""
     from .. import account_routes
@@ -123,6 +160,13 @@ def mt5_call(account_id, actor: str, mode: str, payload: dict, purpose: str, tim
                 token = account_routes.bridge_token(target, actor, purpose)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{(route or {}).get('label', 'server')}: no token ({getattr(exc, 'detail', exc)})")
+                continue
+            old = _too_old(bridge, token['token'])
+            if old:  # an older bridge would take this request for a price stream: never send it an order
+                token.clear()
+                errors.append(f"{(route or {}).get('label', 'server')}: {old}")
+                if route:
+                    account_routes.record(route['id'], False, old)
                 continue
             request = {'token': token['token'], 'mode': mode, 'login': int(account['external_account_id']), 'password': secret['password'],
                        'server': account['connection_settings'].get('server_name'), **payload}

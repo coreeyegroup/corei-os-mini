@@ -393,8 +393,21 @@ def start() -> None:
         t.start()
 
 
+def check_nodes() -> int:
+    from .. import bridge_nodes
+    with store.transaction('read') as db:
+        ids = [r['id'] for r in db.execute('SELECT id FROM cfg_bridge_nodes WHERE fingerprint IS NOT NULL AND token IS NOT NULL').fetchall()]
+    for nid in ids:
+        try:
+            bridge_nodes.check(nid, 'health')
+        except Exception:  # noqa: BLE001 - one node never stops the others
+            log.warning('node check failed', exc_info=True)
+    return len(ids)
+
+
 def _loop() -> None:
     last_recon = 0.0
+    last_nodes = 0.0
     while True:
         _wake.wait(2.0)
         _wake.clear()
@@ -407,6 +420,9 @@ def _loop() -> None:
                 last_recon = _time.monotonic()
                 from . import posttrade
                 posttrade.reconcile_due()
+            if _time.monotonic() - last_nodes > 300:  # bridge nodes: version, clock, pool and certificate, every 5 minutes
+                last_nodes = _time.monotonic()
+                check_nodes()
         except Exception as exc:  # noqa: BLE001 - the loop keeps running; the error is shown on the screen
             STATUS['errors'] = ([f'{_now().isoformat()} {type(exc).__name__}: {exc}'[:300]] + STATUS['errors'])[:20]
             log.exception('execution loop')

@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from . import config_store as store
 from . import credentials
 
-LATEST_BRIDGE = '0.43.1'           # the bridge in this release (connectors/mt5-bridge/corei_mt5_bridge.py)
+LATEST_BRIDGE = '0.43.2'           # the bridge in this release (connectors/mt5-bridge/corei_mt5_bridge.py)
 CODE_MINUTES = 60
 FIRST_TUNNEL_PORT = 9450
 _FP = re.compile(r'^([0-9A-F]{2}:){31}[0-9A-F]{2}$')
@@ -267,6 +267,17 @@ def enrol_info(code: str) -> dict:
             'tunnel_port': row['tunnel_port'], 'latest_bridge': LATEST_BRIDGE}
 
 
+def _private_or_proxy(ip: str) -> bool:
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    cloudflare = ('173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20',
+                  '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22')
+    return a.is_private or a.is_loopback or any(a in ipaddress.ip_network(n) for n in cloudflare)
+
+
 def enrol(code: str, data: EnrolIn, remote_ip: str | None) -> dict:
     if data.ssh_public_key and not _KEY.match(data.ssh_public_key.strip()):
         raise HTTPException(422, 'ssh_public_key is not an OpenSSH public key line.')
@@ -275,6 +286,9 @@ def enrol(code: str, data: EnrolIn, remote_ip: str | None) -> dict:
         if row['mode'] == 'TUNNEL' and not data.ssh_public_key:
             raise HTTPException(422, 'A tunnel-mode node sends its SSH public key (the installer does this).')
         host = '127.0.0.1' if row['mode'] == 'TUNNEL' else (row['host'] or data.host or remote_ip)
+        if row['mode'] == 'DIRECT' and not (row['host'] or data.host) and remote_ip and _private_or_proxy(remote_ip):
+            raise HTTPException(422, f'This machine reached COREI from {remote_ip}, which is not an address COREI can call back (a home or office '
+                                     'network, or a proxy). Set the machine\'s public IP on the node, or use Tunnel mode (for a PC behind a router).')
         port = row['tunnel_port'] if row['mode'] == 'TUNNEL' else data.port
         if not host:
             raise HTTPException(422, 'The node\'s address is unknown: set Host on the node in COREI.')
@@ -304,6 +318,37 @@ def token(node_id: Any, used_by: str, purpose: str) -> dict[str, str]:
         db.execute("INSERT INTO cfg_credential_use(credential_id, owner, owner_id, used_by, purpose) VALUES (%s,'bridge_node',%s,%s,%s)",
                    (row['id'], row['id'], used_by[:120], purpose[:200]))
     return credentials.decrypt(row['id'], bytes(row['token']))
+
+
+def diagnose(error: str | None) -> str | None:
+    """A certificate mismatch usually means two bridges on one machine fight for the same port (an older set-up and a
+    node), or the bridge was reinstalled. Name whose certificate is answering, so the fix is clear."""
+    import re
+    if not error or 'FINGERPRINT_MISMATCH' not in error or 'Whose certificate' in error:
+        return error
+    m = re.search(r'presented certificate ([0-9A-F]{16})', error)
+    if not m:
+        return error
+    seen = m.group(1)
+    owners: list[str] = []
+    try:
+        with store.transaction('read') as db:
+            for r in db.execute("SELECT name FROM cfg_bridge_nodes WHERE upper(replace(fingerprint, ':', '')) LIKE %s", (seen + '%',)).fetchall():
+                owners.append(f"bridge node {r['name']}")
+            for r in db.execute("""SELECT r.label, a.code FROM cfg_account_routes r JOIN cfg_accounts a ON a.id=r.account_id
+                                   WHERE r.node_id IS NULL AND upper(replace(r.fingerprint, ':', '')) LIKE %s""", (seen + '%',)).fetchall():
+                owners.append(f"route '{r['label']}' of {r['code']} (an older set-up of the bridge)")
+            for r in db.execute("""SELECT code FROM cfg_connections WHERE upper(replace(settings->'bridge'->>'fingerprint', ':', '')) LIKE %s""",
+                                (seen + '%',)).fetchall():
+                owners.append(f"server {r['code']}'s bridge")
+    except Exception:  # noqa: BLE001 - the plain error still stands
+        return error
+    if owners:
+        return (error.split(' Update the fingerprint')[0] + ' Whose certificate answers there: ' + '; '.join(dict.fromkeys(owners)) + '. '
+                'Two COREI bridges share this machine and port: keep one (Setup › Bridge nodes) and stop the other on the machine — '
+                'the update script does this (install-corei-bridge.ps1 -Update). Then point every route of that machine at the one kept.')[:900]
+    return error.split(' Update the fingerprint')[0] + (' No COREI record knows this certificate: the bridge was reinstalled or another program '
+                                                         'answers on that port. If you reinstalled it, enrol the machine again (Setup › Bridge nodes).')
 
 
 def check(node_id: Any, actor: str = 'health') -> dict:
@@ -342,7 +387,7 @@ def check(node_id: Any, actor: str = 'health') -> dict:
         else:
             result = {'ok': False, 'error': (answer.get('attempts') or [{}])[0].get('error') or 'The bridge did not answer the health check.'}
     except BridgeError as exc:
-        result = {'ok': False, 'error': str(exc)}
+        result = {'ok': False, 'error': diagnose(str(exc))}
     except (OSError, ValueError, StopIteration) as exc:
         result = {'ok': False, 'error': f'{type(exc).__name__}: {exc}'[:300]}
     with store.transaction('write') as db:

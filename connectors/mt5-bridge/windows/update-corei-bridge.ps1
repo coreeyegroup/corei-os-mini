@@ -43,6 +43,46 @@ $pyExe = ([regex]'"([^"]*python[^"]*\.exe)"').Match($start).Groups[1].Value
 $port = ([regex]'--port (\d+)').Match($start).Groups[1].Value
 if (-not $pyExe -or -not (Test-Path $pyExe)) { Fail "Python not found in $cmd." }
 
+# One bridge per port (0.43.2). Another COREI bridge on this machine set to the same port (an older set-up) would take
+# the port whenever this one restarts, and COREI would see the wrong certificate. Find it, stop it and turn off its
+# start-up task (reversible), so exactly this bridge listens.
+function Resolve-PortConflict([int]$Port, [string]$Dir, [string]$Root) {
+    $others = @()
+    Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $Dir } | ForEach-Object {
+        $rc = Join-Path $_.FullName 'run-bridge.cmd'
+        if ((Test-Path $rc) -and ((Get-Content $rc -Raw) -match "--port $Port(\s|$)")) { $others += $_.Name }
+    }
+    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"
+        $cl = "$($p.CommandLine)"
+        if ($cl -like "*$Dir*") { return }
+        if ($cl -match 'corei_mt5_bridge') {
+            $m = [regex]::Match($cl, 'corei-bridge\\([A-Za-z0-9-]+)\\')
+            if ($m.Success -and $others -notcontains $m.Groups[1].Value) { $others += $m.Groups[1].Value }
+        } elseif ($p) {
+            Fail "Port $Port is used by another program: $($p.Name) (pid $($p.ProcessId)). Stop it or give this bridge another port."
+        }
+    }
+    foreach ($o in ($others | Select-Object -Unique)) {
+        Write-Host "Another COREI bridge on this machine, '$o', uses port $Port too. Only one can listen: stopping '$o' and turning its start-up task off." -ForegroundColor Yellow
+        Stop-ScheduledTask -TaskName "COREI MT5 bridge $o" -ErrorAction SilentlyContinue
+        Disable-ScheduledTask -TaskName "COREI MT5 bridge $o" -ErrorAction SilentlyContinue | Out-Null
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*corei-bridge\$o\*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host "  stopped pid $($_.ProcessId)" }
+        Write-Host "  Undo (if ever needed): Enable-ScheduledTask -TaskName 'COREI MT5 bridge $o'"
+        Write-Host "  In COREI: routes that used '$o' (its own certificate) must now use this node; Setup > the account > Routes." -ForegroundColor Yellow
+    }
+    Start-Sleep 2
+}
+
+# The program answering on the port must be this bridge (not another one that took the port).
+function Test-OwnListener([int]$Port, [string]$Dir) {
+    $l = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $l) { return $false }
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)"
+    return ("$($p.CommandLine)" -like "*$Dir*")
+}
+
 Step '1/5 Versions'
 function Get-BridgeVersion($file) {
     $ErrorActionPreference = 'Continue'
@@ -56,7 +96,8 @@ if (-not $new) { Fail "The corei_mt5_bridge.py in $here is not a valid bridge (o
 Write-Host "Installed: $old"
 Write-Host "New:       $new"
 
-Step '2/5 Stop the bridge'
+Step '2/5 Stop the bridge (and any other bridge set to the same port)'
+Resolve-PortConflict -Port ([int]$port) -Dir $dir -Root $Root
 Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*$dir*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host "stopped pid $($_.ProcessId)" }
@@ -84,12 +125,16 @@ if ($start -notmatch 'max-terminals') {
 } else { Write-Host 'Terminal pool already set:' ([regex]::Match($start, '--max-terminals \d+').Value) }
 
 Step '5/5 Start and check'
+Enable-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue | Out-Null
 Start-ScheduledTask -TaskName $task
 $ok = $false
-for ($i = 0; $i -lt 15 -and -not $ok; $i++) {
+for ($i = 0; $i -lt 20 -and -not $ok; $i++) {
     Start-Sleep 2
-    $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port $port -WarningAction SilentlyContinue).TcpTestSucceeded
+    $ok = Test-OwnListener -Port ([int]$port) -Dir $dir   # answering, AND it is this bridge (not another one on the port)
 }
+$fp = (& $pyExe $dst --fingerprint --state $dir 2>$null | Select-Object -Last 1)
+Write-Host "This bridge's certificate fingerprint: $fp"
+Write-Host "  (COREI pins this; it must match Setup > Bridge nodes > $Name)"
 $log = Join-Path $dir 'bridge.log'
 if (Test-Path $log) {
     # Read without locking the file the bridge is writing.
@@ -99,8 +144,8 @@ if (Test-Path $log) {
     $lines | Select-Object -Last 8 | ForEach-Object { Write-Host "  $_" }
 }
 if ($ok) {
-    Write-Host "`nOK: bridge $new is answering on port $port. COREI reconnects within a minute; the first connection per account takes about a minute more (terminal copy)." -ForegroundColor Green
+    Write-Host "`nOK: bridge $new ('$Name') is the one answering on port $port. COREI checks nodes every 5 minutes (or Setup > Bridge nodes > Check now); the first connection per account takes about a minute more (terminal copy)." -ForegroundColor Green
 } else {
-    Write-Host "`nThe bridge is not answering on port $port. Send the log lines above. To go back: Copy-Item -Force `"$backup`" `"$dst`"; Start-ScheduledTask -TaskName `"$task`"" -ForegroundColor Red
+    Write-Host "`nThis bridge is not the one answering on port $port. Send the log lines above (look for PORT_IN_USE). To go back: Copy-Item -Force `"$backup`" `"$dst`"; Start-ScheduledTask -TaskName `"$task`"" -ForegroundColor Red
     exit 1
 }

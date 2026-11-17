@@ -48,6 +48,46 @@ if ($Mode -eq 'Tunnel' -and -not $SshTarget) { Fail 'Tunnel mode needs -SshTarge
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bridgeSrc = Join-Path $here 'corei_mt5_bridge.py'
 if (-not (Test-Path $bridgeSrc)) { Fail "corei_mt5_bridge.py must be next to this script ($here)." }
+# One bridge per port (0.43.2). Another COREI bridge on this machine set to the same port (an older set-up) would take
+# the port whenever this one restarts, and COREI would see the wrong certificate. Find it, stop it and turn off its
+# start-up task (reversible), so exactly this bridge listens.
+function Resolve-PortConflict([int]$Port, [string]$Dir, [string]$Root) {
+    $others = @()
+    Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $Dir } | ForEach-Object {
+        $rc = Join-Path $_.FullName 'run-bridge.cmd'
+        if ((Test-Path $rc) -and ((Get-Content $rc -Raw) -match "--port $Port(\s|$)")) { $others += $_.Name }
+    }
+    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"
+        $cl = "$($p.CommandLine)"
+        if ($cl -like "*$Dir*") { return }
+        if ($cl -match 'corei_mt5_bridge') {
+            $m = [regex]::Match($cl, 'corei-bridge\\([A-Za-z0-9-]+)\\')
+            if ($m.Success -and $others -notcontains $m.Groups[1].Value) { $others += $m.Groups[1].Value }
+        } elseif ($p) {
+            Fail "Port $Port is used by another program: $($p.Name) (pid $($p.ProcessId)). Stop it or give this bridge another port."
+        }
+    }
+    foreach ($o in ($others | Select-Object -Unique)) {
+        Write-Host "Another COREI bridge on this machine, '$o', uses port $Port too. Only one can listen: stopping '$o' and turning its start-up task off." -ForegroundColor Yellow
+        Stop-ScheduledTask -TaskName "COREI MT5 bridge $o" -ErrorAction SilentlyContinue
+        Disable-ScheduledTask -TaskName "COREI MT5 bridge $o" -ErrorAction SilentlyContinue | Out-Null
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*corei-bridge\$o\*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host "  stopped pid $($_.ProcessId)" }
+        Write-Host "  Undo (if ever needed): Enable-ScheduledTask -TaskName 'COREI MT5 bridge $o'"
+        Write-Host "  In COREI: routes that used '$o' (its own certificate) must now use this node; Setup > the account > Routes." -ForegroundColor Yellow
+    }
+    Start-Sleep 2
+}
+
+# The program answering on the port must be this bridge (not another one that took the port).
+function Test-OwnListener([int]$Port, [string]$Dir) {
+    $l = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $l) { return $false }
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)"
+    return ("$($p.CommandLine)" -like "*$Dir*")
+}
+
 $dir = Join-Path $Root $Name
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -118,6 +158,7 @@ $trigger = @(
     (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650))
 )
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+Resolve-PortConflict -Port $Port -Dir $dir -Root $Root
 Register-ScheduledTask -Force -TaskName "COREI MT5 bridge $Name" -Action (New-ScheduledTaskAction -Execute $runBridge) -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
 Start-ScheduledTask -TaskName "COREI MT5 bridge $Name"
 Write-Host "Task 'COREI MT5 bridge $Name' registered and started; it is started again every 5 minutes if it stops."

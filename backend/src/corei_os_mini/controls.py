@@ -195,6 +195,9 @@ def set_connection_status(connection_id: UUID, state: str, *, host: str | None =
                           logged_in: bool = False, heartbeat: bool = False, failover: bool = False,
                           server_time_offset_ms: int | None = None, error: str | None = None) -> None:
     """Adapters call this on every state change and heartbeat. Failures alert."""
+    if error and 'FINGERPRINT_MISMATCH' in error:
+        from .bridge_nodes import diagnose
+        error = diagnose(error)
     with store.transaction('update') as db:
         previous = db.execute('SELECT state FROM cfg_connection_status WHERE connection_id=%s', (connection_id,)).fetchone()
         db.execute('''INSERT INTO cfg_connection_status(connection_id, state, current_host, current_port, last_login_at,

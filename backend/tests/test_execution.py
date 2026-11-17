@@ -415,8 +415,23 @@ class Transport(unittest.TestCase):
         with patch.object(brokers, '_account', return_value=account), patch.object(brokers, 'mt5_targets', return_value=targets), \
                 patch.object(brokers.store, 'use_credential', side_effect=lambda *a: {'password': 'p'}), \
                 patch('corei_os_mini.account_routes.bridge_token', side_effect=lambda *a: {'token': 't'}), \
-                patch('corei_os_mini.account_routes.record'), patch.object(brokers, 'BridgeTransport', transport):
+                patch('corei_os_mini.account_routes.record'), patch.object(brokers, 'BridgeTransport', transport), \
+                patch.object(brokers, '_too_old', side_effect=lambda b, t: self.too_old):
             return brokers.mt5_call(UUID(int=1), 'test', 'trade', {'action': 'send'}, 'test')
+
+    too_old = None
+
+    def test_old_bridge_never_gets_an_order(self):
+        brokers._versions.clear()
+        pong = FakeTransport(b'{"t":"pong","version":"0.42.0"}\n')
+        with patch.object(brokers, 'BridgeTransport', lambda *a, **k: pong):
+            why = brokers._too_old({'host': 'h', 'port': 1, 'fingerprint': 'F'}, 't')
+        self.assertTrue(why.startswith('BRIDGE_TOO_OLD'), why)
+        self.assertEqual(pong.sent['mode'], 'ping', 'only a ping went to the old bridge')
+        self.too_old = why
+        with self.assertRaises(brokers.NotSent) as ctx:
+            self.run_call([FakeTransport(b'{"t":"trade"}\n')])
+        self.assertIn('BRIDGE_TOO_OLD', str(ctx.exception))
 
     def test_classification(self):
         from corei_os_mini.md.bridge_client import BridgeError

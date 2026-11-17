@@ -210,7 +210,14 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
     with store.transaction('read') as db:
         cap = brokers.capability(db, account_id)
         cfg = settings(db)
-    use_broker = bool(cap.get('wanted')) if broker is None else broker
+    if broker is None:  # against the broker only when the account trades for real; a paper-only account checks its own records
+        with store.transaction('read') as db:
+            real = db.execute("""SELECT EXISTS (SELECT 1 FROM oms_orders WHERE account_id=%s AND mode='BROKER' AND created_at > now() - interval '30 days')
+                                     OR EXISTS (SELECT 1 FROM pf_positions WHERE account_id=%s AND mode='BROKER' AND quantity <> 0)
+                                     OR EXISTS (SELECT 1 FROM cfg_deployments WHERE account_id=%s AND mode='BROKER' AND status='ACTIVE') AS r""",
+                              (str(account_id),) * 3).fetchone()['r']
+        broker = real
+    use_broker = bool(cap.get('wanted')) and broker
     book, error = None, None
     if use_broker:
         try:

@@ -60,7 +60,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.43.1'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.43.2'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -703,6 +703,23 @@ def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> No
                 pass
 
 
+def listen(host: str, port: int) -> socket.socket:
+    """The listening socket, exclusively: on Windows a second program may otherwise share the port, and connections
+    would go to one or the other at random (two bridges on one machine). A port in use is said plainly."""
+    family = socket.AF_INET6 if ':' in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):  # Windows
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        sock.bind((host, port))
+    except OSError as exc:
+        sock.close()
+        raise SystemExit(f'{now_iso()} PORT_IN_USE: port {port} is already used by another program ({exc}). Only one COREI bridge can listen on a port: '
+                         'stop the other one (the update script does this: install-corei-bridge.ps1 -Update -Name <node>), or give this bridge another port.')
+    sock.listen(128)
+    return sock
+
+
 def pong(terminals: 'Terminals | None') -> dict:
     """What COREI's health check sees: version, clock, and the terminal pool."""
     out = {'t': 'pong', 'version': BRIDGE_VERSION, 'utc_now': now_iso(), 'machine': platform.node()[:80]}
@@ -828,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--port', type=int, default=9443)
     parser.add_argument('--state', default=str(HERE), help='folder for the certificate and token')
     parser.add_argument('--init', action='store_true', help='make the certificate and token, print what COREI needs, and exit')
+    parser.add_argument('--fingerprint', action='store_true', help='print this bridge\'s certificate fingerprint and exit (no token shown)')
     parser.add_argument('--terminals-root', help='serve every account: one portable terminal copy per login under this folder')
     parser.add_argument('--version', action='version', version=f'corei_mt5_bridge {BRIDGE_VERSION}')
     parser.add_argument('--max-terminals', type=int, default=0, help='with --terminals-root: at most this many terminals run at once (0 = no limit); '
@@ -861,6 +879,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({'fingerprint': ensure_cert(state / 'corei-bridge.crt', state / 'corei-bridge.key'),
                           'token_file': str(state / 'corei-bridge.token'), 'token': ensure_token(state / 'corei-bridge.token')}))
         return 0
+    if args.fingerprint:
+        state = Path(args.state)
+        print(ensure_cert(state / 'corei-bridge.crt', state / 'corei-bridge.key'))
+        return 0
     if mt5 is None:
         print('MetaTrader5 package missing: pip install MetaTrader5 (Windows, or Wine with a Windows Python)', file=sys.stderr)
         return 2
@@ -875,7 +897,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f'{now_iso()} COREI MT5 bridge {BRIDGE_VERSION} listening on {args.bind}:{args.port}' + (f' · every account, terminal copies under {args.terminals_root}' if terminals else ''))
     print(f'Certificate fingerprint (SHA-256): {fingerprint}')
     print(f'Token file: {state / "corei-bridge.token"} (paste its contents into COREI; keep it secret)')
-    with socket.create_server((args.bind, args.port), reuse_port=False) as server:
+    with listen(args.bind, args.port) as server:
         server.settimeout(1.0)
         while True:
             try:

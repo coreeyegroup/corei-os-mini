@@ -224,7 +224,8 @@ def record(route_id: Any, ok: bool, error: str | None = None) -> None:
             if ok:
                 db.execute('UPDATE cfg_account_routes SET last_ok_at=now() WHERE id=%s', (str(route_id),))
             else:
-                db.execute('UPDATE cfg_account_routes SET last_error=%s, last_error_at=now() WHERE id=%s', ((error or 'failed')[:300], str(route_id)))
+                from .bridge_nodes import diagnose
+                db.execute('UPDATE cfg_account_routes SET last_error=%s, last_error_at=now() WHERE id=%s', ((diagnose(error) or 'failed')[:900], str(route_id)))
     except HTTPException:
         pass
 

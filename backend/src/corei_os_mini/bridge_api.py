@@ -102,8 +102,14 @@ _hits: dict[str, list[float]] = {}
 _lock = threading.Lock()
 
 
+def client_ip(request: Request) -> str | None:
+    """The caller's address behind Cloudflare and Caddy: Cloudflare's header first, then the first forwarded address."""
+    return (request.headers.get('cf-connecting-ip') or request.headers.get('x-forwarded-for', request.client.host if request.client else '')
+            ).split(',')[0].strip() or None
+
+
 def _limit(request: Request, per_minute: int = 20) -> str | None:
-    ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip() or None
+    ip = client_ip(request)
     now = time.monotonic()
     with _lock:
         recent = [t for t in _hits.get(ip or '-', []) if now - t < 60]

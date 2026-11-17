@@ -1034,3 +1034,7 @@ next bar (Realign); a new decision waits for the deployment's working or unknown
 take-profit in ATRs (sent to MT5, watched by COREI on paper and Upstox); stops and targets the broker executes are
 booked as fills of the right strategy; orders on a stale price are refused. Update bridge nodes to 0.43.1 (same
 command as above) so each deal reports why it happened.
+
+**0.45.3 — live audit fixes** (DEC-86, bridge 0.43.2): two bridges on one VPS port are resolved by the update script;
+certificate mismatches name the bridge that answered; orders and broker reads refuse a bridge older than 0.43 instead of
+waiting for it; paper-only accounts reconcile against their own fills; bridge nodes are checked every 5 minutes.

@@ -71,11 +71,11 @@ class BridgeNodes(tmd.MarketData):
         self.ok(self.public.get('/api/bridge-enroll/files/..%2F..%2Fsecret'), 404)
 
         # The machine enrols (as the installer does), from 127.0.0.1 where the test bridge listens.
-        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': '0.43.1',
+        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': '0.43.2',
                 'machine': 'VPS1', 'host': '127.0.0.1'}
         done = self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body))
         self.assertTrue(done['check']['ok'], done)
-        self.assertEqual(done['check']['version'], '0.43.1')
+        self.assertEqual(done['check']['version'], '0.43.2')
         self.assertEqual(done['check']['terminals_open'], 0, 'the ping starts no terminal')
         self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body), 404)  # single use
         listed = self.ok(self.alice.get('/api/config/bridge-nodes'))['items'][0]
@@ -121,7 +121,7 @@ class BridgeNodes(tmd.MarketData):
         code = node['instructions']['code']
         info = self.ok(self.public.get(f'/api/bridge-enroll/{code}'))
         self.assertEqual((info['ssh_target'].split('@')[0], info['tunnel_port']), ('corei-tunnel', 9450))
-        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': 9443, 'bridge_version': '0.43.1', 'machine': 'PC'}
+        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': 9443, 'bridge_version': '0.43.2', 'machine': 'PC'}
         self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body), 422)  # tunnel mode needs the key
         key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB' + 'x' * 43 + ' corei-tunnel-office-pc'
         done = self.ok(self.public.post(f'/api/bridge-enroll/{code}', json={**body, 'ssh_public_key': key}))
@@ -153,3 +153,32 @@ def test_windows_scripts_are_ascii_with_crlf():
         data = (folder / name).read_bytes()
         assert all(b < 128 for b in data), name
         assert b'\r\n' in data and data.count(b'\n') == data.count(b'\r\n'), name
+
+
+def test_mismatch_names_whose_certificate_answers():
+    """Two bridges on one machine: the error says which record pins the certificate that answered."""
+    from unittest.mock import patch
+    from corei_os_mini import bridge_nodes
+
+    class Db:
+        def __init__(self):
+            self.q = []
+
+        def execute(self, sql, args=()):
+            self.q.append(sql)
+            rows = [{'label': 'Windows VPS', 'code': 'METAQUOTES_DEMO'}] if 'cfg_account_routes' in sql else []
+            return type('R', (), {'fetchall': lambda _s: rows})()
+
+    class Tx:
+        def __enter__(self):
+            return Db()
+
+        def __exit__(self, *a):
+            return False
+    err = ('BRIDGE_FINGERPRINT_MISMATCH: the bridge at 38.253.125.46:9443 presented certificate CAA0B5200E4E6FBA…, not the pinned one. '
+           'Update the fingerprint on the connection only if you reinstalled the bridge.')
+    with patch.object(bridge_nodes.store, 'transaction', lambda *_: Tx()):
+        out = bridge_nodes.diagnose(err)
+    assert "route 'Windows VPS' of METAQUOTES_DEMO" in out and 'Two COREI bridges share this machine' in out
+    assert bridge_nodes._private_or_proxy('162.159.124.14') and bridge_nodes._private_or_proxy('192.168.1.5')
+    assert not bridge_nodes._private_or_proxy('38.253.125.46')
