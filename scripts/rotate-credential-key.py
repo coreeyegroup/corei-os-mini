@@ -33,7 +33,10 @@ TABLES = (  # (table, id column used as AEAD context, ciphertext column)
     ('cfg_session_tokens', 'account_id', 'ciphertext'),
     ('cfg_change_requests', 'id', 'secret'),
     ('cfg_alert_channels', 'id', 'secret'),
+    ('cfg_account_routes', 'id', 'token'),
+    ('cfg_bridge_nodes', 'id', 'token'),
 )
+KEY_ID_COLUMN = {'cfg_credentials': 'key_id', 'cfg_session_tokens': 'key_id', 'cfg_account_routes': 'token_key_id', 'cfg_bridge_nodes': 'token_key_id'}
 
 
 def database_url(env_file: Path) -> str:
@@ -58,8 +61,8 @@ def rotate(url: str, old: bytes, new: bytes, dry_run: bool) -> int:
             for record_id, ciphertext in rows:
                 fields = credentials.decrypt(record_id, bytes(ciphertext), key=old)
                 updated = credentials.encrypt(record_id, fields, key=new)
-                has_key_id = table in ('cfg_credentials', 'cfg_session_tokens')
-                db.execute(f'UPDATE {table} SET {column}=%s' + (', key_id=%s' if has_key_id else '') + f' WHERE {id_column}=%s',
+                has_key_id = table in KEY_ID_COLUMN
+                db.execute(f'UPDATE {table} SET {column}=%s' + (f', {KEY_ID_COLUMN[table]}=%s' if has_key_id else '') + f' WHERE {id_column}=%s',
                            (updated, new_id, record_id) if has_key_id else (updated, record_id))
                 count += 1
         if dry_run:

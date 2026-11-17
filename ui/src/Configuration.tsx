@@ -11,12 +11,13 @@ import './configuration.css';
 import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
+import { BridgeNodes } from './BridgeNodes';
 import ConnectTree from './ConnectTree';
 import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 
 export type Row = Record<string, any>;
-type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database';
-type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database'>;
+type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
+type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -29,6 +30,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'providers', label: 'Providers', hint: 'Step 1 · who you deal with: broker, exchange, ECN, feed … legal entity, regulator, contacts, exposure' },
   { id: 'accounts', label: 'Accounts', hint: 'Step 2 · the accounts you hold at each provider: login, credentials, permission, the server each uses, readiness' },
   { id: 'connections', label: 'Servers', hint: 'Step 3 · where accounts connect: MT5 servers in use, FIX sessions, APIs — environment, addresses, clock, order limits' },
+  { id: 'bridges', label: 'Bridge nodes', hint: 'Windows machines (VPS, PC) running the COREI MT5 bridge: connect one with a one-time code, then use it for any number of accounts' },
   { id: 'groups', label: 'Account groups', hint: 'Named sets of accounts, e.g. a desk or a client book' },
   { id: 'instruments', label: 'Instruments', hint: 'Canonical instruments and contract specifications' },
   { id: 'mappings', label: 'Symbol mappings', hint: 'Broker symbol for each instrument on a connection' },
@@ -191,7 +193,8 @@ const blank: Record<Entity, Row> = {
     expires_on: '', password_changed_on: '', relationship: 'OWN', mandate_reference: '', mandate_expires_on: '', other_users: '', group_ids: [] },
   groups: { code: '', name: '', description: '', status: 'ACTIVE' },
   instruments: { symbol: '', name: '', asset_class: 'FX', base_currency: '', quote_currency: '', price_precision: 5, quantity_precision: 2,
-    tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE' },
+    tick_size: '0.00001', min_quantity: '0.01', quantity_step: '0.01', contract_size: '100000', contract_unit: 'units', trading_session: '', status: 'ACTIVE',
+    exchange: '', market: '', isin: '', lot_size: '', expiry: '', strike: '', option_type: '', underlying: '', aliases: [] },
   mappings: { connection_id: '', account_id: '', instrument_id: '', broker_symbol: '', usage: 'BOTH', broker_contract_size: '', broker_price_digits: '', status: 'ACTIVE' },
 };
 const FIELDS: Record<Entity, string[]> = {
@@ -204,7 +207,8 @@ const FIELDS: Record<Entity, string[]> = {
     'relationship', 'mandate_reference', 'mandate_expires_on', 'other_users', 'group_ids'],
   groups: ['code', 'name', 'description', 'status'],
   instruments: ['symbol', 'name', 'asset_class', 'base_currency', 'quote_currency', 'price_precision', 'quantity_precision',
-    'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status'],
+    'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status',
+    'exchange', 'market', 'isin', 'lot_size', 'expiry', 'strike', 'option_type', 'underlying', 'aliases'],
   mappings: ['connection_id', 'account_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
 };
 const IMMUTABLE: Record<Entity, string[]> = {
@@ -240,7 +244,10 @@ export function toPayload(entity: Entity, draft: Row): Row {
     out.adapter = draft.adapter ?? 'DEFAULT'; out.dst_rule = draft.dst_rule ?? 'UNKNOWN'; out.clock_source = draft.clock_source ?? 'UNKNOWN';
     out.maintenance = draft.maintenance ?? []; }
   if (entity === 'mappings') out.account_id = orNull(draft.account_id);
-  if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision); }
+  if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision);
+    for (const k of ['lot_size', 'strike', 'expiry']) out[k] = orNull(draft[k]);
+    for (const k of ['exchange', 'market', 'isin', 'option_type', 'underlying']) out[k] = draft[k] ?? '';
+    out.aliases = Array.isArray(draft.aliases) ? draft.aliases : String(draft.aliases ?? '').split(',').map((a: string) => a.trim()).filter(Boolean); }
   if (entity === 'connections' && (draft.platform === 'MT5' || draft.platform === 'MT4'))
     out.settings = { server_name: draft.settings.server_name, company_name: draft.settings.company_name || null, server_details: draft.settings.server_details ?? {},
       access_points: draft.settings.access_points.map((p: Row) => ({ name: p.name, host: p.host, port: Number(p.port), enabled: p.enabled !== false,
@@ -833,7 +840,18 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     <div className="cfg-pair">{text('quantity_precision', 'Quantity decimals', { required: true, type: 'number', min: 0, max: 12 })}{text('quantity_step', 'Smallest increment (contract)', { required: true, inputMode: 'decimal' })}</div>
     <div className="cfg-pair">{text('min_quantity', 'Smallest tradable quantity (contract)', { required: true, inputMode: 'decimal' })}{text('contract_size', 'Contract size', { required: true, inputMode: 'decimal' })}</div>
     {text('contract_unit', 'Contract unit', { required: true, maxLength: 32 }, 'e.g. oz, units, barrels')}
-    {text('trading_session', 'Trading session', { maxLength: 200 }, 'Optional description, e.g. Sun 23:00 – Fri 22:00 UTC')}{status}</>;
+    {text('trading_session', 'Trading session', { maxLength: 200 }, 'Optional description, e.g. Sun 23:00 – Fri 22:00 UTC')}
+    <h4>Where it trades</h4>
+    <div className="cfg-pair">{text('exchange', 'Exchange', { maxLength: 20 }, 'e.g. NSE, BSE, MCX; blank for OTC (FX, CFDs)')}
+      {pick('market', 'Market hours', [['', 'Round the clock (not set)'], ['NSE', 'NSE cash and indices'], ['NSE_FO', 'NSE F&O'], ['NSE_CD', 'NSE currency'], ['BSE', 'BSE cash and indices'], ['BSE_FO', 'BSE F&O'], ['MCX', 'MCX commodities'], ['FX', 'FX / CFD 24×5'], ['CRYPTO', 'Crypto 24×7']])}</div>
+    <p className="cfg-note">Market hours decide when prices are expected: collection on <em>Market hours</em> and stale-price alarms follow them (NSE 09:15–15:30 IST, MCX to 23:30/23:55, FX Sun–Fri). Blank: round the clock.</p>
+    <div className="cfg-pair">{text('isin', 'ISIN', { maxLength: 12 }, 'Equities, e.g. INE002A01018')}
+      <Field label="Other names (aliases)" hint="Comma-separated names traders use, e.g. BANKNIFTY, NIFTY BANK; searches find the instrument by them">
+        <input aria-label="Aliases" value={Array.isArray(draft.aliases) ? draft.aliases.join(', ') : draft.aliases ?? ''} onChange={e => set('aliases', e.target.value)} /></Field></div>
+    <h4>Derivative contract (futures and options)</h4>
+    <div className="cfg-pair">{text('underlying', 'Underlying', { maxLength: 40 }, 'e.g. NIFTY, BANKNIFTY, CRUDEOIL')}{text('lot_size', 'Lot size', { inputMode: 'decimal' }, 'Exchange lot, e.g. 75 for NIFTY')}</div>
+    <div className="cfg-pair">{text('expiry', 'Expiry', { type: 'date' })}{text('strike', 'Strike', { inputMode: 'decimal' })}</div>
+    {pick('option_type', 'Option type', [['', 'Not an option'], ['CE', 'Call (CE)'], ['PE', 'Put (PE)']])}{status}</>;
 
   const accountsHere = (refs.accounts ?? []).filter((a: Row) => a.connection_id === draft.connection_id);
   return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${PURPOSE_LABEL[r.purpose] ?? r.purpose}`)}
@@ -1072,6 +1090,11 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
     server: preset ? { server_name: preset.settings?.server_name ?? '', access_points: (preset.settings?.access_points ?? []).map((p: Row) => ({ ...p })) }
       : { server_name: '', access_points: [] as Row[] }, adapter: preset?.adapter === 'TERMINAL_BRIDGE' ? 'TERMINAL_BRIDGE' : 'MTAPI_DIRECT', bridge_token: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // Registered bridge nodes (Setup › Bridge nodes): picking one replaces host, port, fingerprint and token.
+  const [nodes, setNodes] = useState<Row[]>([]), [nodeId, setNodeId] = useState('');
+  useEffect(() => { void api('config/bridge-nodes').then(d => { const usable = d.items.filter((n: Row) => n.status !== 'DISABLED'); setNodes(usable);
+    const def = usable.find((n: Row) => n.default_for_new) ?? (usable.length === 1 ? usable[0] : null);
+    if (def) { setNodeId(def.id); if (!preset) setF(old => ({ ...old, adapter: 'TERMINAL_BRIDGE' })); } }).catch(() => setNodes([])); }, []);
   const provider = refs.providers.find(p => p.id === f.provider_id);
   const set = (patch: Row) => setF(old => {
     const next = { ...old, ...patch };
@@ -1086,7 +1109,7 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
   const newOnServer = match ? picked.filter(p => !(match.settings.access_points ?? []).some((q: Row) => key(q) === key(p))) : [];
   // Addresses the account may choose from: the server's (existing connection) plus any picked here.
   const serverPoints: Row[] = match ? [...match.settings.access_points, ...newOnServer.map(p => ({ ...p, enabled: false }))] : picked;
-  const bridgeNew = !match && f.adapter === 'TERMINAL_BRIDGE';
+  const bridgeNew = !match && f.adapter === 'TERMINAL_BRIDGE' && !nodeId;
   const bridgeOk = !bridgeNew || (f.server.bridge?.host && /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f.server.bridge?.fingerprint ?? '') && f.bridge_token);
   const ready = f.provider_id && f.external_account_id && f.name && f.code && f.server.server_name && picked.length > 0
     && (f.access_mode !== 'ACCOUNT' || f.access_points.length > 0) && bridgeOk;
@@ -1099,7 +1122,8 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
         ...(bridgeNew ? { bridge: { host: f.server.bridge.host, port: Number(f.server.bridge.port || 9443), fingerprint: f.server.bridge.fingerprint } } : {}) };
       const result = await api('config/mt5/account-setup', 'POST', {
         provider_id: f.provider_id, environment: f.environment, server, ...(match ? { connection_id: match.id } : {}),
-        ...(bridgeNew ? { adapter: 'TERMINAL_BRIDGE', bridge_token: f.bridge_token } : match ? {} : { adapter: f.adapter }),
+        ...(bridgeNew ? { adapter: 'TERMINAL_BRIDGE', bridge_token: f.bridge_token } : match ? {} : { adapter: f.adapter === 'TERMINAL_BRIDGE' ? 'DEFAULT' : f.adapter }),
+        ...(nodeId ? { bridge_node_id: nodeId } : {}),
         account: { code: f.code, name: f.name, external_account_id: f.external_account_id, holder_name: f.holder_name, base_currency: f.base_currency,
           trading_permission: f.trading_permission, access_mode: f.access_mode, access_points: f.access_points.map((p: Row) => ({ host: p.host, port: Number(p.port) })) },
         ...(f.password ? { credential: { kind: 'MT5_LOGIN', password: f.password, access_level: f.access_level } } : {}) });
@@ -1109,7 +1133,7 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
       const note = result.connection_action === 'CREATED' ? `Account added. Connection ${result.connection.code} was created for ${server.server_name}${bridgeNew ? ' through the MT5 terminal bridge' : ''}.`
         : result.connection_action === 'ADDRESSES_ADDED' ? `Account added to ${result.connection.code}. New addresses were added to the server unticked; other accounts are unchanged.`
         : `Account added to ${result.connection.code}.`;
-      created(result.account, note);
+      created(result.account, note + (result.bridge_route_added ? ` It connects through bridge node ${nodes.find(n => n.id === nodeId)?.name ?? '(default)'}.` : ''));
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   const dirty = !!(f.provider_id || f.external_account_id || f.server.server_name || f.password);
@@ -1150,7 +1174,12 @@ function AddMt5Account({ refs, close, created, preset }: { refs: Record<string, 
             <Choice label="Connection method" value={f.adapter} options={[['MTAPI_DIRECT', 'Direct SDK'], ['TERMINAL_BRIDGE', 'MT5 terminal bridge (official terminal)'], ['TERMINAL_PUSH', 'Terminal push — COREI EA (optional)']]} onChange={v => set({ adapter: v })} /></Field>
           {f.adapter === 'TERMINAL_PUSH' && <p className="cfg-note">The COREI EA in an MT5 terminal logged in to this account sends its prices to COREI over HTTPS. No password is needed here.
             After adding, open the account's server › <b>Create push token</b> and follow the steps there.</p>}
-          {f.adapter === 'TERMINAL_BRIDGE' && <>
+          {f.adapter === 'TERMINAL_BRIDGE' && nodes.length > 0 && <Field label="Bridge node" hint="A Windows machine registered under Setup › Bridge nodes: nothing else to enter">
+            <select aria-label="Bridge node" value={nodeId} onChange={e => setNodeId(e.target.value)}>
+              {nodes.map(n => <option key={n.id} value={n.id}>{n.name} · {n.mode === 'TUNNEL' ? 'tunnel' : n.host ?? 'not enrolled'} · {String(n.status).toLowerCase()}{n.default_for_new ? ' · default' : ''}</option>)}
+              <option value="">Enter host, fingerprint and token by hand…</option></select></Field>}
+          {f.adapter === 'TERMINAL_BRIDGE' && nodes.length === 0 && <p className="cfg-note">No bridge node yet. Easier than typing a fingerprint and token: Setup › Bridge nodes › <em>Connect a Windows machine</em> (once), then every account picks it here.</p>}
+          {f.adapter === 'TERMINAL_BRIDGE' && !nodeId && <>
             <BridgeFields settings={f.server} change={server => set({ server })} />
             <Field label="Bridge token" hint="Contents of corei-bridge.token on the bridge machine; stored encrypted on the connection"><input aria-label="Bridge token" type="password" autoComplete="new-password" maxLength={200}
               value={f.bridge_token} onChange={e => set({ bridge_token: e.target.value.trim() })} /></Field></>}
@@ -1380,7 +1409,8 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Permission', r => <Status value={r.trading_permission} />],
     ['Data', r => <Ready blockers={r.data_blockers} />], ['Trading', r => <Ready blockers={r.trading_blockers} />],
     ['Status', r => <><Status value={r.status} />{r.warnings?.length > 0 && <> <span className="cfg-pill" title={r.warnings.map((w: string) => BLOCKERS[w] ?? w).join('\n')}>{r.warnings.length} warning{r.warnings.length > 1 ? 's' : ''}</span></>}<Pending r={r} /></>]],
-  instruments: [['Symbol', r => r.symbol], ['Name', r => r.name], ['Class', r => r.asset_class], ['Tick', r => r.tick_size],
+  instruments: [['Symbol', r => <>{r.symbol}{r.aliases?.length ? <small className="cfg-note"> {r.aliases.join(', ')}</small> : null}</>], ['Name', r => r.name], ['Class', r => r.asset_class],
+    ['Market', r => r.market ? `${r.market}${r.expiry ? ` · ${r.expiry}` : ''}${r.strike ? ` · ${r.strike} ${r.option_type}` : ''}` : '—'], ['Tick', r => r.tick_size],
     ['Contract min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],
   mappings: [['Instrument', r => r.instrument_symbol], ['Provider', r => r.provider_code], ['Connection', r => <Link to="connections" id={r.connection_id}>{r.connection_code}</Link>], ['Env', r => <Env value={r.environment} />],
     ['Applies to', r => r.account_id ? <Link to="accounts" id={r.account_id}>{r.account_code}</Link> : 'All accounts'], ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
@@ -2037,6 +2067,7 @@ export default function Configuration() {
         : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={openId.id} /></div>
         : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
+        : current.id === 'bridges' ? <div className="cfg-pane"><BridgeNodes canEdit={canEdit} /></div>
         : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
         : current.id === 'users' ? <Users me={user} />
         : current.id === 'database' ? (user.roles.includes('ADMIN') ? <DatabaseEditor /> : <p className="cfg-note">The database editor needs the Administrator role.</p>)

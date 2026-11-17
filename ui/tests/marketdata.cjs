@@ -37,6 +37,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/md/collectors'))return ok({items:[{account_id:'a1',account_code:'VTM_A',account_name:'VT Markets gold',state:'CONNECTED',host:'198.51.100.10',port:443,lag_ms:12,subscribed:1,ticks_total:12345,backlog:0,heartbeat_age_seconds:'2.31',problem:null},
      {account_id:'a2',account_code:'ICM_B',account_name:'IC Markets B',state:'FAILED',host:null,port:null,lag_ms:null,subscribed:0,ticks_total:0,backlog:0,heartbeat_age_seconds:3,last_error:'ServerException: OLD_VERSION',
       problem:{title:'Broker refused the connector version',detail:'The broker requires a newer MT5 version.',permanent:true,raw:'ServerException: OLD_VERSION'}}]});
+   if(url.includes('/md/catalog/a1/instrument')){catalogCalls.push(body);return ok({id:'i9',symbol:'XAGUSD',name:'Silver vs US Dollar',asset_class:'METAL',market:'FX',aliases:[]});}
    if(url.includes('/md/catalog/a1/refresh')){catalogCalls.push('refresh');return ok({source:'MT5_LOGIN',symbols:3,refreshed_at:now});}
    if(url.includes('/md/catalog/a1/collect')){catalogCalls.push(body);return ok({created:body.items.map(i=>({broker_symbol:i.broker_symbol,plan_id:'px',code:'X',instrument:i.instrument})),started:body.items.length,awaiting_approval:[],skipped:[],errors:[]},201);}
    if(url.includes('/md/catalog/a1')){catalogCalls.push(url);const q=new URL('https://x'+url.slice(url.indexOf('/api'))).searchParams;
@@ -296,6 +297,21 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok($('[role="status"]').textContent.includes('Sent for approval'));
  $('[aria-label="Close window"]').click();await settle(2);
  console.log('PASS: plans matrix, new plan with size estimate, LIVE trading feed sent for approval.');
+
+ // The plan form searches the source's own list: type a name, pick it; a missing instrument is created from the source's details.
+ button('New collection plan').click();await settle(2);
+ fill($('[aria-label="Plan account"]'),'a1');fill($('[aria-label="Broker symbol"]'),'silver');await new Promise(r=>setTimeout(r,400));await settle(2);
+ const hit=[...w.document.querySelectorAll('.md-suggest li')].find(li=>li.textContent.includes('XAGUSD.r'));
+ assert.ok(hit,'matching symbols from the source list');
+ hit.dispatchEvent(new w.MouseEvent('mousedown',{bubbles:true}));await settle(2);
+ assert.equal($('[aria-label="Broker symbol"]').value,'XAGUSD.r');
+ assert.equal($('[aria-label="Plan code"]').value,'VTM_A_XAGUSD');
+ button('Create instrument XAGUSD from the source\'s details').click();await settle(3);
+ assert.deepEqual(catalogCalls.at(-1),{broker_symbol:'XAGUSD.r'});
+ assert.equal($('[aria-label="Plan instrument"]').value,'i9');
+ assert.match($('[role="status"]').textContent,/Instrument XAGUSD ready/);
+ $('[aria-label="Close window"]').click();await settle(2);
+ console.log('PASS: plan form finds the broker symbol in the source list and creates the missing instrument from it.');
 
  nav('Controls').click();await settle();
  button('Pause everything…').click();await settle(2);

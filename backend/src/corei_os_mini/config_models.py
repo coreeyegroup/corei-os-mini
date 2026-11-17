@@ -364,9 +364,22 @@ class InstrumentIn(_Strict):
     contract_unit: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)]
     trading_session: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] = ''
     status: Status = 'ACTIVE'
+    # Where it trades and, for derivatives, the contract (Indian F&O, MCX…). market decides the hours that apply.
+    exchange: Annotated[str, Upper, StringConstraints(pattern=r'^[A-Z0-9_]{0,20}$')] = ''
+    market: Literal['', 'NSE', 'NSE_FO', 'NSE_CD', 'BSE', 'BSE_FO', 'MCX', 'FX', 'CRYPTO'] = ''
+    isin: Annotated[str, Upper, StringConstraints(pattern=r'^([A-Z]{2}[A-Z0-9]{9}[0-9])?$')] = ''
+    lot_size: Amount | None = None
+    expiry: date | None = None
+    strike: Amount | None = None
+    option_type: Literal['', 'CE', 'PE'] = ''
+    underlying: Annotated[str, Upper, StringConstraints(strip_whitespace=True, max_length=40)] = ''
+    aliases: Annotated[list[Annotated[str, Upper, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]], Field(max_length=20)] = []
 
     @model_validator(mode='after')
     def precision_is_consistent(self) -> 'InstrumentIn':
+        if self.asset_class == 'OPTION' and self.market in ('NSE_FO', 'BSE_FO') and not (self.strike and self.option_type and self.expiry):
+            raise ValueError('an exchange option needs its expiry, strike and option type (CE or PE)')
+        self.aliases = sorted({a for a in self.aliases if a != self.symbol})
         if _places(self.tick_size) > self.price_precision:
             raise ValueError('tick_size has more decimal places than price_precision')
         for field in ('min_quantity', 'quantity_step'):
@@ -464,9 +477,13 @@ class Mt5AccountSetupIn(_Strict):
     # or the direct SDK. Applies when the connection is created; an existing connection keeps its method.
     adapter: Literal['TERMINAL_BRIDGE', 'TERMINAL_PUSH', 'MTAPI_DIRECT', 'DEFAULT'] = 'DEFAULT'
     bridge_token: Secret | None = None
+    # A registered bridge node (Setup › Bridge nodes): the account gets a route through it; nothing else to enter.
+    bridge_node_id: UUID | None = None
 
     @model_validator(mode='after')
     def bridge_complete(self) -> 'Mt5AccountSetupIn':
+        if self.bridge_node_id and self.adapter == 'TERMINAL_BRIDGE' and self.server.bridge is None:
+            self.adapter = 'DEFAULT'  # the node's route carries the bridge; the server keeps its own method
         if self.adapter == 'TERMINAL_BRIDGE' and self.server.bridge is None:
             raise ValueError('bridge: the terminal bridge needs its host, port and certificate fingerprint')
         return self

@@ -956,3 +956,18 @@ typed reason and has *Get history for all*. Plans have a *Collect everything* bu
 **Many accounts** (DEC-73): market data is collected once per broker server; account reads rotate through the bridge's
 terminal pool (`--max-terminals`, default 20, least-recently-used idle terminal closed first, streaming terminals never
 closed); dedicated terminals only for trading accounts; more bridge nodes for more capacity.
+
+## Indian markets and bridge nodes — release 0.43.0
+
+**Indian markets** (DEC-74): instruments record exchange, market hours, ISIN, lot, expiry, strike, CE/PE, underlying
+and aliases (BANKNIFTY, FINNIFTY, MIDCPNIFTY…). An Upstox source loads its instrument list by itself; *Available*
+offers the main indices (NIFTY 50, NIFTY BANK, FIN NIFTY, MIDCAP SELECT, NEXT 50, SENSEX, BANKEX, INDIA VIX) and
+each one's nearest future in one click. The plan form searches the source's list ("banknifty", "reliance", "gold")
+and creates a missing instrument from it. Plans on *Market hours* follow NSE/BSE (09:15–15:30 IST), MCX and FX;
+no stale alarm while a market is closed; INR HOLIDAY events in the calendar close Indian markets. Sessions shows
+every exchange. Migration 031.
+
+**Bridge nodes** (DEC-75): Setup › Bridge nodes › *Connect a Windows machine* gives two lines for PowerShell on the
+VPS or PC; the machine installs the bridge (0.42.0) and registers itself, COREI checks it, and accounts use it with
+one click (or automatically, as the default node). Adding an MT5 account offers the node instead of a fingerprint and
+token. Tunnel-mode nodes: run `sudo bash scripts/enable-bridge-tunnels.sh` once on the COREI server. Migration 032.

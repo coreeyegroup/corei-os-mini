@@ -34,7 +34,8 @@ param(
     [string]$SshTarget = '',
     [int]$TunnelPort = 9450,
     [int]$MaxTerminals = 20,
-    [string]$Root = 'C:\corei-bridge'
+    [string]$Root = 'C:\corei-bridge',
+    [switch]$Enrolling   # run by install-corei-bridge.ps1: COREI receives fingerprint and token by enrolment, so they are not printed
 )
 $ErrorActionPreference = 'Stop'
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
@@ -150,14 +151,17 @@ goto loop
 "@ | Set-Content -Encoding ASCII $runTunnel
     Register-ScheduledTask -Force -TaskName "COREI MT5 tunnel $Name" -Action (New-ScheduledTaskAction -Execute $runTunnel) -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
     $pub = (Get-Content "$key.pub").Trim()
-    Write-Host ''
-    Write-Host 'ON THE COREI SERVER, allow this key to open only this tunnel (one line, then start the task below):' -ForegroundColor Yellow
-    Write-Host "  echo 'restrict,port-forwarding,permitlisten=""127.0.0.1:$TunnelPort"",command=""/bin/false"" $pub' >> ~/.ssh/authorized_keys"
-    Write-Host "Then here: Start-ScheduledTask -TaskName 'COREI MT5 tunnel $Name'"
+    if (-not $Enrolling) {
+        Write-Host ''
+        Write-Host 'ON THE COREI SERVER, allow this key to open only this tunnel (one line, then start the task below):' -ForegroundColor Yellow
+        Write-Host "  echo 'restrict,port-forwarding,permitlisten=""127.0.0.1:$TunnelPort"",command=""/bin/false"" $pub' >> ~/.ssh/authorized_keys"
+        Write-Host "Then here: Start-ScheduledTask -TaskName 'COREI MT5 tunnel $Name'"
+    }
     $hostForCorei = '127.0.0.1'
     $portForCorei = $TunnelPort
 }
 
+if ($Enrolling) { exit 0 }
 Write-Host ''
 Write-Host '==== Enter in COREI: Setup > the account > Routes > Add route > Terminal bridge ====' -ForegroundColor Green
 Write-Host ("  Location     : " + $(if ($Mode -eq 'Direct') { 'Windows VPS' } else { 'Windows PC (or VPS) through SSH tunnel' }))

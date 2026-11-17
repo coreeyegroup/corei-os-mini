@@ -5,6 +5,24 @@
 > `connectors/mt5-bridge/windows/setup-corei-bridge.ps1` (below), then add the route in Setup › the account ›
 > *Connection routes · failover*. The manual steps in section A remain valid.
 
+## Recommended: bridge nodes (no fingerprint or token to copy)
+
+1. COREI › Setup › Bridge nodes › **Connect a Windows machine**: a name (e.g. `vps-london`), where it runs and how
+   COREI reaches it (Direct for a VPS with a public IP, Tunnel for a PC behind a router). COREI shows two lines and a
+   one-time code (60 minutes, single use).
+2. On the Windows machine (the broker's MT5 terminal installed and logged in once by hand), PowerShell as
+   Administrator, paste the two lines. They create `C:\corei-setup`, download `install-corei-bridge.ps1`, and run it:
+   Python, the MetaTrader5 package, the bridge 0.42.0 in `C:\corei-bridge\<name>`, the task that keeps it running,
+   clock sync, the firewall open to COREI only (or the outgoing tunnel), then registration with COREI.
+3. COREI shows the node green (round trip, clock difference, terminal pool). **Use for accounts** adds it as a route to
+   the accounts you choose, or tick *Default for new MT5 accounts*.
+
+Update a node: the node shows *Update steps* when a newer bridge is out (one line, keeps certificate and token).
+Tunnel mode needs, once, on the COREI server: `sudo bash scripts/enable-bridge-tunnels.sh` (a no-shell user whose keys
+COREI manages; each key may only open its own 127.0.0.1 port).
+
+The manual procedure below still works (and is what the installer runs).
+
 ## Windows set-up in one run (VPS or PC)
 
 1. Install the broker's MT5 terminal and log in to the account once by hand.

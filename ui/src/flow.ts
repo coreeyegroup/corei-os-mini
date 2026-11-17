@@ -19,7 +19,8 @@ export const PIPELINE: Stage[] = [
       { step: 1, name: 'History backfill', does: 'Bars from broker history, gaps only', state: 'BUILT', where: ['Market data', 'backfill'] },
       { step: 2, name: 'Symbol normalisation', does: 'One instrument across brokers (XAUUSD.r, GOLD → XAUUSD), contract specs', state: 'PARTIAL', where: ['Configuration', 'mappings'] },
       { step: 3, name: 'Order book depth', does: 'Level-2 where the broker publishes it', state: 'PLANNED' },
-      { step: 3, name: 'Upstox / other API feeds', does: 'Indian brokers and vendors through the same plans', state: 'PLANNED' },
+      { step: 3, name: 'Upstox / Indian markets', does: 'NSE, BSE, MCX indices, stocks, futures and options through the same plans; exchange hours and holidays; the main indices and nearest futures in one click', state: 'BUILT', where: ['Market data', 'dashboard'] },
+      { step: 2, name: 'Bridge nodes', does: 'Windows machines running the MT5 bridge, registered with a one-time code and shared by many accounts', state: 'BUILT', where: ['Configuration', 'bridges'] },
     ] },
   { view: 'Intelligence', n: 2, short: 'Intelligence', title: 'Market intelligence', question: 'What state is each market in, and which instruments are worth attention?', feeds: 'Features and the ranked universe to signals and strategies',
     components: [

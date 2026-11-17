@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from .operator_auth import admin_router, current_user, require_operator, router as operator_router
 from .config_api import router as config_router
 from .routes_api import router as routes_router
+from .bridge_api import enrol_router as bridge_enrol_router, router as bridge_router
 from .intel_api import router as intel_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
@@ -78,6 +79,8 @@ app.include_router(db_admin_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
 app.include_router(routes_router)
+app.include_router(bridge_router)
+app.include_router(bridge_enrol_router)
 app.include_router(intel_router)
 app.include_router(config_router)
 

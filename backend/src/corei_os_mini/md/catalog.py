@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .. import config_store as store
 from ..config_models import InstrumentIn, MappingIn
-from . import plans
+from . import markets, plans
 
 _log = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -97,8 +97,29 @@ def upstox_class(item: dict) -> str:
     return 'OTHER'
 
 
+# Indian indices: the exchange's own name (as in the Upstox file) -> COREI name, and the names traders also use.
+INDIA_INDICES = {
+    'NIFTY 50': ('NIFTY50', ['NIFTY', 'NIFTY 50']), 'NIFTY BANK': ('NIFTYBANK', ['BANKNIFTY', 'NIFTY BANK']),
+    'NIFTY FIN SERVICE': ('NIFTYFIN', ['FINNIFTY', 'NIFTY FINANCIAL SERVICES']), 'NIFTY MID SELECT': ('NIFTYMIDSELECT', ['MIDCPNIFTY', 'MIDCAP NIFTY']),
+    'NIFTY NEXT 50': ('NIFTYNEXT50', ['NIFTYNXT50', 'NIFTY JUNIOR']), 'INDIA VIX': ('INDIAVIX', ['VIX']), 'NIFTY IT': ('NIFTYIT', ['CNXIT']),
+    'NIFTY MIDCAP 100': ('NIFTYMIDCAP100', []), 'NIFTY 100': ('NIFTY100', []), 'NIFTY 200': ('NIFTY200', []), 'NIFTY 500': ('NIFTY500', []),
+    'SENSEX': ('SENSEX', ['BSE SENSEX']), 'BANKEX': ('BANKEX', ['BSE BANKEX']), 'SENSEX 50': ('SENSEX50', []),
+}
+# What a desk usually wants first from an Indian source: the main indices and their nearest futures.
+POPULAR_INDICES = ('NIFTY 50', 'NIFTY BANK', 'NIFTY FIN SERVICE', 'NIFTY MID SELECT', 'NIFTY NEXT 50', 'SENSEX', 'BANKEX', 'INDIA VIX')
+POPULAR_FUTURES = ('NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'SENSEX', 'BANKEX', 'CRUDEOIL', 'GOLD', 'SILVER', 'NATURALGAS')
+
+
+def india_index(name: str) -> tuple[str, list[str]] | None:
+    return INDIA_INDICES.get(re.sub(r'\s+', ' ', str(name or '')).strip().upper())
+
+
 def suggest_upstox(item: dict) -> str:
     cls = upstox_class(item)
+    if cls == 'INDEX':
+        known = india_index(item.get('name') or item.get('trading_symbol') or '')
+        if known:
+            return known[0]
     base = item.get('name') if cls == 'INDEX' else item.get('trading_symbol') or item.get('name') or ''
     return re.sub(r'[^A-Z0-9._/-]', '', str(base).upper())[:32] or 'X'
 
@@ -114,7 +135,7 @@ def _num(v: Any) -> Decimal | None:
 
 COLS = ('broker_symbol', 'display_symbol', 'description', 'asset_class', 'exchange', 'segment', 'instrument_type', 'base_currency',
         'quote_currency', 'digits', 'tick_size', 'lot_size', 'volume_min', 'volume_step', 'contract_size', 'expiry', 'strike',
-        'underlying', 'suggested_instrument')
+        'underlying', 'suggested_instrument', 'isin')
 
 
 def _replace(account_id: UUID, source: str, rows: list[dict]) -> int:
@@ -133,7 +154,7 @@ def _replace(account_id: UUID, source: str, rows: list[dict]) -> int:
 
 def _row(**kw: Any) -> dict:
     out = {c: kw.get(c) for c in COLS}
-    for c in ('display_symbol', 'description', 'exchange', 'segment', 'instrument_type', 'base_currency', 'quote_currency', 'underlying', 'suggested_instrument'):
+    for c in ('display_symbol', 'description', 'exchange', 'segment', 'instrument_type', 'base_currency', 'quote_currency', 'underlying', 'suggested_instrument', 'isin'):
         out[c] = str(out[c] or '')[:200]
     out['asset_class'] = out.get('asset_class') if out.get('asset_class') in CLASSES else 'OTHER'
     return out
@@ -184,7 +205,8 @@ def _upstox_rows(items: list[dict]) -> list[dict]:
                          instrument_type=it.get('instrument_type') or '', quote_currency='INR',
                          tick_size=(tick / 100) if tick else None,  # Upstox gives the tick in paise
                          lot_size=_num(it.get('lot_size')), expiry=exp, strike=_num(it.get('strike_price')) or None,
-                         underlying=it.get('underlying_symbol') or '', suggested_instrument=suggest_upstox(it)))
+                         underlying=it.get('underlying_symbol') or it.get('asset_symbol') or '', suggested_instrument=suggest_upstox(it),
+                         isin=it.get('isin') or ''))
     return rows
 
 
@@ -303,9 +325,13 @@ def listing(account_id: UUID, q: str = '', asset_class: str = '', exchange: str 
             limit: int = 200, offset: int = 0) -> dict:
     where, args = ['c.account_id=%s'], [account_id]
     if q.strip():
-        where.append('(lower(c.display_symbol) LIKE %s OR lower(c.broker_symbol) LIKE %s OR lower(c.description) LIKE %s OR lower(c.suggested_instrument) LIKE %s)')
+        # Traders' names find the exchange's: "banknifty" finds the index "Nifty Bank" as well as its futures.
+        qq = re.sub(r'\s+', '', q.strip().upper())
+        names = [k for k, (canon, aliases) in INDIA_INDICES.items() if qq in (canon, *(re.sub(r'\s+', '', a) for a in aliases))]
+        where.append('(lower(c.display_symbol) LIKE %s OR lower(c.broker_symbol) LIKE %s OR lower(c.description) LIKE %s OR lower(c.suggested_instrument) LIKE %s'
+                     ' OR upper(c.description) = ANY(%s))')
         like = f"%{q.strip().lower()}%"
-        args += [like, like, like, like]
+        args += [like, like, like, like, names]
     filters = list(where), list(args)
     if asset_class:
         where.append('c.asset_class=%s'); args.append(asset_class)
@@ -318,7 +344,7 @@ def listing(account_id: UUID, q: str = '', asset_class: str = '', exchange: str 
     elif show == 'not_collected':
         where.append('p.id IS NULL')
     join = ("LEFT JOIN md_collection_plans p ON p.account_id=c.account_id AND p.broker_symbol=c.broker_symbol AND p.status <> 'ARCHIVED' "
-            'LEFT JOIN cfg_instruments i ON i.symbol=c.suggested_instrument')
+            'LEFT JOIN cfg_instruments i ON i.symbol=c.suggested_instrument')  # aliases: see popular() and _instrument()
     sql_where = ' AND '.join(where)
     with store.transaction('read') as db:
         total = db.execute(f'SELECT count(*) AS n FROM md_symbol_catalog c {join} WHERE {sql_where}', args).fetchone()['n']
@@ -376,8 +402,9 @@ def _places(v: Decimal | None) -> int:
 
 
 def _instrument(actor: str, db, row: dict, name: str) -> tuple[UUID | None, str | None]:
-    """The COREI instrument for this symbol: existing by name, or created from the provider's facts."""
-    found = db.execute('SELECT id FROM cfg_instruments WHERE symbol=%s', (name,)).fetchone()
+    """The COREI instrument for this symbol: existing by name or alias (BANKNIFTY finds NIFTYBANK), or created from
+    the provider's facts, with where it trades and, for derivatives, the contract (lot, expiry, strike, CE/PE)."""
+    found = db.execute('SELECT id FROM cfg_instruments WHERE symbol=%s OR %s = ANY(aliases) ORDER BY (symbol=%s) DESC LIMIT 1', (name, name, name)).fetchone()
     if found:
         return found['id'], None
     digits = row.get('digits')
@@ -386,12 +413,25 @@ def _instrument(actor: str, db, row: dict, name: str) -> tuple[UUID | None, str 
     vmin = row.get('volume_min') or row.get('lot_size') or step
     quote = (row.get('quote_currency') or 'USD')[:10].upper()
     base = (row.get('base_currency') or (name[:3] if row['asset_class'] in ('FX', 'METAL') else quote))[:10].upper()
+    market = markets.market_for(None, row.get('broker_symbol') or '', '', row.get('asset_class') or '') or ''
+    india = market in ('NSE', 'NSE_FO', 'NSE_CD', 'BSE', 'BSE_FO', 'MCX')
+    known = india_index(row.get('description') or '') if row.get('asset_class') == 'INDEX' else None
+    kind = str(row.get('instrument_type') or '').upper()
+    extra = dict(exchange=re.sub(r'[^A-Z0-9_]', '', str(row.get('exchange') or '').upper())[:20], market=market,
+                 isin=row.get('isin') if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{9}[0-9]', str(row.get('isin') or '')) else '',
+                 lot_size=row.get('lot_size') or None, expiry=row.get('expiry'), strike=row.get('strike') or None,
+                 option_type=kind if kind in ('CE', 'PE') else '', underlying=str(row.get('underlying') or '').upper()[:40],
+                 aliases=known[1] if known else [], trading_session=markets.session_text(market))
+    if india:
+        # Exchange instruments are traded in lots of whole units: 1 for cash and indices, the lot for derivatives.
+        lot = row.get('lot_size') or Decimal(1)
+        step = vmin = lot if row.get('asset_class') in ('FUTURE', 'OPTION', 'COMMODITY') else Decimal(1)
     try:
-        data = InstrumentIn(symbol=name, name=(row.get('description') or name)[:120], asset_class=row['asset_class'] if row['asset_class'] != 'OTHER' else 'EQUITY',
+        data = InstrumentIn(**extra, symbol=name, name=(row.get('description') or name)[:120], asset_class=row['asset_class'] if row['asset_class'] != 'OTHER' else 'EQUITY',
                             base_currency=re.sub(r'[^A-Z0-9]', '', base) or quote, quote_currency=re.sub(r'[^A-Z0-9]', '', quote) or 'USD',
                             price_precision=max(_places(tick), int(digits or 0)), quantity_precision=max(_places(step), _places(vmin)),
                             tick_size=tick, min_quantity=vmin, quantity_step=step, contract_size=row.get('contract_size') or Decimal(1),
-                            contract_unit='lot' if row['asset_class'] in ('FX', 'METAL') else 'unit')
+                            contract_unit='lot' if row['asset_class'] in ('FX', 'METAL') else 'index point' if row['asset_class'] == 'INDEX' else 'unit')
     except ValidationError as exc:
         return None, f"instrument {name} not created ({exc.errors()[0]['msg'].removeprefix('Value error, ')})"
     created = store.create(actor, 'instruments', data)
@@ -447,3 +487,59 @@ def collect(actor: str, account_id: UUID, data: CollectIn) -> dict:
         except ValidationError as exc:
             errors.append({'broker_symbol': sym, 'error': exc.errors()[0]['msg'].removeprefix('Value error, ')})
     return {'created': created, 'started': started, 'awaiting_approval': pending, 'skipped': skipped, 'errors': errors}
+
+
+# ---------- quick picks and single instruments ----------
+
+def popular(account_id: UUID) -> dict:
+    """For an Indian source: the main indices and the nearest future of each main underlying (from the loaded list)."""
+    with store.transaction('read') as db:
+        rows = db.execute("""
+            SELECT c.*, p.id AS plan_id, i.id AS instrument_id FROM md_symbol_catalog c
+            LEFT JOIN md_collection_plans p ON p.account_id=c.account_id AND p.broker_symbol=c.broker_symbol AND p.status <> 'ARCHIVED'
+            LEFT JOIN cfg_instruments i ON i.symbol=c.suggested_instrument OR c.suggested_instrument = ANY(i.aliases)
+            WHERE c.account_id=%s AND ((c.asset_class='INDEX' AND upper(c.description) = ANY(%s))
+               OR (c.instrument_type LIKE 'FUT%%' AND upper(c.underlying) = ANY(%s) AND c.expiry >= current_date))
+            ORDER BY c.asset_class DESC, c.underlying, c.expiry""", (account_id, list(POPULAR_INDICES), list(POPULAR_FUTURES))).fetchall()
+    indices, futures, seen = [], [], set()
+    for r in rows:
+        r = store.clean(r)
+        if r['asset_class'] == 'INDEX':
+            if r['broker_symbol'] not in seen:
+                indices.append(r); seen.add(r['broker_symbol'])
+        else:
+            key = (r['underlying'], r['exchange'])
+            if key not in seen:  # nearest expiry only
+                futures.append(r); seen.add(key)
+    order = {n: i for i, n in enumerate(POPULAR_INDICES)}
+    indices.sort(key=lambda r: order.get((r['description'] or '').upper(), 99))
+    return {'indices': indices, 'futures': futures}
+
+
+class InstrumentFromCatalogue(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    broker_symbol: str = Field(min_length=1, max_length=64)
+    instrument: str | None = Field(default=None, max_length=32)
+
+
+def instrument_from_catalogue(actor: str, account_id: UUID, data: InstrumentFromCatalogue) -> dict:
+    """The COREI instrument for one catalogue symbol (found or created from the provider's facts) and its symbol
+    mapping on this account's connection. Used by the plan form so a plan never waits for manual instrument set-up."""
+    with store.transaction('read') as db:
+        account = _account(db, account_id)
+        row = db.execute('SELECT * FROM md_symbol_catalog WHERE account_id=%s AND broker_symbol=%s', (account_id, data.broker_symbol)).fetchone()
+        if not row:
+            raise HTTPException(404, 'That symbol is not in this source\'s list. Load the list (Available › Refresh symbols) or check the spelling.')
+        row = dict(row)
+        name = (data.instrument or row.get('suggested_instrument') or '').upper()
+        instrument_id, note = _instrument(actor, db, row, name)
+    if not instrument_id:
+        raise HTTPException(422, note or 'The instrument could not be created.')
+    try:
+        store.create(actor, 'mappings', MappingIn(connection_id=account['connection_id'], account_id=account_id, instrument_id=instrument_id,
+                                                  broker_symbol=data.broker_symbol, usage='MARKET_DATA'))
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+    with store.transaction('read') as db:
+        return store.clean(db.execute('SELECT id, symbol, name, asset_class, market, exchange, aliases FROM cfg_instruments WHERE id=%s', (instrument_id,)).fetchone())

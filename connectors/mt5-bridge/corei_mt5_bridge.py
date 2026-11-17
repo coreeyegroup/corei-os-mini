@@ -28,6 +28,8 @@ import datetime as dt
 import hashlib
 import json
 import os
+import platform
+import urllib.parse
 import secrets
 import shutil
 import socket
@@ -55,7 +57,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.41.0'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.42.0'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -383,6 +385,10 @@ def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> No
                                      'error': 'BRIDGE_TOKEN_REJECTED: the bridge token does not match.', 'refused': True}]}) + '\n')
             writer.flush()
             return
+        if request.get('mode') == 'ping':  # COREI's health check: no login, no terminal started
+            writer.write(json.dumps(pong(terminals)) + '\n')
+            writer.flush()
+            return
         login = str(int(request.get('login') or 0))
         worker = socket.create_connection(('127.0.0.1', terminals.port_for(login)), timeout=30)
         terminals.busy(login, +1)
@@ -424,6 +430,43 @@ def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> No
                 pass
 
 
+def pong(terminals: 'Terminals | None') -> dict:
+    """What COREI's health check sees: version, clock, and the terminal pool."""
+    out = {'t': 'pong', 'version': BRIDGE_VERSION, 'utc_now': now_iso(), 'machine': platform.node()[:80]}
+    if terminals is not None:
+        with terminals.lock:
+            out.update({'terminals_open': len(terminals.workers), 'max_terminals': terminals.max_terminals,
+                        'streaming': sum(1 for w in terminals.workers.values() if w.get('sessions'))})
+    return out
+
+
+def enroll(url: str, code: str, state: Path, port: int, extra: dict) -> int:
+    """Register this bridge with COREI using the one-time code from Setup › Bridge nodes: sends the certificate
+    fingerprint, the token (over HTTPS, once) and how to reach it, so nobody copies them by hand."""
+    import urllib.error
+    import urllib.request
+    state.mkdir(parents=True, exist_ok=True)
+    body = {'fingerprint': ensure_cert(state / 'corei-bridge.crt', state / 'corei-bridge.key'), 'token': ensure_token(state / 'corei-bridge.token'),
+            'port': port, 'bridge_version': BRIDGE_VERSION, 'machine': platform.node()[:80], **extra}
+    req = urllib.request.Request(url.rstrip('/') + '/api/bridge-enroll/' + urllib.parse.quote(code.strip()), data=json.dumps(body).encode(),
+                                 headers={'Content-Type': 'application/json', 'User-Agent': f'corei-mt5-bridge/{BRIDGE_VERSION}'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - the COREI URL the operator gave
+            answer = json.loads(resp.read() or b'{}')
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read() or b'{}').get('detail')
+        except ValueError:
+            detail = None
+        print(json.dumps({'ok': False, 'status': exc.code, 'error': detail or exc.reason}))
+        return 1
+    except (urllib.error.URLError, OSError) as exc:
+        print(json.dumps({'ok': False, 'error': f'cannot reach COREI at {url}: {exc}'}))
+        return 1
+    print(json.dumps({'ok': True, **answer}))
+    return 0
+
+
 # ----- the TLS server -----
 
 def serve_client(conn: socket.socket, token: str, terminal: str | None) -> None:
@@ -453,6 +496,9 @@ def serve_client(conn: socket.socket, token: str, terminal: str | None) -> None:
             send({'t': 'failed', 'attempts': [{'host': 'bridge', 'port': 0, 'ok': False, 'error': 'BRIDGE_TOKEN_REJECTED: the bridge token does not match.', 'refused': True}]})
             return
         mode = request.get('mode') or 'stream'
+        if mode == 'ping':
+            send(pong(None))
+            return
         with terminal_lock:
             ok, error = login(request, terminal)
             request['password'] = ''
@@ -494,6 +540,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--version', action='version', version=f'corei_mt5_bridge {BRIDGE_VERSION}')
     parser.add_argument('--max-terminals', type=int, default=0, help='with --terminals-root: at most this many terminals run at once (0 = no limit); '
                         'an idle one (no stream) is closed to make room, least recently used first')
+    parser.add_argument('--enroll', metavar='COREI_URL', help='register this bridge with COREI (with --code from Setup › Bridge nodes) and exit')
+    parser.add_argument('--code', help='the one-time enrolment code')
+    parser.add_argument('--ssh-public-key', default='', help='tunnel mode: the public key this machine uses for its SSH tunnel')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)  # internal: one login, plain TCP on 127.0.0.1
     args = parser.parse_args(argv)
     try:
@@ -508,6 +557,12 @@ def main(argv: list[str] | None = None) -> int:
             while True:
                 raw, _ = server.accept()
                 threading.Thread(target=serve_client, args=(raw, '', args.terminal), daemon=True).start()
+    if args.enroll:
+        if not args.code:
+            print('--enroll needs --code (Setup › Bridge nodes › Connect a Windows machine)', file=sys.stderr)
+            return 2
+        return enroll(args.enroll, args.code, Path(args.state), args.port,
+                      {'ssh_public_key': args.ssh_public_key, 'max_terminals': args.max_terminals or None})
     if args.init:
         state = Path(args.state)
         state.mkdir(parents=True, exist_ok=True)

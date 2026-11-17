@@ -22,7 +22,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const users=[{id:'u1',username:'risk-ops',display_name:'risk-ops',roles:['ADMIN','OBSERVER','RISK_APPROVER','TRADING_OPS'],status:'ACTIVE',must_change_password:false,version:1,active_sessions:1}];const db={providers:[],connections:[],accounts:[],instruments:[],mappings:[],groups:[]};const prefs={};const approvals=[];const importCalls=[];let needReauth=false,reauthCalls=0;
  const controls={DEMO:{environment:'DEMO',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()},
                   LIVE:{environment:'LIVE',trading_enabled:false,reason:'Initial state: off',version:1,updated_by:'system',updated_at:new Date().toISOString()}};
- const searched=[],latencyCalls=[],setups=[],upstoxSetups=[],venues=[],mt5Calls=[];
+ const searched=[],latencyCalls=[],setups=[],upstoxSetups=[],venues=[],mt5Calls=[],bnodes=[],bnCalls=[];
  const requests=[];let n=0;
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
@@ -42,6 +42,13 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.endsWith('/operator/password')){session.must=false;return ok({changed:true});}
    if(url.includes('/operator/prefs')){if(method==='PUT'){prefs[decodeURIComponent(url.split('/prefs/')[1])]=JSON.parse(options.body).value;return ok({saved:true});}return ok(prefs);}
    if(url.endsWith('/operator/reauth')){reauthCalls++;needReauth=false;return ok({reauthenticated:true,minutes:5});}
+   if(url.includes('/config/bridge-nodes')){const body=options.body?JSON.parse(options.body):{};bnCalls.push({url,method,body});
+     if(method==='POST'&&url.endsWith('/config/bridge-nodes')){const nd={id:'bn'+(bnodes.length+1),...body,status:'PENDING',accounts:0,version:1,bridge_version:'',port:9443,tunnel_port:body.mode==='TUNNEL'?9450:null};bnodes.push(nd);
+       return ok({...nd,instructions:{code:'ABCDE-FGHJK-LMNPQ-RSTUV',code_minutes:60,steps:[{title:'Open PowerShell as Administrator'},{title:'Download the installer',command:'Invoke-WebRequest https://x/api/bridge-enroll/files/install-corei-bridge.ps1 -OutFile C:\\corei-setup\\install-corei-bridge.ps1'},
+         {title:'Install and register this machine',command:'powershell -ExecutionPolicy Bypass -File C:\\corei-setup\\install-corei-bridge.ps1 -Corei https://x -Code ABCDE-FGHJK-LMNPQ-RSTUV'}]}},201);}
+     if(url.endsWith('/attach'))return ok({added:['ICM_LIVE_1'],already:[]});
+     const one=bnodes.find(x=>url.endsWith('/'+x.id));if(one)return ok(one);
+     return ok({items:bnodes,latest_bridge:'0.42.0',corei_url:'https://x'});}
    if(url.endsWith('/config/health'))return ok({generated_at:new Date().toISOString(),network:{egress_ip:'203.0.113.200',clock_synchronised:true,server_time_utc:'2026-11-11T10:00:00Z'},
      controls:Object.values(controls),four_eyes_live_changes:true,pending_approvals:approvals.length,failed_alerts:0,
      checklist:[{step:'1 Broker',how:'Add a provider (broker)',done:db.providers.length>0,section:'brokers'},{step:'2 Account',how:'Add an account (MT5: login, password and server)',done:db.accounts.length>0,section:'brokers'}],
@@ -614,6 +621,27 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(controls.LIVE.trading_enabled,true);
  assert.match($('.cfg-nav').textContent,/LIVE ON/);
  console.log('PASS: LIVE order sending needs reason and typed confirmation; status visible in navigation.');
+
+ // Bridge nodes: connect a Windows machine with a one-time code, then use it for accounts (no fingerprint or token typed).
+ nav('Bridge nodes').click();await tick();await tick();
+ button('Connect a Windows machine').click();await tick();
+ fill(byLabel('Node name'),'VPS London');await tick();
+ assert.equal(byLabel('Node name').value,'vps-london');
+ await submit($('#bn-new'));await tick();await tick();
+ assert.deepEqual(bnCalls.filter(c=>c.method==='POST').at(-1).body,{name:'vps-london',location:'WINDOWS_VPS',mode:'DIRECT',max_terminals:20,default_for_new:true,notes:''});
+ const steps=$('.bn-steps');
+ assert.match(steps.textContent,/install-corei-bridge\.ps1 -Corei https:\/\/x -Code ABCDE-FGHJK-LMNPQ-RSTUV/);
+ assert.match(steps.textContent,/Waiting for the machine to register/);
+ assert.equal(steps.querySelectorAll('.bn-cmd button').length,2,'each command has a copy button');
+ button('Close (the code stays valid)').click();await tick();
+ Object.assign(bnodes[0],{status:'ACTIVE',host:'38.253.125.46',bridge_version:'0.42.0',fingerprint:Array(32).fill('AB').join(':'),last_check_ok:true,last_check:{ok:true,terminals_open:0,max_terminals:20}});
+ button('Reload').click();await tick();await tick();
+ assert.match($('.bn .cfg-table').textContent,/vps-london.*direct · 38\.253\.125\.46:9443/);
+ button('Use for accounts').click();await tick();await tick();
+ button('Use for all MT5 accounts').click();await tick();await tick();
+ assert.deepEqual(bnCalls.find(c=>c.url.endsWith('/attach')).body,{account_ids:'ALL_MT5'});
+ assert.match($('[role=status]').textContent,/added to 1 account/);
+ console.log('PASS: bridge nodes: a machine is connected with a one-time code and copy-ready commands, then used for accounts in one click.');
 
  // Users (administrator): create a user with roles.
  nav('Users').click();await tick();await tick();

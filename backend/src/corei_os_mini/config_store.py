@@ -159,6 +159,7 @@ SELECTS = {
         LEFT JOIN cfg_credentials cr ON cr.connection_id=c.id
         LEFT JOIN cfg_connection_status st ON st.connection_id=c.id''',
     'accounts': '''SELECT a.*, c.code AS connection_code, c.name AS connection_name, c.platform, c.environment,
+        (SELECT count(*) FROM cfg_account_routes ar WHERE ar.account_id=a.id AND ar.enabled) AS route_count,
         c.purpose, c.status AS connection_status, c.settings->>'auth_method' AS auth_method,
         c.adapter, c.server_utc_offset_minutes, c.dst_rule, c.registered_egress_ip, c.max_orders_per_second,
         p.id AS provider_id, p.code AS provider_code, p.name AS provider_name, p.status AS provider_status,
@@ -265,8 +266,12 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if row['platform'] == 'REST_API' and not row.get('connection_credential_kind'):
         data.append('CONNECTION_CREDENTIAL_MISSING')
     routing = row.get('routing')
-    uses_bridge = row['platform'] == 'MT5' and row.get('adapter') == 'TERMINAL_BRIDGE'
-    if uses_bridge:
+    # An account with its own routes (DEC-69/75: bridge nodes, push, direct) is reached through them, not the server's method.
+    routed = bool(row.get('route_count'))
+    uses_bridge = row['platform'] == 'MT5' and row.get('adapter') == 'TERMINAL_BRIDGE' and not routed
+    if routed:
+        pass
+    elif uses_bridge:
         # The terminal logs in; COREI needs the bridge's address, certificate fingerprint and token, not server addresses.
         if not ((row.get('connection_settings') or {}).get('bridge') or {}).get('fingerprint'):
             data.append('BRIDGE_NOT_CONFIGURED')
@@ -367,7 +372,7 @@ def list_records(entity: str, filters: dict[str, str], q: str = '', include_arch
     if q:
         text_columns = {'providers': ['p.code', 'p.name'], 'connections': ['c.code', 'c.name', 'p.code'],
                         'accounts': ['a.code', 'a.name', 'a.external_account_id', 'a.holder_name', 'c.code', 'p.code'],
-                        'instruments': ['i.symbol', 'i.name'], 'mappings': ['m.broker_symbol', 'i.symbol', 'c.code'],
+                        'instruments': ['i.symbol', 'i.name', "array_to_string(i.aliases, ' ')", 'i.underlying'], 'mappings': ['m.broker_symbol', 'i.symbol', 'c.code'],
                         'groups': ['g.code', 'g.name']}[entity]
         pattern = '%' + q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         clauses.append('(' + ' OR '.join(f'{c} ILIKE %s' for c in text_columns) + ')')

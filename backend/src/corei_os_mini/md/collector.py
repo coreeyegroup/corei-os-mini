@@ -29,14 +29,14 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from .. import account_routes
 from .. import config_store as cfg
-from . import store
+from . import markets, store
 from .bars import BarBuilder, FRAMES, floor
 from .bridge_client import BridgeError, BridgeTransport, bridge_of
 from .explain import explain
@@ -63,7 +63,35 @@ def parse_time(value: str | None) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
-def scheduled(plan: dict, now: datetime) -> bool:
+CALENDAR: dict[str, frozenset] = {}  # exchange holidays by currency, refreshed on every sync
+
+
+def market_of(plan: dict) -> str | None:
+    """The market whose hours apply to a plan: its instrument's market, else inferred from the broker symbol."""
+    return markets.market_for(plan.get('instrument_market'), plan.get('broker_symbol') or '', plan.get('platform') or '', plan.get('instrument_class') or '')
+
+
+def plan_holidays(plan: dict, calendar: dict | None = None) -> frozenset:
+    """The provider's holidays plus calendar HOLIDAY events in the market's currency."""
+    days = set()
+    for h in plan.get('holidays') or []:
+        if isinstance(h, dict) and h.get('date'):
+            try:
+                days.add(date.fromisoformat(str(h['date'])[:10]))
+            except ValueError:
+                pass
+    m = markets.MARKETS.get(market_of(plan) or '')
+    if m and m.currency and calendar:
+        days |= set(calendar.get(m.currency, ()))
+    return frozenset(days)
+
+
+def in_session(plan: dict, now: datetime, calendar: dict | None = None) -> bool:
+    """Is the plan's market open (pre-open included)? Unknown market: always."""
+    return markets.is_open(market_of(plan), now, plan_holidays(plan, calendar), pre_open=True)
+
+
+def scheduled(plan: dict, now: datetime, calendar: dict | None = None) -> bool:
     """Is this plan meant to collect right now?"""
     schedule = plan['schedule']
     if schedule == 'ALWAYS':
@@ -71,6 +99,9 @@ def scheduled(plan: dict, now: datetime) -> bool:
     if schedule == 'WHILE_DEPLOYED':
         return bool(plan.get('deployed'))
     if schedule == 'SESSIONS':
+        # The market's own hours (NSE 09:00–15:30 IST, MCX to 23:30/23:55, FX Sun–Fri…), minus holidays.
+        if market_of(plan):
+            return in_session(plan, now, calendar)
         holidays = {h.get('date') for h in (plan.get('holidays') or []) if isinstance(h, dict)}
         return now.isoweekday() <= 5 and now.strftime('%Y-%m-%d') not in holidays
     if now.isoweekday() not in (plan.get('window_days') or []):
@@ -694,7 +725,8 @@ class SourceWorker(threading.Thread):
                     self.sink.bars[(self.account_id, symbol, b['timeframe'], b['bar_time'])] = {'account_id': self.account_id, 'broker_symbol': symbol, **b}
                 for r in st.quality.roll(now):
                     self.sink.quality.append({'account_id': self.account_id, 'broker_symbol': symbol, **r})
-                for e in st.quality.stale(now):
+                # No price is expected while the market is closed (NIFTY after 15:30 IST, weekends): no stale alarm.
+                for e in (st.quality.stale(now) if in_session(st.plan, now, CALENDAR) else []):
                     self.sink.events.append({**e, 'account_id': self.account_id, 'broker_symbol': symbol, 'plan_id': st.plan['id']})
             self.sink.status[self.account_id] = self.status()
         self._next_job()
@@ -804,13 +836,15 @@ class Collector:
     def sync(self) -> None:
         now = self.clock()
         plans = store.active_plans()
+        calendar = store.holidays()
+        CALENDAR.clear(); CALENDAR.update(calendar)  # noqa: E702 - read by the workers' stale check
         paused = store.paused_scopes()
         deviation_bp = float(store.policy('md_deviation_bp', 10))
         by_account: dict[str, dict[str, dict]] = {}
         if 'ALL' not in paused:
             for p in plans:
                 account = str(p['account_id'])
-                if f'account:{account}' in paused or p['account_status'] == 'ARCHIVED' or not scheduled(p, now):
+                if f'account:{account}' in paused or p['account_status'] == 'ARCHIVED' or not scheduled(p, now, calendar):
                     continue
                 by_account.setdefault(account, {})[p['broker_symbol']] = p
         for account, wanted in by_account.items():

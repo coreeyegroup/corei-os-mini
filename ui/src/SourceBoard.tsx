@@ -377,6 +377,12 @@ function Available({ s, canEdit, changed }: { s: Row; canEdit: boolean; changed:
       setNonce(n => n + 1); changed();
     } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
   }
+  // Upstox: the list is a public daily file, so it loads by itself the first time (no login needed).
+  const auto = useRef(false);
+  useEffect(() => { if (canEdit && data && !data.catalogue_size && data.source === 'UPSTOX_FILE' && !auto.current && !busy && !data.last_run) { auto.current = true; void refresh(); } }, [data]);
+  const [pop, setPop] = useState<Row | null>(null);
+  useEffect(() => { if (data?.source === 'UPSTOX_FILE' && data.catalogue_size) void api(`md/catalog/${s.account_id}/popular`).then(setPop).catch(() => setPop(null)); }, [data?.catalogue_size, data?.source, nonce]);
+  const quick = (rows: Row[]) => rows.filter(r => !r.plan_id);
   const facets = data?.facets ?? { asset_class: [], exchange: [], segment: [] };
   const lastRun = data?.last_run;
   return <div className="sb-avail" aria-label="Available symbols">
@@ -386,6 +392,14 @@ function Available({ s, canEdit, changed }: { s: Row; canEdit: boolean; changed:
       {canEdit && <button onClick={() => void refresh()} disabled={!!busy} title={s.platform === 'MT5' ? 'Logs in to the broker and reads its symbol list' : 'Loads the list from the provider now'}>
         {busy === 'refresh' ? 'Loading…' : 'Refresh symbols'}</button>}
     </div>
+    {pop && (pop.indices.length > 0 || pop.futures.length > 0) && <div className="md-popular" aria-label="Indian markets quick picks">
+      <b>Indices</b>{pop.indices.map((r: Row) => <button key={r.broker_symbol} disabled={!canEdit || !!r.plan_id || !!busy} title={r.broker_symbol} onClick={() => void collect(r)}>
+        {r.plan_id ? '✓ ' : '+ '}{r.suggested_instrument}</button>)}
+      {pop.futures.length > 0 && <><b>Nearest futures</b>{pop.futures.map((r: Row) => <button key={r.broker_symbol} disabled={!canEdit || !!r.plan_id || !!busy} title={`${r.display_symbol} · lot ${r.lot_size}`} onClick={() => void collect(r)}>
+        {r.plan_id ? '✓ ' : '+ '}{r.underlying} {r.expiry?.slice(5)}</button>)}</>}
+      {canEdit && quick([...pop.indices, ...pop.futures]).length > 1 && <button className="primary" disabled={!!busy}
+        onClick={() => { setPicked(Object.fromEntries(quick([...pop.indices, ...pop.futures]).map(r => [r.broker_symbol, r.suggested_instrument ?? '']))); }}>Pick all of these</button>}
+      <small className="cfg-note">One click collects with the options below. Options chains: filter Class › OPTION and search the underlying (e.g. NIFTY), or Exchange › NSE.</small></div>}
     {data && !data.catalogue_size && <p className="sb-none">{s.platform === 'MT5' ? 'The MT5 server sends its symbol list at login. Use Refresh symbols (it logs in), or Log in and read now on the account.'
       : s.platform === 'FIX' ? 'Refresh symbols asks the venue for its instrument list on the FIX session.'
       : 'Refresh symbols loads the provider\'s instrument list.'}</p>}

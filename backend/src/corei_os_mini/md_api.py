@@ -112,6 +112,33 @@ def collect_from_catalogue(account_id: UUID, payload: dict, response: Response, 
     return catalog.collect(user.username, account_id, _parse(catalog.CollectIn, payload))
 
 
+@router.get('/catalog/{account_id}/popular')
+def popular_from_catalogue(account_id: UUID, response: Response, _: str = Depends(require_operator)):
+    """Indian sources: the main indices (NIFTY 50, NIFTY BANK, FINNIFTY, MIDCPNIFTY, SENSEX…) and each one's nearest future."""
+    _no_store(response)
+    from .md import catalog
+    return catalog.popular(account_id)
+
+
+@router.post('/catalog/{account_id}/instrument')
+def instrument_from_catalogue(account_id: UUID, payload: dict, response: Response, user: Principal = Depends(_ops)):
+    """Find or create the COREI instrument for one listed symbol (with exchange, market hours, lot, expiry…) and map it."""
+    _no_store(response)
+    from .md import catalog
+    return catalog.instrument_from_catalogue(user.username, account_id, _parse(catalog.InstrumentFromCatalogue, payload))
+
+
+@router.get('/markets')
+def market_hours(response: Response, _: str = Depends(require_operator)):
+    """Every market COREI knows the hours of: open now, hours, the next opening or closing."""
+    _no_store(response)
+    from datetime import datetime, timezone
+    from .md import markets
+    hol = store.holidays()
+    now = datetime.now(timezone.utc)
+    return {'items': [markets.describe(code, now, hol.get(m.currency, frozenset())) for code, m in markets.MARKETS.items()]}
+
+
 @router.get('/sources')
 def sources(response: Response, _: str = Depends(require_operator)):
     _no_store(response)

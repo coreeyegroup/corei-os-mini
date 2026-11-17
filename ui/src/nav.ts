@@ -81,6 +81,7 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Intelligence', section: 'strength', label: 'Intelligence › Strength', group: 'Trading flow', keywords: 'currency strength meter fx' },
   { view: 'Intelligence', section: 'watchlists', label: 'Intelligence › Watchlists', group: 'Trading flow', keywords: 'lists groups' },
   { view: 'Intelligence', section: 'rules', label: 'Intelligence › Rules & alerts', group: 'Trading flow', keywords: 'conditions alerts rsi cross regime' },
+  { view: 'Configuration', section: 'bridges', label: 'Setup › Bridge nodes', group: 'Setup', keywords: 'windows vps pc bridge terminal mt5 fingerprint token install enrol tunnel' },
   { view: 'Intelligence', section: 'indicators', label: 'Intelligence › Indicators', group: 'Trading flow', keywords: 'ema sma custom period bollinger macd vwap volume strategy' },
   { view: 'Intelligence', section: 'settings', label: 'Intelligence › Engine settings', group: 'Trading flow', keywords: 'engine cycle pause timeframes retention exclude' },
   { view: 'Intelligence', section: 'calendar', label: 'Intelligence › Calendar', group: 'Trading flow', keywords: 'economic events news holidays cpi nfp csv' },
@@ -125,7 +126,7 @@ export const ago = (v?: number | string | null) => { const s = v == null || v ==
 /* Setup, in the order a firm sets itself up. One tree, used by the side bar and the Setup screen;
  * the three record lists behind "Connectivity" are views of that one screen. */
 export const SETUP_GROUPS: [string, [string, string][]][] = [
-  ['1 · Connect', [['brokers', 'Connectivity'], ['groups', 'Account groups']]],
+  ['1 · Connect', [['brokers', 'Connectivity'], ['bridges', 'Bridge nodes'], ['groups', 'Account groups']]],
   ['2 · Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
   ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
   ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],

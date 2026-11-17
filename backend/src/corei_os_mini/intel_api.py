@@ -104,7 +104,10 @@ def instrument(account_id: UUID, broker_symbol: str, response: Response, timefra
 def session_map(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
     now = datetime.now(timezone.utc)
-    return {'now': sessions.sessions_at(now), 'next': sessions.next_changes(now), 'table': sessions.week_table()}
+    from .md import markets, store as md_store
+    hol = md_store.holidays()
+    exchanges = [markets.describe(code, now, hol.get(m.currency, frozenset())) for code, m in markets.MARKETS.items()]
+    return {'now': sessions.sessions_at(now), 'next': sessions.next_changes(now), 'table': sessions.week_table(), 'exchanges': exchanges}
 
 
 @router.get('/status')

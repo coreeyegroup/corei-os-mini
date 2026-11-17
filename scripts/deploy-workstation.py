@@ -198,6 +198,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 UMask=0077
+# Bridge-node tunnel keys (scripts/enable-bridge-tunnels.sh); ignored when that folder does not exist.
+ReadWritePaths=-/var/lib/corei-os-mini/tunnel
 
 [Install]
 WantedBy=multi-user.target

@@ -59,9 +59,11 @@ INSTRUMENTS = [
     dict(symbol='USDJPY', name='US dollar vs Japanese yen', asset_class='FX', base_currency='USD', quote_currency='JPY', price_precision=3, quantity_precision=2,
          tick_size=D('0.001'), min_quantity=D('0.01'), quantity_step=D('0.01'), contract_size=D('100000'), contract_unit='USD', trading_session='Sun 22:00 – Fri 22:00 UTC'),
     dict(symbol='NIFTY50', name='NIFTY 50 index (NSE)', asset_class='INDEX', base_currency='INR', quote_currency='INR', price_precision=2, quantity_precision=0,
-         tick_size=D('0.05'), min_quantity=D('1'), quantity_step=D('1'), contract_size=D('1'), contract_unit='index point', trading_session='Mon–Fri 09:15–15:30 IST'),
+         tick_size=D('0.05'), min_quantity=D('1'), quantity_step=D('1'), contract_size=D('1'), contract_unit='index point', trading_session='Mon–Fri 09:15–15:30 IST',
+         exchange='NSE', market='NSE', aliases=['NIFTY', 'NIFTY 50']),
     dict(symbol='NIFTYBANK', name='NIFTY Bank index (NSE)', asset_class='INDEX', base_currency='INR', quote_currency='INR', price_precision=2, quantity_precision=0,
-         tick_size=D('0.05'), min_quantity=D('1'), quantity_step=D('1'), contract_size=D('1'), contract_unit='index point', trading_session='Mon–Fri 09:15–15:30 IST'),
+         tick_size=D('0.05'), min_quantity=D('1'), quantity_step=D('1'), contract_size=D('1'), contract_unit='index point', trading_session='Mon–Fri 09:15–15:30 IST',
+         exchange='NSE', market='NSE', aliases=['BANKNIFTY', 'NIFTY BANK']),
 ]
 GROUPS = [
     {'code': 'SRC_FX_METALS', 'name': 'Price sources · FX and metals', 'description': 'MT5 accounts that give FX and gold prices', 'members': ['METAQUOTES_DEMO_5056977914', 'VTMARKET_LIVE_35822869']},

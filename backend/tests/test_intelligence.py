@@ -175,7 +175,7 @@ class PublicShell(unittest.TestCase):
         from pathlib import Path
         from corei_os_mini.api import app
         caddy = (Path(__file__).resolve().parents[2] / 'deploy' / 'workstation.Caddyfile').read_text()
-        allowed = re.search(r'@operational path ([^\n]+)', caddy).group(1).split()
+        allowed = re.search(r'@operational path ([^\n]+)', caddy).group(1).split() + re.search(r'@bridge_enrol path ([^\n]+)', caddy).group(1).split()
         prefixes = {'/'.join(r.path.split('/')[:3]) for r in app.routes if getattr(r, 'path', '').startswith('/api/')}
         internal = {'/api/workstation', '/api/market-data', '/api/paper-runs', '/api/demo'}  # deliberately not on the public shell
         missing = sorted(p for p in prefixes if p not in internal and f'{p}/*' not in allowed)

@@ -246,7 +246,14 @@ export function SessionsView() {
         {data.table.map((s: Row) => <tr key={s.name}><td>{s.name}</td><td>{s.local} <small className="cfg-note">{s.zone}</small></td><td>{s.utc_today}</td>
           <td>{data.now.sessions.includes(s.name) ? <span className="cfg-pill ok">open</span> : '–'}</td></tr>)}</tbody></table>
     </div>
-    <p className="cfg-note">FX week: Sunday 17:00 to Friday 17:00 New York. Daylight-saving changes follow each centre's time zone. Exchange holidays and economic events are the next component (calendar).</p>
+    <h4>Exchanges</h4>
+    <table className="cfg-table compact"><thead><tr><th>Market</th><th>Hours</th><th>Now</th><th>Next</th><th>Note</th></tr></thead><tbody>
+      {(data.exchanges ?? []).map((m: Row) => <tr key={m.code}><td><b>{m.code}</b> <small className="cfg-note">{m.name}</small></td><td>{m.hours}</td>
+        <td>{m.open ? <span className="cfg-pill ok">open</span> : <span className="cfg-pill off">closed</span>}</td>
+        <td>{m.next ? <small>{m.next.event} {new Date(m.next.at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</small> : '–'}</td>
+        <td><small className="cfg-note">{m.note}</small></td></tr>)}</tbody></table>
+    <p className="cfg-note">FX week: Sunday 17:00 to Friday 17:00 New York. Daylight-saving changes follow each centre's time zone. Exchange holidays come from the calendar
+      (Monitor › Calendar: a HOLIDAY event in INR closes NSE, BSE and MCX that day). Collection plans on <em>Market hours</em> follow these, and no stale-price alarm is raised while a market is closed.</p>
   </section>;
 }
 

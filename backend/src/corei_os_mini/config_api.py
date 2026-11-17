@@ -183,7 +183,16 @@ def setup_mt5_account(payload: dict, response: Response, actor: str = Depends(ed
         data.credential = parse(CredentialEnvelope, {'credential': credential}, secret=True).credential
     if payload.get('bridge_token'):
         data.bridge_token = parse(CredentialEnvelope, {'credential': {'kind': 'BRIDGE_TOKEN', 'token': payload['bridge_token']}}, secret=True).credential.token
-    return _pending(response, store.setup_mt5_account(actor, data))
+    result = store.setup_mt5_account(actor, data)
+    account = result.get('account') if isinstance(result, dict) else None
+    if account and account.get('id'):
+        from . import bridge_nodes
+        attached = (bridge_nodes.attach(actor, data.bridge_node_id, bridge_nodes.AttachIn(account_ids=[UUID(str(account['id']))], priority=10))
+                    if data.bridge_node_id else bridge_nodes.attach_default(actor, UUID(str(account['id']))))
+        if attached and attached['added']:
+            with store.transaction('read') as db:
+                result = {**result, 'account': store.get_record(db, 'accounts', UUID(str(account['id']))), 'bridge_route_added': True}
+    return _pending(response, result)
 
 
 @router.post('/accounts/{account_id}/mt5-server')
@@ -281,7 +290,17 @@ def get_entity(entity: Entity, record_id: UUID, response: Response, _: str = Dep
 @router.post('/{entity}', status_code=201)
 def create_entity(entity: Entity, payload: dict, response: Response, actor: str = Depends(editor)):
     _no_store(response)
-    return _pending(response, store.create(actor, entity, parse(store.SPECS[entity].model, payload)))
+    created = store.create(actor, entity, parse(store.SPECS[entity].model, payload))
+    if entity == 'accounts' and isinstance(created, dict) and created.get('id') and not created.get('change_request'):
+        # A new MT5 account uses the default bridge node at once (Setup › Bridge nodes), so no route is typed by hand.
+        with store.transaction('read') as db:
+            mt5 = db.execute("SELECT c.platform FROM cfg_connections c WHERE c.id=%s", (created['connection_id'],)).fetchone()
+        if mt5 and mt5['platform'] == 'MT5':
+            from . import bridge_nodes
+            attached = bridge_nodes.attach_default(actor, UUID(str(created['id'])))
+            if attached and attached['added']:
+                created = {**created, 'bridge_route_added': True}
+    return _pending(response, created)
 
 
 @router.put('/{entity}/{record_id}')

@@ -20,6 +20,12 @@ UPSTOX = [
      'lot_size': 1, 'tick_size': 5.0, 'trading_symbol': 'RELIANCE'},
     {'segment': 'MCX_FO', 'name': 'GOLD', 'exchange': 'MCX', 'instrument_type': 'FUT', 'instrument_key': 'MCX_FO|440000', 'lot_size': 100,
      'tick_size': 100.0, 'trading_symbol': 'GOLD FUT 05 DEC 26', 'expiry': 1796495399000, 'underlying_symbol': 'GOLD'},
+    {'segment': 'NSE_INDEX', 'name': 'Nifty Bank', 'exchange': 'NSE', 'instrument_type': 'INDEX', 'instrument_key': 'NSE_INDEX|Nifty Bank', 'trading_symbol': 'BANKNIFTY', 'tick_size': 5.0},
+    {'segment': 'NSE_INDEX', 'name': 'Nifty Fin Service', 'exchange': 'NSE', 'instrument_type': 'INDEX', 'instrument_key': 'NSE_INDEX|Nifty Fin Service', 'trading_symbol': 'FINNIFTY'},
+    {'segment': 'NSE_FO', 'name': 'BANKNIFTY', 'exchange': 'NSE', 'instrument_type': 'FUT', 'instrument_key': 'NSE_FO|60001', 'lot_size': 35, 'tick_size': 20.0,
+     'trading_symbol': 'BANKNIFTY FUT 24 DEC 99', 'expiry': 4101820199000, 'underlying_symbol': 'BANKNIFTY'},
+    {'segment': 'NSE_FO', 'name': 'BANKNIFTY', 'exchange': 'NSE', 'instrument_type': 'FUT', 'instrument_key': 'NSE_FO|60000', 'lot_size': 35, 'tick_size': 20.0,
+     'trading_symbol': 'BANKNIFTY FUT 24 NOV 99', 'expiry': 4099228199000, 'underlying_symbol': 'BANKNIFTY'},
     {'segment': 'NSE_FO', 'name': 'NIFTY', 'exchange': 'NSE', 'instrument_type': 'CE', 'instrument_key': 'NSE_FO|50001', 'lot_size': 75, 'tick_size': 5.0,
      'trading_symbol': 'NIFTY 24500 CE 26 NOV 26', 'strike_price': 24500.0, 'expiry': 1795717799000, 'underlying_symbol': 'NIFTY'},
 ]
@@ -80,8 +86,8 @@ class SymbolCatalogue(test_market_data.MarketData):
         with patch('corei_os_mini.md.catalog._download_upstox', return_value=UPSTOX):
             loaded = self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/refresh"))
             nightly = __import__('corei_os_mini.md.catalog', fromlist=['refresh_due']).refresh_due()
-        self.assertEqual((loaded['source'], loaded['symbols']), ('UPSTOX_FILE', 4))
-        self.assertEqual(nightly[0]['symbols'], 4, 'the nightly job reloads the daily file')
+        self.assertEqual((loaded['source'], loaded['symbols']), ('UPSTOX_FILE', 8))
+        self.assertEqual(nightly[0]['symbols'], 8, 'the nightly job reloads the daily file')
         items = {i['broker_symbol']: i for i in self.ok(self.alice.get(f"/api/md/catalog/{a['id']}"))['items']}
         nifty, rel, gold, opt = items['NSE_INDEX|Nifty 50'], items['NSE_EQ|INE002A01018'], items['MCX_FO|440000'], items['NSE_FO|50001']
         self.assertEqual((nifty['asset_class'], nifty['suggested_instrument']), ('INDEX', 'NIFTY50'))
@@ -89,8 +95,30 @@ class SymbolCatalogue(test_market_data.MarketData):
         self.assertEqual((gold['asset_class'], gold['expiry'], str(gold['lot_size'])), ('COMMODITY', '2026-12-05', '100'))
         self.assertEqual((opt['asset_class'], str(opt['strike'])), ('OPTION', '24500'))
         facets = self.ok(self.alice.get(f"/api/md/catalog/{a['id']}?exchange=NSE"))
-        self.assertEqual(facets['total'], 3)
-        self.assertEqual({f['k']: f['n'] for f in facets['facets']['exchange']}, {'NSE': 3, 'MCX': 1})
+        self.assertEqual(facets['total'], 7)
+        self.assertEqual({f['k']: f['n'] for f in facets['facets']['exchange']}, {'NSE': 7, 'MCX': 1})
         picked = self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/collect", json={'items': [{'broker_symbol': 'NSE_INDEX|Nifty 50'}], 'purpose': 'RESEARCH'}), 201)
         self.assertEqual((picked['started'], picked['created'][0]['instrument']), (1, 'NIFTY50'), picked)
         self.assertEqual(picked['created'][0]['code'], 'UPSTOX_7AB123_NSE_INDEX_NIFTY_50')
+
+        # Indian names: traders' names find the exchange's, the main indices and nearest futures are one click away,
+        # and an instrument is created with where it trades and its contract.
+        found = {i['broker_symbol'] for i in self.ok(self.alice.get(f"/api/md/catalog/{a['id']}?q=banknifty"))['items']}
+        self.assertEqual(found, {'NSE_INDEX|Nifty Bank', 'NSE_FO|60000', 'NSE_FO|60001'})
+        self.assertEqual(self.ok(self.alice.get(f"/api/md/catalog/{a['id']}?q=FINNIFTY"))['items'][0]['suggested_instrument'], 'NIFTYFIN')
+        pop = self.ok(self.alice.get(f"/api/md/catalog/{a['id']}/popular"))
+        self.assertEqual([i['broker_symbol'] for i in pop['indices']], ['NSE_INDEX|Nifty 50', 'NSE_INDEX|Nifty Bank', 'NSE_INDEX|Nifty Fin Service'])
+        bank_futs = [f['broker_symbol'] for f in pop['futures'] if f['underlying'] == 'BANKNIFTY']
+        self.assertEqual(bank_futs, ['NSE_FO|60000'], 'nearest BANKNIFTY future only')
+        bank = self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/instrument", json={'broker_symbol': 'NSE_INDEX|Nifty Bank'}))
+        self.assertEqual((bank['symbol'], bank['market'], bank['exchange'], bank['aliases']), ('NIFTYBANK', 'NSE', 'NSE', ['BANKNIFTY', 'NIFTY BANK']))
+        again = self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/instrument", json={'broker_symbol': 'NSE_INDEX|Nifty Bank', 'instrument': 'BANKNIFTY'}))
+        self.assertEqual(again['id'], bank['id'], 'an alias finds the same instrument, never a duplicate')
+        fut = self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/instrument", json={'broker_symbol': 'NSE_FO|60001'}))
+        with self.connect() as db:
+            f = db.execute('SELECT * FROM cfg_instruments WHERE id=%s', (UUID(fut['id']),)).fetchone()
+            mapped = db.execute("SELECT count(*) AS n FROM cfg_symbol_mappings WHERE broker_symbol='NSE_FO|60001'").fetchone()['n']
+        self.assertEqual((f['asset_class'], f['market'], str(f['lot_size'].normalize()), str(f['expiry']), f['underlying'], str(f['min_quantity'].normalize()), f['trading_session']),
+                         ('FUTURE', 'NSE_FO', '35', '2099-12-24', 'BANKNIFTY', '35', 'Mon–Fri 09:15–15:30 IST'))
+        self.assertEqual(mapped, 1)
+        self.ok(self.alice.post(f"/api/md/catalog/{a['id']}/instrument", json={'broker_symbol': 'NSE_FO|99'}), 404)

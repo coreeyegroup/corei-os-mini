@@ -22,13 +22,28 @@ INTEGRITY_KINDS = {'VERIFY', 'BACKUP', 'DISK', 'ARCHIVE'}
 def active_plans() -> list[dict]:
     with store.transaction('read') as db:
         return [dict(r) for r in db.execute('''SELECT p.*, a.code AS account_code, a.external_account_id, a.connection_id, a.status AS account_status,
-                c.platform, c.environment, pr.holidays,
+                c.platform, c.environment, pr.holidays, i.market AS instrument_market, i.asset_class AS instrument_class,
                 COALESCE((SELECT (s.spec->>'digits')::int FROM cfg_symbol_specs s WHERE s.account_id=p.account_id AND s.broker_symbol=p.broker_symbol
                           ORDER BY s.read_at DESC LIMIT 1), 5) AS digits,
                 EXISTS (SELECT 1 FROM cfg_deployments d WHERE d.instrument_id=p.instrument_id AND d.account_id=p.account_id AND d.status='ACTIVE') AS deployed
             FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id JOIN cfg_connections c ON c.id=a.connection_id
-            JOIN cfg_providers pr ON pr.id=c.provider_id
+            JOIN cfg_providers pr ON pr.id=c.provider_id LEFT JOIN cfg_instruments i ON i.id=p.instrument_id
             WHERE p.status='ACTIVE' ''').fetchall()]
+
+
+def holidays() -> dict[str, frozenset]:
+    """Exchange holidays by currency, from the calendar's HOLIDAY events (Intelligence › Calendar), as local dates
+    (India: IST). Used for market hours: an NSE holiday is an INR HOLIDAY event."""
+    try:
+        with store.transaction('read') as db:
+            rows = db.execute("""SELECT currency, (at AT TIME ZONE CASE currency WHEN 'INR' THEN 'Asia/Kolkata' ELSE 'UTC' END)::date AS day
+                                  FROM intel_events WHERE impact='HOLIDAY' AND at > now() - interval '2 days' AND at < now() + interval '400 days'""").fetchall()
+    except Exception:  # noqa: BLE001 - calendar not migrated yet
+        return {}
+    out: dict[str, set] = {}
+    for r in rows:
+        out.setdefault(r['currency'], set()).add(r['day'])
+    return {k: frozenset(v) for k, v in out.items()}
 
 
 def paused_scopes() -> set[str]:

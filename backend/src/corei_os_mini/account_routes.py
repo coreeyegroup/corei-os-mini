@@ -24,7 +24,7 @@ METHODS = ('DIRECT', 'TERMINAL_BRIDGE', 'TERMINAL_PUSH')
 LOCATIONS = ('WINDOWS_VPS', 'WINDOWS_PC', 'DOCKER', 'COREI_SERVER', 'OTHER')
 SWITCH_AFTER_FAILURES = 2      # failed sessions on one route before moving to the next
 FAILBACK_SECONDS = 300         # time on a lower route before a reconnect tries the first route again
-FIELDS = ('label', 'method', 'location', 'host', 'port', 'fingerprint', 'priority', 'enabled', 'notes')
+FIELDS = ('label', 'method', 'location', 'host', 'port', 'fingerprint', 'priority', 'enabled', 'notes', 'node_id')
 _FP = re.compile(r'^([0-9A-F]{2}:){31}[0-9A-F]{2}$')
 
 
@@ -38,6 +38,7 @@ class RouteIn(BaseModel):
     priority: int = Field(default=10, ge=0, le=1000)
     enabled: bool = True
     notes: str = Field(default='', max_length=500)
+    node_id: UUID | None = None   # a registered bridge node (Setup › Bridge nodes): its address, fingerprint and token are used
 
     @field_validator('fingerprint')
     @classmethod
@@ -53,19 +54,22 @@ class RouteIn(BaseModel):
 
     @model_validator(mode='after')
     def _bridge_needs_address(self) -> 'RouteIn':
-        if self.method == 'TERMINAL_BRIDGE':
+        if self.method == 'TERMINAL_BRIDGE' and self.node_id:
+            self.host = self.port = self.fingerprint = None
+        elif self.method == 'TERMINAL_BRIDGE':
             missing = [n for n in ('host', 'port', 'fingerprint') if not getattr(self, n)]
             if missing:
                 raise ValueError(f"A terminal bridge route needs: {', '.join(missing)}.")
         else:
-            self.host = self.port = self.fingerprint = None
+            self.host = self.port = self.fingerprint = self.node_id = None
         return self
 
 
 def _public(row: dict) -> dict:
     out = {k: v for k, v in store.clean(dict(row)).items() if k not in ('token', 'token_key_id')}
-    out['token_saved'] = row.get('token') is not None
-    out['needs_token'] = row['method'] in ('TERMINAL_BRIDGE', 'TERMINAL_PUSH')
+    out['token_saved'] = row.get('token') is not None or bool(row.get('node_token'))
+    out['needs_token'] = row['method'] in ('TERMINAL_BRIDGE', 'TERMINAL_PUSH') and not row.get('node_id')
+    out.pop('node_token', None)
     return out
 
 
@@ -82,8 +86,9 @@ def _account(db, account_id: UUID) -> dict:
 def list_routes(account_id: UUID) -> list[dict]:
     with store.transaction('read') as db:
         _account(db, account_id)
-        rows = [_public(r) for r in db.execute('SELECT * FROM cfg_account_routes WHERE account_id=%s ORDER BY priority, created_at',
-                                               (account_id,)).fetchall()]
+        rows = [_public(r) for r in db.execute('SELECT r.*, n.name AS node_name, n.status AS node_status, n.host AS node_host, n.port AS node_port, '
+                                               'n.token IS NOT NULL AS node_token FROM cfg_account_routes r LEFT JOIN cfg_bridge_nodes n ON n.id=r.node_id '
+                                               'WHERE r.account_id=%s ORDER BY r.priority, r.created_at', (account_id,)).fetchall()]
         if any(r['method'] == 'TERMINAL_PUSH' for r in rows):
             try:
                 ea = db.execute('SELECT login, server, company, build, ea_version, remote_ip, last_push_at, pushes FROM md_push_terminals '
@@ -101,8 +106,10 @@ def create(actor: str, account_id: UUID, data: RouteIn) -> dict:
         account = _account(db, account_id)
         route_id = uuid4()
         values = data.model_dump()
+        if values.get('node_id') and not db.execute('SELECT 1 FROM cfg_bridge_nodes WHERE id=%s', (values['node_id'],)).fetchone():
+            raise HTTPException(422, 'That bridge node does not exist.')
         db.execute('INSERT INTO cfg_account_routes(id, account_id, label, method, location, host, port, fingerprint, priority, enabled, notes, '
-                   'created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                   'node_id, created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                    (route_id, account_id, *[values[k] for k in FIELDS], actor, actor))
         store.audit(db, actor, 'CREATE_ROUTE', 'account', account_id, None, {'route': str(route_id), 'account': account['code'], **values})
         return _public(db.execute('SELECT * FROM cfg_account_routes WHERE id=%s', (route_id,)).fetchone())
@@ -122,7 +129,7 @@ def update(actor: str, account_id: UUID, route_id: UUID, data: RouteIn, version:
         before = _route(db, account_id, route_id, version)
         values = data.model_dump()
         db.execute('UPDATE cfg_account_routes SET label=%s, method=%s, location=%s, host=%s, port=%s, fingerprint=%s, priority=%s, enabled=%s, '
-                   'notes=%s, version=version+1, updated_by=%s, updated_at=now() WHERE id=%s',
+                   'notes=%s, node_id=%s, version=version+1, updated_by=%s, updated_at=now() WHERE id=%s',
                    (*[values[k] for k in FIELDS], actor, route_id))
         if before['method'] != values['method']:
             db.execute('UPDATE cfg_account_routes SET token=NULL, token_key_id=NULL, token_set_at=NULL WHERE id=%s', (route_id,))
@@ -144,6 +151,8 @@ def set_token(actor: str, account_id: UUID, route_id: UUID, token: str) -> None:
         row = _route(db, account_id, route_id)
         if row['method'] == 'DIRECT':
             raise HTTPException(422, 'A direct SDK route uses the account\'s own login; it has no token.')
+        if row.get('node_id'):
+            raise HTTPException(422, 'This route uses a bridge node: its token comes from the node (Setup › Bridge nodes).')
         db.execute('UPDATE cfg_account_routes SET token=%s, token_key_id=%s, token_set_at=now(), updated_by=%s, updated_at=now() WHERE id=%s',
                    (credentials.encrypt(route_id, {'token': token}), credentials.key_id(), actor, route_id))
         store.audit(db, actor, 'REPLACE_CREDENTIAL' if row['token'] else 'SET_CREDENTIAL', 'account', account_id, None,
@@ -152,6 +161,9 @@ def set_token(actor: str, account_id: UUID, route_id: UUID, token: str) -> None:
 
 def use_token(route: dict, used_by: str, purpose: str) -> dict[str, str]:
     """A route's token for in-process use; every use is logged like any credential's."""
+    if route.get('node_id'):
+        from . import bridge_nodes
+        return bridge_nodes.token(route['node_id'], used_by, purpose)
     with store.transaction('read') as db:
         row = db.execute('SELECT id, account_id, token FROM cfg_account_routes WHERE id=%s', (route['id'],)).fetchone()
         if not row or row['token'] is None:
@@ -163,15 +175,28 @@ def use_token(route: dict, used_by: str, purpose: str) -> dict[str, str]:
 
 # ----- the collector's side -----
 
+_RESOLVED = ('SELECT r.id, r.label, r.method, r.location, COALESCE(n.host, r.host) AS host, COALESCE(n.port, r.port) AS port, '
+             'COALESCE(n.fingerprint, r.fingerprint) AS fingerprint, r.priority, r.node_id, n.name AS node_name, '
+             'COALESCE(n.token, r.token) IS NOT NULL AS has_token '
+             'FROM cfg_account_routes r LEFT JOIN cfg_bridge_nodes n ON n.id=r.node_id WHERE r.account_id=%s ')
+
+
 def enabled_routes(account_id: Any) -> list[dict]:
-    """The account's enabled routes in order (empty: use the server's method)."""
+    """The account's enabled routes in order (empty: use the server's method). A route through a bridge node takes
+    the node's address and fingerprint; a disabled or not yet enrolled node is skipped."""
     try:
         with store.transaction('read') as db:
-            return [dict(r) for r in db.execute('SELECT id, label, method, location, host, port, fingerprint, priority, token IS NOT NULL AS has_token '
-                                                'FROM cfg_account_routes WHERE account_id=%s AND enabled ORDER BY priority, created_at',
-                                                (str(account_id),)).fetchall()]
+            return [dict(r) for r in db.execute(_RESOLVED + "AND r.enabled AND (r.node_id IS NULL OR n.status IN ('ACTIVE', 'UNREACHABLE')) "
+                                                'ORDER BY r.priority, r.created_at', (str(account_id),)).fetchall()]
     except HTTPException:
         return []  # schema not migrated yet: behave as before
+
+
+def resolved_route(account_id: Any, route_id: Any) -> dict | None:
+    """One route as the readers use it (node address and fingerprint filled in), enabled or not."""
+    with store.transaction('read') as db:
+        row = db.execute(_RESOLVED + 'AND r.id=%s', (str(account_id), str(route_id))).fetchone()
+    return dict(row) if row else None
 
 
 def apply(account: dict, route: dict) -> dict:

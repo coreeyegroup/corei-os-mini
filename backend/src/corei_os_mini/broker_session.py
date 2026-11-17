@@ -179,7 +179,7 @@ def read_account(actor: str, account_id: UUID, symbols: list[str] | None = None,
     # Routes (DEC-69): read through the chosen route, or the account's first route when it has any.
     from . import account_routes
     routes = account_routes.enabled_routes(account_id) if route_id is None else [
-        r for r in account_routes.list_routes(account_id) if r['id'] == str(route_id)]
+        r for r in [account_routes.resolved_route(account_id, route_id)] if r]
     if route_id is not None and not routes:
         raise HTTPException(404, 'Route not found on this account.')
     if routes:

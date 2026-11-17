@@ -181,6 +181,29 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
     catch (err) { setError((err as Error).message); }
   }
   const account = accounts.find(a => a.id === f.account_id);
+  // Broker symbol: searched in the source's own list (MT5 symbols, the Upstox file: NSE/BSE/MCX indices, stocks, F&O),
+  // so nobody types "NSE_INDEX|Nifty Bank" by hand; picking it links or creates the COREI instrument.
+  const [hits, setHits] = useState<Row[] | null>(null), [picked, setPicked] = useState<Row | null>(null), [made, setMade] = useState<Row[]>([]);
+  const [insQ, setInsQ] = useState(''), [catSize, setCatSize] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isNew || !f.account_id || !f.broker_symbol || f.broker_symbol === picked?.broker_symbol) { setHits(null); return; }
+    const t = window.setTimeout(() => void api(`md/catalog/${f.account_id}?q=${encodeURIComponent(f.broker_symbol)}&limit=12`)
+      .then(d => { setHits(d.items); setCatSize(d.catalogue_size); }).catch(() => setHits(null)), 250);
+    return () => window.clearTimeout(t);
+  }, [f.account_id, f.broker_symbol]);
+  const choose = (r: Row) => {
+    setPicked(r); setHits(null);
+    setF({ ...f, broker_symbol: r.broker_symbol, instrument_id: r.instrument_id ?? f.instrument_id,
+      purpose: r.instrument_id ? 'TRADING_FEED' : f.purpose, code: f.code || `${account?.code ?? ''}_${r.suggested_instrument || r.display_symbol}`.toUpperCase().replace(/[^A-Z0-9_.-]/g, '_').slice(0, 60) });
+  };
+  const createInstrument = async () => {
+    try { const i = await api(`md/catalog/${f.account_id}/instrument`, 'POST', { broker_symbol: f.broker_symbol });
+      setMade([...made, i]); setF({ ...f, instrument_id: i.id, purpose: 'TRADING_FEED' }); setNotice(`Instrument ${i.symbol} ready (${i.market || 'no market'}${i.aliases?.length ? `, also called ${i.aliases.join(', ')}` : ''}).`); }
+    catch (err) { setError((err as Error).message); }
+  };
+  const allInstruments = [...instruments, ...made.filter(m => !instruments.some(i => i.id === m.id))];
+  const shownInstruments = allInstruments.filter(i => !insQ || `${i.symbol} ${i.name} ${(i.aliases ?? []).join(' ')}`.toLowerCase().includes(insQ.toLowerCase()) || i.id === f.instrument_id);
+  const byClass: Record<string, Row[]> = shownInstruments.reduce((m: Record<string, Row[]>, i: Row) => ({ ...m, [i.asset_class]: [...(m[i.asset_class] ?? []), i] }), {});
   return <FloatingWindow title={isNew ? 'New collection plan' : `Plan ${plan.code}`} subtitle={isNew ? 'What to collect, from where and how to keep it' : `${plan.status.toLowerCase()} · ${plan.account_code} · ${plan.broker_symbol}`}
     onClose={close} width={760} storageKey="corei-os-mini.window.md-plan"
     footer={<div className="cfg-actions">
@@ -194,15 +217,28 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
         <div className="cfg-pair"><Field label="Plan code"><input aria-label="Plan code" required value={f.code} onChange={e => set('code', e.target.value.toUpperCase())} /></Field>
           <Field label="Account (source)"><select aria-label="Plan account" required disabled={!isNew} value={f.account_id} onChange={e => set('account_id', e.target.value)}>
             <option value="">Choose…</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.provider_code} {a.environment}</option>)}</select></Field></div>
-        <div className="cfg-pair"><Field label="Broker symbol" hint="Exactly as the broker names it: MT5 e.g. XAUUSD.r; Upstox the instrument key, e.g. NSE_INDEX|Nifty 50 or NSE_EQ|INE002A01018."><input aria-label="Broker symbol" required disabled={!isNew} value={f.broker_symbol} onChange={e => set('broker_symbol', e.target.value)} /></Field>
-          <Field label="Instrument" hint="Needed for a trading feed; links sources of the same instrument for comparison and switching.">
-            <select aria-label="Plan instrument" value={f.instrument_id} onChange={e => set('instrument_id', e.target.value)}><option value="">None</option>
-              {instruments.map(i => <option key={i.id} value={i.id}>{i.symbol}</option>)}</select></Field></div>
+        <div className="cfg-pair"><Field label="Broker symbol" hint={isNew ? 'Type a name: nifty, banknifty, reliance, gold, EURUSD… and pick from the source\'s own list. Or type the exact symbol (MT5 XAUUSD.r; Upstox key NSE_INDEX|Nifty 50).' : undefined}>
+            <div className="md-suggest-wrap"><input aria-label="Broker symbol" required disabled={!isNew} autoComplete="off" value={f.broker_symbol}
+              placeholder={f.account_id ? 'Search this source…' : 'Choose the account first'} onChange={e => { setPicked(null); set('broker_symbol', e.target.value); }} />
+              {hits && <ul className="md-suggest" role="listbox" aria-label="Matching symbols">
+                {hits.map(r => <li key={r.broker_symbol} role="option" aria-selected={false} onMouseDown={e => { e.preventDefault(); choose(r); }}>
+                  <b>{r.display_symbol}</b> <small>{r.description}</small>
+                  <span className="cfg-note"> {r.asset_class.toLowerCase()}{r.exchange ? ` · ${r.exchange}` : ''}{r.expiry ? ` · exp ${r.expiry}` : ''}{r.strike ? ` · ${r.strike}` : ''}{r.plan_id ? ' · already collected' : ''}</span></li>)}
+                {!hits.length && <li className="cfg-note">{catSize === 0 ? 'This source\'s list is not loaded yet: Sources › this source › Available › Refresh symbols (or keep the exact symbol you typed).' : 'No match in this source\'s list; the exact symbol you typed is used.'}</li>}
+              </ul>}</div></Field>
+          <Field label="Instrument" hint="The COREI instrument (one name across brokers). Needed for a trading feed; links sources of the same instrument for comparison and switching.">
+            <input aria-label="Filter instruments" placeholder={`Filter ${allInstruments.length} instruments (name or alias)…`} value={insQ} onChange={e => setInsQ(e.target.value)} />
+            <select aria-label="Plan instrument" value={f.instrument_id} onChange={e => set('instrument_id', e.target.value)}><option value="">None (research only)</option>
+              {Object.entries(byClass).map(([cls, list]) => <optgroup key={cls} label={cls}>{(list as Row[]).map((i: Row) => <option key={i.id} value={i.id}>{i.symbol} · {i.name}{i.aliases?.length ? ` (${i.aliases.join(', ')})` : ''}</option>)}</optgroup>)}</select>
+            {isNew && picked && !f.instrument_id && <button type="button" onClick={() => void createInstrument()}>Create instrument {picked.suggested_instrument} from the source's details</button>}
+          </Field></div>
         <div className="cfg-pair"><Field label="Purpose"><select aria-label="Plan purpose" value={f.purpose} onChange={e => set('purpose', e.target.value)}>
             {[['RESEARCH', 'Collect (research)'], ['TRADING_FEED', 'Trading feed (needs an instrument)'], ['REFERENCE', 'Reference (comparison)'], ['MONITORING', 'Quality monitoring']].map(([v, l]) => <option key={v} value={v} disabled={v === 'TRADING_FEED' && !f.instrument_id}>{l}</option>)}</select></Field>
           <Field label="Feed role"><select aria-label="Plan role" value={f.feed_role} onChange={e => set('feed_role', e.target.value)}>
             {[['PRIMARY', 'Primary'], ['BACKUP', 'Backup'], ['REFERENCE', 'Reference']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
-        {account && account.platform !== 'MT5' && <p className="cfg-note">The collector for {account.platform} accounts is not built yet; the plan is kept and starts when it is.</p>}
+        {account && !['MT5', 'REST_API', 'FIX'].includes(account.platform) && <p className="cfg-note">The collector for {account.platform} accounts is not built yet; the plan is kept and starts when it is.</p>}
+        {account?.platform === 'REST_API' && <p className="cfg-note">Upstox: prices are read once a second (best bid/ask, last, volume) and bars from its history; it needs today's broker login (Setup › the account › Log in to Upstox).
+          Indian markets trade 09:15–15:30 IST (MCX to 23:30): choose <em>Market hours</em> under When, or keep Always; no stale alarm is raised while the market is closed.</p>}
       </div></section>
       <section className="cfg-section"><h4><span>2</span>Data</h4><div className="cfg-section-body">
         <div className="cfg-actions"><button type="button" title="Every price update, bars on every timeframe (with tick and real volume and the bar spread), and order-book depth where the broker publishes it"
@@ -216,7 +252,7 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
       </div></section>
       <section className="cfg-section"><h4><span>3</span>When</h4><div className="cfg-section-body">
         <Field label="Schedule"><select aria-label="Plan schedule" value={f.schedule} onChange={e => set('schedule', e.target.value)}>
-          {[['ALWAYS', 'Always'], ['SESSIONS', 'Trading days (Mon–Fri, provider holidays excluded)'], ['WHILE_DEPLOYED', 'Only while a deployment uses it'], ['WINDOW', 'A time window (UTC)']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+          {[['ALWAYS', 'Always'], ['SESSIONS', 'Market hours of the instrument (NSE 09:00–15:30 IST, MCX, FX…; holidays excluded)'], ['WHILE_DEPLOYED', 'Only while a deployment uses it'], ['WINDOW', 'A time window (UTC)']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
         {f.schedule === 'WINDOW' && <><div className="cfg-pair"><Field label="From (UTC)"><input aria-label="Window start" type="time" required value={f.window_start} onChange={e => set('window_start', e.target.value)} /></Field>
           <Field label="To (UTC)"><input aria-label="Window end" type="time" required value={f.window_end} onChange={e => set('window_end', e.target.value)} /></Field></div>
           <Field label="Days"><div className="cfg-checks">{DAYS.map(([d, l]) => <label key={d}><input type="checkbox" checked={f.window_days.includes(d)} onChange={() => toggle('window_days', d)} /> {l}</label>)}</div></Field></>}

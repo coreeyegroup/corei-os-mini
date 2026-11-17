@@ -365,19 +365,25 @@ const ROUTE_METHODS: [string, string][] = [['TERMINAL_BRIDGE', 'Terminal bridge 
 const ROUTE_LOCATIONS: [string, string][] = [['WINDOWS_VPS', 'Windows VPS'], ['WINDOWS_PC', 'Windows PC (office/home)'], ['DOCKER', 'Docker on the COREI server'], ['COREI_SERVER', 'COREI server'], ['OTHER', 'Other']];
 const methodName = (m: string) => ({ TERMINAL_BRIDGE: 'Terminal bridge', DIRECT: 'Direct SDK', TERMINAL_PUSH: 'EA push' } as Row)[m] ?? m;
 const locationName = (l: string) => (ROUTE_LOCATIONS.find(x => x[0] === l) ?? [l, l])[1];
-const ROUTE_BLANK: Row = { label: '', method: 'TERMINAL_BRIDGE', location: 'WINDOWS_VPS', host: '', port: 9443, fingerprint: '', priority: 10, enabled: true, notes: '' };
+const ROUTE_BLANK: Row = { label: '', method: 'TERMINAL_BRIDGE', location: 'WINDOWS_VPS', host: '', port: 9443, fingerprint: '', priority: 10, enabled: true, notes: '', node_id: '' };
 
 export function AccountRoutes({ account, canEdit, onChange }: { account: Row; canEdit: boolean; onChange?: () => void }) {
   const [data, setData] = useState<Row | null>(null), [edit, setEdit] = useState<Row | null>(null), [token, setToken] = useState<Row | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState('');
   const base = `config/accounts/${account.id}/routes`;
+  const [nodes, setNodes] = useState<Row[]>([]);
   const load = async () => { try { setData(await api(base)); } catch (e) { setError((e as Error).message); } };
+  useEffect(() => { void api('config/bridge-nodes').then(d => setNodes(d.items)).catch(() => setNodes([])); }, [account.id]);
+  const useNode = async (n: Row) => {
+    try { const r = await api(`config/bridge-nodes/${n.id}/attach`, 'POST', { account_ids: [account.id], priority: (routes.length + 1) * 10 });
+      await done(r.added.length ? `Route through ${n.name} added.` : `${account.code} already uses ${n.name}.`); } catch (e) { fail(e); }
+  };
   useEffect(() => { void load(); const t = window.setInterval(() => void load(), 20_000); return () => window.clearInterval(t); }, [account.id]);
   const routes: Row[] = data?.items ?? [];
   const done = async (message: string) => { setNotice(message); setError(''); await load(); onChange?.(); };
   const fail = (e: unknown) => { setError((e as Error).message); setNotice(''); };
   const body = (r: Row) => ({ label: r.label, method: r.method, location: r.location, host: r.host || null, port: r.port ? Number(r.port) : null,
-    fingerprint: r.fingerprint || null, priority: Number(r.priority), enabled: Boolean(r.enabled), notes: r.notes ?? '' });
+    fingerprint: r.node_id ? null : r.fingerprint || null, priority: Number(r.priority), enabled: Boolean(r.enabled), notes: r.notes ?? '', node_id: r.node_id || null });
   async function save(e: FormEvent) {
     e.preventDefault(); if (!edit) return;
     try { if (edit.id) await api(`${base}/${edit.id}`, 'PUT', { ...body(edit), version: edit.version }); else await api(base, 'POST', body(edit));
@@ -416,7 +422,12 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
     : r.needs_token && !r.token_saved ? <span className="cfg-pill warn">Token missing</span> : <span className="cfg-pill">Standby</span>;
   return <section className="cfg-panel cfg-routes" aria-label="Connection routes">
     <header><strong>Connection routes · failover</strong>
-      {canEdit && <button type="button" className="primary" onClick={() => setEdit({ ...ROUTE_BLANK, priority: (routes.length + 1) * 10 })}>Add route</button>}</header>
+      {canEdit && nodes.filter(n => n.status !== 'DISABLED' && !routes.some(r => r.node_id === n.id)).map(n =>
+        <button key={n.id} type="button" className="primary" title={`${n.mode === 'TUNNEL' ? 'Tunnel' : 'Direct'} · ${n.host ?? 'not enrolled yet'} · bridge ${n.bridge_version || '?'}`}
+          onClick={() => void useNode(n)}>Use bridge {n.name}</button>)}
+      {canEdit && <button type="button" onClick={() => setEdit({ ...ROUTE_BLANK, priority: (routes.length + 1) * 10, node_id: nodes.find(n => n.status !== 'DISABLED')?.id ?? '' })}>Add route</button>}</header>
+    {nodes.length === 0 && <p className="cfg-note">Tip: register a Windows machine once under <a href="#" onClick={e => { e.preventDefault(); goto('Configuration', 'bridges'); }}>Setup › Bridge nodes</a>
+      (one code, nothing to copy); every account then uses it with one click, without entering fingerprints or tokens.</p>}
     <p className="cfg-note">COREI uses the first route that is on. If it fails {data?.switch_after_failures ?? 2} times in a row it moves to the next one
       (alert: route fallback) and goes back to the first after {Math.round((data?.failback_seconds ?? 300) / 60)} minutes at the next reconnect.
       {routes.length === 0 && ' No routes yet: the server\'s own method is used.'}</p>
@@ -424,7 +435,8 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
       {routes.map((r, i) => <tr key={r.id}>
         <td>{i + 1}</td>
         <td><strong>{r.label}</strong><br /><small className="cfg-note">{methodName(r.method)} · {locationName(r.location)}{r.notes ? ` · ${r.notes}` : ''}</small></td>
-        <td>{r.method === 'TERMINAL_BRIDGE' ? `${r.host}:${r.port}` : r.method === 'DIRECT' ? 'server addresses'
+        <td>{r.method === 'TERMINAL_BRIDGE' && r.node_id ? <span>node <b>{r.node_name}</b><br /><small className="cfg-note">{r.node_host ? `${r.node_host}:${r.node_port}` : 'not enrolled yet'} · {String(r.node_status).toLowerCase()}</small></span>
+          : r.method === 'TERMINAL_BRIDGE' ? `${r.host}:${r.port}` : r.method === 'DIRECT' ? 'server addresses'
           : r.terminal ? <span title={`pushes: ${r.terminal.pushes} · from ${r.terminal.remote_ip ?? '?'}`}>EA {r.terminal.ea_version ?? '?'} · {r.terminal.login}@{r.terminal.server ?? '?'} · build {r.terminal.build ?? '?'}<br /><small className="cfg-note">last push {when(r.terminal.last_push_at)}</small></span>
           : <small className="cfg-note">EA not seen yet</small>}</td>
         <td>{state(r)}<br /><small className="cfg-note">{r.last_ok_at ? `OK ${when(r.last_ok_at)}` : 'never OK'}</small>
@@ -434,15 +446,17 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
           {canEdit && <>
             <button type="button" aria-label="Move up" title="Try earlier" disabled={i === 0} onClick={() => void move(r, -1)}>↑</button>
             <button type="button" aria-label="Move down" title="Try later" disabled={i === routes.length - 1} onClick={() => void move(r, 1)}>↓</button>
-            {r.method === 'TERMINAL_BRIDGE' && <button type="button" onClick={() => setToken({ ...r, value: '' })}>{r.token_saved ? 'Replace token' : 'Enter token'}</button>}
+            {r.method === 'TERMINAL_BRIDGE' && !r.node_id && <button type="button" onClick={() => setToken({ ...r, value: '' })}>{r.token_saved ? 'Replace token' : 'Enter token'}</button>}
             {r.method === 'TERMINAL_PUSH' && <button type="button" onClick={() => void newToken(r)}>{r.token_saved ? 'New token' : 'Issue token'}</button>}
             <button type="button" onClick={() => void toggle(r)}>{r.enabled ? 'Switch off' : 'Switch on'}</button>
-            <button type="button" onClick={() => setEdit({ ...r, host: r.host ?? '', port: r.port ?? '', fingerprint: r.fingerprint ?? '' })}>Edit</button>
+            <button type="button" onClick={() => setEdit({ ...r, host: r.host ?? '', port: r.port ?? '', fingerprint: r.fingerprint ?? '', node_id: r.node_id ?? '' })}>Edit</button>
             <button type="button" onClick={() => void remove(r)}>Delete</button></>}
         </div></td></tr>)}</tbody></table></div>}
     <details className="cfg-more"><summary>How to set up each route</summary>
       <ul className="cfg-note">
-        <li><strong>Windows VPS</strong> (recommended primary): install the broker's MT5 terminal and log in once, then run the set-up script as Administrator:{' '}
+        <li><strong>Recommended: a bridge node.</strong> Setup › Bridge nodes › <em>Connect a Windows machine</em> gives two lines to paste into PowerShell on the VPS or PC;
+          the machine installs the bridge and registers itself (no fingerprint or token to copy). Then <em>Use bridge …</em> above, or tick “Default for new MT5 accounts”.</li>
+        <li><strong>Windows VPS</strong> (by hand): install the broker's MT5 terminal and log in once, then run the set-up script as Administrator:{' '}
           <code>setup-corei-bridge.ps1 -Name {String(account.code).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)} -Mode Direct -CoreiIp &lt;COREI server IP&gt;</code>. It prints host, port, fingerprint and token for <em>Add route</em>.</li>
         <li><strong>Windows PC</strong> (office/home, no open port): same script with <code>-Mode Tunnel -SshTarget user@&lt;COREI server&gt; -TunnelPort 9450</code>; the PC opens an SSH tunnel out to COREI. Route host <code>127.0.0.1</code>, port <code>9450</code>.</li>
         <li><strong>Docker on the COREI server</strong>: <code>sudo bash scripts/use-mt5-docker.sh {account.code}</code> (Wine; least stable, keep it as a lower route).</li>
@@ -464,7 +478,10 @@ export function AccountRoutes({ account, canEdit, onChange }: { account: Row; ca
         <Field label="Name" hint="e.g. Windows VPS London, Office PC, Docker, EA push"><input aria-label="Route name" required maxLength={80} value={edit.label} onChange={e => setEdit({ ...edit, label: e.target.value })} /></Field>
         <Field label="Method"><Choice label="Method" value={edit.method} options={ROUTE_METHODS} onChange={v => setEdit({ ...edit, method: v })} /></Field>
         <Field label="Where it runs"><Choice label="Where it runs" value={edit.location} options={ROUTE_LOCATIONS} onChange={v => setEdit({ ...edit, location: v })} /></Field>
-        {edit.method === 'TERMINAL_BRIDGE' && <>
+        {edit.method === 'TERMINAL_BRIDGE' && <Field label="Bridge node" hint="A machine registered under Setup › Bridge nodes: its address, fingerprint and token are used. Or enter them by hand.">
+          <select aria-label="Bridge node" value={edit.node_id ?? ''} onChange={e => setEdit({ ...edit, node_id: e.target.value })}>
+            <option value="">Enter the address by hand…</option>{nodes.map(n => <option key={n.id} value={n.id}>{n.name} · {n.mode === 'TUNNEL' ? 'tunnel' : n.host ?? 'not enrolled'} · {String(n.status).toLowerCase()}</option>)}</select></Field>}
+        {edit.method === 'TERMINAL_BRIDGE' && !edit.node_id && <>
           <Field label="Bridge host" hint="The VPS's IP or name; 127.0.0.1 for an SSH tunnel or Docker on this server"><input aria-label="Bridge host" required maxLength={253} value={edit.host} onChange={e => setEdit({ ...edit, host: e.target.value })} /></Field>
           <Field label="Bridge port"><input aria-label="Bridge port" required type="number" min={1} max={65535} value={edit.port} onChange={e => setEdit({ ...edit, port: e.target.value })} /></Field>
           <Field label="Certificate fingerprint (SHA-256)" hint="Printed by the set-up script or the bridge at start"><input aria-label="Fingerprint" required value={edit.fingerprint} onChange={e => setEdit({ ...edit, fingerprint: e.target.value })} /></Field>
