@@ -173,3 +173,22 @@ An MT5 terminal holds one login at a time, so the bridge does not try to keep on
    one about 100. The "5–7 terminals" limit is the size of a small VPS, not of MT5.
 5. **Hundreds of trading accounts** at one broker: ask the broker for its Manager / Gateway API (one connection for
    all accounts), or license an MT5 protocol API. Both need the broker's or vendor's agreement.
+
+## Orders through the bridge (0.43.0)
+
+Two one-shot modes beside *session* and *stream* (same TLS, token and login line; COREI sends the **master** password):
+
+| Mode | Request | Reply |
+|---|---|---|
+| `trade` | `action`: `check` (MT5 order_check), `send`, `cancel` (by tag or ticket), `modify` (pending price, SL/TP), `sltp` (a position's SL/TP), `close` (one position by ticket); `order`: tag, symbol, side, volume, type (MARKET / LIMIT / STOP), price, sl, tp, time in force, magic, deviation | `results`: one per MetaTrader request — retcode, ok, text, deal, order, volume, price, bid, ask |
+| `book` | optional `tag`, `days` | money, positions, working orders, deals (buys and sells), and everything carrying the tag |
+
+- The tag (20 characters of COREI's client order ID) goes in the MT5 comment. Before *send* the bridge looks for it in
+  open orders, positions and 7 days of history; if found it answers `duplicate` with what it found and sends nothing.
+- Hedging accounts: a COREI order is net — it first closes COREI's opposite positions (magic number) by ticket, oldest
+  first, and opens only the rest.
+- A terminal already streaming the same login is reused; an investor session is upgraded with the master password. A
+  terminal busy with another login answers `TERMINAL_BUSY` (use a terminal pool) — nothing is sent.
+- Refusals before sending (`failed`, `sent: false`): token, login, `TRADING_NOT_ALLOWED`, `TERMINAL_ALGO_TRADING_OFF`,
+  `SYMBOL_UNKNOWN`. COREI treats these as *not sent*; a connection that drops after the request was written is *unknown*
+  and is looked up by tag, never re-sent.

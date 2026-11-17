@@ -1,13 +1,15 @@
-/* Stages 3–7 screens: Signals, Strategies, Risk, Portfolio, Orders — each in the same StageShell.
+/* Stages 3–7 screens: Signals, Strategies, Risk, Portfolio, Orders — each in the same StageShell (Stage 8 and the 0.45
+ * additions live in TradingExtras.tsx).
  * Why: the trading core (signals → risk → orders → portfolio) is visible and controllable step by step, with the
  * reason for every refusal on screen.
  * Purpose: each stage's Overview / Work / Monitor / Configure sections over /api/trading.
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 import { goto } from './nav';
+import { Allocation, Attribution, BrokerBook, Connections, CopyTrading, Drift, Optimise, Routing, Stress, Unknown, VarMargin, Waiting } from './TradingExtras';
 
 /* ---------- shared ---------- */
 
@@ -28,6 +30,28 @@ const SETTING_LABEL: Record<string, [string, string]> = {
   agree_count: ['Agreeing signals needed', 'With "agree": how many in a row'],
   paper_slippage_ticks: ['Paper slippage (ticks)', 'Paper fills pay this many ticks beyond the bid / ask'],
   default_capital: ['Default paper capital', 'Starting equity of an account without its own (account currency)'],
+  pre_check_orders: ['Pre-check real orders at the broker', 'MT5 order_check (margin, volume, price, trading rules) before every real order'],
+  live_four_eyes: ['Four-eyes on LIVE accounts', 'A second Risk approver releases the order before it goes to the broker'],
+  broker_magic: ['MT5 magic number', 'Marks COREI\'s positions and deals in the terminal (reconciliation counts only these)'],
+  max_deviation_points: ['Max price deviation (points)', 'MT5 market orders may fill this far from the requested price'],
+  broker_timeout_seconds: ['Broker answer timeout (seconds)', 'No answer in this time → the order is UNKNOWN and looked up by its tag'],
+  unknown_check_seconds: ['Look-up interval (seconds)', 'How often working and UNKNOWN orders are looked up at the broker'],
+  upstox_product: ['Upstox product', 'D delivery, I intraday, MTF margin trading'],
+  recon_interval_minutes: ['Reconcile every (minutes)', 'Broker positions and deals against COREI\'s, per account with real orders or positions'],
+  recon_qty_tolerance: ['Position tolerance', 'Differences up to this quantity are not a break'],
+  recon_kill_on_break: ['Stop the account on a position break', 'Engage the account kill switch when a position differs from the broker'],
+  drift_min_trades: ['Drift: minimum trades', 'Closed trades before live results are compared with the backtest'],
+  drift_tolerance_pct: ['Drift: tolerance %', 'Live worse than the backtest by more than this → DRIFT'],
+  var_confidence: ['VaR confidence %', '90, 95, 97.5, 99 or 99.5'],
+  var_timeframe: ['VaR horizon (bar)', 'D1 = 1-day VaR'],
+  var_lookback_bars: ['VaR look-back (bars)', 'Past bars used for the historical simulation'],
+};
+const SETTING_CHOICES: Record<string, [string, string][]> = {
+  decision_mode: [['LATEST', 'Latest signal wins'], ['AGREE', 'Agreeing signals needed']],
+  live_four_eyes: [['MANUAL', 'Manual orders on LIVE'], ['ALL', 'Every LIVE order'], ['OFF', 'Off']],
+  upstox_product: [['D', 'Delivery (D)'], ['I', 'Intraday (I)'], ['MTF', 'Margin trading (MTF)']],
+  var_confidence: [['90', '90%'], ['95', '95%'], ['97.5', '97.5%'], ['99', '99%'], ['99.5', '99.5%']],
+  var_timeframe: [['D1', 'One day'], ['H4', 'Four hours'], ['H1', 'One hour'], ['M30', '30 minutes'], ['M15', '15 minutes']],
 };
 
 function SettingsForm({ fields, canEdit, intro }: { fields: string[]; canEdit: boolean; intro?: string }) {
@@ -37,14 +61,14 @@ function SettingsForm({ fields, canEdit, intro }: { fields: string[]; canEdit: b
   if (!f) return <Msg error={error} />;
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    try { await api('trading/settings', 'PUT', { ...Object.fromEntries(Object.keys(SETTING_LABEL).map(k => [k, f[k]])), version: f.version, reason }); setMsg('Saved.'); setErr(''); setReason(''); reload(); }
+    try { await api('trading/settings', 'PUT', { ...Object.fromEntries(Object.keys(SETTING_LABEL).filter(k => f[k] !== undefined).map(k => [k, f[k]])), version: f.version, reason }); setMsg('Saved.'); setErr(''); setReason(''); reload(); }
     catch (x) { setErr((x as Error).message); }
   };
   return <form className="cfg-form" onSubmit={save}>
     {intro && <p className="cfg-note">{intro}</p>}
     {fields.map(k => { const [label, hint] = SETTING_LABEL[k]; const v = f[k];
       return typeof v === 'boolean' ? <label key={k} title={hint}><input type="checkbox" disabled={!canEdit} checked={v} onChange={e => setF({ ...f, [k]: e.target.checked })} /> {label} <small className="cfg-note">{hint}</small></label>
-        : k === 'decision_mode' ? <Field key={k} label={label} hint={hint}><Choice label={label} value={v} options={[['LATEST', 'Latest signal wins'], ['AGREE', 'Agreeing signals needed']]} onChange={x => setF({ ...f, [k]: x })} /></Field>
+        : SETTING_CHOICES[k] ? <Field key={k} label={label} hint={hint}><Choice label={label} value={String(v)} options={SETTING_CHOICES[k]} onChange={x => setF({ ...f, [k]: x })} /></Field>
         : <Field key={k} label={label} hint={hint}><input aria-label={label} disabled={!canEdit} value={v ?? ''} onChange={e => setF({ ...f, [k]: e.target.value })} /></Field>; })}
     {canEdit ? <><Field label="Reason (kept in the audit log)"><input aria-label="Settings reason" value={reason} onChange={e => setReason(e.target.value)} /></Field>
       <div className="cfg-actions"><button className="primary" disabled={reason.trim().length < 5}>Save</button></div></>
@@ -291,7 +315,10 @@ export function StrategiesView() {
   const sections: Section[] = [
     { id: 'runtime', label: 'Runtime', group: 'Overview', hint: 'Every deployment: is it running, on which bar, what target, and what needs attention.', render: ctx => <Runtime ctx={ctx} /> },
     { id: 'backtest', label: 'Backtest', group: 'Work', hint: 'A version, or an idea, on stored history with costs; trades, equity and metrics.', render: ctx => <Backtest ctx={ctx} /> },
-    { id: 'performance', label: 'Performance', group: 'Monitor', hint: 'Live (paper) results per strategy, instrument and account.', render: () => <Performance /> },
+    { id: 'optimise', label: 'Optimise', group: 'Work', hint: 'Every combination of parameter values, and walk-forward: chosen on one part, tested on the next.', render: ctx => <Optimise ctx={ctx} /> },
+    { id: 'performance', label: 'Performance', group: 'Monitor', hint: 'Live results per strategy, instrument and account (paper and real).', render: () => <Performance /> },
+    { id: 'drift', label: 'Drift', group: 'Monitor', hint: 'Is each running strategy still behaving like its backtest?', render: () => <Drift /> },
+    { id: 'drift-settings', label: 'Drift settings', group: 'Configure', hint: 'When live results count as drift.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['drift_min_trades', 'drift_tolerance_pct']} /> },
     { id: 'algorithms', label: 'Algorithms', group: 'Configure', hint: 'The rule sets a version can use and their parameters.', render: () => <Algorithms /> },
     { id: 'runtime-settings', label: 'Runtime switch', group: 'Configure', hint: 'Pause or resume every strategy at once.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['runtime_enabled']} intro="Paused: no deployment is evaluated and no new signal is raised; orders already working stay as they are. Pause one deployment from Setup › Deployments." /> },
@@ -401,9 +428,12 @@ export function RiskView() {
   const sections: Section[] = [
     { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Kill switches, limits, refusals and each account\'s equity, loss today and exposure.', render: () => <RiskOverview /> },
     { id: 'kill', label: 'Kill switches', group: 'Work', hint: 'Stop new orders for the firm, an account, a strategy, an instrument or one deployment.', render: ctx => <KillSwitches ctx={ctx} /> },
-    { id: 'limits', label: 'Limits', group: 'Work', hint: 'Order size, position, working orders, orders per minute, daily loss, drawdown, exposure — per scope.', render: ctx => <Limits ctx={ctx} /> },
+    { id: 'limits', label: 'Limits', group: 'Work', hint: 'Order size and value, position, working orders, orders per minute, daily loss, drawdown, exposure, margin, leverage, VaR, price deviation — per scope.', render: ctx => <Limits ctx={ctx} /> },
     { id: 'decisions', label: 'Decisions', group: 'Monitor', hint: 'Every pre-trade check with its result and reasons.', render: () => <Decisions /> },
     { id: 'exposure', label: 'Exposure', group: 'Monitor', hint: 'Net and gross position value per account and instrument.', render: () => <Exposure /> },
+    { id: 'var', label: 'VaR and margin', group: 'Monitor', hint: 'How much each account could lose in a bad bar, and the margin in use.', render: () => <VarMargin /> },
+    { id: 'stress', label: 'Stress tests', group: 'Monitor', hint: 'Today\'s positions under price shocks: everything, an asset class, a currency or one symbol.', render: ctx => <Stress ctx={ctx} /> },
+    { id: 'var-settings', label: 'VaR settings', group: 'Configure', hint: 'Confidence, horizon and look-back of the VaR.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['var_confidence', 'var_timeframe', 'var_lookback_bars']} /> },
   ];
   return <StageShell view="Risk" sections={sections} />;
 }
@@ -425,7 +455,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
       {a.missing_fx?.length > 0 && <p className="cfg-error">No FX rate for {a.missing_fx.join(', ')} → {a.currency}: collect that pair (e.g. USDINR).</p>}
       {ctx.canRisk && <button onClick={() => set(a)}>Set starting capital</button>}</div>)}
       {data && !data.items.length && <p className="cfg-note">No account has a deployment or a position yet.</p>}</div>
-    <p className="cfg-note">Paper equity = starting capital + realised + unrealised P&L, in the account's currency. Real broker balances appear here once the broker order adapter is built.</p></section>;
+    <p className="cfg-note">Paper equity = starting capital + realised + unrealised P&L, in the account's currency. Real accounts: the broker's own balance and equity are under Monitor › Broker positions; sizing of a real deployment uses the broker's equity.</p></section>;
 }
 
 function Positions({ ctx }: { ctx: Ctx }) {
@@ -450,8 +480,12 @@ export function PortfolioView() {
   const sections: Section[] = [
     { id: 'accounts', label: 'Accounts', group: 'Overview', hint: 'Equity, P&L today and drawdown per account.', render: ctx => <Accounts ctx={ctx} /> },
     { id: 'positions', label: 'Positions', group: 'Work', hint: 'Every open position with its P&L at the live price; close one in a click.', render: ctx => <Positions ctx={ctx} /> },
+    { id: 'allocation', label: 'Allocation', group: 'Work', hint: 'Capital partitions per account, deployment weights, and rebalancing.', render: ctx => <Allocation ctx={ctx} /> },
+    { id: 'copy', label: 'Copy trading', group: 'Work', hint: 'Follower accounts that mirror a master account\'s fills, each with its own size and risk.', render: ctx => <CopyTrading ctx={ctx} /> },
     { id: 'attribution', label: 'Performance', group: 'Monitor', hint: 'P&L, win rate and profit factor per strategy, instrument and account.', render: () => <Performance /> },
+    { id: 'contribution', label: 'Attribution', group: 'Monitor', hint: 'Where the result came from: by strategy, deployment, instrument, account, order source.', render: () => <Attribution /> },
     { id: 'exposure', label: 'Exposure', group: 'Monitor', hint: 'Net and gross value per account and instrument.', render: () => <Exposure /> },
+    { id: 'broker', label: 'Broker positions', group: 'Monitor', hint: 'What the broker itself holds for a real account.', render: ctx => <BrokerBook ctx={ctx} /> },
     { id: 'capital', label: 'Paper capital', group: 'Configure', hint: 'Starting equity of accounts without their own.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="Each account's own starting capital is set on its card (Overview › Accounts)." /> },
   ];
@@ -474,20 +508,28 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
   if (!o) return <Msg error={error} />;
   const cancel = () => { const reason = window.prompt('Reason for cancelling'); if (reason) void api(`trading/orders/${id}/cancel`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); };
   return <FloatingWindow storageKey="corei.order.v1" title={`Order · ${o.symbol} ${o.side} ${o.quantity}`} subtitle={o.client_order_id} onClose={close}
-    footer={<div className="cfg-actions">{['ACKNOWLEDGED', 'PARTIALLY_FILLED', 'SUBMITTED'].includes(o.state) && (ctx.canOps || ctx.canRisk) && <button onClick={cancel}>Cancel order</button>}
+    footer={<div className="cfg-actions">{(['ACKNOWLEDGED', 'PARTIALLY_FILLED'].includes(o.state) || (o.state === 'SUBMITTED' && o.mode === 'PAPER') || (o.state === 'APPROVED' && o.mode === 'BROKER')) && (ctx.canOps || ctx.canRisk) && <button onClick={cancel}>Cancel order</button>}
+      {o.hold_for_approval && o.state === 'APPROVED' && ctx.canRisk && <button className="primary" onClick={() => { const reason = window.prompt('Release this LIVE order to the broker? Reason:'); if (reason) void api(`trading/orders/${id}/release`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); }}>Release to broker</button>}
+      {o.mode === 'BROKER' && o.broker_tag && !['FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'APPROVED'].includes(o.state) && (ctx.canOps || ctx.canRisk) && <button onClick={() => void api(`trading/orders/${id}/check-broker`, 'POST').then(reload).catch(e => setErr((e as Error).message))}>Look up at the broker</button>}
       {o.state === 'UNKNOWN' && ctx.canRisk && <button onClick={() => setRes({ outcome: 'FILLED', price: '', quantity: '', reason: '' })}>Resolve</button>}<button onClick={close}>Close</button></div>}>
     <div className="cfg-form">
-      <p>{statePill(o.state)} · {o.mode.toLowerCase()} · {o.order_type.toLowerCase()} {o.time_in_force} · filled {o.filled_qty}{o.avg_fill_price ? ` at ${o.avg_fill_price}` : ''}</p>
+      <p>{statePill(o.state)} · {o.mode === 'BROKER' ? 'real' : 'paper'} · {o.order_type.toLowerCase()}{o.limit_price ? ` ${o.limit_price}` : ''}{o.stop_price ? ` stop ${o.stop_price}` : ''} {o.time_in_force} · filled {o.filled_qty}{o.avg_fill_price ? ` at ${o.avg_fill_price}` : ''}
+        {o.hold_for_approval && <> · {pill('waiting for a second person', 'warn')}</>}</p>
+      {o.mode === 'BROKER' && <p className="cfg-note">Adapter {o.adapter ?? '–'} · broker tag <code>{o.broker_tag ?? '–'}</code>{o.broker_order_id ? <> · broker order {o.broker_order_id}</> : null}
+        {o.submitted_at && <> · sent {when(o.submitted_at)}</>}{o.checks ? <> · {o.checks} look-ups, last {ago(o.last_check_at)}</> : null}
+        {o.stop_loss || o.take_profit ? <> · SL {o.stop_loss ?? '–'} / TP {o.take_profit ?? '–'}</> : null}{o.released_by && <> · released by {o.released_by}</>}</p>}
+      {o.routing && <p className="cfg-note">Routed ({o.routing.rule?.toLowerCase().replace('_', ' ')}): {o.routing.because}</p>}
       {o.reasons?.length > 0 && <><b>Refused because</b><Reasons list={o.reasons} /></>}
       <h4>What happened</h4>
       <ol className="st-timeline">{o.events.map((e: Row) => <li key={e.id}><b>{e.state_to.toLowerCase().replace(/_/g, ' ')}</b> <small className="cfg-note">{when(e.at)} · {e.actor}</small>
-        {e.detail?.price && <small> · price {e.detail.price}{e.detail.slippage ? ` (slippage ${e.detail.slippage})` : ''}</small>}{e.detail?.reason && <small> · {e.detail.reason}</small>}</li>)}</ol>
+        {e.detail?.price && <small> · price {e.detail.price}{e.detail.slippage ? ` (slippage ${e.detail.slippage})` : ''}</small>}{e.detail?.reason && <small> · {e.detail.reason}</small>}{e.detail?.reasons && <small> · {e.detail.reasons.join('; ')}</small>}
+        {e.detail?.deal && <small> · deal {e.detail.deal}</small>}{e.detail?.found && <small> · {e.detail.found}</small>}{e.detail?.not_sent && <small> · not sent</small>}</li>)}</ol>
       {o.risk && <><h4>Risk check</h4><p className="cfg-note">{o.risk.approved ? 'Approved' : 'Refused'} · position {o.risk.inputs?.position_before} → {o.risk.inputs?.position_after}
         {o.risk.inputs?.limits && Object.keys(o.risk.inputs.limits).length ? ` · limits ${Object.entries(o.risk.inputs.limits).map(([k, v]) => `${k} ${v}`).join(', ')}` : ' · no limits set'}</p></>}
-      {o.fills.length > 0 && <><h4>Fills</h4><table className="cfg-table compact"><tbody>{o.fills.map((f: Row) => <tr key={f.id}><td>{f.quantity} at {f.price}</td><td><small>bid {f.quote_bid ?? '–'} / ask {f.quote_ask ?? '–'}</small></td><td><small>realised {f.realised_pnl} {f.currency}</small></td></tr>)}</tbody></table></>}
+      {o.fills.length > 0 && <><h4>Fills</h4><table className="cfg-table compact"><tbody>{o.fills.map((f: Row) => <tr key={f.id}><td>{f.quantity} at {f.price}</td><td><small>bid {f.quote_bid ?? '–'} / ask {f.quote_ask ?? '–'}</small></td><td><small>realised {f.realised_pnl} {f.currency}</small></td><td><small>{f.broker_deal_id ? `deal ${f.broker_deal_id}` : ''}{f.latency_ms != null ? ` · ${f.latency_ms} ms` : ''}</small></td></tr>)}</tbody></table></>}
       {res && <form className="intel-edit" onSubmit={e => { e.preventDefault(); void api(`trading/orders/${id}/resolve`, 'POST', { outcome: res.outcome, reason: res.reason, price: res.price || null, quantity: res.quantity || null })
         .then(() => { setRes(null); reload(); }).catch(x => setErr((x as Error).message)); }}>
-        <p className="cfg-note">Check the order at the broker first. COREI never sends an order with an unknown outcome again.</p>
+        <p className="cfg-note">Use "Look up at the broker" first; resolve by hand only when the broker shows nothing. COREI never sends an order with an unknown outcome again.</p>
         <Field label="Outcome"><Choice label="Resolve outcome" value={res.outcome} options={[['FILLED', 'Filled at the broker'], ['NOT_FILLED', 'Not filled']]} onChange={v => setRes({ ...res, outcome: v })} /></Field>
         {res.outcome === 'FILLED' && <div className="cfg-pair"><Field label="Price"><input aria-label="Resolve price" value={res.price} onChange={e => setRes({ ...res, price: e.target.value })} /></Field>
           <Field label="Quantity (blank = the rest)"><input aria-label="Resolve quantity" value={res.quantity} onChange={e => setRes({ ...res, quantity: e.target.value })} /></Field></div>}
@@ -511,38 +553,57 @@ function Blotter({ ctx, openOnly = false }: { ctx: Ctx; openOnly?: boolean }) {
 
 function Ticket({ ctx }: { ctx: Ctx }) {
   const { accounts, instruments } = Lists();
-  const [f, setF] = useState<Row>({ account_id: '', instrument_id: '', side: 'BUY', quantity: '', order_type: 'MARKET', limit_price: '', time_in_force: 'GTC', reason: '' });
-  const [k, setK] = useState(key()), [out, setOut] = useState<Row | null>(null), [err, setErr] = useState('');
+  const blank = { mode: 'PAPER', account_id: '', route: 'NONE', route_accounts: [] as string[], instrument_id: '', side: 'BUY', quantity: '', order_type: 'MARKET', limit_price: '', stop_price: '',
+    stop_loss: '', take_profit: '', time_in_force: 'GTC', reason: '' };
+  const [f, setF] = useState<Row>(blank);
+  const [k, setK] = useState(key()), [out, setOut] = useState<Row | null>(null), [err, setErr] = useState(''), [confirm, setConfirm] = useState(false);
+  const acct = accounts.find((a: Row) => a.id === f.account_id);
+  const real = f.mode === 'BROKER', live = real && (f.route === 'NONE' ? acct?.environment === 'LIVE' : accounts.some((a: Row) => f.route_accounts.includes(a.id) && a.environment === 'LIVE'));
   const send = async (e: FormEvent) => { e.preventDefault(); setErr('');
-    try { const o = await api('trading/orders', 'POST', { ...f, limit_price: f.order_type === 'LIMIT' ? f.limit_price : null, ticket_key: k }); setOut(o); setK(key()); } catch (x) { setErr((x as Error).message); } };
+    if (real && !confirm) { setConfirm(true); return; }
+    setConfirm(false);
+    try { const o = await api('trading/orders', 'POST', { ...f, account_id: f.route === 'NONE' ? f.account_id : null, route_accounts: f.route === 'NONE' ? [] : f.route_accounts,
+      limit_price: f.order_type === 'LIMIT' ? f.limit_price : null, stop_price: f.order_type === 'STOP' ? f.stop_price : null, stop_loss: f.stop_loss || null, take_profit: f.take_profit || null, ticket_key: k });
+      setOut(o); setK(key()); } catch (x) { setErr((x as Error).message); } };
   if (!ctx.canOps) return <p className="cfg-note">Trading operations place orders.</p>;
+  const set = (patch: Row) => { setF({ ...f, ...patch }); setConfirm(false); };
   return <section className="intel">
     <form className="cfg-form" onSubmit={send}>
-      <p className="cfg-note">Paper order: filled by COREI at the live price; the same risk check as a strategy's order. Real broker orders come with the order adapter.</p>
-      <div className="cfg-pair"><Field label="Account"><select aria-label="Ticket account" required value={f.account_id} onChange={e => setF({ ...f, account_id: e.target.value })}><option value="">Choose…</option>
-        {accounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}</select></Field>
-        <Field label="Instrument"><select aria-label="Ticket instrument" required value={f.instrument_id} onChange={e => setF({ ...f, instrument_id: e.target.value })}><option value="">Choose…</option>
+      <Field label="Order"><Choice label="Ticket mode" value={f.mode} options={[['PAPER', 'Paper (COREI fills it)'], ['BROKER', 'Real (sent to the broker)']]} onChange={v => set({ mode: v })} /></Field>
+      {real && <p className={live ? 'cfg-error' : 'cfg-note'}>{live ? 'LIVE account: real money. ' : 'Real order on a demo account. '}Sent through the account's broker connection after the risk check, only when order sending is on for its environment
+        {live ? '; manual LIVE orders wait for a second person (four-eyes) unless switched off in Execution settings' : ''}.</p>}
+      <div className="cfg-pair"><Field label="Where"><Choice label="Ticket routing" value={f.route} options={[['NONE', 'One account'], ['BEST_PRICE', 'Best price'], ['LOWEST_COST', 'Lowest cost'], ['PRIORITY', 'First that can'], ['SPLIT_EQUAL', 'Split equally']]} onChange={v => set({ route: v })} /></Field>
+        {f.route === 'NONE' ? <Field label="Account"><select aria-label="Ticket account" required value={f.account_id} onChange={e => set({ account_id: e.target.value })}><option value="">Choose…</option>
+          {accounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}</select></Field>
+          : <Field label="Accounts it may use"><div className="intel-checks">{accounts.map((a: Row) => <label key={a.id} className="intel-check"><input type="checkbox" checked={f.route_accounts.includes(a.id)}
+            onChange={e => set({ route_accounts: e.target.checked ? [...f.route_accounts, a.id] : f.route_accounts.filter((x: string) => x !== a.id) })} /> {a.code}</label>)}</div></Field>}
+        <Field label="Instrument"><select aria-label="Ticket instrument" required value={f.instrument_id} onChange={e => set({ instrument_id: e.target.value })}><option value="">Choose…</option>
           {instruments.map((i: Row) => <option key={i.id} value={i.id}>{i.symbol} · {i.name}</option>)}</select></Field></div>
-      <div className="cfg-pair"><Field label="Side"><Choice label="Ticket side" value={f.side} options={[['BUY', 'Buy'], ['SELL', 'Sell']]} onChange={v => setF({ ...f, side: v })} /></Field>
-        <Field label="Quantity (lots / contracts)"><input aria-label="Ticket quantity" required inputMode="decimal" value={f.quantity} onChange={e => setF({ ...f, quantity: e.target.value })} /></Field></div>
-      <div className="cfg-pair"><Field label="Type"><Choice label="Ticket type" value={f.order_type} options={[['MARKET', 'Market'], ['LIMIT', 'Limit']]} onChange={v => setF({ ...f, order_type: v })} /></Field>
-        {f.order_type === 'LIMIT' && <Field label="Limit price"><input aria-label="Ticket limit" required inputMode="decimal" value={f.limit_price} onChange={e => setF({ ...f, limit_price: e.target.value })} /></Field>}</div>
-      <Field label="Time in force"><Choice label="Ticket TIF" value={f.time_in_force} options={[['GTC', 'Until cancelled'], ['DAY', 'Today (market close)'], ['IOC', 'Immediate or cancel']]} onChange={v => setF({ ...f, time_in_force: v })} /></Field>
-      <Field label="Reason (audit log)"><input aria-label="Ticket reason" value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
-      <div className="cfg-actions"><button className="primary">Place paper order</button></div>
+      <div className="cfg-pair"><Field label="Side"><Choice label="Ticket side" value={f.side} options={[['BUY', 'Buy'], ['SELL', 'Sell']]} onChange={v => set({ side: v })} /></Field>
+        <Field label="Quantity (lots / contracts)"><input aria-label="Ticket quantity" required inputMode="decimal" value={f.quantity} onChange={e => set({ quantity: e.target.value })} /></Field></div>
+      <div className="cfg-pair"><Field label="Type"><Choice label="Ticket type" value={f.order_type} options={[['MARKET', 'Market'], ['LIMIT', 'Limit'], ['STOP', 'Stop']]} onChange={v => set({ order_type: v })} /></Field>
+        {f.order_type === 'LIMIT' && <Field label="Limit price"><input aria-label="Ticket limit" required inputMode="decimal" value={f.limit_price} onChange={e => set({ limit_price: e.target.value })} /></Field>}
+        {f.order_type === 'STOP' && <Field label="Stop price"><input aria-label="Ticket stop" required inputMode="decimal" value={f.stop_price} onChange={e => set({ stop_price: e.target.value })} /></Field>}
+        <Field label="Time in force"><Choice label="Ticket TIF" value={f.time_in_force} options={[['GTC', 'Until cancelled'], ['DAY', 'Today (market close)'], ['IOC', 'Immediate or cancel']]} onChange={v => set({ time_in_force: v })} /></Field></div>
+      {real && <div className="cfg-pair"><Field label="Stop-loss (at the broker)" hint="Optional; MT5 attaches it to the position"><input aria-label="Ticket stop loss" inputMode="decimal" value={f.stop_loss} onChange={e => set({ stop_loss: e.target.value })} /></Field>
+        <Field label="Take-profit (at the broker)"><input aria-label="Ticket take profit" inputMode="decimal" value={f.take_profit} onChange={e => set({ take_profit: e.target.value })} /></Field></div>}
+      <Field label="Reason (audit log)"><input aria-label="Ticket reason" value={f.reason} onChange={e => set({ reason: e.target.value })} /></Field>
+      {confirm && <p className="cfg-error" role="alert">Send {f.side} {f.quantity} {instruments.find((i: Row) => i.id === f.instrument_id)?.symbol ?? ''} {f.order_type.toLowerCase()} to the broker{f.route === 'NONE' ? ` on ${acct?.code ?? ''}` : ` (${f.route.toLowerCase().replace('_', ' ')})`}? Press again to confirm.</p>}
+      <div className="cfg-actions"><button className={real ? 'danger' : 'primary'}>{real ? (confirm ? 'Confirm: send the real order' : 'Place real order') : 'Place paper order'}</button></div>
     </form>
     <Msg error={err} />
-    {out && <div className="intel-edit"><p><b>{out.duplicate ? 'Already placed (same ticket): ' : ''}{out.side} {out.quantity}</b> → {statePill(out.state)}{out.avg_fill_price ? ` at ${out.avg_fill_price}` : ''}</p><Reasons list={out.reasons} /></div>}
+    {out && <div className="intel-edit">{(out.legs ?? [out]).map((o: Row) => <p key={o.id}><b>{o.duplicate ? 'Already placed (same ticket): ' : ''}{o.side} {o.quantity}</b> → {statePill(o.state)}{o.avg_fill_price ? ` at ${o.avg_fill_price}` : ''}
+      {o.hold_for_approval ? <> · {pill('waiting for a second person', 'warn')}</> : null}{o.routing ? <small className="cfg-note"> · {o.routing.because}</small> : null}</p>)}<Reasons list={out.reasons} /></div>}
   </section>;
 }
 
 function Fills() {
   const [data, error] = useData<Row>('trading/fills', 15_000);
   return <section className="intel"><Msg error={error} />
-    <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Price</th><th>Bid / ask</th><th>Slippage</th><th>Realised</th></tr></thead><tbody>
+    <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Price</th><th>Bid / ask</th><th>Slippage</th><th>Latency</th><th>Realised</th></tr></thead><tbody>
       {(data?.items ?? []).map((f: Row) => <tr key={f.id}><td><small>{when(f.at)}</small></td><td>{f.strategy_code ?? 'manual'} <small className="cfg-note">{f.mode.toLowerCase()}</small></td><td>{f.account_code}</td><td>{f.symbol}</td><td>{f.side}</td>
-        <td>{f.quantity}</td><td>{f.price}</td><td><small>{f.quote_bid ?? '–'} / {f.quote_ask ?? '–'}</small></td><td>{f.slippage ?? '–'}</td><td className={Number(f.realised_pnl) >= 0 ? 'up' : 'down'}>{f.realised_pnl} {f.currency}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={10} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
+        <td>{f.quantity}</td><td>{f.price}</td><td><small>{f.quote_bid ?? '–'} / {f.quote_ask ?? '–'}</small></td><td>{f.slippage ?? '–'}</td><td>{f.latency_ms != null ? `${f.latency_ms} ms` : '–'}</td><td className={Number(f.realised_pnl) >= 0 ? 'up' : 'down'}>{f.realised_pnl} {f.currency}</td></tr>)}
+      {data && !data.items.length && <tr><td colSpan={11} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
 }
 
 function OrdersOverview({ ctx }: { ctx: Ctx }) {
@@ -559,21 +620,32 @@ function OrdersOverview({ ctx }: { ctx: Ctx }) {
 
 function ExecutionSettings({ ctx }: { ctx: Ctx }) {
   return <section className="intel">
-    <SettingsForm canEdit={ctx.canRisk} fields={['paper_slippage_ticks']} />
-    <h4>Paper and broker</h4>
-    <p className="cfg-note">A deployment's mode is set in Setup › Deployments. <b>Paper</b>: COREI fills at the live bid/ask plus the slippage above. <b>Broker</b>: real orders through the MT5 order adapter
-      (the next build), only when Setup › Order sending is on for that environment. Until then broker orders are refused with that reason.</p>
+    <SettingsForm canEdit={ctx.canRisk} fields={['paper_slippage_ticks', 'pre_check_orders', 'live_four_eyes', 'broker_timeout_seconds', 'unknown_check_seconds', 'max_deviation_points',
+      'broker_magic', 'upstox_product', 'recon_interval_minutes', 'recon_qty_tolerance', 'recon_kill_on_break']} />
+    <h4>Paper and real</h4>
+    <p className="cfg-note">A deployment's mode is set in Setup › Deployments; a ticket chooses its own. <b>Paper</b>: COREI fills at the live bid/ask plus the slippage above. <b>Real (broker)</b>: demo or live
+      accounts — MT5 through the COREI terminal bridge (master password), Upstox through its order API — only when Setup › Order sending is on for that environment. A real order is recorded as
+      SUBMITTED before it leaves COREI; with no answer it becomes UNKNOWN and is looked up by its tag, never sent again.</p>
     <button onClick={() => goto('Configuration', 'controls')}>Order sending (Setup)</button>
   </section>;
+}
+
+function WithDetail({ ctx, body }: { ctx: Ctx; body: (open: (id: string) => void) => ReactNode }) {
+  const [id, setId] = useState<string | null>(null);
+  return <>{body(setId)}{id && <OrderDetail id={id} close={() => setId(null)} ctx={ctx} />}</>;
 }
 
 export function OrdersView() {
   const sections: Section[] = [
     { id: 'today', label: 'Dashboard', group: 'Overview', hint: 'Orders today, working orders and anything that needs a person.', render: ctx => <OrdersOverview ctx={ctx} /> },
     { id: 'orders', label: 'Orders', group: 'Work', hint: 'Every order with its full history: open one to see each step, the risk check and the fills.', render: ctx => <Blotter ctx={ctx} /> },
-    { id: 'ticket', label: 'Order ticket', group: 'Work', hint: 'Place a paper order by hand (same risk check).', render: ctx => <Ticket ctx={ctx} /> },
-    { id: 'fills', label: 'Fills', group: 'Monitor', hint: 'Every fill with the price at the time and the slippage.', render: () => <Fills /> },
-    { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills and how real broker orders will be enabled.', render: ctx => <ExecutionSettings ctx={ctx} /> },
+    { id: 'ticket', label: 'Order ticket', group: 'Work', hint: 'Place a paper or real order by hand, on one account or routed; same risk check.', render: ctx => <Ticket ctx={ctx} /> },
+    { id: 'waiting', label: 'Waiting', group: 'Work', hint: 'Real orders waiting for a second person (four-eyes) or for the dispatcher.', render: ctx => <WithDetail ctx={ctx} body={open => <Waiting ctx={ctx} open={open} />} /> },
+    { id: 'unknown', label: 'Unknown', group: 'Work', hint: 'Orders sent with no answer: looked up at the broker, never sent again.', render: ctx => <WithDetail ctx={ctx} body={open => <Unknown ctx={ctx} open={open} />} /> },
+    { id: 'fills', label: 'Fills', group: 'Monitor', hint: 'Every fill with the price at the time, the slippage and the latency.', render: () => <Fills /> },
+    { id: 'connections', label: 'Broker connections', group: 'Monitor', hint: 'The dispatcher, order sending, and which accounts can take real orders through what.', render: () => <Connections /> },
+    { id: 'routing', label: 'Routing', group: 'Monitor', hint: 'Compare accounts for one order: price, spread, slippage, eligibility.', render: () => <Routing /> },
+    { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills, real orders (pre-check, four-eyes, timeouts, magic number), reconciliation.', render: ctx => <ExecutionSettings ctx={ctx} /> },
   ];
   return <StageShell view="Execution" sections={sections} />;
 }

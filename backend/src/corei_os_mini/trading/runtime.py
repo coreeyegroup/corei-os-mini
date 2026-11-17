@@ -125,6 +125,16 @@ def cycle(now: datetime | None = None, force: bool = False) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.exception('Trading housekeeping failed')
         errors.append(f'housekeeping: {type(exc).__name__}: {exc}'[:300])
+    if out['orders'] and any(d.get('mode') == 'BROKER' for d in deps):
+        from . import execution
+        execution.dispatch_soon()
+    try:
+        from . import strategy_health
+        with store.transaction('write') as db:
+            out['drift'] = strategy_health.drift_all(db, now)
+    except Exception as exc:  # noqa: BLE001
+        log.exception('Drift check failed')
+        errors.append(f'drift: {type(exc).__name__}: {exc}'[:300])
     STATUS.update({'last_run_at': now.isoformat(), 'duration_ms': round((_time.monotonic() - started) * 1000), 'errors': errors[:20],
                    'paused': False, **{k: out[k] for k in ('deployments', 'signals', 'orders')}})
     return {**out, 'errors': errors}

@@ -988,3 +988,37 @@ See docs/ARCHITECTURE.md.
 
 Deployments now have a mode (Paper, the default, or Broker), an order size and a signal validity. Broker orders stay
 refused until the MT5 order adapter is built and Setup › Order sending is on.
+
+## Real execution, post-trade and the advanced controls — release 0.45.0
+
+**Real orders on demo and live accounts** (DEC-78 … DEC-80): MT5 through the COREI terminal bridge (0.43.0: pre-check,
+send, cancel, modify, SL/TP, close; net on hedging accounts; a tag is never sent twice) and Upstox through its order
+API. The dispatcher records SUBMITTED before anything leaves COREI; no answer = UNKNOWN, looked up at the broker by
+tag every few seconds and never re-sent. Execution gains *Waiting* (four-eyes on LIVE), *Unknown*, *Broker
+connections* (which account can take real orders and why not) and *Routing*; the ticket takes paper or real, market,
+limit or stop, SL/TP, and routing across accounts (best price, lowest cost, first that can, split).
+
+**Post-trade, Stage 8** (DEC-81): dashboard, breaks (apply fill, adopt position, accept, resolve), reconciliation
+runs, broker book, execution quality (TCA), trade journal, daily statements, order audit trail, CSV exports.
+
+**Risk** (DEC-82): limits on order value, margin %, leverage, VaR % and price deviation; VaR and expected shortfall per
+account; stress scenarios. **Strategies** (DEC-83): optimisation with walk-forward; drift against the backtest.
+**Portfolio** (DEC-84): capital partitions and rebalancing, deployment weights, copy trading, attribution, broker
+positions. Migration 034.
+
+**To start real orders on a demo account**
+1. Update each Windows bridge node to 0.43.0 (below).
+2. Setup › the account: trading permission *Trading*, master password saved, a bridge route (or the node).
+3. Setup › Instruments › mapping: the account's broker symbol for each instrument.
+4. Setup › Order sending: turn DEMO on (Risk approver, password re-entered).
+5. Execution › Broker connections: the account shows *MT5 BRIDGE*. Place a small real ticket; watch it in Orders and
+   in Post-trade › Broker book.
+LIVE stays off until the demo run is checked (docs/DECISIONS.md, "Still required before the first live order").
+
+**Update a bridge node to 0.43.0** (each Windows VPS or PC, PowerShell as Administrator):
+```
+powershell -ExecutionPolicy Bypass -File C:\corei-setup\install-corei-bridge.ps1 -Corei https://corei-os-mini.coreeye.in -Update -Name vps-nys
+```
+(use each node's own name, e.g. `my-laptop`). Then Setup › Bridge nodes › *Check*: the node shows version 0.43.0. In each terminal the bridge uses, *Algo Trading*
+must be on (Tools › Options › Expert Advisors › Allow algorithmic trading) — the bridge reports
+TERMINAL_ALGO_TRADING_OFF otherwise.

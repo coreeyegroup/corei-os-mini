@@ -50,7 +50,8 @@ const BROKER_TABS: [Section, string][] = [['brokers', 'Tree'], ['providers', 'Pr
 
 export const BLOCKERS: Record<string, string> = {
   CONNECTION_FAILED: 'The broker connection failed — reason below',
-  ORDER_ADAPTER_NOT_AVAILABLE: 'Sending orders to this platform is not built yet (market data and account reads work)',
+  ORDER_ADAPTER_NOT_AVAILABLE: 'No order adapter for this platform (MT5 through the bridge and Upstox take real orders)',
+  ORDER_NEEDS_BRIDGE: 'MT5 orders go through the COREI terminal bridge: add a bridge route to this account (Setup › Bridge nodes)',
   LIVE_CONNECTION_ON_DEMO_SERVER: 'This connection is marked LIVE but its server name says demo — check the environment',
   DEMO_CONNECTION_ON_LIVE_SERVER: 'This connection is marked DEMO but its server name says live — check the environment',
   ACCOUNT_EXPIRED: 'The account has expired at the broker',

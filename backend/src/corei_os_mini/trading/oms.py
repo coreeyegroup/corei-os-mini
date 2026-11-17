@@ -8,8 +8,9 @@ match working paper limit orders against live prices, and resolve an order whose
 States: NEW → APPROVED | REJECTED; APPROVED → SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED → FILLED;
 ACKNOWLEDGED/PARTIALLY_FILLED → CANCEL_PENDING → CANCELLED; → EXPIRED; SUBMITTED/ACKNOWLEDGED/CANCEL_PENDING →
 UNKNOWN (no answer from the broker) → resolved by a query or an operator, never by sending again.
-Adapters: PAPER (fills at the live bid/ask plus slippage in ticks; limit orders when the price trades through).
-BROKER orders are refused by risk until the MT5 order adapter exists and order sending is on.
+Adapters: PAPER (fills at the live bid/ask plus slippage in ticks; limit and stop orders when the price trades
+through). BROKER orders stop at APPROVED here (held for a second person when four-eyes applies) and the dispatcher
+(trading.execution) sends them outside this transaction, so SUBMITTED is on record before anything leaves COREI.
 Must never: bypass risk, re-send an order whose outcome is unknown, change an event, or use floating point for a
 price or quantity.
 Dependencies: trading.common, trading.risk, trading.portfolio, config_store. Consumers: trading.signals (intents),
@@ -39,9 +40,9 @@ TRANSITIONS = {
     'APPROVED': {'SUBMITTED', 'REJECTED'},
     'SUBMITTED': {'ACKNOWLEDGED', 'REJECTED', 'FILLED', 'PARTIALLY_FILLED', 'UNKNOWN', 'CANCELLED', 'EXPIRED'},
     'ACKNOWLEDGED': {'PARTIALLY_FILLED', 'FILLED', 'CANCEL_PENDING', 'EXPIRED', 'UNKNOWN', 'CANCELLED'},
-    'PARTIALLY_FILLED': {'PARTIALLY_FILLED', 'FILLED', 'CANCEL_PENDING', 'EXPIRED', 'UNKNOWN'},
-    'CANCEL_PENDING': {'CANCELLED', 'FILLED', 'PARTIALLY_FILLED', 'UNKNOWN'},
-    'UNKNOWN': {'FILLED', 'PARTIALLY_FILLED', 'CANCELLED', 'REJECTED', 'ACKNOWLEDGED'},
+    'PARTIALLY_FILLED': {'PARTIALLY_FILLED', 'FILLED', 'CANCEL_PENDING', 'EXPIRED', 'UNKNOWN', 'CANCELLED'},
+    'CANCEL_PENDING': {'CANCELLED', 'FILLED', 'PARTIALLY_FILLED', 'UNKNOWN', 'ACKNOWLEDGED', 'EXPIRED'},
+    'UNKNOWN': {'FILLED', 'PARTIALLY_FILLED', 'CANCELLED', 'REJECTED', 'ACKNOWLEDGED', 'EXPIRED'},
 }
 
 
@@ -60,23 +61,39 @@ def _move(db, order: dict, to: str, actor: str, detail: dict | None = None, **fi
     return dict(row)
 
 
-def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: str, at: datetime) -> dict:
+def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: str, at: datetime, deal_id: str | None = None,
+          detail: dict | None = None) -> dict:
+    """One fill: the position in the same transaction, then the order's state. A broker deal is applied once (its ticket)."""
     ins = instrument(db, order['instrument_id'])
-    ref = (q['ask'] if order['side'] == 'BUY' else q['bid']) if q else None
+    if deal_id is not None and db.execute('SELECT 1 FROM oms_fills WHERE account_id=%s AND broker_deal_id=%s',
+                                          (str(order['account_id']), str(deal_id))).fetchone():
+        return order
+    arrival = (D(order['decision_ask']) if order['side'] == 'BUY' else D(order['decision_bid'])) if order.get('decision_bid') is not None else None
+    ref = (q['ask'] if order['side'] == 'BUY' else q['bid']) if q else arrival
     slip = ((price - ref) if order['side'] == 'BUY' else (ref - price)) if ref is not None else None
+    latency = int((at - order['submitted_at']).total_seconds() * 1000) if order.get('submitted_at') else None
     fill = {'id': uuid4(), 'order_id': order['id'], 'deployment_id': order.get('deployment_id'), 'account_id': order['account_id'],
             'instrument_id': order['instrument_id'], 'side': order['side'], 'quantity': qty, 'price': price, 'mode': order['mode'], 'at': at}
     realised = portfolio.apply_fill(db, fill)
     db.execute('INSERT INTO oms_fills(id, order_id, deployment_id, account_id, instrument_id, side, quantity, price, quote_bid, quote_ask, slippage, '
-               'realised_pnl, currency, mode, at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+               'realised_pnl, currency, mode, at, broker_deal_id, latency_ms, arrival_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                (fill['id'], str(order['id']), str(order['deployment_id']) if order.get('deployment_id') else None, str(order['account_id']),
                 str(order['instrument_id']), order['side'], qty, price, q and q['bid'], q and q['ask'], slip, realised,
-                ins.get('quote_currency') or 'USD', order['mode'], at))
+                ins.get('quote_currency') or 'USD', order['mode'], at, str(deal_id) if deal_id is not None else None, latency, arrival))
     filled = D(order['filled_qty']) + qty
     avg = price if not D(order['filled_qty']) else (D(order['avg_fill_price']) * D(order['filled_qty']) + price * qty) / filled
     to = 'FILLED' if filled >= D(order['quantity']) else 'PARTIALLY_FILLED'
-    return _move(db, order, to, actor, {'fill_qty': str(qty), 'price': str(price), 'slippage': str(slip) if slip is not None else None,
-                                        'realised_pnl': str(realised)}, filled_qty=filled, avg_fill_price=quantize(avg, D(ins.get('tick_size')) / 1000))
+    out = _move(db, order, to, actor, {'fill_qty': str(qty), 'price': str(price), 'slippage': str(slip) if slip is not None else None,
+                                       'realised_pnl': str(realised), 'deal': deal_id, **(detail or {})}, filled_qty=filled,
+                avg_fill_price=quantize(avg, D(ins.get('tick_size')) / 1000), **({'completed_at': at} if to == 'FILLED' else {}))
+    try:
+        from . import copytrade
+        copytrade.on_fill(db, out, fill)
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 - a follower's problem never undoes the master's fill; copytrade alerts itself
+        pass
+    return out
 
 
 def _paper_price(db, order: dict, q: dict) -> Decimal:
@@ -98,8 +115,11 @@ def _expiry(db, ins: dict, tif: str, at: datetime, q: dict | None) -> datetime |
 
 def place(db, *, account_id, instrument_id, side: str, quantity: Decimal, order_type: str = 'MARKET', limit_price: Decimal | None = None,
           time_in_force: str = 'GTC', mode: str = 'PAPER', deployment: dict | None = None, intent_id=None, seed: str, actor: str,
-          source: str = 'MANUAL', flatten: bool = False, at: datetime | None = None, data_source: tuple | None = None) -> dict:
-    """Create the order, run the risk check, and (paper) execute — all in the caller's transaction."""
+          source: str = 'MANUAL', flatten: bool = False, at: datetime | None = None, data_source: tuple | None = None,
+          stop_price: Decimal | None = None, stop_loss: Decimal | None = None, take_profit: Decimal | None = None,
+          routing: dict | None = None, copy_of=None) -> dict:
+    """Create the order, run the risk check, and (paper) execute — all in the caller's transaction. A BROKER order stops
+    at APPROVED: the dispatcher sends it after this transaction commits."""
     at = at or datetime.now(timezone.utc)
     cid = client_order_id(seed)
     existing = db.execute('SELECT * FROM oms_orders WHERE client_order_id=%s', (cid,)).fetchone()
@@ -111,12 +131,16 @@ def place(db, *, account_id, instrument_id, side: str, quantity: Decimal, order_
     q = quote(db, account_id, instrument_id, data_source)
     tick = D(ins.get('tick_size')) or Decimal('0.00001')
     order = dict(db.execute("""INSERT INTO oms_orders(id, client_order_id, intent_id, deployment_id, account_id, instrument_id, broker_symbol, side, order_type,
-                               time_in_force, quantity, limit_price, mode, reduce_only, state, decision_bid, decision_ask, expires_at, source, created_by)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'NEW',%s,%s,%s,%s,%s) RETURNING *""",
+                               time_in_force, quantity, limit_price, mode, reduce_only, state, decision_bid, decision_ask, expires_at, source, created_by,
+                               stop_price, stop_loss, take_profit, routing, copy_of, adapter, broker_tag)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'NEW',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                             (uuid4(), cid, str(intent_id) if intent_id else None, str(deployment['id']) if deployment else None, str(account_id),
                              str(instrument_id), trading_symbol(db, account_id, instrument_id), side, order_type, time_in_force, quantity,
                              quantize(limit_price, tick) if limit_price else None, mode, flatten, q and q['bid'], q and q['ask'],
-                             _expiry(db, ins, time_in_force, at, q), source, actor)).fetchone())
+                             _expiry(db, ins, time_in_force, at, q), source, actor, quantize(stop_price, tick) if stop_price else None,
+                             quantize(stop_loss, tick) if stop_loss else None, quantize(take_profit, tick) if take_profit else None,
+                             json.dumps(routing, default=str) if routing else None, str(copy_of) if copy_of else None,
+                             'PAPER' if mode == 'PAPER' else None, None if mode == 'PAPER' else cid[:20])).fetchone())
     db.execute("INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,NULL,'NEW',%s,%s)",
                (str(order['id']), json.dumps({'quote': {'bid': str(q['bid']), 'ask': str(q['ask']), 'source': q['source']} if q else None}), actor))
     verdict = risk.check(db, order, deployment, at, q, flatten=flatten)
@@ -124,20 +148,65 @@ def place(db, *, account_id, instrument_id, side: str, quantity: Decimal, order_
         order = _move(db, order, 'REJECTED', 'risk', {'reasons': verdict['reasons']}, reasons=json.dumps(verdict['reasons']))
         _alert(db, 'WARNING', f"Order refused: {ins.get('symbol')} {side} {quantity.normalize()}", '; '.join(verdict['reasons'])[:1500])
         return store.clean(order)
+    if mode != 'PAPER':
+        hold = _four_eyes(db, order, source)
+        order = _move(db, order, 'APPROVED', 'risk', {'inputs': verdict['inputs'], 'adapter': verdict['inputs'].get('adapter'),
+                                                      'held_for_approval': hold}, adapter=verdict['inputs'].get('adapter'), hold_for_approval=hold)
+        if hold:
+            _alert(db, 'WARNING', f"Order waits for a second person: {ins.get('symbol')} {side} {quantity.normalize()}",
+                   'A LIVE order needs a Risk approver other than the person who placed it (Execution › Orders › Waiting).')
+        return store.clean(order)
     order = _move(db, order, 'APPROVED', 'risk', {'inputs': verdict['inputs']})
-    if mode != 'PAPER':  # unreachable while risk refuses BROKER orders; kept so the path is explicit
-        return store.clean(_move(db, order, 'REJECTED', 'execution', {'reasons': ['BROKER_ORDER_ADAPTER_NOT_BUILT']}))
-    order = _move(db, order, 'SUBMITTED', 'paper', {'adapter': 'PAPER'})
-    order = _move(db, order, 'ACKNOWLEDGED', 'paper', {})
+    order = _move(db, order, 'SUBMITTED', 'paper', {'adapter': 'PAPER'}, submitted_at=at)
+    order = _move(db, order, 'ACKNOWLEDGED', 'paper', {}, acknowledged_at=at)
     if order_type == 'MARKET':
         order = _fill(db, order, quantity, _paper_price(db, order, q), q, 'paper', at)
     else:
-        crossed = (q['ask'] <= D(order['limit_price'])) if side == 'BUY' else (q['bid'] >= D(order['limit_price']))
-        if crossed:
-            order = _fill(db, order, quantity, q['ask'] if side == 'BUY' else q['bid'], q, 'paper', at)
+        if _triggered(order, q):
+            order = _fill(db, order, quantity, _paper_price(db, order, q) if order_type == 'STOP' else (q['ask'] if side == 'BUY' else q['bid']), q, 'paper', at)
         elif time_in_force == 'IOC':
             order = _move(db, order, 'CANCELLED', 'paper', {'reason': 'IOC: not marketable on arrival'})
     return store.clean(order)
+
+
+def _triggered(order: dict, q: dict) -> bool:
+    """A working paper order trades: a limit when the price reaches it, a stop when the price passes it."""
+    if order['order_type'] == 'LIMIT':
+        limit = D(order['limit_price'])
+        return q['ask'] <= limit if order['side'] == 'BUY' else q['bid'] >= limit
+    if order['order_type'] == 'STOP':
+        stop = D(order['stop_price'])
+        return q['ask'] >= stop if order['side'] == 'BUY' else q['bid'] <= stop
+    return True
+
+
+def _four_eyes(db, order: dict, source: str) -> bool:
+    """LIVE orders wait for a second person: manual tickets (setting MANUAL) or every order (ALL). Flattens never wait."""
+    rule = settings(db).get('live_four_eyes') or 'MANUAL'
+    if rule == 'OFF' or source == 'FLATTEN':
+        return False
+    env = db.execute('SELECT c.environment FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id WHERE a.id=%s',
+                     (str(order['account_id']),)).fetchone()
+    return bool(env) and env['environment'] == 'LIVE' and (rule == 'ALL' or source == 'MANUAL')
+
+
+def release(actor: str, order_id: UUID, reason: str) -> dict:
+    """The second person lets a held LIVE order go to the broker (never the person who placed it)."""
+    with store.transaction('write') as db:
+        o = db.execute('SELECT * FROM oms_orders WHERE id=%s FOR UPDATE', (order_id,)).fetchone()
+        if not o:
+            raise HTTPException(404, 'Order not found.')
+        o = dict(o)
+        if o['state'] != 'APPROVED' or not o['hold_for_approval']:
+            raise HTTPException(409, 'This order is not waiting for approval.')
+        if o['created_by'] == actor:
+            raise HTTPException(403, 'Four-eyes: the person who placed the order cannot release it.')
+        row = db.execute('UPDATE oms_orders SET hold_for_approval=false, released_by=%s, released_at=now(), version=version+1 WHERE id=%s RETURNING *',
+                         (actor, str(order_id))).fetchone()
+        db.execute('INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,%s,%s,%s,%s)',
+                   (str(order_id), 'APPROVED', 'APPROVED', json.dumps({'released': True, 'reason': reason}), actor))
+        store.audit(db, actor, 'RELEASE_LIVE_ORDER', 'order', order_id, store.clean(o), store.clean(row), reason)
+        return store.clean(row)
 
 
 def _alert(db, severity: str, title: str, body: str) -> None:
@@ -149,7 +218,7 @@ def _alert(db, severity: str, title: str, body: str) -> None:
 
 
 def match(db, now: datetime) -> dict:
-    """Working paper limit orders: fill when the live price trades through; expire DAY orders at the market close."""
+    """Working paper limit and stop orders: fill when the live price reaches them; expire DAY orders at the market close."""
     filled = expired = 0
     for o in db.execute("SELECT * FROM oms_orders WHERE mode='PAPER' AND state IN ('ACKNOWLEDGED','PARTIALLY_FILLED') FOR UPDATE SKIP LOCKED").fetchall():
         o = dict(o)
@@ -157,14 +226,14 @@ def match(db, now: datetime) -> dict:
             _move(db, o, 'EXPIRED', 'paper', {'reason': 'time in force ended'})
             expired += 1
             continue
-        if o['order_type'] != 'LIMIT':
+        if o['order_type'] not in ('LIMIT', 'STOP'):
             continue
         q = quote(db, o['account_id'], o['instrument_id'], None)
         if not q:
             continue
-        limit = D(o['limit_price'])
-        if (o['side'] == 'BUY' and q['ask'] <= limit) or (o['side'] == 'SELL' and q['bid'] >= limit):
-            _fill(db, o, D(o['quantity']) - D(o['filled_qty']), q['ask'] if o['side'] == 'BUY' else q['bid'], q, 'paper', now)
+        if _triggered(o, q):
+            price = _paper_price(db, o, q) if o['order_type'] == 'STOP' else (q['ask'] if o['side'] == 'BUY' else q['bid'])
+            _fill(db, o, D(o['quantity']) - D(o['filled_qty']), price, q, 'paper', now)
             filled += 1
     return {'filled': filled, 'expired': expired}
 
@@ -175,14 +244,25 @@ def cancel(actor: str, order_id: UUID, reason: str) -> dict:
         if not o:
             raise HTTPException(404, 'Order not found.')
         o = dict(o)
-        if o['state'] not in ('ACKNOWLEDGED', 'PARTIALLY_FILLED', 'SUBMITTED'):
-            raise HTTPException(409, f"A {o['state'].lower().replace('_', ' ')} order cannot be cancelled.")
+        if o['state'] == 'APPROVED' and o['mode'] == 'BROKER':  # not sent yet (or held for approval): nothing at the broker
+            row = db.execute("UPDATE oms_orders SET state='CANCELLED', hold_for_approval=false, version=version+1, updated_at=now() WHERE id=%s RETURNING *",
+                             (str(order_id),)).fetchone()
+            db.execute('INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,%s,%s,%s,%s)',
+                       (str(order_id), 'APPROVED', 'CANCELLED', json.dumps({'reason': reason, 'sent': False}), actor))
+            store.audit(db, actor, 'CANCEL_ORDER', 'order', order_id, store.clean(o), store.clean(row), reason)
+            return store.clean(row)
+        if o['state'] not in ('ACKNOWLEDGED', 'PARTIALLY_FILLED') and not (o['state'] == 'SUBMITTED' and o['mode'] == 'PAPER'):
+            raise HTTPException(409, f"A {o['state'].lower().replace('_', ' ')} order cannot be cancelled"
+                                + (' now: its outcome at the broker is not known yet.' if o['state'] in ('SUBMITTED', 'UNKNOWN') else '.'))
         if o['state'] == 'SUBMITTED':
             return store.clean(_move(db, o, 'CANCELLED', actor, {'reason': reason}))
         o = _move(db, o, 'CANCEL_PENDING', actor, {'reason': reason})
+        store.audit(db, actor, 'CANCEL_ORDER', 'order', order_id, None, store.clean(o), reason)
         if o['mode'] == 'PAPER':
             o = _move(db, o, 'CANCELLED', 'paper', {'reason': reason})
-        return store.clean(o)
+            return store.clean(o)
+    from . import execution  # outside the transaction: CANCEL_PENDING is on record before the broker is asked
+    return execution.cancel_at_broker(actor, order_id)
 
 
 class ResolveIn(BaseModel):
@@ -191,6 +271,7 @@ class ResolveIn(BaseModel):
     price: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=12)
     quantity: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=12)
     reason: str = Field(min_length=5, max_length=500)
+    broker_deal_id: str | None = Field(default=None, max_length=64)
 
 
 def resolve(actor: str, order_id: UUID, data: ResolveIn) -> dict:
@@ -208,29 +289,60 @@ def resolve(actor: str, order_id: UUID, data: ResolveIn) -> dict:
         if not data.price:
             raise HTTPException(422, 'A filled outcome needs the fill price the broker reports.')
         qty = data.quantity or (D(o['quantity']) - D(o['filled_qty']))
-        return store.clean(_fill(db, o, qty, data.price, None, actor, datetime.now(timezone.utc)))
+        return store.clean(_fill(db, o, qty, data.price, None, actor, datetime.now(timezone.utc), deal_id=data.broker_deal_id,
+                                 detail={'resolved_by_person': True}))
+
+
+Money = Field(default=None, gt=0, max_digits=38, decimal_places=12)
 
 
 class TicketIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    account_id: UUID
+    account_id: UUID | None = None                     # one account, or a routing choice among route_accounts
+    route: Literal['NONE', 'BEST_PRICE', 'LOWEST_COST', 'PRIORITY', 'SPLIT_EQUAL'] = 'NONE'
+    route_accounts: list[UUID] = Field(default_factory=list, max_length=20)
     instrument_id: UUID
     side: Literal['BUY', 'SELL']
     quantity: Decimal = Field(gt=0, max_digits=38, decimal_places=12)
-    order_type: Literal['MARKET', 'LIMIT'] = 'MARKET'
-    limit_price: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=12)
+    order_type: Literal['MARKET', 'LIMIT', 'STOP'] = 'MARKET'
+    limit_price: Decimal | None = Money
+    stop_price: Decimal | None = Money
+    stop_loss: Decimal | None = Money
+    take_profit: Decimal | None = Money
     time_in_force: Literal['GTC', 'DAY', 'IOC'] = 'GTC'
+    mode: Literal['PAPER', 'BROKER'] = 'PAPER'
     ticket_key: str = Field(min_length=8, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')  # the screen's own key: a double click is one order
     reason: str = Field(default='', max_length=500)
 
 
 def ticket(actor: str, data: TicketIn) -> dict:
+    """An operator's order. With routing, COREI picks the account (or splits across them) and records why."""
+    if data.order_type == 'LIMIT' and not data.limit_price:
+        raise HTTPException(422, 'A limit order needs a limit price.')
+    if data.order_type == 'STOP' and not data.stop_price:
+        raise HTTPException(422, 'A stop order needs a stop price.')
     with store.transaction('write') as db:
-        out = place(db, account_id=data.account_id, instrument_id=data.instrument_id, side=data.side, quantity=data.quantity, order_type=data.order_type,
-                    limit_price=data.limit_price, time_in_force=data.time_in_force, mode='PAPER', seed=f'ticket:{data.ticket_key}', actor=actor)
-        if not out.get('duplicate'):
-            store.audit(db, actor, 'PLACE_ORDER', 'order', out['id'], None, out, data.reason)
-        return out
+        if data.route == 'NONE':
+            if not data.account_id:
+                raise HTTPException(422, 'Choose an account, or a routing rule and the accounts it may use.')
+            legs = [(data.account_id, data.quantity, None)]
+        else:
+            from . import routing
+            legs = routing.choose(db, data.route, data.route_accounts or ([data.account_id] if data.account_id else []), data.instrument_id,
+                                  data.side, data.quantity, data.mode)
+        out = []
+        for n, (account_id, qty, decision) in enumerate(legs):
+            o = place(db, account_id=account_id, instrument_id=data.instrument_id, side=data.side, quantity=qty, order_type=data.order_type,
+                      limit_price=data.limit_price, stop_price=data.stop_price, stop_loss=data.stop_loss, take_profit=data.take_profit,
+                      time_in_force=data.time_in_force, mode=data.mode, seed=f'ticket:{data.ticket_key}' + (f':{n}' if n else ''), actor=actor,
+                      routing=decision)
+            if not o.get('duplicate'):
+                store.audit(db, actor, 'PLACE_ORDER', 'order', o['id'], None, o, data.reason)
+            out.append(o)
+    if data.mode == 'BROKER':
+        from . import execution
+        execution.dispatch_soon()
+    return out[0] if len(out) == 1 else {**out[0], 'legs': out}
 
 
 def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key: str) -> dict:
@@ -250,7 +362,10 @@ def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key:
                       deployment=dep, seed=f"flatten:{key}:{r['id']}", actor=actor, source='FLATTEN', flatten=True)
             store.audit(db, actor, 'FLATTEN_POSITION', 'order', o['id'], None, o, reason)
             out.append(o)
-        return {'orders': out, 'state': 'FILLED' if all(o['state'] == 'FILLED' for o in out) else 'PARTLY'}
+    if any(o.get('mode') == 'BROKER' for o in out):
+        from . import execution
+        execution.dispatch_soon()
+    return {'orders': out, 'state': 'FILLED' if all(o['state'] == 'FILLED' for o in out) else 'PARTLY'}
 
 
 def orders(db, state: str | None = None, account_id=None, limit: int = 300, open_only: bool = False) -> list[dict]:

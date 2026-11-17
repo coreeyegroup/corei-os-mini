@@ -1,4 +1,4 @@
-// Stages 3–7 screens: the same frame on every stage (Overview · Work · Monitor · Configure), signals with reasons,
+// Stages 3–8 screens: the same frame on every stage (Overview · Work · Monitor · Configure), signals with reasons,
 // an order ticket that is one order per ticket, the order history, a kill switch with a reason, a backtest, the home
 // system map with the user's path.
 const {JSDOM}=require('jsdom');
@@ -36,6 +36,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      kill_switches:kills.length,limits:1,refused_today:1,positions:1,accounts:[],backtests:1,runtime:{last_run_at:now,deployments:1,signals:1,orders:1,duration_ms:30,enabled:true,deployments_with_problems:0}});
    if(url.includes('/trading/signals/s1'))return ok({...signal,events:[{id:1,at:now,state:'NEW',actor:'runtime',detail:'EMA 3/5'},{id:2,at:now,state:'REJECTED',actor:'validation',detail:'STALE_PRICE'}],intent:null});
    if(url.includes('/trading/signals'))return ok({items:[signal]});
+   if(url.endsWith('/trading/orders?state=UNKNOWN&limit=200'))return ok({items:[{...order,id:'o9',mode:'BROKER',state:'UNKNOWN',broker_tag:'CABC',checks:2,last_check_at:now}]});
+   if(url.endsWith('/trading/orders/o9/check-broker'))return ok({...order,id:'o9',state:'FILLED'});
    if(url.includes('/trading/orders/o1'))return ok({...order,events:[{id:1,state_to:'NEW',at:now,actor:'risk-ops',detail:{}},{id:2,state_to:'APPROVED',at:now,actor:'risk',detail:{}},
      {id:3,state_to:'SUBMITTED',at:now,actor:'paper',detail:{}},{id:4,state_to:'ACKNOWLEDGED',at:now,actor:'paper',detail:{}},{id:5,state_to:'FILLED',at:now,actor:'paper',detail:{price:'1.08011',slippage:'0.00001'}}],
      fills:[{id:'f1',quantity:'0.1',price:'1.08011',quote_bid:'1.08',quote_ask:'1.0801',realised_pnl:'0',currency:'USD'}],risk:{approved:true,inputs:{position_before:'0',position_after:'0.1',limits:{}}}});
@@ -51,8 +53,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/backtests')&&method==='POST')return ok({id:'b1',metrics:{net_pnl:'812.40',return_pct:'0.81',trades:14,win_rate_pct:57.1,profit_factor:1.6,max_drawdown_pct:'0.42',sharpe:1.3,exposure_pct:48,currency:'USD'},
      equity:[{t:now,equity:'100000'},{t:now,equity:'100812.4'}],trades:[{side:'LONG',entry_time:now,entry:'1.08',exit_time:now,exit:'1.081',pnl:'100.00',reason:'EMA cross'}]},201);
    if(url.includes('/trading/backtests'))return ok({items:[]});
+   if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
+     accounts:[{account_id:'a1',code:'VTM_A',at:now,status:'BREAKS',breaks:1,kind:'BROKER'}]});
+   if(url.includes('/trading/posttrade/breaks/b1')&&method==='POST')return ok({break:{id:'b1',state:'ACCEPTED'},result:null});
+   if(url.includes('/trading/posttrade/breaks'))return ok({items:[{id:'b1',account_code:'VTM_A',kind:'POSITION_MISMATCH',broker_symbol:'EURUSD',corei_value:'0.3',broker_value:'0.4',difference:'-0.1',
+     first_seen:now,last_seen:now,state:'OPEN'}]});
+   if(url.includes('/trading/posttrade/tca'))return ok({by:'account',currency:'USD',slippage_cost_total:'12.5',commission_total:'-2.1',rows:[{label:'VTM_A',orders:4,fill_rate_pct:'100',reject_rate_pct:0,fills:4,
+     avg_slippage_bps:'0.19',slippage_cost:'12.5',price_improved:1,worse_than_arrival:3,latency_avg_ms:140,latency_p95_ms:210,latency_max_ms:230,commission:'-2.1'}],note:'Slippage = fill vs arrival.'});
+   if(url.includes('/trading/risk/stress'))return ok({scenarios:[{id:'s1',name:'Everything −5%',description:'',builtin:true,shocks:[{match:'ALL',value:'',pct:'-5'}],total:'-540.20',by_account:[{account:'VTM_A',pnl:'-540.20'}]}],missing:[]});
    if(url.includes('/trading/'))return ok({items:[]});
-   if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'}]});
+   if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'},{id:'a2',code:'ICM_L',environment:'LIVE',platform:'MT5',status:'ACTIVE'}]});
    if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'}]});
    if(url.includes('/config/strategies'))return ok({items:[]});
    if(url.includes('/config/deployments'))return ok({items:[]});
@@ -97,6 +107,24 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
  console.log('PASS: orders: the ticket sends one order per ticket; each order shows every step, the risk check and its fills.');
 
+ // A real order is confirmed before it is sent; a LIVE account is called out.
+ nav('Order ticket').click();await settle(6);
+ fill($('[aria-label="Ticket mode"]'),'BROKER');await settle();
+ fill($('[aria-label="Ticket account"]'),'a2');fill($('[aria-label="Ticket instrument"]'),'i1');fill($('[aria-label="Ticket quantity"]'),'0.1');await settle();
+ assert.match($('.intel form').textContent,/LIVE account: real money/);
+ const before=calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST').length;
+ await submit($('.intel form'));
+ assert.equal(calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST').length,before,'the first press only asks to confirm');
+ assert.match($('[role="alert"]').textContent,/Press again to confirm/);
+ await submit($('.intel form'));
+ const real=calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST').at(-1).body;
+ assert.equal(real.mode,'BROKER');assert.equal(real.account_id,'a2');
+ nav('Unknown').click();await settle(6);
+ assert.match($('.intel-table').textContent,/CABC/);
+ button('Look up now').click();await settle(4);
+ assert.ok(calls.some(c=>c.url.endsWith('/trading/orders/o9/check-broker')&&c.method==='POST'));
+ console.log('PASS: execution: a real order asks for confirmation (LIVE called out); unknown orders are looked up at the broker, never re-sent.');
+
  // Risk: a kill switch needs a scope, a target and a reason.
  await go('Risk');
  nav('Kill switches').click();await settle(6);
@@ -105,6 +133,21 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await submit($('.intel-edit'));
  assert.deepEqual(calls.filter(c=>c.url.includes('kill-switches')&&c.method==='POST')[0].body,{scope:'ACCOUNT',target_id:'a1',reason:'broker incident'});
  console.log('PASS: risk: a kill switch is engaged with a scope, a target and a reason.');
+ nav('Stress tests').click();await settle(6);
+ assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
+ console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
+
+ // Post-trade: breaks with their actions, execution quality.
+ await go('Post-trade');
+ assert.match($('.st-head').textContent,/Stage 8 · Post-trade/);
+ assert.match($('.intel-kpis').textContent,/Open breaks1/);
+ nav('Breaks').click();await settle(6);
+ assert.match($('.intel-table').textContent,/position mismatch.*EURUSD.*0\.3.*0\.4/i);
+ promptAnswer='known difference, broker fixing';button('Accept').click();await settle(4);
+ assert.deepEqual(calls.filter(c=>c.url.endsWith('/posttrade/breaks/b1')&&c.method==='POST')[0].body,{action:'ACCEPT',note:'known difference, broker fixing'});
+ nav('Execution quality').click();await settle(6);
+ assert.match($('.intel-table').textContent,/0\.19 bp.*140 · 210 · 230 ms/);
+ console.log('PASS: post-trade: breaks are accepted or resolved with a note; TCA shows slippage, latency and costs.');
 
  // Strategies: a backtest of an idea, with metrics and an equity curve.
  await go('Strategies');

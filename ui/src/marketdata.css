@@ -261,3 +261,8 @@
 .st-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .st-big { font-size: 1.5em; font-weight: 600; }
 .st-timeline { padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+/* 0.45: attribution share bars and long event details */
+.st-bar { display: flex; align-items: center; gap: 6px; min-width: 120px; }
+.st-bar > span { display: inline-block; height: 8px; border-radius: 2px; background: currentColor; opacity: .7; }
+.st-detail { display: inline-block; max-width: 520px; overflow-wrap: anywhere; color: var(--muted, #888); }
+@media print { .cfg-nav, .intel-bar, .st-head { display: none !important; } }

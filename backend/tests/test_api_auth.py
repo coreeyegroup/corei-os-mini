@@ -18,4 +18,5 @@ class StoredResultsNeedSignIn(unittest.TestCase):
         client = TestClient(app, base_url='https://testserver')
         caps = {c['id']: c for c in client.get('/api/workstation').json()['capabilities']}
         self.assertIn('MT5', caps['providers']['reason'])
-        self.assertFalse(caps['execution']['available'])
+        self.assertTrue(caps['execution']['available'])
+        self.assertIn('terminal bridge', caps['execution']['reason'])

@@ -16,6 +16,9 @@ per session (never stored here), and then speaks the same line protocol as COREI
   session: one JSON reply  {connected, account facts, symbols, server_time, utc_now, client_build}
   stream : lines {"t":"connected"|"q"|"subscribed"|"hb"|"bars"|"history_error"|"error"|"disconnected"|"stopped"}
            commands from COREI {"cmd":"subscribe"|"unsubscribe"|"history"|"stop"}
+  trade  : one reply {"t":"trade", action, results:[{retcode, ok, deal, order, volume, price, ...}]} for
+           action check | send | cancel | modify | sltp | close (0.43); needs the master password
+  book   : one reply {"t":"book", account, money, positions, orders, deals, tagged} (0.43)
 
 One terminal holds one login at a time. With --terminals-root the bridge serves any number of accounts on one
 machine: for each login it makes a portable copy of the installed terminal (once) and runs a worker for it, so
@@ -57,7 +60,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.42.0'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.43.0'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -193,6 +196,271 @@ def session(request: dict) -> dict:
             'sdk_version': f"MetaTrader5 {getattr(mt5, '__version__', '?')}"}
 
 
+# ----- orders (bridge 0.43): COREI decides, the terminal executes, the bridge reports exactly what happened -----
+# Prices and volumes arrive as decimal strings; the MetaTrader5 package takes doubles, so they are converted here, at
+# the last boundary, and rounded to the symbol's digits and volume step. Every order carries COREI's tag in its
+# comment, so COREI can find it again after a lost connection. Before sending, the bridge looks for the tag in the
+# terminal (open orders, positions, 7 days of history): a tag already there is never sent a second time.
+
+RET_TEXT = {10004: 'requote', 10006: 'rejected', 10007: 'cancelled by trader', 10008: 'placed', 10009: 'done', 10010: 'done partially',
+            10011: 'processing error', 10012: 'timed out', 10013: 'invalid request', 10014: 'invalid volume', 10015: 'invalid price',
+            10016: 'invalid stops', 10017: 'trading disabled', 10018: 'market closed', 10019: 'not enough money', 10020: 'prices changed',
+            10021: 'no quotes', 10022: 'invalid expiration', 10023: 'order state changed', 10024: 'too many requests', 10025: 'no changes',
+            10026: 'server autotrading disabled', 10027: 'terminal autotrading disabled', 10028: 'locked', 10029: 'frozen',
+            10030: 'invalid filling type', 10031: 'no connection to the trade server', 10032: 'live accounts only', 10033: 'pending order limit',
+            10034: 'volume limit', 10035: 'invalid order type', 10036: 'position already closed', 10038: 'close volume exceeds position',
+            10039: 'close order already exists', 10040: 'position limit', 10044: 'close only', 10045: 'FIFO close only'}
+OK_CODES = (10008, 10009, 10010)
+api_lock = threading.RLock()  # one MetaTrader5 call at a time: the stream and an order may share a terminal
+
+
+def _d(row) -> dict:
+    return row._asdict() if hasattr(row, '_asdict') else dict(row)
+
+
+def _const(name: str, default: int) -> int:
+    return int(getattr(mt5, name, default))
+
+
+def _ts(seconds_msc) -> str:
+    return dt.datetime.fromtimestamp(int(seconds_msc) / 1000, UTC).replace(tzinfo=None).isoformat(timespec='milliseconds')
+
+
+def ensure_trading_login(request: dict, terminal: str | None) -> tuple[bool, str]:
+    """Logged in to this account with a password that may trade. A terminal already streaming this login is reused
+    (an investor session is upgraded with the master password); a terminal busy with another login says so."""
+    with api_lock:
+        info = mt5.account_info() if mt5 is not None else None
+        same = info is not None and int(getattr(info, 'login', 0) or 0) == int(request['login'])
+    if not same:
+        if not terminal_lock.acquire(timeout=5):
+            return False, 'TERMINAL_BUSY: this terminal is serving another account; use a terminal pool (--terminals-root)'
+        try:
+            ok, error = login(request, terminal)
+        finally:
+            terminal_lock.release()
+        if not ok:
+            return False, error
+    with api_lock:
+        info = mt5.account_info()
+        if info is not None and not getattr(info, 'trade_allowed', True):
+            if not mt5.login(int(request['login']), password=request['password'], server=request.get('server') or ''):
+                code, text = mt5.last_error()
+                return False, f'TRADE_LOGIN_FAILED: {text} ({code})'
+            info = mt5.account_info()
+            if info is not None and not getattr(info, 'trade_allowed', True):
+                return False, 'TRADING_NOT_ALLOWED: the broker does not allow trading with this login (investor password?)'
+        term = mt5.terminal_info()
+        if term is not None and getattr(term, 'trade_allowed', True) is False:
+            return False, 'TERMINAL_ALGO_TRADING_OFF: press "Algo Trading" in the terminal (Tools › Options › Expert Advisors › Allow algorithmic trading)'
+    return True, ''
+
+
+def _tagged(tag: str, since_days: int = 7) -> dict:
+    """Everything in the terminal carrying this tag: open orders, positions, history orders and deals."""
+    if not tag:
+        return {'orders': [], 'positions': [], 'history_orders': [], 'deals': []}
+    start = dt.datetime.now(UTC) - dt.timedelta(days=since_days)
+    end = dt.datetime.now(UTC) + dt.timedelta(days=1)
+    with api_lock:
+        pick = lambda rows: [_d(r) for r in (rows or []) if str(_d(r).get('comment') or '').startswith(tag)]  # noqa: E731
+        return {'orders': pick(mt5.orders_get()), 'positions': pick(mt5.positions_get()),
+                'history_orders': pick(mt5.history_orders_get(start, end)), 'deals': pick(mt5.history_deals_get(start, end))}
+
+
+def _deal(d: dict) -> dict:
+    return {'ticket': d.get('ticket'), 'order': d.get('order'), 'position_id': d.get('position_id'), 'symbol': d.get('symbol'),
+            'side': 'BUY' if int(d.get('type', 0)) == 0 else 'SELL', 'entry': {0: 'IN', 1: 'OUT', 2: 'INOUT', 3: 'OUT_BY'}.get(int(d.get('entry', 0)), '?'),
+            'volume': repr(float(d.get('volume') or 0)), 'price': repr(float(d.get('price') or 0)), 'commission': repr(float(d.get('commission') or 0)),
+            'swap': repr(float(d.get('swap') or 0)), 'fee': repr(float(d.get('fee') or 0)), 'profit': repr(float(d.get('profit') or 0)),
+            'time': _ts(d.get('time_msc') or int(d.get('time') or 0) * 1000), 'comment': d.get('comment'), 'magic': d.get('magic')}
+
+
+def _position(p: dict) -> dict:
+    return {'ticket': p.get('ticket'), 'symbol': p.get('symbol'), 'side': 'BUY' if int(p.get('type', 0)) == 0 else 'SELL',
+            'volume': repr(float(p.get('volume') or 0)), 'price_open': repr(float(p.get('price_open') or 0)),
+            'price_current': repr(float(p.get('price_current') or 0)), 'profit': repr(float(p.get('profit') or 0)),
+            'swap': repr(float(p.get('swap') or 0)), 'sl': repr(float(p.get('sl') or 0)), 'tp': repr(float(p.get('tp') or 0)),
+            'time': _ts(p.get('time_msc') or int(p.get('time') or 0) * 1000), 'magic': p.get('magic'), 'comment': p.get('comment')}
+
+
+def _order(o: dict) -> dict:
+    kinds = {0: 'BUY', 1: 'SELL', 2: 'BUY_LIMIT', 3: 'SELL_LIMIT', 4: 'BUY_STOP', 5: 'SELL_STOP', 6: 'BUY_STOP_LIMIT', 7: 'SELL_STOP_LIMIT'}
+    states = {0: 'STARTED', 1: 'PLACED', 2: 'CANCELED', 3: 'PARTIAL', 4: 'FILLED', 5: 'REJECTED', 6: 'EXPIRED', 7: 'REQUEST_ADD',
+              8: 'REQUEST_MODIFY', 9: 'REQUEST_CANCEL'}
+    return {'ticket': o.get('ticket'), 'symbol': o.get('symbol'), 'type': kinds.get(int(o.get('type', 0)), str(o.get('type'))),
+            'state': states.get(int(o.get('state', 0)), str(o.get('state'))), 'volume_initial': repr(float(o.get('volume_initial') or 0)),
+            'volume_current': repr(float(o.get('volume_current') or 0)), 'price_open': repr(float(o.get('price_open') or 0)),
+            'time_setup': _ts(o.get('time_setup_msc') or int(o.get('time_setup') or 0) * 1000),
+            'time_done': _ts(o.get('time_done_msc') or int(o.get('time_done') or 0) * 1000) if (o.get('time_done_msc') or o.get('time_done')) else None,
+            'comment': o.get('comment'), 'magic': o.get('magic')}
+
+
+def _result(r, request: dict) -> dict:
+    if r is None:
+        code, text = mt5.last_error()
+        return {'retcode': None, 'ok': False, 'error': f'order_send gave no result: {text} ({code})', 'request': _safe(request)}
+    d = _d(r)
+    code = int(d.get('retcode') or 0)
+    return {'retcode': code, 'ok': code in OK_CODES, 'text': RET_TEXT.get(code, d.get('comment') or ''), 'deal': d.get('deal'), 'order': d.get('order'),
+            'volume': repr(float(d.get('volume') or 0)), 'price': repr(float(d.get('price') or 0)), 'bid': repr(float(d.get('bid') or 0)),
+            'ask': repr(float(d.get('ask') or 0)), 'comment': d.get('comment'), 'request_id': d.get('request_id'),
+            'retcode_external': d.get('retcode_external'), 'request': _safe(request)}
+
+
+def _safe(request: dict) -> dict:
+    return {k: v for k, v in request.items() if k in ('action', 'symbol', 'volume', 'type', 'price', 'sl', 'tp', 'deviation', 'magic', 'comment',
+                                                       'type_filling', 'type_time', 'position', 'order')}
+
+
+def _filling(info) -> int:
+    modes = int(getattr(info, 'filling_mode', 0) or 0)
+    if modes & 1:
+        return _const('ORDER_FILLING_FOK', 0)
+    if modes & 2:
+        return _const('ORDER_FILLING_IOC', 1)
+    return _const('ORDER_FILLING_RETURN', 2)
+
+
+def _round(value: str | float | None, step: float) -> float:
+    if value in (None, '', 0):
+        return 0.0
+    v = float(value)
+    return round(round(v / step) * step, 10) if step else v
+
+
+def _requests(o: dict) -> list[dict]:
+    """The MetaTrader requests for one COREI order. On a hedging account a COREI order is net: it first closes this
+    firm's opposite positions (oldest first, by ticket), and only the rest opens a new position."""
+    info = mt5.symbol_info(o['symbol'])
+    if info is None:
+        raise ValueError(f"SYMBOL_UNKNOWN: {o['symbol']} is not in this terminal's market watch")
+    mt5.symbol_select(o['symbol'], True)
+    digits, step = int(getattr(info, 'digits', 5) or 5), float(getattr(info, 'volume_step', 0.01) or 0.01)
+    volume = _round(o['volume'], step)
+    tick = mt5.symbol_info_tick(o['symbol'])
+    buy = o['side'] == 'BUY'
+    base = {'symbol': o['symbol'], 'magic': int(o.get('magic') or 0), 'comment': o['tag'], 'deviation': int(o.get('deviation') or 10),
+            'type_time': _const('ORDER_TIME_DAY', 1) if o.get('time_in_force') == 'DAY' else _const('ORDER_TIME_GTC', 0)}
+    sl, tp = round(float(o.get('sl') or 0), digits), round(float(o.get('tp') or 0), digits)
+    if sl:
+        base['sl'] = sl
+    if tp:
+        base['tp'] = tp
+    kind = o.get('order_type') or 'MARKET'
+    if kind != 'MARKET':
+        types_ = {('LIMIT', True): 'ORDER_TYPE_BUY_LIMIT', ('LIMIT', False): 'ORDER_TYPE_SELL_LIMIT', ('STOP', True): 'ORDER_TYPE_BUY_STOP',
+                  ('STOP', False): 'ORDER_TYPE_SELL_STOP'}
+        return [{**base, 'action': _const('TRADE_ACTION_PENDING', 5), 'type': _const(types_[(kind, buy)], 2), 'volume': volume,
+                 'price': round(float(o['price']), digits), 'type_filling': _const('ORDER_FILLING_RETURN', 2)}]
+    price = float(tick.ask if buy else tick.bid) if tick is not None else 0.0
+    deal = {**base, 'action': _const('TRADE_ACTION_DEAL', 1), 'type': _const('ORDER_TYPE_BUY' if buy else 'ORDER_TYPE_SELL', 0 if buy else 1),
+            'price': price, 'type_filling': _filling(info)}
+    acc = mt5.account_info()
+    hedging = acc is not None and int(getattr(acc, 'margin_mode', 0) or 0) == 2
+    out, remaining = [], volume
+    if hedging and o.get('net', True):
+        opposite = 1 if buy else 0  # closing a SELL position needs a BUY
+        mine = sorted([_d(p) for p in (mt5.positions_get(symbol=o['symbol']) or [])
+                       if int(_d(p).get('type', 0)) == opposite and int(_d(p).get('magic') or 0) == base['magic']], key=lambda p: p.get('ticket') or 0)
+        for p in mine:
+            if remaining <= 0:
+                break
+            part = min(remaining, float(p.get('volume') or 0))
+            out.append({**deal, 'volume': round(part, 10), 'position': p['ticket']})
+            remaining = round(remaining - part, 10)
+    if remaining > 0:
+        out.append({**deal, 'volume': round(remaining, 10)})
+    return out
+
+
+def trade(request: dict) -> dict:
+    """mode 'trade': action check | send | cancel | modify | close. Returns what the terminal answered, every time."""
+    action, o = request.get('action'), request.get('order') or {}
+    tag = str(o.get('tag') or '')[:31]
+    o['tag'] = tag
+    try:
+        with api_lock:
+            if action in ('send', 'check'):
+                if action == 'send':
+                    seen = _tagged(tag)
+                    if any(seen.values()):  # already at the broker: report it, never send twice
+                        return {'t': 'trade', 'action': action, 'duplicate': True, 'found': {k: [(_deal if k == 'deals' else _position if k == 'positions' else _order)(x) for x in v]
+                                                                                          for k, v in seen.items()}, 'results': []}
+                reqs = _requests(o)
+                if action == 'check':
+                    out = []
+                    for r in reqs:
+                        c = mt5.order_check(r)
+                        d = _d(c) if c is not None else {}
+                        code = int(d.get('retcode', -1)) if c is not None else None
+                        out.append({'retcode': code, 'ok': code == 0, 'text': d.get('comment') or RET_TEXT.get(code or 0, ''),
+                                    'margin': repr(float(d.get('margin') or 0)), 'margin_free': repr(float(d.get('margin_free') or 0)),
+                                    'margin_level': repr(float(d.get('margin_level') or 0)), 'request': _safe(r)})
+                    return {'t': 'trade', 'action': 'check', 'results': out}
+                results = []
+                for r in reqs:
+                    res = _result(mt5.order_send(r), r)
+                    results.append(res)
+                    if not res['ok']:
+                        break  # the rest is not sent; COREI sees exactly which part went through
+                return {'t': 'trade', 'action': 'send', 'results': results, 'utc_now': now_iso()}
+            if action == 'cancel':
+                tickets = [x['ticket'] for x in (_tagged(tag)['orders'])] if not o.get('ticket') else [int(o['ticket'])]
+                results = [_result(mt5.order_send(r), r) for r in [{'action': _const('TRADE_ACTION_REMOVE', 8), 'order': int(t)} for t in tickets]]
+                return {'t': 'trade', 'action': 'cancel', 'results': results, 'nothing_open': not tickets}
+            if action == 'modify':
+                info = mt5.symbol_info(o['symbol'])
+                digits = int(getattr(info, 'digits', 5) or 5) if info else 5
+                r = {'action': _const('TRADE_ACTION_MODIFY', 7), 'order': int(o['ticket']), 'price': round(float(o['price']), digits),
+                     'sl': round(float(o.get('sl') or 0), digits), 'tp': round(float(o.get('tp') or 0), digits)}
+                return {'t': 'trade', 'action': 'modify', 'results': [_result(mt5.order_send(r), r)]}
+            if action == 'sltp':
+                info = mt5.symbol_info(o['symbol'])
+                digits = int(getattr(info, 'digits', 5) or 5) if info else 5
+                r = {'action': _const('TRADE_ACTION_SLTP', 6), 'symbol': o['symbol'], 'position': int(o['position']),
+                     'sl': round(float(o.get('sl') or 0), digits), 'tp': round(float(o.get('tp') or 0), digits)}
+                return {'t': 'trade', 'action': 'sltp', 'results': [_result(mt5.order_send(r), r)]}
+            if action == 'close':  # one broker position by ticket (operator's choice on the reconciliation screen)
+                p = next((_d(x) for x in (mt5.positions_get(ticket=int(o['position'])) or [])), None)
+                if p is None:
+                    return {'t': 'trade', 'action': 'close', 'results': [], 'error': 'POSITION_NOT_FOUND'}
+                info = mt5.symbol_info(p['symbol'])
+                tick = mt5.symbol_info_tick(p['symbol'])
+                sell = int(p.get('type', 0)) == 0
+                r = {'action': _const('TRADE_ACTION_DEAL', 1), 'symbol': p['symbol'], 'position': p['ticket'],
+                     'volume': float(o.get('volume') or p['volume']), 'type': _const('ORDER_TYPE_SELL' if sell else 'ORDER_TYPE_BUY', 1 if sell else 0),
+                     'price': float(tick.bid if sell else tick.ask) if tick else 0.0, 'deviation': int(o.get('deviation') or 10),
+                     'magic': int(o.get('magic') or 0), 'comment': tag, 'type_filling': _filling(info)}
+                return {'t': 'trade', 'action': 'close', 'results': [_result(mt5.order_send(r), r)]}
+        return {'t': 'trade', 'action': action, 'results': [], 'error': f'UNKNOWN_ACTION: {action}'}
+    except ValueError as exc:
+        return {'t': 'trade', 'action': action, 'results': [], 'error': str(exc)[:300]}
+
+
+def book(request: dict) -> dict:
+    """mode 'book': the account as the broker holds it — balance, positions, working orders, deals since a time, and
+    (with a tag) everything carrying that tag."""
+    days = max(1, min(int(request.get('days') or 2), 90))
+    start = dt.datetime.now(UTC) - dt.timedelta(days=days)
+    end = dt.datetime.now(UTC) + dt.timedelta(days=1)
+    with api_lock:
+        out = {'t': 'book', 'utc_now': now_iso(), 'server_time': server_time(), 'account': account_dict(),
+               'positions': [_position(_d(p)) for p in (mt5.positions_get() or [])],
+               'orders': [_order(_d(o)) for o in (mt5.orders_get() or [])],
+               'deals': [_deal(_d(d)) for d in (mt5.history_deals_get(start, end) or [])
+                         if int(_d(d).get('type', 0)) in (0, 1)]}  # buys and sells; balance and credit rows are not trades
+        acc = mt5.account_info()
+        if acc is not None:
+            a = _d(acc)
+            out['money'] = {k: repr(float(a.get(k) or 0)) for k in ('balance', 'equity', 'margin', 'margin_free', 'margin_level', 'profit', 'credit')}
+    if request.get('tag'):
+        found = _tagged(str(request['tag'])[:31], days)
+        out['tagged'] = {'orders': [_order(x) for x in found['orders']], 'positions': [_position(x) for x in found['positions']],
+                         'history_orders': [_order(x) for x in found['history_orders']], 'deals': [_deal(x) for x in found['deals']]}
+    return out
+
+
 class Stream:
     def __init__(self, request: dict, send, recv_lines):
         self.send, self.recv = send, recv_lines
@@ -230,7 +498,8 @@ class Stream:
             frame = getattr(mt5, FRAMES[m['timeframe']])
             start = dt.datetime.fromisoformat(m['from']).replace(tzinfo=UTC)
             end = dt.datetime.fromisoformat(m['to']).replace(tzinfo=UTC)
-            rates = mt5.copy_rates_range(m['symbol'], frame, start, end)
+            with api_lock:
+                rates = mt5.copy_rates_range(m['symbol'], frame, start, end)
             bars = [{'t': dt.datetime.fromtimestamp(int(r['time']), UTC).replace(tzinfo=None).isoformat(), 'o': float(r['open']), 'h': float(r['high']),
                      'l': float(r['low']), 'c': float(r['close']), 'v': int(r['tick_volume'])} for r in (rates if rates is not None else [])]
             self.send({'t': 'bars', 'id': m.get('id'), 'bars': bars})
@@ -252,12 +521,13 @@ class Stream:
             for name in names:
                 since = self.last_msc.get(name)
                 try:
-                    if since is None:
-                        tick = mt5.symbol_info_tick(name)
-                        ticks = [tick] if tick is not None else []
-                    else:
-                        ticks = mt5.copy_ticks_from(name, dt.datetime.fromtimestamp(since / 1000 + 0.001, UTC), 2000, mt5.COPY_TICKS_ALL)
-                        ticks = list(ticks) if ticks is not None else []
+                    with api_lock:
+                        if since is None:
+                            tick = mt5.symbol_info_tick(name)
+                            ticks = [tick] if tick is not None else []
+                        else:
+                            ticks = mt5.copy_ticks_from(name, dt.datetime.fromtimestamp(since / 1000 + 0.001, UTC), 2000, mt5.COPY_TICKS_ALL)
+                            ticks = list(ticks) if ticks is not None else []
                 except Exception as exc:  # noqa: BLE001
                     self.send({'t': 'error', 'msg': f'{name}: {type(exc).__name__}: {exc}'[:300]})
                     continue
@@ -272,7 +542,9 @@ class Stream:
                     self.seq += 1
                     self.send({'t': 'q', 's': name, 'b': bid or None, 'a': ask or None, 'l': last or None, 'v': vol or None,
                                'st': dt.datetime.fromtimestamp(msc / 1000, UTC).replace(tzinfo=None).isoformat(timespec='milliseconds'), 'rx': rx, 'n': self.seq})
-            if not mt5.terminal_info() or not getattr(mt5.terminal_info(), 'connected', True):
+            with api_lock:
+                term = mt5.terminal_info()
+            if not term or not getattr(term, 'connected', True):
                 self.send({'t': 'disconnected'})
                 return
             if time.monotonic() - beat >= self.heartbeat:
@@ -498,6 +770,25 @@ def serve_client(conn: socket.socket, token: str, terminal: str | None) -> None:
         mode = request.get('mode') or 'stream'
         if mode == 'ping':
             send(pong(None))
+            return
+        if mode in ('trade', 'book'):  # orders and the broker's book: works beside a running stream of the same login
+            ok, error = ensure_trading_login(request, terminal) if mode == 'trade' else (True, '')
+            if mode == 'book':
+                with api_lock:
+                    info = mt5.account_info()
+                if info is None or int(getattr(info, 'login', 0) or 0) != int(request.get('login') or 0):
+                    if not terminal_lock.acquire(timeout=5):
+                        ok, error = False, 'TERMINAL_BUSY: this terminal is serving another account; use a terminal pool (--terminals-root)'
+                    else:
+                        try:
+                            ok, error = login(request, terminal)
+                        finally:
+                            terminal_lock.release()
+            request['password'] = ''
+            if not ok:
+                send({'t': 'failed', 'mode': mode, 'error': error, 'sent': False})
+                return
+            send(trade(request) if mode == 'trade' else book(request))
             return
         with terminal_lock:
             ok, error = login(request, terminal)

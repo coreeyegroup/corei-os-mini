@@ -55,6 +55,27 @@ def fake_mt5():
     m.symbol_info_tick = tick
     m.copy_ticks_from = lambda name, since, count, flags: [tick(name)]
     m.copy_rates_range = lambda name, frame, start, end: [{'time': 1_762_000_000, 'open': 1.0, 'high': 2.0, 'low': 0.5, 'close': 1.5, 'tick_volume': 10}]
+    # Orders (bridge 0.43): a hedging account with one firm position to close and a deal history.
+    book = {'positions': [{'ticket': 71, 'symbol': 'XAUUSD', 'type': 1, 'volume': 0.05, 'magic': 7770001, 'comment': 'old', 'price_open': 4001.0}],
+            'deals': [], 'orders': [], 'sent': [], 'n': 900}
+    m.book = book
+    m.positions_get = lambda symbol=None, ticket=None: [p for p in book['positions'] if (symbol is None or p['symbol'] == symbol) and (ticket is None or p['ticket'] == ticket)]
+    m.orders_get = lambda: book['orders']
+    m.history_orders_get = lambda start, end: []
+    m.history_deals_get = lambda start, end: book['deals']
+    m.order_check = lambda r: {'retcode': 0, 'comment': 'Done', 'margin': 40.0, 'margin_free': 960.0, 'margin_level': 2500.0}
+
+    def order_send(r):
+        book['sent'].append(dict(r))
+        book['n'] += 1
+        if r['action'] == 5:  # pending
+            book['orders'].append({'ticket': book['n'], 'symbol': r['symbol'], 'type': r['type'], 'state': 1, 'comment': r['comment'], 'magic': r['magic'],
+                                   'volume_initial': r['volume'], 'volume_current': r['volume'], 'price_open': r['price']})
+            return {'retcode': 10008, 'order': book['n'], 'deal': 0, 'volume': r['volume'], 'price': 0.0, 'comment': 'placed'}
+        book['deals'].append({'ticket': book['n'], 'order': book['n'], 'symbol': r['symbol'], 'type': r['type'], 'entry': 1 if r.get('position') else 0,
+                              'volume': r['volume'], 'price': r['price'], 'comment': r['comment'], 'magic': r['magic'], 'time_msc': 1_763_000_000_000})
+        return {'retcode': 10009, 'order': book['n'], 'deal': book['n'], 'volume': r['volume'], 'price': r['price'], 'comment': 'done'}
+    m.order_send = order_send
     return m
 
 
@@ -112,6 +133,35 @@ class TerminalBridge(unittest.TestCase):
         self.assertEqual(reply['client_build'], 6241)
         self.assertEqual(reply['symbols_available'], 2)
         self.assertNotIn('secret', json.dumps(reply))
+
+    def ask(self, request):
+        t = self.transport()
+        t.send({'token': self.token, 'login': 35822869, 'password': 'secret', 'server': 'VTMarkets-Live 3', **request})
+        reply = json.loads(next(t.lines()))
+        t.close()
+        return reply
+
+    def test_orders_check_send_net_on_hedging_and_never_twice(self):
+        mt5 = sys.modules['MetaTrader5']
+        order = {'tag': 'CABC123', 'symbol': 'XAUUSD', 'side': 'BUY', 'volume': '0.10', 'order_type': 'MARKET', 'magic': 7770001, 'deviation': 20}
+        check = self.ask({'mode': 'trade', 'action': 'check', 'order': order})
+        self.assertTrue(check['results'][0]['ok'])
+        sent = self.ask({'mode': 'trade', 'action': 'send', 'order': order})
+        # Hedging: the firm's 0.05 short is closed by ticket first; only the remaining 0.05 opens a new long.
+        self.assertEqual([r['request'].get('position') for r in sent['results']], [71, None])
+        self.assertEqual([r['request']['volume'] for r in sent['results']], [0.05, 0.05])
+        self.assertTrue(all(r['ok'] and r['deal'] for r in sent['results']))
+        self.assertEqual(mt5.book['sent'][-1]['comment'], 'CABC123')
+        again = self.ask({'mode': 'trade', 'action': 'send', 'order': order})
+        self.assertTrue(again['duplicate'], 'a tag already at the broker is never sent again')
+        self.assertEqual(len(again['found']['deals']), 2)
+        pending = self.ask({'mode': 'trade', 'action': 'send', 'order': {**order, 'tag': 'CLIM1', 'order_type': 'LIMIT', 'price': '3900.004'}})
+        self.assertEqual((pending['results'][0]['retcode'], pending['results'][0]['request']['price']), (10008, 3900.0))
+        book = self.ask({'mode': 'book', 'tag': 'CABC123'})
+        self.assertEqual(len(book['tagged']['deals']), 2)
+        self.assertEqual(book['deals'][0]['side'], 'BUY')
+        self.assertEqual(len(book['orders']), 1)
+        self.assertNotIn('secret', json.dumps(book))
 
     def test_wrong_password_is_a_broker_refusal(self):
         t = self.transport()

@@ -71,11 +71,11 @@ class BridgeNodes(tmd.MarketData):
         self.ok(self.public.get('/api/bridge-enroll/files/..%2F..%2Fsecret'), 404)
 
         # The machine enrols (as the installer does), from 127.0.0.1 where the test bridge listens.
-        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': '0.42.0',
+        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': '0.43.0',
                 'machine': 'VPS1', 'host': '127.0.0.1'}
         done = self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body))
         self.assertTrue(done['check']['ok'], done)
-        self.assertEqual(done['check']['version'], '0.42.0')
+        self.assertEqual(done['check']['version'], '0.43.0')
         self.assertEqual(done['check']['terminals_open'], 0, 'the ping starts no terminal')
         self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body), 404)  # single use
         listed = self.ok(self.alice.get('/api/config/bridge-nodes'))['items'][0]
@@ -121,7 +121,7 @@ class BridgeNodes(tmd.MarketData):
         code = node['instructions']['code']
         info = self.ok(self.public.get(f'/api/bridge-enroll/{code}'))
         self.assertEqual((info['ssh_target'].split('@')[0], info['tunnel_port']), ('corei-tunnel', 9450))
-        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': 9443, 'bridge_version': '0.42.0', 'machine': 'PC'}
+        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': 9443, 'bridge_version': '0.43.0', 'machine': 'PC'}
         self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body), 422)  # tunnel mode needs the key
         key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB' + 'x' * 43 + ' corei-tunnel-office-pc'
         done = self.ok(self.public.post(f'/api/bridge-enroll/{code}', json={**body, 'ssh_public_key': key}))

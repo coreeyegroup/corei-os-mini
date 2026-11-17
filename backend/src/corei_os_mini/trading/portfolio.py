@@ -134,6 +134,49 @@ def equity(db, account_id) -> dict:
             'unrealised': unreal, 'equity': eq, 'peak': peak, 'drawdown_pct': dd.quantize(Decimal('0.01')), 'missing_fx': sorted(missing)}
 
 
+def broker_money(db, account_id, max_age_minutes: int = 15) -> dict | None:
+    """The broker's own balance, equity and margin from the latest good book snapshot (Decimals), if recent."""
+    row = db.execute('SELECT money, at FROM pt_broker_snapshots WHERE account_id=%s AND ok ORDER BY at DESC LIMIT 1', (str(account_id),)).fetchone()
+    if not row or row['at'] < datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes):
+        return None
+    return {**{k: D(v) for k, v in (row['money'] or {}).items() if v not in (None, '')}, 'at': row['at']}
+
+
+def partition_equity(db, partition_id) -> dict:
+    """A capital partition: its capital plus the realised and unrealised P&L of the deployments assigned to it."""
+    part = db.execute('SELECT p.*, a.base_currency FROM pf_partitions p JOIN cfg_accounts a ON a.id=p.account_id WHERE p.id=%s', (str(partition_id),)).fetchone()
+    if not part:
+        return {}
+    ccy = part['base_currency'] or 'USD'
+    deps = [str(r['id']) for r in db.execute('SELECT id FROM cfg_deployments WHERE partition_id=%s', (str(partition_id),)).fetchall()]
+    realised = unreal = ZERO
+    if deps:
+        for r in db.execute('SELECT realised_pnl, currency FROM pf_positions WHERE deployment_id = ANY(%s::uuid[])', (deps,)).fetchall():
+            realised += D(r['realised_pnl']) * (fx_rate(db, r['currency'], ccy) or ZERO)
+        for p in positions(db, part['account_id']):
+            if p['deployment_id'] and str(p['deployment_id']) in deps and p['unrealised_account'] is not None:
+                unreal += p['unrealised_account']
+    eq = D(part['capital']) + realised + unreal
+    return {'partition_id': str(partition_id), 'name': part['name'], 'currency': ccy, 'capital': D(part['capital']), 'realised': realised,
+            'unrealised': unreal, 'equity': eq, 'drawdown_pct': ((D(part['capital']) - eq) / D(part['capital']) * 100).quantize(Decimal('0.01'))
+            if D(part['capital']) > 0 and eq < D(part['capital']) else ZERO, 'deployments': len(deps), 'status': part['status'],
+            'max_drawdown_pct': part['max_drawdown_pct']}
+
+
+def sizing_equity(db, dep: dict) -> dict:
+    """The capital a deployment sizes from: its partition's equity when it has one, else the broker's equity for a real
+    (BROKER) deployment with a recent snapshot, else the account's paper equity. 'basis' says which."""
+    if dep.get('partition_id'):
+        pe = partition_equity(db, dep['partition_id'])
+        if pe:
+            return {**pe, 'basis': f"partition {pe['name']}"}
+    if dep.get('mode') == 'BROKER':
+        bm = broker_money(db, dep['account_id'])
+        if bm and bm.get('equity'):
+            return {'equity': bm['equity'], 'currency': account_currency(db, dep['account_id']), 'basis': 'broker equity'}
+    return {**equity(db, dep['account_id']), 'basis': 'equity'}
+
+
 def day_pnl(db, account_id, day_start: datetime | None = None) -> Decimal:
     """Today's P&L in the account's currency: realised on today's fills plus current unrealised (UTC day)."""
     start = day_start or datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)

@@ -54,6 +54,9 @@ async def lifespan(_: FastAPI):
         tasks.append(asyncio.create_task(alerts.run_forever(config_store.transaction)))
     if os.getenv('COREI_INTEL', 'on') != 'off' and settings.database_url:
         tasks.append(asyncio.create_task(intel_engine.run_forever()))  # Stage 2 feature store, every minute
+    if os.getenv('COREI_EXECUTION', 'on') != 'off' and settings.database_url:
+        from .trading import execution
+        execution.start()  # Stage 7 dispatcher and broker look-ups, Stage 8 periodic reconciliation
     try:
         yield
     finally:
@@ -204,9 +207,9 @@ def workstation(response: Response) -> dict[str, object]:
             {"id": "assessment", "label": "Market-data collection", "available": True,
              "reason": "Collection plans, live price stream (MT5), quality scoring, feed switching, journal, Parquet history."},
             {"id": "execution", "label": "Order execution", "available": bool(config_store.ORDER_ADAPTERS),
-             "reason": "Order lifecycle and provider submission are not implemented yet."},
-            {"id": "portfolio", "label": "Portfolio and reconciliation", "available": False,
-             "reason": "No position ledger or provider reconciliation exists yet."},
+             "reason": "Order engine with paper and real execution: MT5 through the terminal bridge, Upstox order API; UNKNOWN look-ups by tag."},
+            {"id": "portfolio", "label": "Portfolio and reconciliation", "available": True,
+             "reason": "Positions from fills, broker book snapshots, reconciliation breaks, TCA, journal and statements."},
         ],
     }
 

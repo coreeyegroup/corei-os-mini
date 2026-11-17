@@ -166,7 +166,7 @@ class Trading(tmd.MarketData):
         sig = self.ok(self.alice.get('/api/trading/signals'))['items'][0]
         self.assertEqual(sig['state'], 'REJECTED')
         self.assertTrue(any(r.startswith('ORDER_SENDING_OFF_DEMO') for r in sig['reasons']), sig['reasons'])
-        self.assertTrue(any(r.startswith('BROKER_ORDER_ADAPTER_NOT_BUILT') for r in sig['reasons']))
+        self.assertTrue(any(r.startswith('ORDER_NEEDS_BRIDGE') for r in sig['reasons']), 'an MT5 account without a bridge cannot take real orders')
         # A loss limit breached engages the account kill switch by itself.
         with self.connect() as db:
             db.execute("INSERT INTO pf_positions(id, account_id, instrument_id, mode, quantity, avg_price, realised_pnl, currency) "

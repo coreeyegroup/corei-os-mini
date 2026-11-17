@@ -1,9 +1,12 @@
-"""HTTP API for the trading core, Stages 3–7 (signals, strategy runtime and backtests, risk, portfolio, orders).
+"""HTTP API for the trading core, Stages 3–8 (signals, strategies, risk, portfolio, execution, post-trade).
 
 Why it exists: the stage screens and the system map read and control the trading core through one place.
 Purpose: /api/trading/* — overview KPIs per stage; settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
-orders (blotter, detail, ticket, cancel, resolve UNKNOWN); fills; positions, exposure, equity, capital, performance.
+orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
+dispatcher status); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
+attribution; VaR, stress scenarios, margin; optimisation and walk-forward, drift; post-trade reconciliation and breaks,
+broker book, TCA, trade journal, statements, order audit trail and CSV exports.
 Roles: signed-in operators read; Trading operations places tickets, manual signals, flattens, cancels and engages
 kill switches; Risk approver changes limits, releases kill switches, resolves UNKNOWN orders and changes settings.
 Must never: bypass trading.risk or trading.oms, or return a secret.
@@ -23,7 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
-from .trading import algorithms, backtest, oms, portfolio, risk, runtime, signals
+from .trading import (algorithms, backtest, brokers, copytrade, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
+                      strategy_health, var)
 from .trading.common import settings as read_settings
 
 router = APIRouter(prefix='/api/trading', tags=['trading'])
@@ -75,9 +79,12 @@ def overview(response: Response, _: str = Depends(require_operator)):
         cfg = read_settings(db)
         errors = db.execute('SELECT count(*) AS n FROM tr_runtime_state r JOIN cfg_deployments d ON d.id=r.deployment_id WHERE d.status=%s AND r.last_error IS NOT NULL',
                             ('ACTIVE',)).fetchone()['n']
+        execution_status = execution.status(db)
+        pt = posttrade.overview(db)
     return {'deployments': dep, 'active_modes': modes, 'signals_today': sig, 'orders_today': orders, 'open_orders': open_orders, 'unknown_orders': unknown,
             'kill_switches': kills, 'limits': limits_n, 'refused_today': refused, 'positions': len(pos), 'accounts': pnl, 'backtests': backtests,
-            'runtime': {**runtime.STATUS, 'enabled': cfg.get('runtime_enabled'), 'deployments_with_problems': errors}}
+            'runtime': {**runtime.STATUS, 'enabled': cfg.get('runtime_enabled'), 'deployments_with_problems': errors},
+            'execution': _j(execution_status), 'posttrade': _j(pt)}
 
 
 # ----- settings -----
@@ -93,6 +100,22 @@ class SettingsIn(BaseModel):
     agree_count: int = Field(ge=2, le=10)
     paper_slippage_ticks: int = Field(ge=0, le=1000)
     default_capital: Decimal = Field(gt=0, max_digits=20, decimal_places=2)
+    # Execution, post-trade, drift and VaR (0.45); left out = unchanged.
+    broker_magic: int | None = Field(default=None, ge=1, le=2147483647)
+    max_deviation_points: int | None = Field(default=None, ge=0, le=100000)
+    broker_timeout_seconds: int | None = Field(default=None, ge=5, le=300)
+    unknown_check_seconds: int | None = Field(default=None, ge=5, le=3600)
+    pre_check_orders: bool | None = None
+    upstox_product: Literal['D', 'I', 'MTF'] | None = None
+    live_four_eyes: Literal['OFF', 'MANUAL', 'ALL'] | None = None
+    recon_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+    recon_qty_tolerance: Decimal | None = Field(default=None, ge=0, max_digits=38, decimal_places=12)
+    recon_kill_on_break: bool | None = None
+    drift_min_trades: int | None = Field(default=None, ge=5, le=10000)
+    drift_tolerance_pct: Decimal | None = Field(default=None, gt=0, le=1000)
+    var_confidence: Literal['90', '95', '97.5', '99', '99.5'] | None = None
+    var_lookback_bars: int | None = Field(default=None, ge=30, le=5000)
+    var_timeframe: Literal['M15', 'M30', 'H1', 'H4', 'D1'] | None = None
     version: int
     reason: str = Field(min_length=5, max_length=500)
 
@@ -110,7 +133,7 @@ def put_settings(payload: dict, user: Principal = Depends(_risk)):
         before = db.execute('SELECT * FROM tr_settings WHERE id FOR UPDATE').fetchone()
         if before['version'] != data.version:
             raise HTTPException(409, 'The settings were changed by someone else: reload and try again.')
-        vals = data.model_dump(exclude={'version', 'reason'})
+        vals = {k: v for k, v in data.model_dump(exclude={'version', 'reason'}).items() if v is not None}
         after = db.execute('UPDATE tr_settings SET ' + ', '.join(f'{k}=%s' for k in vals) + ', version=version+1, updated_by=%s, updated_at=now() WHERE id RETURNING *',
                            (*vals.values(), user.username)).fetchone()
         store.audit(db, user.username, 'UPDATE_TRADING_SETTINGS', 'trading_settings', 'singleton', dict(before), dict(after), data.reason)
@@ -394,3 +417,318 @@ class FlattenIn(BaseModel):
 def flatten(payload: dict, user: Principal = Depends(_ops_or_risk)):
     data = parse(FlattenIn, payload)
     return _j(oms.flatten(user.username, data.account_id, data.instrument_id, data.reason, data.key))
+
+
+# ----- Stage 7: real execution -----
+
+class ReleaseIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post('/orders/{order_id}/release')
+def release_order(order_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    """Four-eyes: a Risk approver other than the person who placed it lets a LIVE order go to the broker."""
+    out = oms.release(user.username, order_id, parse(ReleaseIn, payload).reason)
+    execution.dispatch_soon()
+    return _j(out)
+
+
+@router.post('/orders/{order_id}/check-broker')
+def check_at_broker(order_id: UUID, user: Principal = Depends(_ops_or_risk)):
+    """Look the order up at the broker by its tag now (never sends it again)."""
+    return _j(execution.broker_order_detail(order_id))
+
+
+@router.get('/execution/status')
+def execution_status(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        st = execution.status(db)
+        caps = []
+        for r in db.execute("""SELECT a.id, a.code, c.environment, c.platform FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id
+                               WHERE a.status <> 'ARCHIVED' ORDER BY a.code""").fetchall():
+            cap = brokers.capability(db, r['id'])
+            caps.append({'account_id': str(r['id']), 'account_code': r['code'], 'environment': r['environment'], 'platform': r['platform'], **cap})
+        controls = list(store.execution_controls(db).values())
+        return _j({**st, 'accounts': caps, 'order_sending': [{'environment': c['environment'], 'enabled': c['trading_enabled']} for c in controls]})
+
+
+@router.post('/execution/dispatch')
+def dispatch_now(user: Principal = Depends(_ops_or_risk)):
+    return _j({'dispatch': execution.dispatch(), 'sync': execution.sync()})
+
+
+# ----- Stage 5: margin, VaR, stress -----
+
+@router.get('/risk/var')
+def var_report(response: Response, account_id: UUID | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        ids = [account_id] if account_id else [r['account_id'] for r in db.execute('SELECT DISTINCT account_id FROM pf_positions WHERE quantity <> 0').fetchall()]
+        codes = {str(r['id']): r['code'] for r in db.execute('SELECT id, code FROM cfg_accounts').fetchall()}
+        out = []
+        for a in ids:
+            eq = portfolio.equity(db, a)
+            v = var.account_var(db, a)
+            m = risk.margin(db, a)
+            out.append({'account_id': str(a), 'account_code': codes.get(str(a)), 'currency': eq['currency'], 'equity': eq['equity'], **v,
+                        'var_pct': (v['var'] / eq['equity'] * 100).quantize(Decimal('0.01')) if v.get('var') is not None and eq['equity'] > 0 else None,
+                        'margin': m})
+        return {'items': _j(out)}
+
+
+@router.get('/risk/stress')
+def stress_report(response: Response, account_id: UUID | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(var.stress(db, account_id))
+
+
+@router.get('/risk/scenarios')
+def scenario_list(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(var.scenarios(db))}
+
+
+@router.post('/risk/scenarios', status_code=201)
+def scenario_create(payload: dict, user: Principal = Depends(_risk)):
+    return _j(var.save_scenario(user.username, parse(var.ScenarioIn, payload)))
+
+
+@router.put('/risk/scenarios/{scenario_id}')
+def scenario_update(scenario_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    return _j(var.save_scenario(user.username, parse(var.ScenarioIn, payload), scenario_id))
+
+
+@router.delete('/risk/scenarios/{scenario_id}', status_code=204)
+def scenario_delete(scenario_id: UUID, reason: str = Query(min_length=5, max_length=500), user: Principal = Depends(_risk)):
+    var.delete_scenario(user.username, scenario_id, reason)
+
+
+# ----- Stage 4: optimisation, drift -----
+
+@router.post('/optimisations', status_code=201)
+def optimise_run(payload: dict, user: Principal = Depends(_ops_or_risk)):
+    return _j(optimise.run(user.username, parse(optimise.OptimiseIn, payload)))
+
+
+@router.get('/optimisations')
+def optimise_list(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(optimise.listing(db))}
+
+
+@router.get('/optimisations/{run_id}')
+def optimise_detail(run_id: UUID, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(optimise.detail(db, run_id))
+
+
+@router.get('/drift')
+def drift(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(strategy_health.drift_report(db))}
+
+
+# ----- Stage 6: attribution, partitions, allocation, copy trading -----
+
+@router.get('/portfolio/attribution')
+def attribution(response: Response, by: str = Query('strategy', max_length=20), days: int = Query(30, ge=1, le=3650),
+                _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(strategy_health.attribution(db, by, datetime.now(timezone.utc) - timedelta(days=days)))
+
+
+@router.get('/portfolio/partitions')
+def partition_list(response: Response, account_id: UUID | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(partitions.listing(db, account_id))}
+
+
+@router.post('/portfolio/partitions', status_code=201)
+def partition_create(payload: dict, user: Principal = Depends(_risk)):
+    return _j(partitions.save(user.username, parse(partitions.PartitionIn, payload)))
+
+
+@router.put('/portfolio/partitions/{partition_id}')
+def partition_update(partition_id: UUID, payload: dict, version: int | None = None, user: Principal = Depends(_risk)):
+    return _j(partitions.save(user.username, parse(partitions.PartitionIn, payload), partition_id, version))
+
+
+@router.delete('/portfolio/partitions/{partition_id}', status_code=204)
+def partition_delete(partition_id: UUID, reason: str = Query(min_length=5, max_length=500), user: Principal = Depends(_risk)):
+    partitions.delete(user.username, partition_id, reason)
+
+
+@router.put('/portfolio/deployments/{deployment_id}/allocation')
+def deployment_allocation(deployment_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    return _j(partitions.assign(user.username, deployment_id, parse(partitions.AssignIn, payload)))
+
+
+@router.post('/portfolio/allocate')
+def allocate(payload: dict, user: Principal = Depends(_risk)):
+    return _j(partitions.allocate(user.username, parse(partitions.AllocateIn, payload)))
+
+
+@router.get('/portfolio/copy-links')
+def copy_list(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(copytrade.links(db))}
+
+
+@router.post('/portfolio/copy-links', status_code=201)
+def copy_create(payload: dict, user: Principal = Depends(_risk)):
+    return _j(copytrade.save(user.username, parse(copytrade.LinkIn, payload)))
+
+
+@router.put('/portfolio/copy-links/{link_id}')
+def copy_update(link_id: UUID, payload: dict, version: int | None = None, user: Principal = Depends(_risk)):
+    return _j(copytrade.save(user.username, parse(copytrade.LinkIn, payload), link_id, version))
+
+
+@router.delete('/portfolio/copy-links/{link_id}', status_code=204)
+def copy_delete(link_id: UUID, reason: str = Query(min_length=5, max_length=500), user: Principal = Depends(_risk)):
+    copytrade.delete(user.username, link_id, reason)
+
+
+@router.get('/routing/preview')
+def routing_preview(response: Response, instrument_id: UUID, side: Literal['BUY', 'SELL'], quantity: Decimal = Query(gt=0),
+                    accounts: str = Query(min_length=36, max_length=2000), mode: Literal['PAPER', 'BROKER'] = 'PAPER', _: str = Depends(require_operator)):
+    """Every candidate account's price and eligibility for an order (nothing is placed)."""
+    _no_store(response)
+    from .trading import routing
+    with store.transaction('read') as db:
+        return {'items': _j(routing.candidates(db, [a for a in accounts.split(',') if a], instrument_id, side, quantity, mode))}
+
+
+# ----- Stage 8: post-trade -----
+
+@router.get('/posttrade/overview')
+def pt_overview(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(posttrade.overview(db))
+
+
+@router.post('/posttrade/reconcile/{account_id}')
+def pt_reconcile(account_id: UUID, broker: bool | None = None, user: Principal = Depends(_ops_or_risk)):
+    return _j(posttrade.reconcile(account_id, user.username, broker))
+
+
+@router.get('/posttrade/breaks')
+def pt_breaks(response: Response, state: str | None = Query('OPEN', max_length=10), account_id: UUID | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(posttrade.breaks(db, state or None, account_id))}
+
+
+@router.post('/posttrade/breaks/{break_id}')
+def pt_break_action(break_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    return _j(posttrade.act_on_break(user.username, break_id, parse(posttrade.BreakAction, payload)))
+
+
+@router.get('/posttrade/runs')
+def pt_runs(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(posttrade.runs(db))}
+
+
+@router.get('/posttrade/broker/{account_id}')
+def pt_broker(account_id: UUID, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(posttrade.broker_view(db, account_id))
+
+
+@router.post('/posttrade/broker/{account_id}/read')
+def pt_broker_read(account_id: UUID, user: Principal = Depends(_ops_or_risk)):
+    posttrade.fetch_book(account_id, user.username)
+    with store.transaction('read') as db:
+        return _j(posttrade.broker_view(db, account_id))
+
+
+def _period(days: int) -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    return now - timedelta(days=days), now + timedelta(minutes=1)
+
+
+@router.get('/posttrade/tca')
+def pt_tca(response: Response, by: str = Query('account', max_length=20), days: int = Query(30, ge=1, le=3650),
+           mode: Literal['PAPER', 'BROKER'] | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(posttrade.tca(db, by, *_period(days), mode))
+
+
+@router.get('/posttrade/journal')
+def pt_journal(response: Response, days: int = Query(90, ge=1, le=3650), account_id: UUID | None = None, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(posttrade.journal(db, *_period(days), account_id))
+
+
+@router.get('/posttrade/statement/{account_id}')
+def pt_statement(account_id: UUID, response: Response, day_from: str = Query(pattern=r'^\d{4}-\d{2}-\d{2}$'),
+                 day_to: str = Query(pattern=r'^\d{4}-\d{2}-\d{2}$'), _: str = Depends(require_operator)):
+    _no_store(response)
+    from datetime import date
+    with store.transaction('read') as db:
+        return _j(posttrade.statement(db, account_id, date.fromisoformat(day_from), date.fromisoformat(day_to)))
+
+
+@router.get('/posttrade/events')
+def pt_events(response: Response, days: int = Query(7, ge=1, le=3650), account_id: UUID | None = None, state: str | None = Query(None, max_length=20),
+              actor: str | None = Query(None, max_length=80), search: str | None = Query(None, max_length=80), limit: int = Query(1000, ge=1, le=20000),
+              _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(posttrade.order_events(db, *_period(days), account_id, state, actor, search, limit))}
+
+
+EXPORTS = ('fills', 'orders', 'trades', 'events', 'breaks', 'tca', 'statement', 'attribution')
+
+
+@router.get('/posttrade/export/{kind}.csv')
+def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650), account_id: UUID | None = None, by: str = Query('account', max_length=20),
+              day_from: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'), day_to: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'),
+              _: str = Depends(require_operator)):
+    """CSV of a post-trade report (exact decimals, ISO times)."""
+    if kind not in EXPORTS:
+        raise HTTPException(404, f"Unknown export; one of: {', '.join(EXPORTS)}.")
+    since, until = _period(days)
+    with store.transaction('read') as db:
+        if kind == 'fills':
+            rows = [store.clean(r) for r in db.execute("""SELECT f.at, a.code AS account, i.symbol, f.side, f.quantity, f.price, f.arrival_price, f.slippage,
+                         f.latency_ms, f.realised_pnl, f.currency, f.mode, f.broker_deal_id, o.client_order_id, o.source FROM oms_fills f
+                         JOIN oms_orders o ON o.id=f.order_id JOIN cfg_accounts a ON a.id=f.account_id JOIN cfg_instruments i ON i.id=f.instrument_id
+                         WHERE f.at >= %s AND f.at < %s""" + (' AND f.account_id=%s' if account_id else '') + ' ORDER BY f.at',
+                                                        [since, until, *([str(account_id)] if account_id else [])]).fetchall()]
+        elif kind == 'orders':
+            rows = [r for r in oms.orders(db, None, account_id, 20000) if r['created_at'] >= since]
+        elif kind == 'trades':
+            rows = posttrade.journal(db, since, until, account_id, excursions=False, limit=20000)['trips']
+        elif kind == 'events':
+            rows = posttrade.order_events(db, since, until, account_id, limit=20000)
+        elif kind == 'breaks':
+            rows = posttrade.breaks(db, None, account_id, 20000)
+        elif kind == 'tca':
+            rows = posttrade.tca(db, by, since, until)['rows']
+        elif kind == 'attribution':
+            rows = strategy_health.attribution(db, by if by in strategy_health.DIMENSIONS else 'strategy', since, until)['rows']
+        else:
+            if not account_id or not day_from or not day_to:
+                raise HTTPException(422, 'A statement needs account_id, day_from and day_to.')
+            from datetime import date
+            rows = posttrade.statement(db, account_id, date.fromisoformat(day_from), date.fromisoformat(day_to))['days']
+    response.headers['Content-Disposition'] = f'attachment; filename="corei-{kind}.csv"'
+    return Response(content=posttrade.to_csv(rows), media_type='text/csv', headers={'Content-Disposition': f'attachment; filename="corei-{kind}.csv"',
+                                                                                     'Cache-Control': 'no-store'})

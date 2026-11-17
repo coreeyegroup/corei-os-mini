@@ -4,6 +4,7 @@ import Infrastructure, { Health, SignIn } from "./Infrastructure";
 import MarketData from "./MarketData";
 import Intelligence from "./Intelligence";
 import { OrdersView, PortfolioView, RiskView, SignalsView, StrategiesView } from "./TradingViews";
+import { PostTradeView } from "./TradingExtras";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
@@ -394,6 +395,7 @@ export default function App() {
     if (view === "Risk") return <RiskView/>;
     if (view === "Portfolio") return <PortfolioView/>;
     if (view === "Execution") return <OrdersView/>;
+    if (view === "Post-trade") return <PostTradeView/>;
     if (stageOf(view)) return <Stage view={view} open={v=>goto(v)}/>;
     return null;
   }
@@ -603,7 +605,7 @@ function SystemMap({ overview }: { overview: OverviewData | null }) {
     Risk: t ? `${t.kill_switches} kill switches · ${t.limits} limits` : '',
     Portfolio: t ? `${t.positions} open positions` : '',
     Execution: t ? `${sum(t.orders_today)} orders today · ${t.open_orders} working` : '',
-    'Post-trade': 'audit trail',
+    'Post-trade': t?.posttrade ? `${t.posttrade.open_total} open breaks · ${t.posttrade.fills_today} fills today` : '',
   };
   const steps: [string, boolean, View, string?][] = [
     ['Connect a broker account', (overview?.setup?.done ?? 0) > 0, 'Configuration', 'brokers'],

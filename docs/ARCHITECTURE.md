@@ -20,11 +20,11 @@ record and hands one thing to the next. Setup feeds every stage; Monitor and the
 | 1 | Market data | What is the market doing, from which source, can we trust it? | ticks, bars, quality | `md/` | Market data |
 | 2 | Market intelligence | What state is each market in? | features, regimes, screens | `intel/` | Intelligence |
 | 3 | Signal intelligence | Is there a trade? | signals, intents | `trading/signals.py` | Signals |
-| 4 | Strategy intelligence | Which rules run where, are they working? | versions, deployments, runtime, backtests | `strategy_registry.py`, `trading/algorithms.py`, `runtime.py`, `backtest.py` | Strategies |
-| 5 | Risk intelligence | Allowed? How big? Exposure? | limits, kill switches, decisions | `trading/risk.py` | Risk |
-| 6 | Portfolio intelligence | What do we hold and what is it worth? | positions, equity | `trading/portfolio.py` | Portfolio |
-| 7 | Execution intelligence | How does an order reach the broker, what happened? | orders, order events, fills | `trading/oms.py` | Orders |
-| 8 | Post-trade | Does our record match the broker's? | breaks, costs | (planned), audit log | Post-trade |
+| 4 | Strategy intelligence | Which rules run where, are they working? | versions, deployments, runtime, backtests, optimisations, drift | `strategy_registry.py`, `trading/algorithms.py`, `runtime.py`, `backtest.py`, `optimise.py`, `strategy_health.py` | Strategies |
+| 5 | Risk intelligence | Allowed? How big? Exposure? What could we lose? | limits, kill switches, decisions, stress scenarios | `trading/risk.py`, `var.py` | Risk |
+| 6 | Portfolio intelligence | What do we hold, what is it worth, how is capital split? | positions, equity, partitions, copy links | `trading/portfolio.py`, `partitions.py`, `copytrade.py` | Portfolio |
+| 7 | Execution intelligence | How does an order reach the broker, what happened? | orders, order events, fills | `trading/oms.py`, `execution.py`, `brokers.py`, `routing.py` | Orders |
+| 8 | Post-trade | Does our record match the broker's? What did it cost? | broker book and deals, breaks, recon runs | `trading/posttrade.py` | Post-trade |
 
 ## One trade, end to end
 
@@ -38,9 +38,15 @@ record and hands one thing to the next. Setup feeds every stage; Monitor and the
    account, strategy, instrument, deployment); sizing (fixed, % of equity with an ATR stop, fixed value).
 7. **Order engine**: client order ID from the intent (a repeat is the same order); NEW → APPROVED → SUBMITTED →
    ACKNOWLEDGED → FILLED, or REJECTED / CANCELLED / EXPIRED / UNKNOWN; every change is an append-only event.
-8. **Paper adapter** fills at the live bid/ask plus slippage (broker adapter: next build).
-9. **Portfolio** updates the position in the fill's transaction; P&L at the live mid; equity and drawdown feed risk.
-10. **Post-trade** compares with the broker (planned) — differences are raised, never hidden.
+8. **Paper** fills at the live bid/ask plus slippage, in the same transaction. **Real (demo or live)**: the order stops
+   at APPROVED (held for a second person on LIVE when four-eyes applies); the **dispatcher** re-checks kill switches
+   and order sending, pre-checks at the broker, commits SUBMITTED, then sends — MT5 through the terminal bridge (routes
+   in priority order), Upstox through its API — and records the answer: fills per deal, ACKNOWLEDGED, REJECTED, or
+   UNKNOWN when no answer came. UNKNOWN and working orders are looked up by their tag; nothing is ever sent twice.
+9. **Portfolio** updates the position in the fill's transaction; P&L at the live mid; equity and drawdown feed risk;
+   copy links turn a master fill into follower orders; partitions and weights set the next order's size.
+10. **Post-trade** reads the broker's book every few minutes and reconciles it with COREI's — differences are raised
+   as breaks, never hidden; TCA, journal and statements are built from the fills and the broker's deals.
 
 ## Rules every stage follows
 
@@ -50,15 +56,17 @@ record and hands one thing to the next. Setup feeds every stage; Monitor and the
 - Audit in the same transaction; order events append-only.
 - Risk can always say no; every refusal names its reasons.
 - UNKNOWN is a state, resolved by a check or a person, never by sending again.
-- Paper first; real orders need the adapter and the environment's order-sending switch (off by default).
+- Paper first; real orders need an account that can take them, the environment's order-sending switch (off by
+  default) and, on LIVE, a second person for manual orders.
+- A broker call never holds a database transaction; SUBMITTED is on record before anything is sent.
 - Every stage screen: Overview · Work · Monitor · Configure, plus its stage map; plain words; blocked actions say why.
 
 ## Where things run
 
 | Process | What | Where |
 |---|---|---|
-| Workstation API (`corei-os-mini-workstation`) | All screens and APIs; the feature engine and the trading cycle (every minute) | COREI server |
+| Workstation API (`corei-os-mini-workstation`) | All screens and APIs; the feature engine and the trading cycle (every minute); the order dispatcher and broker look-ups (every 2 s); reconciliation (every few minutes) | COREI server |
 | Collector (`corei-os-mini-collector`) | Market data from MT5 (bridge, EA push, SDK), Upstox, FIX | COREI server |
 | Nightly jobs | Archive, verify, backup | COREI server |
-| MT5 bridge nodes | Official MT5 terminals behind TLS + token, a terminal pool | Windows VPS / PC |
+| MT5 bridge nodes | Official MT5 terminals behind TLS + token, a terminal pool; market data, account reads and (0.43+) orders | Windows VPS / PC |
 | PostgreSQL | Every record | COREI server |

@@ -38,7 +38,7 @@ from .persistence import PersistenceNotConfigured, _connect
 # (read-only, through the MT5 SDK); sending orders is built per platform later. An
 # account on a platform not listed reports the blocker instead of implying it works.
 DATA_ADAPTERS: set[str] = {'MT5', 'REST_API', 'FIX'}  # REST_API: Upstox market data only (md/upstox_reader.py)
-ORDER_ADAPTERS: set[str] = set()
+ORDER_ADAPTERS: set[str] = {'MT5', 'REST_API'}  # MT5 through the terminal bridge, Upstox order API (trading/brokers.py)
 AVAILABLE_ADAPTERS = DATA_ADAPTERS
 
 
@@ -296,8 +296,10 @@ def account_readiness(row: dict, controls: dict[str, dict], context: dict | None
     if oauth_login_needed:
         data.append('BROKER_LOGIN_NEEDED_TODAY')
     trading = list(data)
-    if row['platform'] not in ORDER_ADAPTERS:
+    if row['platform'] not in ORDER_ADAPTERS or (row['platform'] == 'REST_API' and 'upstox' not in api_base):
         trading.append('ORDER_ADAPTER_NOT_AVAILABLE')
+    elif row['platform'] == 'MT5' and row.get('adapter') != 'TERMINAL_BRIDGE' and not row.get('route_count'):
+        trading.append('ORDER_NEEDS_BRIDGE')  # MT5 orders go through the COREI terminal bridge (a route or the server's bridge)
     if row['platform'] == 'MT5' and row.get('margin_mode', 'UNKNOWN') == 'UNKNOWN':
         trading.append('MARGIN_MODE_UNKNOWN')
     # The broker's clock: entered on the connection, or measured at the last login.
