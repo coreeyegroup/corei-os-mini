@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
-from .trading import (algorithms, backtest, brokers, copytrade, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
+from .trading import (algorithms, backtest, brokers, copytrade, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
                       strategy_health, var)
 from .trading.common import settings as read_settings
 
@@ -732,3 +732,17 @@ def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650
     response.headers['Content-Disposition'] = f'attachment; filename="corei-{kind}.csv"'
     return Response(content=posttrade.to_csv(rows), media_type='text/csv', headers={'Content-Disposition': f'attachment; filename="corei-{kind}.csv"',
                                                                                      'Cache-Control': 'no-store'})
+
+
+# ----- Quick start: a working paper strategy in one step -----
+
+@router.get('/quickstart')
+def quickstart_options(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(quickstart.options(db))
+
+
+@router.post('/quickstart', status_code=201)
+def quickstart_start(payload: dict, user: Principal = Depends(_ops)):
+    return _j(quickstart.start(user, parse(quickstart.QuickIn, payload)))

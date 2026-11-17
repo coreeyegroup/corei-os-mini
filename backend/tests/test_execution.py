@@ -446,3 +446,33 @@ class FakeTransport:
 
     def close(self):
         pass
+
+
+class QuickStart(tt.Trading):
+    test_paper_trade_end_to_end = None
+    test_tickets_limits_and_unknown = None
+    test_broker_mode_refused_and_loss_limit_stops = None
+    test_backtest_no_look_ahead = None
+
+    def test_one_step_paper_strategy(self):
+        _connection, (a, _b, _c), ins = self.setup_accounts()
+        self.start(self.plan(a, ins, 'EU_QS'))
+        opts = self.ok(self.alice.get('/api/trading/quickstart'))
+        src = opts['sources'][0]
+        self.assertTrue(src['ready'])
+        self.assertEqual((opts['strategies'], opts['deployments']), (0, 0))
+        out = self.ok(self.alice.post('/api/trading/quickstart', json={'account_id': a['id'], 'broker_symbol': 'EURUSD', 'preset': 'EMA_FAST',
+                                                                        'timeframe': 'M5'}), 201)
+        self.assertTrue(out['activated'], out['steps'])
+        self.assertEqual((out['deployment']['mode'], out['deployment']['status']), ('PAPER', 'ACTIVE'))
+        self.assertEqual(out['version']['state'], 'APPROVED')
+        self.assertIn('symbol mapping EURUSD → EURUSD', out['steps'])
+        second = self.ok(self.alice.post('/api/trading/quickstart', json={'account_id': a['id'], 'broker_symbol': 'EURUSD', 'preset': 'RSI_REVERSION'}), 201)
+        self.assertEqual(second['strategy']['code'], 'RSI_EURUSD_M5')
+        self.assertNotIn('symbol mapping EURUSD → EURUSD', second['steps'], 'the mapping is reused')
+        # The runtime now evaluates it: the deployment shows on Strategies › Runtime.
+        start = NOW - timedelta(minutes=5 * 41)
+        self.bars(a['id'], tt.series(40, False), start)
+        self.quote(a['id'], 1.08000, 1.08010)
+        self.assertEqual(tt.runtime.cycle(NOW)['deployments'], 2)
+        self.assertEqual(len(self.ok(self.alice.get('/api/trading/runtime'))['items']), 2)

@@ -53,6 +53,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/backtests')&&method==='POST')return ok({id:'b1',metrics:{net_pnl:'812.40',return_pct:'0.81',trades:14,win_rate_pct:57.1,profit_factor:1.6,max_drawdown_pct:'0.42',sharpe:1.3,exposure_pct:48,currency:'USD'},
      equity:[{t:now,equity:'100000'},{t:now,equity:'100812.4'}],trades:[{side:'LONG',entry_time:now,entry:'1.08',exit_time:now,exit:'1.081',pnl:'100.00',reason:'EMA cross'}]},201);
    if(url.includes('/trading/backtests'))return ok({items:[]});
+   if(url.endsWith('/trading/quickstart')&&method==='POST')return ok({strategy:{code:'EMA_EURUSD_M5'},steps:['strategy EMA_EURUSD_M5','version 1 (EMA_CROSSOVER)','approved','paper deployment','activated'],activated:true,next:'Running on paper.'},201);
+   if(url.endsWith('/trading/quickstart'))return ok({active:calls.some(c=>c.url.endsWith('/trading/quickstart')&&c.method==='POST')?1:0,strategies:0,deployments:0,
+     sources:[{account_id:'a1',account_code:'VTM_A',environment:'DEMO',broker_symbol:'EURUSD',instrument:'EURUSD',ready:true}],
+     presets:[{id:'EMA_FAST',label:'Fast trend · EMA 3/8 cross',algorithm:'EMA_CROSSOVER',parameters:{fast:3,slow:8},why:'Many signals.'}]});
    if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
      accounts:[{account_id:'a1',code:'VTM_A',at:now,status:'BREAKS',breaks:1,kind:'BROKER'}]});
    if(url.includes('/trading/posttrade/breaks/b1')&&method==='POST')return ok({break:{id:'b1',state:'ACCEPTED'},result:null});
@@ -78,6 +82,14 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle(4);};
  const go=async v=>{w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:v}}));await settle(12);};
+
+ // Nothing running yet: every stage offers to start a paper strategy in one step.
+ assert.match($('.st-start').textContent,/Nothing is running yet/);
+ button('Start on paper').click();await settle(6);
+ assert.deepEqual(calls.filter(c=>c.url.endsWith('/trading/quickstart')&&c.method==='POST')[0].body,{account_id:'a1',broker_symbol:'EURUSD',preset:'EMA_FAST',timeframe:'M5',quantity:null});
+ assert.match($('.st-start').textContent,/Running on paper: EMA_EURUSD_M5/);
+ button('Close').click();await settle(4);
+ console.log('PASS: start here: an empty trading stage starts a paper strategy on a collected instrument in one step.');
 
  // Signals: the frame, then the reason a signal was refused, in plain words.
  assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);

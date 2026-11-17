@@ -111,6 +111,11 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const riskNav=[...sqa('.cfg-nav button')].map(b=>b.textContent);
  ['Dashboard','Kill switches','Limits','Decisions','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
  assert.deepEqual([...sqa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['Overview','Work','Monitor','Configure'],'every stage: the same four groups');
+ // With the side bar open (which hides the section bar) the side bar lists the stage's sections.
+ assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Risk intelligence')),'the stage\'s own pane in the side bar');
+ sqa('.sb-row').find(r=>r.textContent==='Kill switches').click();for(let i=0;i<4;i++)await tick();
+ assert.equal(sq('.cfg-nav [aria-current="page"]').textContent,'Kill switches','side bar opens a stage section');
+ assert.ok(sqa('.sb-row.selected').some(r=>r.textContent==='Kill switches'));
  sqa('.cfg-nav button').find(b=>b.textContent==='Stage map').click();for(let i=0;i<4;i++)await tick();
  assert.equal(sqa('.pl-flow .pl-node').length,8);assert.ok(sq('.pl-node.on').textContent.includes('Risk')&&sq('.pl-head').textContent.includes('Risk intelligence'));
  assert.ok(sqa('.pl-table tbody tr').some(r=>r.textContent.includes('Constraint engine')&&r.textContent.includes('built')));

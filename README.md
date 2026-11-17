@@ -1022,3 +1022,9 @@ powershell -ExecutionPolicy Bypass -File C:\corei-setup\install-corei-bridge.ps1
 (use each node's own name, e.g. `my-laptop`). Then Setup › Bridge nodes › *Check*: the node shows version 0.43.0. In each terminal the bridge uses, *Algo Trading*
 must be on (Tools › Options › Expert Advisors › Allow algorithmic trading) — the bridge reports
 TERMINAL_ALGO_TRADING_OFF otherwise.
+
+**0.45.1 — the stages were hard to use when empty.** With the side bar open, a stage's own sections (Signals,
+Decisions, Kill switches, Limits, Optimise, Breaks…) were hidden; the side bar now lists them under the stage's name.
+While no strategy runs, every trading stage shows *Start here*: pick a collected instrument, a starter rule set and a
+bar, and *Start on paper* creates the strategy, approves it (Risk approver), maps the symbol and activates a paper
+deployment in one step (POST /api/trading/quickstart; never real orders).

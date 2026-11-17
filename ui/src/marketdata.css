@@ -266,3 +266,6 @@
 .st-bar > span { display: inline-block; height: 8px; border-radius: 2px; background: currentColor; opacity: .7; }
 .st-detail { display: inline-block; max-width: 520px; overflow-wrap: anywhere; color: var(--muted, #888); }
 @media print { .cfg-nav, .intel-bar, .st-head { display: none !important; } }
+/* Start here (no strategy running yet) */
+.st-start { border: 1px solid var(--accent, #2ea043); border-radius: 6px; padding: 10px 14px; margin: 0 0 12px; background: color-mix(in srgb, var(--accent, #2ea043) 7%, transparent); }
+.st-start h3 { margin: 0 0 4px; font-size: 14px; }

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
-import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, SETUP_GROUPS, setupRowOf, type Overview } from './nav';
+import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, SETUP_GROUPS, setupRowOf, stageSections, type Overview } from './nav';
 import { FlowList } from './Pipeline';
 import { stageOf } from './flow';
 
@@ -115,6 +115,22 @@ function IntelTree() {
       <span className="sb-grow">{label}</span></button>)}</div>)}</>;
 }
 
+function StageTree({ view }: { view: View }) {
+  const section = useCurrent(view);
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const on = (e: Event) => { if ((e as CustomEvent).detail?.view === view) bump(n => n + 1); };
+    window.addEventListener('corei-stage-sections', on);
+    return () => window.removeEventListener('corei-stage-sections', on);
+  }, [view]);
+  const list = stageSections[view] ?? [];
+  const groups = [...new Set(list.map(s => s.group))];
+  if (!list.length) return <div className="sb-empty">Loading…</div>;
+  return <>{groups.map(g => <div key={g}><div className="sb-group">{g}</div>
+    {list.filter(s => s.group === g).map(s => <button key={s.id} className={`sb-row sb-indent ${(section ?? list[0].id) === s.id ? 'selected' : ''}`} onClick={() => goto(view, s.id)}>
+      <span className="sb-grow">{s.label}</span></button>)}</div>)}</>;
+}
+
 function TablesList() {
   const data = usePoll<{ tables: Row[] }>('infra/database', 60000);
   const [filter, setFilter] = useState('');
@@ -145,6 +161,7 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
     <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
   </>;
   if (stageOf(view)) return <>
+    <Pane title={stageOf(view)!.title}><StageTree view={view} /></Pane>
     <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
     <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
     <Pane title="Market watch"><MarketWatch /></Pane>

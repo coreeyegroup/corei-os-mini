@@ -9,6 +9,14 @@ const pending: Partial<Record<View, string>> = {};
 /* The section each screen is showing now (for the side bar's highlight). */
 export const current: Partial<Record<View, string>> = {};
 
+/* Each stage screen's sections, published for the side bar (which replaces the section bar when it is open). */
+export type StageSection = { id: string; label: string; group: string };
+export const stageSections: Partial<Record<View, StageSection[]>> = {};
+export function publishSections(view: View, list: StageSection[]) {
+  stageSections[view] = list;
+  window.dispatchEvent(new CustomEvent('corei-stage-sections', { detail: { view } }));
+}
+
 export function goto(view: View, section?: string) {
   if (section) pending[view] = section;
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));

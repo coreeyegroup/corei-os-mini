@@ -11,7 +11,8 @@ import { SignIn } from './Infrastructure';
 import Stage from './Pipeline';
 import { PIPELINE, stageOf } from './flow';
 import type { View } from './layout';
-import { goto, useSection } from './nav';
+import { goto, publishSections, useSection } from './nav';
+import { StartHere } from './QuickStart';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
@@ -24,6 +25,7 @@ const GROUPS = ['Overview', 'Work', 'Monitor', 'Configure'] as const;
 export default function StageShell({ view, sections }: { view: View; sections: Section[] }) {
   const all = [...sections, { id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }];
   const [tab, setTab] = useSection<string>(view, sections[0].id, all.map(s => s.id));
+  useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
@@ -54,7 +56,7 @@ export default function StageShell({ view, sections }: { view: View; sections: S
         <h1>{current.label}</h1><p>{current.hint}</p>
         <p className="st-question"><b>This stage answers:</b> {stage.question} <b>It hands on:</b> {stage.feeds}.</p>
       </div></header>
-      <div className="cfg-pane">{current.render(ctx)}</div>
+      <div className="cfg-pane"><StartHere ctx={ctx} />{current.render(ctx)}</div>
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
