@@ -51,14 +51,18 @@ def apply_fill(db, fill: dict) -> Decimal:
             avg = price  # flipped: the remainder opens at the fill price
     tick = D(ins.get('tick_size')) or Decimal('0.00001')
     avg = avg.quantize(tick / 1000) if avg is not None else None
+    # Protective levels: set by the order that opens (or reverses) the position, kept while it runs, cleared when flat.
+    opens = new_qty != 0 and (qty == 0 or (new_qty > 0) != (qty > 0))
+    stop = fill.get('stop_loss') if opens else (None if new_qty == 0 else (row['stop_loss'] if row else None))
+    take = fill.get('take_profit') if opens else (None if new_qty == 0 else (row['take_profit'] if row else None))
     if row:
         db.execute('UPDATE pf_positions SET quantity=%s, avg_price=%s, realised_pnl=realised_pnl+%s, opened_at=CASE WHEN %s THEN %s ELSE opened_at END, '
-                   'updated_at=now() WHERE id=%s', (new_qty, avg, realised, qty == 0 and new_qty != 0, fill['at'], row['id']))
+                   'stop_loss=%s, take_profit=%s, updated_at=now() WHERE id=%s', (new_qty, avg, realised, opens, fill['at'], stop, take, row['id']))
     else:
-        db.execute('INSERT INTO pf_positions(id, account_id, instrument_id, deployment_id, mode, quantity, avg_price, realised_pnl, currency, opened_at) '
-                   'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (uuid4(), str(fill['account_id']), str(fill['instrument_id']),
-                                                            str(fill['deployment_id']) if fill.get('deployment_id') else None, fill['mode'],
-                                                            new_qty, avg, realised, ccy, fill['at']))
+        db.execute('INSERT INTO pf_positions(id, account_id, instrument_id, deployment_id, mode, quantity, avg_price, realised_pnl, currency, opened_at, '
+                   'stop_loss, take_profit) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                   (uuid4(), str(fill['account_id']), str(fill['instrument_id']), str(fill['deployment_id']) if fill.get('deployment_id') else None,
+                    fill['mode'], new_qty, avg, realised, ccy, fill['at'], stop, take))
     return realised
 
 

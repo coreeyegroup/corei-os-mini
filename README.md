@@ -1028,3 +1028,9 @@ Decisions, Kill switches, Limits, Optimise, Breaks…) were hidden; the side bar
 While no strategy runs, every trading stage shows *Start here*: pick a collected instrument, a starter rule set and a
 bar, and *Start on paper* creates the strategy, approves it (Risk approver), maps the symbol and activates a paper
 deployment in one step (POST /api/trading/quickstart; never real orders).
+
+**0.45.2 — end-to-end audit** (DEC-85, migration 035, bridge 0.43.1): unexecuted strategy decisions are retried on the
+next bar (Realign); a new decision waits for the deployment's working or unknown order; deployments get stop-loss and
+take-profit in ATRs (sent to MT5, watched by COREI on paper and Upstox); stops and targets the broker executes are
+booked as fills of the right strategy; orders on a stale price are refused. Update bridge nodes to 0.43.1 (same
+command as above) so each deal reports why it happened.

@@ -60,7 +60,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.43.0'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.43.1'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -273,7 +273,8 @@ def _deal(d: dict) -> dict:
             'side': 'BUY' if int(d.get('type', 0)) == 0 else 'SELL', 'entry': {0: 'IN', 1: 'OUT', 2: 'INOUT', 3: 'OUT_BY'}.get(int(d.get('entry', 0)), '?'),
             'volume': repr(float(d.get('volume') or 0)), 'price': repr(float(d.get('price') or 0)), 'commission': repr(float(d.get('commission') or 0)),
             'swap': repr(float(d.get('swap') or 0)), 'fee': repr(float(d.get('fee') or 0)), 'profit': repr(float(d.get('profit') or 0)),
-            'time': _ts(d.get('time_msc') or int(d.get('time') or 0) * 1000), 'comment': d.get('comment'), 'magic': d.get('magic')}
+            'time': _ts(d.get('time_msc') or int(d.get('time') or 0) * 1000), 'comment': d.get('comment'), 'magic': d.get('magic'),
+            'reason': {0: 'CLIENT', 1: 'MOBILE', 2: 'WEB', 3: 'EXPERT', 4: 'SL', 5: 'TP', 6: 'SO', 7: 'ROLLOVER', 8: 'VMARGIN', 9: 'SPLIT'}.get(int(d.get('reason') or 0), str(d.get('reason')))}
 
 
 def _position(p: dict) -> dict:

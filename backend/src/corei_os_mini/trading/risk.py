@@ -270,6 +270,13 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         reasons.append(f'MARKET_CLOSED: {market} is closed now')
     if quote is None:
         reasons.append('NO_PRICE: no live price for this instrument')
+    else:
+        # A price older than the limit (Trading settings) is not a price to decide or fill on. A real order that closes
+        # a position is still allowed: the broker prices it, and holding risk because a feed stopped is worse.
+        seen = quote.get('received_at') or quote.get('source_time')
+        limit_s = int((db.execute('SELECT max_quote_age_seconds FROM tr_settings WHERE id').fetchone() or {}).get('max_quote_age_seconds') or 60)
+        if seen is not None and (now - seen).total_seconds() > limit_s and not (order['mode'] == 'BROKER' and reducing):
+            reasons.append(f'STALE_PRICE: the last price is {int((now - seen).total_seconds())} s old (limit {limit_s} s; Trading settings)')
     if order.get('order_type') == 'LIMIT' and not order.get('limit_price'):
         reasons.append('LIMIT_PRICE_MISSING')
     if order['mode'] == 'PAPER' and order.get('order_type') == 'STOP' and not order.get('stop_price'):

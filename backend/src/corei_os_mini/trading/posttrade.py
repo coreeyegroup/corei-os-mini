@@ -78,14 +78,57 @@ def store_book(account_id, reply: dict, source: str = 'MT5_BRIDGE') -> int:
             except ValueError:
                 at = _now()
             cur = db.execute("""INSERT INTO pt_broker_deals(account_id, ticket, order_ticket, position_id, symbol, side, entry, volume, price, commission, swap, fee,
-                                profit, at, comment, magic, order_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                profit, at, comment, magic, order_id, reason) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                 ON CONFLICT (account_id, ticket) DO UPDATE SET order_id=COALESCE(pt_broker_deals.order_id, EXCLUDED.order_id)""",
                              (str(account_id), str(d.get('ticket')), str(d.get('order') or ''), str(d.get('position_id') or ''), str(d.get('symbol') or ''),
                               d.get('side') or '?', d.get('entry'), _dec(d.get('volume')), _dec(d.get('price')), _dec(d.get('commission')),
-                              _dec(d.get('swap')), _dec(d.get('fee')), _dec(d.get('profit')), at, comment[:64], d.get('magic'), oid))
+                              _dec(d.get('swap')), _dec(d.get('fee')), _dec(d.get('profit')), at, comment[:64], d.get('magic'), oid, d.get('reason')))
             n += cur.rowcount
+        book_broker_exits(db, account_id)
         db.execute("DELETE FROM pt_broker_snapshots WHERE at < now() - interval '90 days'")
         return n
+
+
+def book_broker_exits(db, account_id) -> int:
+    """Exits the broker made itself on COREI's positions — stop-loss, take-profit, stop-out — are booked as fills of
+    the position's own strategy (found through the deal that opened that broker position), so COREI's position closes
+    when the broker's does. Deals that cannot be traced to a COREI position stay for reconciliation."""
+    magic = int(settings(db).get('broker_magic') or 0)
+    rows = db.execute("""SELECT d.* FROM pt_broker_deals d WHERE d.account_id=%s AND d.order_id IS NULL AND d.magic=%s
+                           AND d.entry IN ('OUT', 'OUT_BY', 'INOUT') AND d.at > now() - interval '7 days'
+                           AND NOT EXISTS (SELECT 1 FROM oms_fills f WHERE f.account_id=d.account_id AND f.broker_deal_id=d.ticket)
+                         ORDER BY d.at""", (str(account_id), magic)).fetchall()
+    n = 0
+    for d in rows:
+        opener = db.execute("""SELECT o.deployment_id, o.instrument_id FROM pt_broker_deals x JOIN oms_orders o ON o.id=x.order_id
+                               WHERE x.account_id=%s AND x.position_id=%s AND x.entry='IN' AND x.order_id IS NOT NULL LIMIT 1""",
+                            (str(account_id), d['position_id'])).fetchone()
+        if not opener:
+            continue
+        held = D(db.execute('SELECT COALESCE(sum(quantity), 0) AS q FROM pf_positions WHERE account_id=%s AND instrument_id=%s AND mode=%s '
+                            'AND deployment_id IS NOT DISTINCT FROM %s', (str(account_id), str(opener['instrument_id']), 'BROKER',
+                                                                          opener['deployment_id'])).fetchone()['q'])
+        qty = min(D(d['volume']), abs(held))
+        if qty <= 0 or (d['side'] == 'SELL') != (held > 0):
+            continue
+        _book_fill(db, 'broker', account_id, opener['instrument_id'], opener['deployment_id'], d['side'], qty, D(d['price']), d['ticket'],
+                   {'broker_exit': d['reason'] or 'broker', 'ticket': d['ticket'], 'sent': False}, 'PROTECT')
+        n += 1
+    return n
+
+
+def _book_fill(db, actor: str, account_id, instrument_id, deployment_id, side: str, qty: Decimal, price: Decimal, deal_id, detail: dict, source: str) -> dict:
+    """A fill the broker made without a COREI order (a broker-side exit, an adopted position): an order record that was
+    never sent, then its fill — so the order history and the position stay complete."""
+    cid = oms.client_order_id(f"{source.lower()}:{account_id}:{deal_id or uuid4()}")
+    o = dict(db.execute("""INSERT INTO oms_orders(id, client_order_id, account_id, instrument_id, deployment_id, broker_symbol, side, order_type, quantity, mode,
+                           state, source, created_by, adapter, reduce_only) VALUES (%s,%s,%s,%s,%s,%s,%s,'MARKET',%s,'BROKER','NEW',%s,%s,'BROKER_SIDE',%s) RETURNING *""",
+                        (uuid4(), cid, str(account_id), str(instrument_id), str(deployment_id) if deployment_id else None,
+                         trading_symbol(db, account_id, instrument_id), side, qty, source, actor, source == 'PROTECT')).fetchone())
+    db.execute("INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,NULL,'NEW',%s,%s)", (str(o['id']), json.dumps(detail), actor))
+    for to in ('APPROVED', 'SUBMITTED', 'ACKNOWLEDGED'):
+        o = oms._move(db, o, to, actor, detail)
+    return store.clean(oms._fill(db, o, qty, price, None, actor, _now(), deal_id=str(deal_id) if deal_id else None, detail=detail))
 
 
 def fetch_book(account_id, actor: str) -> dict:
@@ -329,15 +372,8 @@ def _adopt(db, actor: str, b: dict, note: str) -> dict:
     price = next((_dec(p.get('price_open')) for p in (snap['positions'] if snap else []) if p.get('symbol') == b['broker_symbol']), ZERO)
     if price <= 0:
         raise HTTPException(409, 'No broker price for the position: read the broker book first.')
-    cid = oms.client_order_id(f"adopt:{b['id']}")
-    o = dict(db.execute("""INSERT INTO oms_orders(id, client_order_id, account_id, instrument_id, broker_symbol, side, order_type, quantity, mode, state, source,
-                           created_by, adapter) VALUES (%s,%s,%s,%s,%s,%s,'MARKET',%s,'BROKER','NEW','RECONCILE',%s,'RECONCILE') RETURNING *""",
-                        (uuid4(), cid, str(b['account_id']), str(iid), b['broker_symbol'], 'BUY' if diff > 0 else 'SELL', abs(diff), actor)).fetchone())
-    db.execute("INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,NULL,'NEW',%s,%s)",
-               (str(o['id']), json.dumps({'adopted_from_broker': True, 'note': note, 'sent': False}), actor))
-    for to in ('APPROVED', 'SUBMITTED', 'ACKNOWLEDGED'):
-        o = oms._move(db, o, to, actor, {'adopted': True, 'sent': False})
-    return store.clean(oms._fill(db, o, abs(diff), price, None, actor, _now(), detail={'adopted': True, 'note': note}))
+    return _book_fill(db, actor, b['account_id'], iid, None, 'BUY' if diff > 0 else 'SELL', abs(diff), price, None,
+                      {'adopted_from_broker': True, 'note': note, 'sent': False}, 'RECONCILE')
 
 
 def breaks(db, state: str | None = 'OPEN', account_id=None, limit: int = 500) -> list[dict]:

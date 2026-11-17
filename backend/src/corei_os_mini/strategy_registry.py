@@ -90,6 +90,13 @@ class Sizing(_Strict):
         return self
 
 
+class Protect(_Strict):
+    """Protective exits in ATRs of the strategy timeframe from the entry price (blank: none). A RISK_PCT size without a
+    stop here uses its own atr_multiple as the stop, so the stop it sizes for is the stop that is placed."""
+    stop_atr: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,6})?$')] | None = None
+    take_atr: Annotated[str, StringConstraints(pattern=r'^\d+(\.\d{1,6})?$')] | None = None
+
+
 class DeploymentIn(_Strict):
     strategy_id: UUID
     strategy_version_id: UUID
@@ -102,6 +109,8 @@ class DeploymentIn(_Strict):
     mode: Literal['PAPER', 'BROKER'] = 'PAPER'
     sizing: Sizing = Field(default_factory=Sizing)
     signal_expiry_bars: int = Field(2, ge=1, le=500)
+    protect: Protect = Field(default_factory=Protect)
+    realign: bool = True   # retry a decision that was not executed (refused, rejected, expired) on the next bar
 
 
 class Versioned(_Strict):
@@ -378,10 +387,11 @@ def create_deployment(payload: dict, response: Response, user: Principal = Depen
                       (data.strategy_id, data.instrument_id, data.account_id)).fetchone():
             raise HTTPException(409, 'This strategy is already deployed on this instrument and account.')
         row = db.execute('INSERT INTO cfg_deployments(id, strategy_id, strategy_version_id, instrument_id, account_id, data_mapping_id, '
-                         'allocation_weight_bps, note, proposed_by, mode, sizing, signal_expiry_bars) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                         'allocation_weight_bps, note, proposed_by, mode, sizing, signal_expiry_bars, protect, realign) '
+                         'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                          (uuid4(), data.strategy_id, data.strategy_version_id, data.instrument_id, data.account_id,
                           data.data_mapping_id, data.allocation_weight_bps, data.note, user.username, data.mode,
-                          Jsonb(data.sizing.model_dump()), data.signal_expiry_bars)).fetchone()
+                          Jsonb(data.sizing.model_dump()), data.signal_expiry_bars, Jsonb(data.protect.model_dump(exclude_none=True)), data.realign)).fetchone()
         store.audit(db, user.username, 'PROPOSE', 'deployment', row['id'], None, row)
         return _deployment(db, row['id'])
 
@@ -401,11 +411,11 @@ def update_deployment(deployment_id: UUID, payload: dict, response: Response, us
             raise HTTPException(422, 'This deployment has ended. Create a new one instead.')
         _check_links(db, data)
         after = db.execute("UPDATE cfg_deployments SET strategy_version_id=%s, data_mapping_id=%s, allocation_weight_bps=%s, note=%s, "
-                           "mode=%s, sizing=%s, signal_expiry_bars=%s, "
+                           "mode=%s, sizing=%s, signal_expiry_bars=%s, protect=%s, realign=%s, "
                            "status='PROPOSED', proposed_by=%s, activated_by=NULL, activated_at=NULL, version=version+1, updated_at=now() "
                            'WHERE id=%s RETURNING *', (data.strategy_version_id, data.data_mapping_id, data.allocation_weight_bps,
                                                        data.note, data.mode, Jsonb(data.sizing.model_dump()), data.signal_expiry_bars,
-                                                       user.username, deployment_id)).fetchone()
+                                                       Jsonb(data.protect.model_dump(exclude_none=True)), data.realign, user.username, deployment_id)).fetchone()
         store.audit(db, user.username, 'UPDATE', 'deployment', deployment_id, before, after,
                     'Returned to PROPOSED; needs activation' if before['status'] == 'ACTIVE' else '')
         return _deployment(db, deployment_id)

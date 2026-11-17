@@ -73,7 +73,8 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
     slip = ((price - ref) if order['side'] == 'BUY' else (ref - price)) if ref is not None else None
     latency = int((at - order['submitted_at']).total_seconds() * 1000) if order.get('submitted_at') else None
     fill = {'id': uuid4(), 'order_id': order['id'], 'deployment_id': order.get('deployment_id'), 'account_id': order['account_id'],
-            'instrument_id': order['instrument_id'], 'side': order['side'], 'quantity': qty, 'price': price, 'mode': order['mode'], 'at': at}
+            'instrument_id': order['instrument_id'], 'side': order['side'], 'quantity': qty, 'price': price, 'mode': order['mode'], 'at': at,
+            'stop_loss': order.get('stop_loss'), 'take_profit': order.get('take_profit')}
     realised = portfolio.apply_fill(db, fill)
     db.execute('INSERT INTO oms_fills(id, order_id, deployment_id, account_id, instrument_id, side, quantity, price, quote_bid, quote_ask, slippage, '
                'realised_pnl, currency, mode, at, broker_deal_id, latency_ms, arrival_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
@@ -236,6 +237,42 @@ def match(db, now: datetime) -> dict:
             _fill(db, o, D(o['quantity']) - D(o['filled_qty']), price, q, 'paper', now)
             filled += 1
     return {'filled': filled, 'expired': expired}
+
+
+def protect(db, now: datetime) -> dict:
+    """Protective exits COREI watches itself: every paper position, and real positions on brokers that do not hold the
+    stop (Upstox). MT5 holds them at the broker (sent with the order) and its exits are booked from its deals.
+    A level touched → a market order that closes the position for its own book, allowed through a kill switch."""
+    from . import brokers
+    closed = 0
+    rows = db.execute('SELECT p.*, d.strategy_id FROM pf_positions p LEFT JOIN cfg_deployments d ON d.id=p.deployment_id '
+                      'WHERE p.quantity <> 0 AND (p.stop_loss IS NOT NULL OR p.take_profit IS NOT NULL)').fetchall()
+    for r in rows:
+        if r['mode'] == 'BROKER' and brokers.capability(db, r['account_id']).get('wanted') == 'MT5_BRIDGE':
+            continue
+        q = quote(db, r['account_id'], r['instrument_id'], None)
+        if not q:
+            continue
+        long = D(r['quantity']) > 0
+        px = q['bid'] if long else q['ask']
+        hit = None
+        if r['stop_loss'] is not None and ((long and px <= D(r['stop_loss'])) or (not long and px >= D(r['stop_loss']))):
+            hit = f"stop-loss {D(r['stop_loss']).normalize()} touched at {px}"
+        elif r['take_profit'] is not None and ((long and px >= D(r['take_profit'])) or (not long and px <= D(r['take_profit']))):
+            hit = f"take-profit {D(r['take_profit']).normalize()} touched at {px}"
+        if not hit:
+            continue
+        if db.execute('SELECT 1 FROM oms_orders WHERE account_id=%s AND instrument_id=%s AND deployment_id IS NOT DISTINCT FROM %s AND state = ANY(%s)',
+                      (str(r['account_id']), str(r['instrument_id']), r['deployment_id'], list(OPEN))).fetchone():
+            continue  # a close is already on its way
+        dep = {'id': r['deployment_id'], 'strategy_id': r['strategy_id']} if r['deployment_id'] else None
+        o = place(db, account_id=r['account_id'], instrument_id=r['instrument_id'], side='SELL' if long else 'BUY', quantity=abs(D(r['quantity'])),
+                  mode=r['mode'], deployment=dep, seed=f"protect:{r['id']}:{r['opened_at'].isoformat() if r['opened_at'] else ''}:{now:%Y%m%d%H%M}",
+                  actor='protect', source='PROTECT', flatten=True, at=now)
+        db.execute('INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,%s,%s,%s,%s)',
+                   (str(o['id']), o['state'], o['state'], json.dumps({'reason': hit}), 'protect'))
+        closed += 1
+    return {'protective_exits': closed}
 
 
 def cancel(actor: str, order_id: UUID, reason: str) -> dict:

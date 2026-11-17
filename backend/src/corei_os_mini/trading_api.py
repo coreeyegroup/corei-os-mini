@@ -116,6 +116,7 @@ class SettingsIn(BaseModel):
     var_confidence: Literal['90', '95', '97.5', '99', '99.5'] | None = None
     var_lookback_bars: int | None = Field(default=None, ge=30, le=5000)
     var_timeframe: Literal['M15', 'M30', 'H1', 'H4', 'D1'] | None = None
+    realign_max_attempts: int | None = Field(default=None, ge=0, le=50)
     version: int
     reason: str = Field(min_length=5, max_length=500)
 

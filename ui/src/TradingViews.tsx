@@ -45,6 +45,7 @@ const SETTING_LABEL: Record<string, [string, string]> = {
   var_confidence: ['VaR confidence %', '90, 95, 97.5, 99 or 99.5'],
   var_timeframe: ['VaR horizon (bar)', 'D1 = 1-day VaR'],
   var_lookback_bars: ['VaR look-back (bars)', 'Past bars used for the historical simulation'],
+  realign_max_attempts: ['Realign attempts', 'Times in a row a deployment retries a decision that was not executed (0 = never)'],
 };
 const SETTING_CHOICES: Record<string, [string, string][]> = {
   decision_mode: [['LATEST', 'Latest signal wins'], ['AGREE', 'Agreeing signals needed']],
@@ -467,12 +468,12 @@ function Positions({ ctx }: { ctx: Ctx }) {
   return <section className="intel">
     <div className="intel-bar"><label className="intel-check"><input type="checkbox" checked={closed} onChange={e => setClosed(e.target.checked)} /> Include closed</label></div>
     <Msg error={error || err} notice={msg} />
-    <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Instrument</th><th>Strategy</th><th>Mode</th><th>Quantity</th><th>Average</th><th>Mark</th><th>Unrealised</th><th>Realised</th><th>Value</th><th>Opened</th><th /></tr></thead><tbody>
+    <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Instrument</th><th>Strategy</th><th>Mode</th><th>Quantity</th><th>Average</th><th>Mark</th><th>Unrealised</th><th>Realised</th><th>Value</th><th>Stop / target</th><th>Opened</th><th /></tr></thead><tbody>
       {(data?.items ?? []).map((p: Row) => <tr key={p.id}><td>{p.account_code}</td><td>{p.symbol}</td><td>{p.strategy_code ?? 'manual'}</td><td>{p.mode.toLowerCase()}</td>
         <td className={Number(p.quantity) > 0 ? 'up' : Number(p.quantity) < 0 ? 'down' : ''}><b>{p.quantity}</b></td><td>{p.avg_price ?? '–'}</td><td>{p.mark ?? '–'}</td>
         <td className={Number(p.unrealised_pnl) >= 0 ? 'up' : 'down'}>{money(p.unrealised_pnl, p.quote_currency)}</td><td>{money(p.realised_pnl, p.quote_currency)}</td><td>{money(p.notional_account, p.account_currency)}</td>
-        <td><small>{when(p.opened_at)}</small></td><td>{(ctx.canOps || ctx.canRisk) && Number(p.quantity) !== 0 && <button onClick={() => flatten(p)}>Flatten</button>}</td></tr>)}
-      {data && !data.items.length && <tr><td colSpan={12} className="cfg-note">No open positions.</td></tr>}</tbody></table></div>
+        <td><small>{p.stop_loss ?? '–'} / {p.take_profit ?? '–'}</small></td><td><small>{when(p.opened_at)}</small></td><td>{(ctx.canOps || ctx.canRisk) && Number(p.quantity) !== 0 && <button onClick={() => flatten(p)}>Flatten</button>}</td></tr>)}
+      {data && !data.items.length && <tr><td colSpan={13} className="cfg-note">No open positions.</td></tr>}</tbody></table></div>
     <p className="cfg-note">Positions come only from fills (Orders). Each deployment keeps its own book; Flatten closes every book of that account in the instrument, also when a kill switch is on.</p></section>;
 }
 
@@ -621,7 +622,7 @@ function OrdersOverview({ ctx }: { ctx: Ctx }) {
 function ExecutionSettings({ ctx }: { ctx: Ctx }) {
   return <section className="intel">
     <SettingsForm canEdit={ctx.canRisk} fields={['paper_slippage_ticks', 'pre_check_orders', 'live_four_eyes', 'broker_timeout_seconds', 'unknown_check_seconds', 'max_deviation_points',
-      'broker_magic', 'upstox_product', 'recon_interval_minutes', 'recon_qty_tolerance', 'recon_kill_on_break']} />
+      'broker_magic', 'upstox_product', 'realign_max_attempts', 'recon_interval_minutes', 'recon_qty_tolerance', 'recon_kill_on_break']} />
     <h4>Paper and real</h4>
     <p className="cfg-note">A deployment's mode is set in Setup › Deployments; a ticket chooses its own. <b>Paper</b>: COREI fills at the live bid/ask plus the slippage above. <b>Real (broker)</b>: demo or live
       accounts — MT5 through the COREI terminal bridge (master password), Upstox through its order API — only when Setup › Order sending is on for that environment. A real order is recorded as

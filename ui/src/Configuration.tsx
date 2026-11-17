@@ -1830,7 +1830,8 @@ function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Ro
   useEffect(() => { if (draft?.strategy_id) void (async () => setVersions((await api(`config/strategies/${draft.strategy_id}/versions`)).items))(); else setVersions([]); }, [draft?.strategy_id]);
   const body = (d: Row) => ({ strategy_id: d.strategy_id, strategy_version_id: d.strategy_version_id, instrument_id: d.instrument_id, account_id: d.account_id,
     data_mapping_id: d.data_mapping_id, allocation_weight_bps: Number(d.allocation_weight_bps), note: d.note ?? '', mode: d.mode ?? 'PAPER',
-    signal_expiry_bars: Number(d.signal_expiry_bars ?? 2), sizing: sizingBody(d.sizing) });
+    signal_expiry_bars: Number(d.signal_expiry_bars ?? 2), sizing: sizingBody(d.sizing), realign: d.realign !== false,
+    protect: Object.fromEntries(Object.entries(d.protect ?? {}).filter(([, v]) => v !== '' && v != null)) });
   async function run(task: () => Promise<any>, message: string) {
     setBusy(true); setError(''); setNotice('');
     try { const r = await task(); setNotice(message); setReason(''); await load(r?.id ?? draft?.id); }
@@ -1897,6 +1898,15 @@ function Deployments({ roles, refs }: { roles: string[]; refs: Record<string, Ro
             onChange={e => setDraft({ ...draft, sizing: { ...draft.sizing, notional: e.target.value } })} /></Field>}
           <Field label="Signal valid for (bars)" hint="A signal not acted on within this many bars of its timeframe expires"><input aria-label="Signal expiry bars" type="number" min={1} max={500}
             value={draft.signal_expiry_bars ?? 2} onChange={e => setDraft({ ...draft, signal_expiry_bars: e.target.value })} /></Field>
+          <div className="cfg-pair">
+            <Field label="Stop-loss (× ATR)" hint={draft.sizing?.method === 'RISK_PCT' ? 'Blank: the sizing stop distance is used' : 'Blank: no stop-loss'}><input aria-label="Protect stop ATR" inputMode="decimal"
+              value={draft.protect?.stop_atr ?? ''} onChange={e => setDraft({ ...draft, protect: { ...(draft.protect ?? {}), stop_atr: e.target.value } })} /></Field>
+            <Field label="Take-profit (× ATR)" hint="Blank: none"><input aria-label="Protect take ATR" inputMode="decimal"
+              value={draft.protect?.take_atr ?? ''} onChange={e => setDraft({ ...draft, protect: { ...(draft.protect ?? {}), take_atr: e.target.value } })} /></Field>
+          </div>
+          <p className="cfg-note">Real MT5 orders carry the stop and target to the broker; on paper and Upstox COREI watches them and closes the position.</p>
+          <label className="intel-check"><input type="checkbox" aria-label="Realign" checked={draft.realign !== false} onChange={e => setDraft({ ...draft, realign: e.target.checked })} />
+            Retry a decision that was not executed (refused, rejected or expired) on the next bar — at most the attempts set in Execution settings, never after a stop-out</label>
           <Field label="Note"><input aria-label="Note" maxLength={1000} value={draft.note ?? ''} onChange={e => setDraft({ ...draft, note: e.target.value })} /></Field>
         </fieldset>
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}

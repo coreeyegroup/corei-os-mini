@@ -66,15 +66,54 @@ def evaluate(db, dep: dict, now: datetime) -> dict:
         return {'skipped': 'no new bar', 'closes': closes}
     first = not state or state['last_bar_time'] is None
     _state(db, dep, tf, src, bar_time, last['target'], None)
-    if first or not last['change']:
+    realign = None
+    if not first and not last['change']:
+        realign = realign_reason(db, dep, last['target'])
+    if first or (not last['change'] and not realign):
         return {'evaluated': bar_time, 'signal': None, 'first': first, 'closes': closes}
     side = {'LONG': 'BUY', 'SHORT': 'SELL', 'FLAT': 'FLAT'}[last['target']]
     sig = signals.create(db, dep, side=side, strength=last['strength'], bar_time=bar_time, timeframe=tf, features=rows[-1],
-                         explanation=[last['reason']], source='RUNTIME', actor='runtime', price=D(bars[-1]['close']))
+                         explanation=[realign] if realign else [last['reason']], source='RUNTIME', actor='runtime', price=D(bars[-1]['close']))
     if not sig:
         return {'evaluated': bar_time, 'signal': None}
+    sig['realign'] = bool(realign)
     result = signals.process(db, sig, dep, now)
     return {'evaluated': bar_time, 'signal': sig['id'], 'result': result.get('state'), 'closes': closes}
+
+
+def realign_reason(db, dep: dict, target: str) -> str | None:
+    """Retry a decision that was not executed: the deployment's latest signal asked for this target but its order was
+    refused, rejected, cancelled or expired without a fill (or the signal itself was refused), the position is not at
+    the target, and nothing is working. Never after an executed decision (a stop-out stays out until a new signal),
+    and at most realign_max_attempts times in a row."""
+    if dep.get('realign') is False:
+        return None
+    last = db.execute('SELECT s.id, s.side, s.state, i.outcome, o.state AS order_state, o.filled_qty FROM tr_signals s '
+                      'LEFT JOIN tr_intents i ON i.signal_id=s.id LEFT JOIN oms_orders o ON o.id=i.order_id '
+                      "WHERE s.deployment_id=%s AND s.source='RUNTIME' ORDER BY s.created_at DESC LIMIT 1", (str(dep['id']),)).fetchone()
+    if not last or {'BUY': 'LONG', 'SELL': 'SHORT', 'FLAT': 'FLAT'}[last['side']] != target:
+        return None
+    executed = last['order_state'] in ('FILLED', 'PARTIALLY_FILLED') or (last['filled_qty'] and D(last['filled_qty']) > 0) or last['outcome'] == 'NO_CHANGE'
+    unexecuted = last['state'] in ('REJECTED', 'EXPIRED') or last['outcome'] == 'REFUSED' or last['order_state'] in ('REJECTED', 'CANCELLED', 'EXPIRED')
+    if executed or not unexecuted:
+        return None
+    if db.execute('SELECT 1 FROM oms_orders WHERE deployment_id=%s AND state = ANY(%s)', (str(dep['id']), list(oms.OPEN))).fetchone():
+        return None
+    qty = portfolio.position_qty(db, dep['account_id'], dep['instrument_id'], dep['id'], dep.get('mode') or 'PAPER')
+    if (target == 'LONG' and qty > 0) or (target == 'SHORT' and qty < 0) or (target == 'FLAT' and qty == 0):
+        return None
+    limit = int(settings(db).get('realign_max_attempts') or 0)
+    streak = 0
+    for r in db.execute('SELECT s.explanation, s.state, i.outcome, o.state AS order_state FROM tr_signals s LEFT JOIN tr_intents i ON i.signal_id=s.id '
+                        "LEFT JOIN oms_orders o ON o.id=i.order_id WHERE s.deployment_id=%s AND s.source='RUNTIME' ORDER BY s.created_at DESC LIMIT 60",
+                        (str(dep['id']),)).fetchall():
+        if not str((r['explanation'] or [''])[0]).startswith('REALIGN'):
+            break
+        streak += 1
+    if streak >= limit:
+        return None
+    return (f"REALIGN: the {target.lower()} decision of an earlier bar was not executed ({(last['order_state'] or last['outcome'] or last['state']).lower()}); "
+            f"position {qty.normalize()} — attempt {streak + 1} of {limit}")
 
 
 def _state(db, dep, tf, src, bar_time, target, error):
@@ -119,6 +158,7 @@ def cycle(now: datetime | None = None, force: bool = False) -> dict:
         with store.transaction('write') as db:
             out['expired'] = signals.expire(db, now)
             out['matched'] = oms.match(db, now)
+            out['protected'] = oms.protect(db, now)
             out['quality'] = signals.evaluate_quality(db, now, closes)
             out['kill_switches'] = len(risk.auto_stop(db, now))
             portfolio.snapshot(db, now)

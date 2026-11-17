@@ -399,6 +399,8 @@ def _loop() -> None:
         _wake.wait(2.0)
         _wake.clear()
         try:
+            with store.transaction('write') as db:
+                oms.protect(db, _now())  # paper and Upstox stops between trading cycles
             dispatch()
             sync()
             if _time.monotonic() - last_recon > 60:

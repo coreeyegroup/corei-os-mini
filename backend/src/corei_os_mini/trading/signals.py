@@ -130,6 +130,14 @@ def process(db, sig: dict, dep: dict, now: datetime, actor: str = 'runtime') -> 
     if target is None:
         return {'state': 'VALID', 'note': why}
     current = portfolio.position_qty(db, dep['account_id'], dep['instrument_id'], dep['id'], dep.get('mode') or 'PAPER')
+    # An earlier order of this deployment still working (or with an unknown outcome) settles first: deciding from the
+    # position alone could double it.
+    working = db.execute("SELECT client_order_id, state FROM oms_orders WHERE deployment_id=%s AND state = ANY(%s) ORDER BY created_at DESC LIMIT 1",
+                         (str(dep['id']), list(oms.OPEN))).fetchone()
+    if working:
+        why = (f"WORKING_ORDER: order {working['client_order_id'][:12]}… is {working['state'].lower().replace('_', ' ')}"
+               + ('; its outcome at the broker is being looked up' if working['state'] == 'UNKNOWN' else '; the next decision waits for it'))
+        return _intent(db, sig, dep, target, current, None, 'REFUSED', [why])
     want, note = ZERO, ''
     if target != 'FLAT':
         if (target == 'LONG' and current > 0) or (target == 'SHORT' and current < 0):
@@ -146,15 +154,34 @@ def process(db, sig: dict, dep: dict, now: datetime, actor: str = 'runtime') -> 
     if delta == 0:
         return _intent(db, sig, dep, target, current, want, 'NO_CHANGE', [])
     intent_id = uuid4()
+    stop_loss, take_profit = protective_levels(dep, target, want, current, q, (sig.get('features') or {}).get('atr14'))
     order = oms.place(db, account_id=dep['account_id'], instrument_id=dep['instrument_id'], side='BUY' if delta > 0 else 'SELL', quantity=abs(delta),
                       mode=dep.get('mode') or 'PAPER', deployment=dep, intent_id=intent_id, seed=f"intent:{dep['id']}:{sig['id']}", actor=actor,
-                      source='RUNTIME' if sig['source'] == 'RUNTIME' else 'MANUAL', at=now, data_source=src)
+                      source=('REALIGN' if sig.get('realign') else 'RUNTIME') if sig['source'] == 'RUNTIME' else 'MANUAL', at=now, data_source=src,
+                      stop_loss=stop_loss, take_profit=take_profit)
     refused = order['state'] == 'REJECTED'
     _intent(db, sig, dep, target, current, want, 'REFUSED' if refused else 'ORDERED', order.get('reasons') or [], intent_id=intent_id, order_id=order['id'])
     _set(db, sig['id'], 'REJECTED' if refused else 'ACTED', 'risk' if refused else 'execution',
          ('; '.join(order.get('reasons') or [])) if refused else f"order {order['client_order_id']} {order['state'].lower()} ({note or 'kept size'})",
          order.get('reasons') if refused else None)
     return {'state': 'REJECTED' if refused else 'ACTED', 'order': order}
+
+
+def protective_levels(dep: dict, target: str, want: Decimal, current: Decimal, q: dict | None, atr) -> tuple[Decimal | None, Decimal | None]:
+    """Stop-loss and take-profit for an order that opens (or reverses) a position: entry ∓ ATR × the deployment's
+    multiples (a RISK_PCT size without its own stop uses its atr_multiple, so the sized-for stop is the placed stop)."""
+    if target == 'FLAT' or q is None or not atr or (want > 0) == (current > 0) and current != 0:
+        return None, None
+    p = dep.get('protect') or {}
+    sizing = dep.get('sizing') or {}
+    stop_atr = p.get('stop_atr') or (sizing.get('atr_multiple') if sizing.get('method') == 'RISK_PCT' else None)
+    take_atr = p.get('take_atr')
+    a = Decimal(str(atr))
+    long = want > 0
+    entry = q['ask'] if long else q['bid']
+    stop = (entry - a * Decimal(str(stop_atr)) if long else entry + a * Decimal(str(stop_atr))) if stop_atr else None
+    take = (entry + a * Decimal(str(take_atr)) if long else entry - a * Decimal(str(take_atr))) if take_atr else None
+    return (stop if stop and stop > 0 else None), (take if take and take > 0 else None)
 
 
 def _intent(db, sig, dep, target, current, want, outcome, reasons, intent_id=None, order_id=None) -> dict:

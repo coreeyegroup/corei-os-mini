@@ -43,7 +43,7 @@ class FakeBroker:
         self.ticket += 1
         d = {'ticket': self.ticket, 'order': self.ticket + 100000, 'symbol': o['symbol'], 'side': o['side'], 'entry': 'IN', 'volume': volume,
              'price': price, 'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '0', 'time': '2026-11-18T10:00:01.000', 'comment': o['tag'],
-             'magic': MAGIC}
+             'magic': MAGIC, 'position_id': 777, 'reason': 'EXPERT'}
         self.deals.append(d)
         return d
 
@@ -118,7 +118,7 @@ class Execution(tt.Trading):
     def place(self, a, instrument, seed, side='BUY', qty='0.10', **kw):
         with store.transaction('write') as db:
             return oms.place(db, account_id=a['id'], instrument_id=instrument['id'], side=side, quantity=Decimal(qty), mode=kw.pop('mode', 'BROKER'),
-                             seed=seed, actor=kw.pop('actor', 'alice'), at=NOW, **kw)
+                             seed=seed, actor=kw.pop('actor', 'alice'), at=kw.pop('at', NOW), **kw)
 
     def order(self, oid):
         return self.ok(self.alice.get(f'/api/trading/orders/{oid}'))
@@ -476,3 +476,99 @@ class QuickStart(tt.Trading):
         self.quote(a['id'], 1.08000, 1.08010)
         self.assertEqual(tt.runtime.cycle(NOW)['deployments'], 2)
         self.assertEqual(len(self.ok(self.alice.get('/api/trading/runtime'))['items']), 2)
+
+
+class EndToEnd(Execution):
+    """The gaps closed in 0.45.2: working orders block a new decision, protective stops are placed and executed, broker
+    exits are booked, stale prices refuse, an unexecuted decision is retried on the next bar."""
+    test_real_orders_on_demo_every_path = None
+    test_four_eyes_on_live = None
+    test_risk_extras = None
+    test_portfolio_extras = None
+    test_optimise_walk_forward_and_drift = None
+
+    def deploy_on(self, a, ins, **extra):
+        with self.connect() as db:
+            mapping = db.execute('SELECT id FROM cfg_symbol_mappings LIMIT 1').fetchone()
+        strat = self.ok(self.alice.post('/api/config/strategies', json={'code': 'EMA_RA', 'name': 'EMA realign test'}), 201)
+        ver = self.ok(self.alice.post(f"/api/config/strategies/{strat['id']}/versions",
+                                      json={'algorithm': 'EMA_CROSSOVER', 'parameters': {'timeframe': 'M5', 'fast': 3, 'slow': 5}}), 201)
+        self.ok(self.bob.post(f"/api/config/strategy-versions/{ver['id']}/approve", json={'version': ver['version']}))
+        dep = self.ok(self.alice.post('/api/config/deployments', json={'strategy_id': strat['id'], 'strategy_version_id': ver['id'], 'instrument_id': ins['id'],
+                                                                       'account_id': a['id'], 'data_mapping_id': str(mapping['id']), **extra}), 201)
+        dep = self.ok(self.bob.post(f"/api/config/deployments/{dep['id']}/activate", json={'version': dep['version'], 'reason': 'paper test run'}))
+        return strat, ver, dep
+
+    def test_stale_price_and_paper_stop(self):
+        _c, a, _b, ins = self.real_account()
+        stale = self.place(a, ins, 'stale-1', mode='PAPER', at=NOW + timedelta(minutes=10))
+        self.assertTrue(any(r.startswith('STALE_PRICE') for r in stale['reasons']), stale['reasons'])
+        o = self.place(a, ins, 'sl-1', mode='PAPER', stop_loss=Decimal('1.07900'), take_profit=Decimal('1.08300'))
+        self.assertEqual(o['state'], 'FILLED')
+        pos = self.ok(self.alice.get('/api/trading/portfolio/positions'))['items'][0]
+        self.assertEqual((Decimal(pos['stop_loss']), Decimal(pos['take_profit'])), (Decimal('1.079'), Decimal('1.083')))
+        with store.transaction('write') as db:
+            self.assertEqual(oms.protect(db, NOW)['protective_exits'], 0, 'not touched yet')
+        self.quote(a['id'], 1.07890, 1.07900, NOW)
+        with store.transaction('write') as db:
+            self.assertEqual(oms.protect(db, NOW)['protective_exits'], 1)
+        self.assertEqual(self.ok(self.alice.get('/api/trading/portfolio/positions'))['items'], [])
+        with self.connect() as db:
+            src = db.execute("SELECT source, state FROM oms_orders ORDER BY created_at DESC LIMIT 1").fetchone()
+        self.assertEqual((src['source'], src['state']), ('PROTECT', 'FILLED'))
+
+    def test_working_order_blocks_and_broker_stop_is_booked(self):
+        connection, a, _b, ins = self.real_account()
+        self.sending()
+        o = self.place(a, ins, 'buy-sl', stop_loss=Decimal('1.07500'))
+        execution.dispatch()
+        self.assertEqual(self.order(o['id'])['state'], 'FILLED')
+        self.assertEqual(self.broker.sends, 1)
+        # The broker closes the position on its stop-loss: a deal with COREI's magic, no COREI tag.
+        self.broker.ticket += 1
+        self.broker.deals.append({'ticket': self.broker.ticket, 'order': 1, 'symbol': 'EURUSD', 'side': 'SELL', 'entry': 'OUT', 'volume': '0.1', 'price': '1.07500',
+                                  'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '-50.2', 'time': '2026-11-18T11:00:00.000', 'comment': '[sl 1.07500]',
+                                  'magic': MAGIC, 'position_id': 777, 'reason': 'SL'})
+        run = self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
+        self.assertEqual(run['status'], 'MATCHED', run)
+        self.assertEqual(self.ok(self.alice.get('/api/trading/portfolio/positions'))['items'], [], 'COREI closed the position with the broker')
+        with self.connect() as db:
+            ex = db.execute("SELECT o.source, o.state, f.broker_deal_id FROM oms_orders o JOIN oms_fills f ON f.order_id=o.id WHERE o.source='PROTECT'").fetchone()
+        self.assertEqual((ex['source'], ex['state'], ex['broker_deal_id']), ('PROTECT', 'FILLED', str(self.broker.ticket)))
+        # Booked once: the next read changes nothing.
+        self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) AS n FROM oms_orders WHERE source='PROTECT'").fetchone()['n'], 1)
+
+    def test_realign_and_working_order_rule(self):
+        connection, a, _b, ins = self.real_account()
+        self.start(self.plan(a, ins, 'EU_RA'))
+        strat, ver, dep = self.deploy_on(a, ins, sizing={'method': 'FIXED_QTY', 'quantity': '0.10'}, protect={'stop_atr': '2', 'take_atr': '3'})
+        start = NOW - timedelta(minutes=5 * 41)
+        self.bars(a['id'], tt.series(40, False), start)
+        tt.runtime.cycle(NOW)
+        kill = self.ok(self.alice.post('/api/trading/risk/kill-switches', json={'scope': 'STRATEGY', 'target_id': strat['id'], 'reason': 'hold for a moment'}), 201)
+        self.bars(a['id'], tt.series(41, True)[40:], start + timedelta(minutes=5 * 40))
+        tt.runtime.cycle(NOW)
+        first = self.ok(self.alice.get('/api/trading/signals'))['items'][0]
+        self.assertEqual((first['side'], first['state']), ('BUY', 'REJECTED'))
+        self.ok(self.alice.post(f"/api/trading/risk/kill-switches/{kill['id']}/release", json={'reason': 'go on now'}))
+        last = tt.series(41, True)[-1]
+        self.bars(a['id'], [last + 0.0010], start + timedelta(minutes=5 * 41))  # the next bar: still long, no new cross
+        out = tt.runtime.cycle(NOW)
+        self.assertEqual((out['signals'], out['orders']), (1, 1), out)
+        sig = self.ok(self.alice.get('/api/trading/signals'))['items'][0]
+        self.assertTrue(sig['explanation'][0].startswith('REALIGN'), sig['explanation'])
+        self.assertEqual(sig['state'], 'ACTED')
+        orders = self.ok(self.alice.get('/api/trading/orders'))['items']
+        self.assertEqual((orders[0]['source'], orders[0]['state']), ('REALIGN', 'FILLED'))
+        self.assertIsNotNone(orders[0]['stop_loss'], 'the protective stop from the deployment rides on the order')
+        self.assertLess(Decimal(orders[0]['stop_loss']), Decimal(orders[0]['avg_fill_price']))
+        # Executed: no further realign on the next bar.
+        self.bars(a['id'], [last + 0.0015], start + timedelta(minutes=5 * 42))
+        self.assertEqual(tt.runtime.cycle(NOW)['signals'], 0)
+        # A working order of the deployment blocks the next decision.
+        with self.connect() as db:
+            db.execute("UPDATE oms_orders SET state='UNKNOWN' WHERE id=%s", (UUID(orders[0]['id']),))
+        manual = self.ok(self.alice.post('/api/trading/signals', json={'deployment_id': dep['id'], 'side': 'SELL', 'reason': 'test the working rule'}), 201)
+        self.assertIn('WORKING_ORDER', ' '.join(manual['signal']['reasons']))

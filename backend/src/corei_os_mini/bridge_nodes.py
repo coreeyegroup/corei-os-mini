@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from . import config_store as store
 from . import credentials
 
-LATEST_BRIDGE = '0.43.0'           # the bridge in this release (connectors/mt5-bridge/corei_mt5_bridge.py)
+LATEST_BRIDGE = '0.43.1'           # the bridge in this release (connectors/mt5-bridge/corei_mt5_bridge.py)
 CODE_MINUTES = 60
 FIRST_TUNNEL_PORT = 9450
 _FP = re.compile(r'^([0-9A-F]{2}:){31}[0-9A-F]{2}$')
