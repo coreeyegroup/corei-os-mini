@@ -288,3 +288,40 @@ class MultiAccountBridge(unittest.TestCase):
         t.send({'cmd': 'stop'})
         t.close()
         self.assertGreaterEqual(seen, 3)
+
+
+class TerminalPool(MultiAccountBridge):
+    """--max-terminals 1: a second login closes the first one's idle terminal; a streaming one is never closed."""
+    test_two_logins_get_their_own_terminal_copies_and_workers = None
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            cls.port = s.getsockname()[1]
+        master = Path(cls.tmp) / 'MetaTrader 5'
+        threading.Thread(target=lambda: TerminalBridge.bridge.main(['--bind', '127.0.0.1', '--port', str(cls.port), '--state', cls.state,
+                                                                    '--terminal', str(master / 'terminal64.exe'), '--terminals-root', str(Path(cls.tmp) / 'pool'),
+                                                                    '--max-terminals', '1']), daemon=True).start()
+        for _ in range(100):
+            time.sleep(0.05)
+            try:
+                socket.create_connection(('127.0.0.1', cls.port), timeout=0.2).close()
+                break
+            except OSError:
+                continue
+
+    def test_pool_makes_room_but_never_closes_a_stream(self):
+        self.assertTrue(self.session(111)['connected'])
+        self.assertTrue(self.session(222)['connected'], 'the idle terminal of 111 made room')
+        t = BridgeTransport('127.0.0.1', self.port, self.fingerprint)
+        t.send({'token': self.token, 'mode': 'stream', 'login': 222, 'password': 'secret', 'server': 'X', 'symbols': ['EURUSD'], 'heartbeat_seconds': 1})
+        self.assertEqual(json.loads(next(t.lines()))['t'], 'connected')
+        t2 = BridgeTransport('127.0.0.1', self.port, self.fingerprint)
+        t2.send({'token': self.token, 'mode': 'session', 'login': 333, 'password': 'secret', 'server': 'X', 'symbols': []})
+        reply = json.loads(next(t2.lines()))
+        t2.close()
+        self.assertIn('BRIDGE_FULL', json.dumps(reply))
+        t.send({'cmd': 'stop'})
+        t.close()

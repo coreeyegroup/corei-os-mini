@@ -21,6 +21,8 @@ Run in PowerShell as Administrator, in the folder holding this script and corei_
 Every account of the firm can use this one bridge: for each login COREI sends, the bridge makes a portable copy of the
 installed terminal (once, under C:\corei-bridge\<Name>\terminals\<login>) and runs it, so several accounts stream at
 the same time through the same host and port. The installed terminal itself is only the template.
+-MaxTerminals (default 20) caps how many run at once: an idle terminal (no stream, least recently used) is closed to
+make room, so many accounts can share a machine for account reads; streaming accounts keep theirs.
 At the end it prints the host, port, fingerprint and token to enter in COREI (Setup > the account > Routes > Add route).
 #>
 param(
@@ -31,6 +33,7 @@ param(
     [string]$CoreiIp = '',
     [string]$SshTarget = '',
     [int]$TunnelPort = 9450,
+    [int]$MaxTerminals = 20,
     [string]$Root = 'C:\corei-bridge'
 )
 $ErrorActionPreference = 'Stop'
@@ -92,7 +95,7 @@ $runBridge = Join-Path $dir 'run-bridge.cmd'
 @echo off
 rem COREI MT5 bridge ($Name): restarts itself if it stops.
 :loop
-"$pyExe" "$dir\corei_mt5_bridge.py" --terminal "$Terminal" --terminals-root "$dir\terminals" --bind $bind --port $Port --state "$dir" >> "$dir\bridge.log" 2>&1
+"$pyExe" "$dir\corei_mt5_bridge.py" --terminal "$Terminal" --terminals-root "$dir\terminals" --max-terminals $MaxTerminals --bind $bind --port $Port --state "$dir" >> "$dir\bridge.log" 2>&1
 timeout /t 10 /nobreak >nul
 goto loop
 "@ | Set-Content -Encoding ASCII $runBridge

@@ -55,7 +55,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.38.3'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.41.0'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -283,10 +283,32 @@ class Stream:
 # ----- several accounts on one machine: one portable terminal copy and one worker per login -----
 
 class Terminals:
-    def __init__(self, master: str, root: Path):
+    def __init__(self, master: str, root: Path, max_terminals: int = 0):
         self.master, self.root = Path(master), root
+        self.max_terminals = max_terminals  # 0 = no limit; else a pool: the least recently used idle terminal makes room
         self.workers: dict[str, dict] = {}
         self.lock = threading.Lock()
+
+    def busy(self, login: str, delta: int) -> None:
+        with self.lock:
+            w = self.workers.get(login)
+            if w:
+                w['sessions'] = max(0, w['sessions'] + delta)
+                w['used'] = time.monotonic()
+
+    def _stop(self, login: str) -> None:
+        """Stop a login's worker and its terminal copy (the pool needs the room)."""
+        w = self.workers.pop(login)
+        try:
+            w['proc'].terminate()
+        except OSError:
+            pass
+        exe = str(self.root / login / 'terminal64.exe')
+        if os.name == 'nt':
+            subprocess.run(['powershell', '-NoProfile', '-Command',
+                            f"Get-Process terminal64 -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{exe}' }} | Stop-Process -Force"],
+                           capture_output=True, timeout=30)
+        print(f'{now_iso()} login {login}: terminal closed to make room in the pool ({self.max_terminals} terminals)', flush=True)
 
     def copy_for(self, login: str) -> Path:
         folder = self.root / login
@@ -320,7 +342,14 @@ class Terminals:
         with self.lock:
             w = self.workers.get(login)
             if w and w['proc'].poll() is None:
+                w['used'] = time.monotonic()
                 return w['port']
+            alive = {k: v for k, v in self.workers.items() if v['proc'].poll() is None}
+            if self.max_terminals and len(alive) >= self.max_terminals:
+                idle = sorted((v['used'], k) for k, v in alive.items() if v['sessions'] == 0)
+                if not idle:
+                    raise OSError(f'BRIDGE_FULL: all {self.max_terminals} terminals of this bridge are streaming; add a bridge node or raise --max-terminals.')
+                self._stop(idle[0][1])
             exe = self.copy_for(login)
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
@@ -333,7 +362,7 @@ class Terminals:
                     break
                 except OSError:
                     continue
-            self.workers[login] = {'port': port, 'proc': proc}
+            self.workers[login] = {'port': port, 'proc': proc, 'sessions': 0, 'used': time.monotonic()}
             print(f'{now_iso()} login {login}: worker on 127.0.0.1:{port} (pid {proc.pid})')
             return port
 
@@ -356,6 +385,7 @@ def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> No
             return
         login = str(int(request.get('login') or 0))
         worker = socket.create_connection(('127.0.0.1', terminals.port_for(login)), timeout=30)
+        terminals.busy(login, +1)
         worker.settimeout(None)
         wr = worker.makefile('r', encoding='utf-8', newline='\n')
         ww = worker.makefile('w', encoding='utf-8', newline='\n')
@@ -385,6 +415,8 @@ def proxy_to_worker(conn: socket.socket, token: str, terminals: Terminals) -> No
         except OSError:
             pass
     finally:
+        if worker is not None:
+            terminals.busy(login, -1)
         for part in (worker, writer, reader, conn):
             try:
                 part.close()
@@ -460,6 +492,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--init', action='store_true', help='make the certificate and token, print what COREI needs, and exit')
     parser.add_argument('--terminals-root', help='serve every account: one portable terminal copy per login under this folder')
     parser.add_argument('--version', action='version', version=f'corei_mt5_bridge {BRIDGE_VERSION}')
+    parser.add_argument('--max-terminals', type=int, default=0, help='with --terminals-root: at most this many terminals run at once (0 = no limit); '
+                        'an idle one (no stream) is closed to make room, least recently used first')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)  # internal: one login, plain TCP on 127.0.0.1
     args = parser.parse_args(argv)
     try:
@@ -490,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(state / 'corei-bridge.crt'), str(state / 'corei-bridge.key'))
-    terminals = Terminals(args.terminal, Path(args.terminals_root)) if args.terminals_root and args.terminal else None
+    terminals = Terminals(args.terminal, Path(args.terminals_root), args.max_terminals) if args.terminals_root and args.terminal else None
     print(f'{now_iso()} COREI MT5 bridge {BRIDGE_VERSION} listening on {args.bind}:{args.port}' + (f' · every account, terminal copies under {args.terminals_root}' if terminals else ''))
     print(f'Certificate fingerprint (SHA-256): {fingerprint}')
     print(f'Token file: {state / "corei-bridge.token"} (paste its contents into COREI; keep it secret)')
