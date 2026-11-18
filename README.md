@@ -1132,3 +1132,27 @@ Two levels, as in VS Code (DEC-91):
   *Execution*. Sub-tab layouts start fresh once (new storage key) so every domain opens in the aligned order.
 - Tests check, for Market data and every stage, that the side bar equals the sub-tabs.
 
+
+## Calculation Graphs, phase 1: the engine — release 0.50.0
+
+Every calculation becomes a graph of typed nodes you can see with live numbers on every step (DEC-93; the n8n pattern
+in our own code). This release is the foundation; the screens adopt it from 0.51. Details:
+[docs/CALCULATION_GRAPHS.md](docs/CALCULATION_GRAPHS.md); what moves when: [docs/CALCULATION_INVENTORY.md](docs/CALCULATION_INVENTORY.md).
+
+- **Node catalogue** (69 nodes): sources (bars, any feature, any library signal, quote, position, account, instrument,
+  setting, constants), the platform indicators (wrapped, not re-implemented), series (shift, rolling, returns,
+  cumulative, normalise by ATR), maths and the **Expression** node, logic (compare, crosses, hysteresis…), combine
+  (weighted sum, vote, consensus, rank), convert (last value, **To decimal**) and one output per purpose (feature,
+  signal, rule, sizing, protective, risk check, allocation, measure) that enforces its contract.
+- **Expression language**: one line such as `100 * (fast - slow) / (scale * atr)`; our own parser, no eval, no code,
+  `x[t-k]` for the past and no way to write the future.
+- **Executor**: complete checks before running (types name both ports; money only through To decimal; cycles; one
+  output), deterministic order, per-node errors that stop only what depends on them, a trace of every node on any bar
+  (inputs, outputs, the formula with the numbers, time). 600 bars ≈ 1.3 ms per signal graph.
+- **Proof**: the built-in graph *EMA trend* equals the signal library's EMA trend to 1e-9 on every bar.
+- **Storage** (migration 038): graphs, versions (approved versions frozen by the database), bindings, and an
+  insert-only record of every run.
+- **API**: `GET /api/calc/nodes`, `/graphs`, `/graphs/{code}`, `/graphs/{code}/versions/{n}`, `POST /api/calc/validate`,
+  `POST /api/calc/preview`, `GET /api/calc/runs`.
+- Nothing changes on the trading path: no stage runs a graph yet, the code stays the reference until parity is
+  proven per formula, and live trading stays off by default.

@@ -12,6 +12,7 @@ from .routes_api import router as routes_router
 from .bridge_api import enrol_router as bridge_enrol_router, router as bridge_router
 from .trading_api import router as trading_router
 from .intel_api import router as intel_router
+from .calc_api import router as calc_router
 from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
 from .infra_api import router as infra_router
@@ -79,6 +80,7 @@ app.include_router(strategy_router)
 app.include_router(controls_router)
 app.include_router(infra_router)
 app.include_router(md_router)
+app.include_router(calc_router)
 app.include_router(db_admin_router)
 app.include_router(broker_login_router)
 app.include_router(oauth_router)
