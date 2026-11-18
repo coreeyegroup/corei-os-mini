@@ -74,7 +74,29 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/signal-library/definitions')&&method==='POST')return ok({id:'d9',...body,version:1},201);
    if(url.includes('/trading/signal-library/definitions'))return ok({items:[{id:'d1',code:'EMA_TREND',name:'EMA trend 9/21',kind:'EMA_TREND',family:'Trend',parameters:{fast:9,slow:21,scale:1},threshold:'20',timeframes:['M5','H1'],status:'ACTIVE',builtin:true,
      equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)'}]});
-   if(url.includes('/trading/signal-library/board'))return ok({timeframe:'H1',items:[{definition_id:'d1',code:'EMA_TREND',account_code:'VTM_A',broker_symbol:'EURUSD',score:'62.4',previous_score:'40',direction:'LONG',threshold:'20',bar_time:now,
+   if(url.includes('/trading/signal-library/overview'))return ok({timeframe:'H1',definitions_active:12,definitions_total:13,instruments:1,scores:12,long:5,short:3,flat:4,flips_24h:7,last_computed:now,instruments_by_timeframe:{H1:1},
+     strongest:[{code:'EMA_TREND',account_code:'VTM_A',broker_symbol:'EURUSD',score:'62.4',direction:'LONG',worked:'x',bar_time:now,threshold:'20'}],consensus:[{account_code:'VTM_A',broker_symbol:'EURUSD',account_id:'a1',score:23.4,agree_pct:67,n:12}]});
+   if(url.includes('/trading/signal-library/events'))return ok({items:[{id:1,code:'RSI_REVERSION',account_code:'VTM_A',broker_symbol:'EURUSD',timeframe:'H1',bar_time:now,from_direction:'FLAT',to_direction:'SHORT',score:'-34.2',previous_score:'12'}]});
+   if(url.includes('/trading/signal-library/instrument'))return ok({broker_symbol:'EURUSD',timeframes:['M5','H1'],signals:['EMA_TREND'],cells:{EMA_TREND:{M5:{code:'EMA_TREND',timeframe:'M5',score:'40',worked:'a'},H1:{code:'EMA_TREND',timeframe:'H1',score:'-30',worked:'b'}}},
+     consensus:{M5:{score:40,agree_pct:100,n:1},H1:{score:-30,agree_pct:100,n:1}},overall:{score:5,agree_pct:50,n:2}});
+   if(url.includes('/trading/signal-library/correlation'))return ok({codes:['EMA_TREND','SMA_TREND'],matrix:[[1,0.91],[0.91,1]],redundant:[{a:'EMA_TREND',b:'SMA_TREND',r:0.91}],bars:1000});
+   if(url.includes('/trading/signal-library/explain'))return ok({symbol:'EURUSD',timeframe:'H1',bars:600,bar_source:'BROKER',last_bar:now,last_close:'1.0861',closes:[],consensus:{score:23.4,agree_pct:67,n:12},items:[]});
+   if(url.includes('/trading/signal-library/research-all'))return ok({symbol:'EURUSD',timeframe:'H1',bars:900,horizons:[1,5],items:[{code:'EMA_TREND',family:'Trend',verdict:'PREDICTIVE',best_horizon:5,ic:0.061,ic_t:3.1,hit_rate_pct:55.2,edge_bp:4.1,cost_bp:1.2,coverage_pct:40,turnover_per_bar:0.05,ic_by_horizon:{1:0.03,5:0.061}},
+     {code:'RSI_REVERSION',family:'Mean reversion',verdict:'NO_EDGE',best_horizon:1,ic:-0.004,ic_t:-0.2,ic_by_horizon:{1:-0.004,5:0.001}}]});
+   if(url.includes('/trading/strategies/monitor'))return ok({items:[{id:'d1',status:'ACTIVE',mode:'PAPER',version:4,strategy_code:'EMA_FAST',version_number:1,algorithm:'EMA_CROSSOVER',symbol:'EURUSD',account_code:'VTM_A',timeframe:'M5',
+     last_target:'LONG',handoff:'AUTO',execution:{},position:{quantity:'0.1',unrealised:'12.5',realised:'40',currency:'USD'},live:{trades:3,win_rate_pct:66.7,profit_factor:2.1},drift:{status:'OK'},
+     last_signal:{side:'BUY',strength:70,state:'ACTED',bar_time:now,why:'EMA 3/5 crossed up'},last_decision:{outcome:'ORDERED',side:'BUY',quantity:'0.1',created_at:now},signals_today:2,orders_today:1,pending:0}],
+     summary:{active:1,paused:0,proposed:0,paper:1,real:0,long:1,short:0,drifting:0,errors:0,pending:1,signals_today:2,orders_today:1,pnl_by_currency:{USD:{unrealised:'12.5',realised:'40'}}}});
+   if(url.includes('/trading/execution/decisions/'))return ok({state:url.endsWith('/decline')?'DECLINED':'ORDERED'});
+   if(url.includes('/trading/execution/flow'))return ok({items:[{id:'t1',outcome:'PENDING',handoff:'APPROVE',strategy_code:'EMA_FAST',version_number:1,algorithm:'EMA_CROSSOVER',symbol:'EURUSD',account_code:'VTM_A',mode:'PAPER',
+     signal_side:'SELL',strength:66,side:'SELL',quantity:'0.2',target:'SHORT',current_qty:'0.1',target_qty:'-0.1',order_type:'LIMIT',limit_price:'1.0801',time_in_force:'GTC',decision_bid:'1.08',decision_ask:'1.0801',
+     bar_time:now,timeframe:'M5',created_at:now,expires_at:new Date(Date.now()+600000).toISOString(),explanation:['EMA 3/5 crossed down'],reasons:[]},
+     {id:'t2',outcome:'REFUSED',handoff:'AUTO',strategy_code:'EMA_FAST',symbol:'EURUSD',account_code:'VTM_A',signal_side:'BUY',side:'BUY',quantity:'0.1',target:'LONG',order_id:'o2',order_state:'REJECTED',created_at:now,
+     reasons:['MAX_DAILY_LOSS: today −512 beyond −500'],explanation:[]}].filter(x=>!url.includes('outcome=')||url.includes('outcome='+x.outcome)),summary:{today:{ORDERED:3,REFUSED:1},pending:1,next_expiry:new Date(Date.now()+600000).toISOString(),active_by_handoff:{AUTO:1,APPROVE:1}}});
+   if(url.includes('/trading/execution/policies/')&&method==='PUT')return ok({id:'d1',policy:body});
+   if(url.includes('/trading/execution/policies'))return ok({items:[{id:'d1',status:'ACTIVE',mode:'PAPER',version:4,strategy_code:'EMA_FAST',version_number:1,algorithm:'EMA_CROSSOVER',symbol:'EURUSD',account_code:'VTM_A',environment:'DEMO',
+     policy:{handoff:'AUTO',order_type:'MARKET',limit_mode:'MARKETABLE',limit_offset_ticks:0,time_in_force:'GTC',approval_minutes:10}}]});
+   if(url.includes('/trading/signal-library/board'))return ok({timeframe:'H1',items:[{definition_id:'d1',code:'EMA_TREND',family:'Trend',kind:'EMA_TREND',account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',score:'62.4',previous_score:'40',direction:'LONG',threshold:'20',bar_time:now,
      inputs:{ema_fast:1.0861,ema_slow:1.0842,atr14:0.003},worked:'100 × (1.0861 − 1.0842) ÷ (1 × 0.003) = +62.4'}]});
    if(url.includes('/trading/signal-library/blend-preview'))return ok({components:[{kind:'EMA_TREND',weight:2,score:62.4,worked:'100 × (1.0861 − 1.0842) ÷ (1 × 0.003) = +62.4'},{kind:'RSI_REVERSION',weight:1,score:-10,worked:'2 × (50 − 55) = -10.0'}],
      combined:38.3,worked:'2 × +62.4 + 1 × -10.0 ÷ 3 = +38.3',side:'FLAT or hold (inside ±entry)',entry:40,exit:10,symbol:'EURUSD',timeframe:'H1',last_bar:now});
@@ -105,18 +127,36 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: start here: an empty trading stage starts a paper strategy on a collected instrument in one step.');
 
  // Every stage opens as one workspace: every panel (dashboard, work, monitor, settings) on one page.
- const PANELS=['Dashboard','Live signal board','Explain an instrument','Signal research','Strategy signals','Decisions','Signal quality','Checks and decision','Signal library','Calculations & formulas'];
+ const PANELS=['Dashboard','Live signal board','Explain an instrument','Across timeframes','Signal research','Rank every signal','Signal correlation','Signal flips','Signal library','Calculations & formulas'];
  assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent),PANELS);
  assert.ok($$('.ws-panel .ws-body').length===PANELS.length,'all panels open');
  assert.ok($('.ws-panel [aria-label="Min strength"], .ws-panel input')!==null,'settings controls are on the workspace');
  $$('.ws-head')[6].click();await settle(2);
  assert.equal($$('.ws-panel .ws-body').length,PANELS.length-1,'a panel closes');
- assert.match(w.localStorage.getItem('corei.workspace.closed.Signals'),/quality/);
+ assert.match(w.localStorage.getItem('corei.workspace.closed.Signals'),/correlation/);
  button('Open all').click();await settle(2);
  // Stage 3 owns the maths: the live board shows each score and, on a click, the equation with this bar's numbers.
- const cell=$$('.sig-board td.sig-cell')[0];assert.equal(cell.textContent,'+62.4');cell.click();await settle(2);
- assert.match($('.sig-detail').textContent,/100 × \(1\.0861 − 1\.0842\) ÷ \(1 × 0\.003\) = \+62\.4/);
- assert.match($('.sig-detail').textContent,/ema_fast 1\.0861/);
+ // Stage 3 dashboard: long / short / flat now, the strongest scores, the composite of each instrument, the latest flips.
+ assert.match($('.intel-kpis').textContent,/Long5.*Short3.*Flat4.*Flips in 24 h7/);
+ assert.match($('.sig-split').textContent,/Composite per instrument.*VTM_A · EURUSD.*\+23\.4.*67% agree/);
+ assert.match($('.sig-split').textContent,/RSI_REVERSION.*flat.*short/i);
+ const boardPanel=$$('.ws-panel').find(p=>/Live signal board/.test(p.querySelector('.ws-head').textContent));
+ assert.match(boardPanel.querySelector('thead').textContent,/Composite/);
+ const cell=boardPanel.querySelectorAll('tbody td.sig-cell')[1];assert.equal(cell.textContent,'+62.4');cell.click();await settle(4);
+ assert.match(boardPanel.querySelector('.sig-detail').textContent,/100 × \(1\.0861 − 1\.0842\) ÷ \(1 × 0\.003\) = \+62\.4/);
+ // A click focuses the instrument in Explain, Timeframes, Correlation and Rank.
+ assert.equal(JSON.parse(w.localStorage.getItem('corei.signals.focus')).src,'a1|EURUSD');await settle(6);
+ const panel=name=>$$('.ws-panel').find(p=>p.querySelector('.ws-head b').textContent===name);
+ globalThis.panel2=panel;
+ assert.match(panel('Across timeframes').textContent,/Composite.*\+40\.0.*100%.*−?-30\.0/);
+ assert.match(panel('Signal correlation').textContent,/Redundant pairs.*EMA_TREND ~ SMA_TREND \(0\.91\)/);
+ assert.match(panel('Explain an instrument').textContent,/Composite of 12 signals.*\+23\.4.*67% agree/);
+ panel('Rank every signal').querySelector('button.primary').click();await settle(6);
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/signal-library/research-all')).body,{account_id:'a1',symbol:'EURUSD',timeframe:'H1',days:180,horizons:[1,2,5,10,20]});
+ assert.match(panel('Rank every signal').textContent,/1EMA_TREND.*predictive.*3\.1.*2RSI_REVERSION.*no edge/i);
+ assert.match(panel('Signal flips').textContent,/RSI_REVERSION.*flat.*short/i);
+ console.log('PASS: signals: dashboard, board with composite, one focus for explain, timeframes, correlation and the ranking of every signal; flips.');
+ assert.match(boardPanel.querySelector('.sig-detail').textContent,/ema_fast 1\.0861/);
  assert.match($$('.ws-panel').find(p=>/Signal library/.test(p.querySelector('.ws-head').textContent)).textContent,/EMA\(fast\) − EMA\(slow\).*fast 9 · slow 21.*±20/);
  assert.match($$('.ws-panel').find(p=>/Calculations/.test(p.querySelector('.ws-head').textContent)).textContent,/EMA trend \(EMA_TREND\).*score = clamp/);
  button('+ New signal').click();await settle(2);
@@ -131,16 +171,50 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);
  assert.match($('.st-head').textContent,/2 · Market intelligence/);
  assert.deepEqual($$('.cfg-nav .cfg-nav-group').map(g=>g.textContent),['Overview','Work','Monitor','Configure']);
- assert.match($('.intel-kpis').textContent,/Signals today3/);
- assert.match($('.intel-table').textContent,/STALE_PRICE: the last price is 95 s old/);
+ // Stage 4 owns what a strategy decides: its signals, their checks and the decisions; the desk shows every strategy at once.
+ await go('Strategies');
+ assert.match($('.st-head').textContent,/Stage 4 · Strategy intelligence/);
+ assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent).slice(0,4),['Dashboard','Runtime','Strategy signals','Decisions']);
+ assert.match($('.sd-card').textContent,/EMA_FAST.*running.*paper.*automatic.*long 0\.10.*\+12\.50.*BUY.*70.*acted/);
+ promptAnswer='review the levels';$('.sd-card footer button').click();await settle(4);
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/config/deployments/d1/pause')).body,{version:4,reason:'review the levels'});
+ fill($('[aria-label="Handoff EMA_FAST EURUSD"]'),'APPROVE');await settle(4);
+ const hand=calls.find(c=>c.url.endsWith('/trading/execution/policies/d1')&&c.method==='PUT').body;
+ assert.equal(hand.handoff,'APPROVE');assert.equal(hand.version,4);assert.equal(hand.reason,'review the levels');assert.equal(hand.order_type,'MARKET');
+ console.log('PASS: strategies: the desk shows each strategy with position, P&L, last signal and decision; pause and handoff change from the card.');
+ assert.match(globalThis.panel2('Strategy signals').textContent,/STALE_PRICE: the last price is 95 s old/);
  nav('Strategy signals').click();await settle(6);
  $$('.intel-table tbody tr')[0].click();await settle(6);
  assert.match($('.fw').textContent,/Why it was refused:STALE_PRICE/);
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
  console.log('PASS: signals: one frame for every stage, refused signals show their reason and history.');
 
- // Orders: ticket = one order per ticket key; the order history step by step.
+ // Execution receives every decision from the strategies: the chain, what waits for a trader, execute or decline.
  await go('Execution');
+ const ep=name=>$$('.ws-panel').find(p=>p.querySelector('.ws-head b').textContent===name);
+ assert.match(ep('From strategies').textContent,/Waiting for execution1.*Ordered today3/);
+ assert.match(ep('From strategies').querySelector('.ex-flow').textContent,/EMA_FAST.*SignalSELL.*66.*Decisionshort.*Riskat execution.*waiting for execution/);
+ assert.match(ep('From strategies').textContent,/MAX_DAILY_LOSS.*refused/);
+ assert.match(ep('Decision queue').textContent,/SELL 0\.20 EURUSD.*limit @ 1\.08010/);
+ assert.equal(ep('Decision queue').querySelectorAll('.ex-card').length,1,'only what waits');
+ ep('Decision queue').querySelector('.ex-card button.primary').click();await settle(4);
+ fill($('[aria-label="Execute quantity"]'),'0.1');fill($('[aria-label="Execute note"]'),'half now');await settle();
+ await submit($('.ex-dialog form'));
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/execution/decisions/t1/execute')).body,{quantity:'0.1',order_type:'LIMIT',limit_price:'1.0801',note:'half now'});
+ ep('Decision queue').querySelectorAll('.ex-card button')[1].click();await settle(4);
+ fill($('[aria-label="Decline reason"]'),'news in 5 minutes');await settle();
+ await submit($('.ex-dialog form'));
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/execution/decisions/t1/decline')).body,{reason:'news in 5 minutes'});
+ [...ep('Execution policy').querySelectorAll('button')].find(b=>b.textContent==='Change').click();await settle(4);
+ const radios=[...ep('Execution policy').querySelectorAll('.ex-radio input')];radios[1].click();await settle(2);
+ fill($('[aria-label="Policy order type"]'),'LIMIT');await settle(2);
+ fill($('[aria-label="Policy limit mode"]'),'PASSIVE');fill($('[aria-label="Policy offset"]'),'2');fill($('[aria-label="Policy approval minutes"]'),'5');fill($('[aria-label="Policy reason"]'),'trader reviews gold');await settle();
+ await submit($('.ex-policy'));
+ assert.deepEqual(calls.filter(c=>c.url.endsWith('/trading/execution/policies/d1')&&c.method==='PUT').at(-1).body,
+   {handoff:'APPROVE',order_type:'LIMIT',limit_mode:'PASSIVE',limit_offset_ticks:2,time_in_force:'GTC',approval_minutes:5,version:4,reason:'trader reviews gold'});
+ console.log('PASS: execution: decisions from strategies arrive with their chain; a waiting one is executed (smaller, limit) or declined; the policy per strategy is set.');
+
+ // Orders: ticket = one order per ticket key; the order history step by step.
  nav('Order ticket').click();await settle(6);
  fill($('[aria-label="Ticket account"]'),'a1');fill($('[aria-label="Ticket instrument"]'),'i1');fill($('[aria-label="Ticket quantity"]'),'0.1');await settle();
  await submit($('.intel form'));

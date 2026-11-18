@@ -1065,3 +1065,30 @@ and every formula is on the workspace with live numbers (DEC-88, migration 036).
 - API: `/api/trading/formulas`, `/api/trading/signal-library/{catalogue,definitions,board,explain,research,blend-preview}`.
   Scores are computed by the intelligence engine after each run (`sig_live`); windows end at the newest stored bar.
 
+## Signals → strategies → execution, end to end — release 0.47.0
+
+The order stays **3 Signals → 4 Strategies**, on purpose: Stage 3 produces forecasts (scores) for every instrument;
+Stage 4 combines them into decisions. What a running strategy raises — its signals, their checks and its decisions —
+now lives in Stage 4, where it is made (DEC-89, migration 037).
+
+- **Stage 3 · Signals** — Dashboard (long / short / flat now, strongest scores, the composite of each instrument,
+  latest flips); Live board with a composite column, filters by family and side, sorting and a colour legend; one
+  instrument in focus for every panel (a click on the board focuses it); *Explain* with the composite and a chart of any
+  signal against price; *Across timeframes* (every signal × M5…D1 with the composite of each); *Rank every signal*
+  (all researched on the same bars, ranked by |IC t|); *Signal correlation* (redundant pairs |r| ≥ 0.8); *Signal flips*.
+- **Stage 4 · Strategies** — Dashboard: one card per strategy with position, open and closed P&L (per currency, never
+  added across currencies), target, live trades, win rate, profit factor, drift, last signal and last decision; pause,
+  resume and the execution handoff from the card. Strategy signals, Decisions, Signal quality and Checks and decision
+  moved here. *Compare backtests*: up to four side by side with equity curves.
+- **Stage 7 · Execution** — *From strategies*: every decision with its chain signal → decision → risk → order → fill,
+  outcome and reasons. *Decision queue*: decisions waiting for a trader — execute (full or smaller, market or limit) or
+  decline, one or all, before the window closes. *Execution policy* per strategy:
+  - handoff **Automatic** (default, as before) · **Trader approves** · **Signal only**;
+  - order **market** or **limit** (marketable = price cap at ask/bid ± n ticks, passive = waits at bid/ask ∓ n ticks);
+  - time in force GTC / DAY / IOC; approval window.
+  A waiting decision is executed as target − position *now*, through the normal risk check, with the same client order
+  ID as an automatic order — it can never be sent twice; a newer decision replaces an older one; an expired, declined or
+  waiting decision is never retried by realign.
+- API: `/api/trading/strategies/monitor`, `/execution/{flow,policies}`, `/execution/decisions/{id}/{execute,decline}`,
+  `/signal-library/{overview,instrument,events,correlation,research-all}`.
+

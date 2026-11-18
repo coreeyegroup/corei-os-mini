@@ -23,7 +23,7 @@ from typing import Any
 
 from .. import config_store as store
 from ..intel import engine
-from . import algorithms, oms, portfolio, risk, signals
+from . import algorithms, handoff, oms, portfolio, risk, signals
 from .common import D, data_source, deployments, settings
 
 log = logging.getLogger(__name__)
@@ -86,8 +86,8 @@ def realign_reason(db, dep: dict, target: str) -> str | None:
     refused, rejected, cancelled or expired without a fill (or the signal itself was refused), the position is not at
     the target, and nothing is working. Never after an executed decision (a stop-out stays out until a new signal),
     and at most realign_max_attempts times in a row."""
-    if dep.get('realign') is False:
-        return None
+    if dep.get('realign') is False or (dep.get('execution') or {}).get('handoff', 'AUTO') != 'AUTO':
+        return None  # a decision waiting for a person, or recorded only, is never retried by itself
     last = db.execute('SELECT s.id, s.side, s.state, i.outcome, o.state AS order_state, o.filled_qty FROM tr_signals s '
                       'LEFT JOIN tr_intents i ON i.signal_id=s.id LEFT JOIN oms_orders o ON o.id=i.order_id '
                       "WHERE s.deployment_id=%s AND s.source='RUNTIME' ORDER BY s.created_at DESC LIMIT 1", (str(dep['id']),)).fetchone()
@@ -156,6 +156,7 @@ def cycle(now: datetime | None = None, force: bool = False) -> dict:
             errors.append(f"{dep['strategy_code']} {dep['instrument_symbol']}: {type(exc).__name__}: {str(getattr(exc, 'detail', exc))[:200]}")
     try:
         with store.transaction('write') as db:
+            out['expired_decisions'] = handoff.expire(db, now)
             out['expired'] = signals.expire(db, now)
             out['matched'] = oms.match(db, now)
             out['protected'] = oms.protect(db, now)

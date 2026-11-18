@@ -4,8 +4,9 @@ Why it exists: a desk must be able to check every number it trades on. Each stag
 its live numbers; this registry is the single place those formulas are written, beside the code that computes them,
 so the text and the code are reviewed together.
 Purpose: FORMULAS[stage] = [{name, equation, variables, notes, code}] for stages 1–8; stage 2 also lists every feature
-of the feature store, stage 3 the signal library (from trading.signal_library), stage 4 every strategy algorithm (from
-trading.algorithms) and the sizing and protective-exit formulas.
+of the feature store, stage 3 the signal library (from trading.signal_library), consensus, flips, correlation and
+research, stage 4 every strategy algorithm (from trading.algorithms), the checks and decision of a strategy signal, and
+the sizing and protective-exit formulas; stage 7 the execution handoff and order terms.
 Must never: drift from the code — when a calculation changes, its entry here changes in the same commit (the test suite
 checks that every algorithm, signal formula and feature has an entry).
 Dependencies: trading.algorithms, trading.signal_library, intel.indicators (names only). Consumers: GET /api/formulas.
@@ -53,17 +54,24 @@ STAGE2 = [
     F(name='Timeframes', equation='M5…D1 bars = the broker\'s own bars when as complete as M1-built ones, else M1 resampled (open = first, high = max, low = min, close = last)', code='intel/engine.py: resample'),
 ]
 
-STAGE3_GATE = [
+STAGE3_EXTRA = [
     F(name='Signal side (library)', equation='LONG if score ≥ +threshold;  SHORT if score ≤ −threshold;  else FLAT (threshold per definition, default 20)', code='trading/signal_library.py: direction'),
+    F(name='Consensus (composite of an instrument)', equation='composite = mean(score of every active signal);  agreement = share of signals with the composite\'s sign', code='trading/signal_library.py: consensus'),
+    F(name='Flip', equation='recorded when direction(scoreₜ) ≠ direction(scoreₜ₋₁) on a closed bar (once per bar)', code='trading/signal_library.py: live_update'),
+    F(name='Signal correlation', equation='r(a, b) = Pearson correlation of the two score series over the same bars;  |r| ≥ 0.8 = redundant (a blend counts it twice)', code='trading/signal_library.py: correlation'),
+    F(name='Research: information coefficient', equation='IC(h) = Spearman rank correlation(scoreₜ, closeₜ₊ₕ ÷ closeₜ − 1);  t = IC·√((n − 2) ÷ (1 − IC²))', code='trading/signal_library.py: research'),
+    F(name='Research: hit rate, quintiles, turnover, cost', equation='hit = share of bars with |score| ≥ threshold whose h-bar return has the score\'s sign;  quintile = average h-bar return of each fifth of scores;  '
+                                                                'turnover = mean |Δscore| ÷ 200 per bar;  cost = average spread ÷ average close (bp)', code='trading/signal_library.py: research'),
+    F(name='Research: verdict', equation='PREDICTIVE if |IC| ≥ 0.03 and |t| ≥ 2 and edge > cost at the best horizon;  WEAK if |t| ≥ 1;  else NO_EDGE', code='trading/signal_library.py: research'),
+]
+
+STAGE3_GATE = [
     F(name='Strategy signal born', equation='a running strategy\'s target changes on a newly closed bar (or by hand); the first bar after activation is only recorded', code='trading/runtime.py'),
     F(name='Check: price fresh', equation='now − quote received time ≤ max_quote_age_seconds', code='trading/signals.py: validate'),
     F(name='Check: spread', equation='100 × (ask − bid) ÷ ATR14 ≤ max_spread_atr_pct', code='trading/signals.py: validate'),
     F(name='Check: market open, event risk, strength, duplicate', equation='market hours (Market data › markets);  no high-impact event for either currency within ±30 min;  strength ≥ min_strength;  no live signal with the same side', code='trading/signals.py: validate'),
     F(name='Decision', equation='target = LONG / SHORT / FLAT of the latest signal (or of N agreeing signals);  wanted = +size, −size or 0;  order = wanted − current position (of this deployment)', code='trading/signals.py: process'),
-    F(name='Realign', equation='retry when the latest decision was not executed and position ≠ target, nothing working, attempts < realign_max_attempts', code='trading/runtime.py: realign_reason'),
-    F(name='Research: information coefficient', equation='IC(h) = Spearman rank correlation(scoreₜ, closeₜ₊ₕ ÷ closeₜ − 1);  t = IC·√((n − 2) ÷ (1 − IC²))', code='trading/signal_library.py: research'),
-    F(name='Research: hit rate, quintiles, turnover, cost', equation='hit = share of bars with |score| ≥ threshold whose h-bar return has the score\'s sign;  quintile = average h-bar return of each fifth of scores;  '
-                                                                'turnover = mean |Δscore| ÷ 200 per bar;  cost = average spread ÷ average close (bp)', code='trading/signal_library.py: research'),
+    F(name='Realign', equation='retry when the latest decision was not executed and position ≠ target, nothing working, attempts < realign_max_attempts (AUTO handoff only)', code='trading/runtime.py: realign_reason'),
 ]
 
 STAGE4_SIZING = [
@@ -109,6 +117,12 @@ STAGE6 = [
 ]
 
 STAGE7 = [
+    F(name='Handoff (per deployment)', equation='AUTO: order now;  APPROVE: waits in the execution queue until approval_minutes, then EXPIRED;  SIGNAL_ONLY: recorded with its size, never ordered',
+      code='trading/handoff.py: policy'),
+    F(name='Executing a waiting decision', equation='order = target − position now (not at decision time);  a smaller quantity may be chosen, rounded down to the lot step;  same client order ID as automatic',
+      code='trading/handoff.py: execute'),
+    F(name='Order terms', equation='MARKET;  or LIMIT — MARKETABLE: buy = ask + n·tick, sell = bid − n·tick (a price cap);  PASSIVE: buy = bid − n·tick, sell = ask + n·tick;  time in force GTC / DAY / IOC',
+      code='trading/handoff.py: order_terms'),
     F(name='Client order ID', equation='"C" + first 31 hex of SHA-256(seed) — the same intent always gives the same ID;  broker tag = first 20 characters', code='trading/oms.py: client_order_id'),
     F(name='Paper fill price', equation='buy = ask + slippage ticks × tick size;  sell = bid − slippage ticks × tick size;  limit at the limit price when reached;  stop at market when passed', code='trading/oms.py'),
     F(name='Slippage', equation='buy: fill − arrival ask;  sell: arrival bid − fill (positive = worse than the price when decided)', code='trading/oms.py: _fill'),
@@ -134,5 +148,5 @@ def all_formulas() -> dict:
              for k, v in algorithms.ALGORITHMS.items()]
     sigs = [F(name=f"{v['label']} ({k})", equation=v['equation'], notes=v['detail'], variables=', '.join(f'{a} = {b}' for a, b in v['defaults'].items()),
               code=f'trading/signal_library.py · {k}') for k, v in signal_library.KINDS.items()]
-    return {'Market data': STAGE1, 'Intelligence': STAGE2, 'Signals': sigs + STAGE3_GATE, 'Strategies': algos + STAGE4_SIZING, 'Risk': STAGE5,
+    return {'Market data': STAGE1, 'Intelligence': STAGE2, 'Signals': sigs + STAGE3_EXTRA, 'Strategies': algos + STAGE3_GATE + STAGE4_SIZING, 'Risk': STAGE5,
             'Portfolio': STAGE6, 'Execution': STAGE7, 'Post-trade': STAGE8}

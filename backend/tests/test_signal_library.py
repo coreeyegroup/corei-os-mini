@@ -119,6 +119,34 @@ class SignalLibraryApi(tt.Trading):
         self.assertIn('÷ 3 =', bp['worked'])
         self.assertEqual(self.alice.post('/api/trading/signal-library/blend-preview', json={
             'account_id': a['id'], 'symbol': 'EURUSD', 'components': [{'kind': 'NOPE'}]}).status_code, 422)
+        # Stage 3 dashboard, one instrument across timeframes, flips, correlation, every signal researched.
+        ov = self.ok(self.alice.get('/api/trading/signal-library/overview', params={'timeframe': 'M5'}))
+        self.assertEqual((ov['instruments'], ov['definitions_active']), (1, 13))
+        self.assertEqual(ov['long'] + ov['short'] + ov['flat'], ov['scores'])
+        self.assertTrue(ov['strongest'] and ov['consensus'][0]['n'] >= 12)
+        mx = self.ok(self.alice.get('/api/trading/signal-library/instrument', params={'account_id': a['id'], 'symbol': 'EURUSD'}))
+        self.assertEqual(mx['timeframes'], ['M5'])
+        self.assertIn('EMA_TREND', mx['cells'])
+        self.assertIn('=', mx['cells']['EMA_TREND']['M5']['worked'])
+        with store.transaction('write') as db:
+            defs_now = signal_library.definitions(db, active_only=True)
+            for k in range(300, 400):
+                signal_library.live_update(db, a['id'], 'EURUSD', 'M5', bars[:k], defs_now)
+            signal_library.live_update(db, a['id'], 'EURUSD', 'M5', bars[:399], defs_now)  # a re-run never doubles a flip
+        flips = self.ok(self.alice.get('/api/trading/signal-library/events', params={'timeframe': 'M5'}))['items']
+        self.assertTrue(flips, 'a sine wave flips its signals')
+        self.assertTrue(all(e['from_direction'] != e['to_direction'] for e in flips))
+        self.assertEqual(len({(e['code'], e['bar_time']) for e in flips}), len(flips))
+        cor = self.ok(self.alice.get('/api/trading/signal-library/correlation', params={'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5'}))
+        i = cor['codes'].index('EMA_TREND')
+        self.assertEqual(cor['matrix'][i][i], 1.0)
+        self.assertTrue(any(r['a'] == 'EMA_FAST_TREND' or r['b'] == 'EMA_FAST_TREND' for r in cor['redundant']), 'two EMA trends say the same thing')
+        allr = self.ok(self.alice.post('/api/trading/signal-library/research-all', json={'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5', 'days': 30}))
+        self.assertEqual(len(allr['items']), 13)
+        ts = [abs(x['ic_t'] or 0) for x in allr['items']]
+        self.assertEqual(ts, sorted(ts, reverse=True))
+        self.assertIn('closes', ex)
+        self.assertEqual(len(ex['closes']), 200)
         f = self.ok(self.alice.get('/api/trading/formulas'))['stages']
         self.assertIn('Risk', f)
         self.ok(self.bob.delete(f"/api/trading/signal-library/definitions/{mine['id']}", params={'reason': 'test clean-up'}), 204)

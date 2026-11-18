@@ -10,6 +10,8 @@ Purpose:
                state; a change to DRIFT raises an alert (once).
   attribution  realised P&L (account currency) and its share of the total by strategy, deployment, instrument,
                account and order source, for a period.
+  monitor      one row per deployment for the Stage 4 dashboard: status, execution handoff, last bar and target, the
+               position and its P&L, live statistics, drift, the last signal and the last decision, today's counts.
 Must never: stop a strategy by itself (an alert and the screen tell a person; kill switches stop strategies), or
 mix currencies without converting (a missing FX rate is reported).
 Dependencies: trading.common, config_store. Consumers: trading.runtime (drift each cycle), trading_api.
@@ -129,3 +131,61 @@ def attribution(db, by: str = 'strategy', since: datetime | None = None, until: 
                     'win_rate_pct': round(100 * g['wins'] / (g['wins'] + g['losses']), 1) if (g['wins'] + g['losses']) else None})
     return {'by': by, 'currency': report, 'total': total.quantize(Decimal('0.01')), 'rows': out, 'missing_fx': sorted(missing),
             'from': since.isoformat(), 'to': until.isoformat()}
+
+
+def monitor(db) -> dict:
+    """Every deployment that is not ended, as the Stage 4 dashboard shows it."""
+    from . import portfolio
+    day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = db.execute("""SELECT d.id, d.status, d.mode, d.version, d.weight, d.allocation_weight_bps, d.execution, s.code AS strategy_code,
+                                v.number AS version_number, v.algorithm, v.parameters, i.symbol, a.code AS account_code, c.environment,
+                                r.timeframe, r.last_bar_time, r.last_target, r.last_run_at, r.last_error, r.drift,
+                                (SELECT row_to_json(x) FROM (SELECT sg.side, sg.strength, sg.state, sg.bar_time, sg.explanation->>0 AS why
+                                    FROM tr_signals sg WHERE sg.deployment_id=d.id ORDER BY sg.created_at DESC LIMIT 1) x) AS last_signal,
+                                (SELECT row_to_json(y) FROM (SELECT t.id, t.outcome, t.side, t.quantity, t.created_at, t.expires_at
+                                    FROM tr_intents t WHERE t.deployment_id=d.id ORDER BY t.created_at DESC LIMIT 1) y) AS last_decision,
+                                (SELECT count(*) FROM tr_signals sg WHERE sg.deployment_id=d.id AND sg.created_at >= %s) AS signals_today,
+                                (SELECT count(*) FROM oms_orders o WHERE o.deployment_id=d.id AND o.created_at >= %s) AS orders_today,
+                                (SELECT count(*) FROM tr_intents t WHERE t.deployment_id=d.id AND t.outcome='PENDING') AS pending
+                         FROM cfg_deployments d JOIN cfg_strategies s ON s.id=d.strategy_id JOIN cfg_strategy_versions v ON v.id=d.strategy_version_id
+                         JOIN cfg_instruments i ON i.id=d.instrument_id JOIN cfg_accounts a ON a.id=d.account_id JOIN cfg_connections c ON c.id=a.connection_id
+                         LEFT JOIN tr_runtime_state r ON r.deployment_id=d.id
+                         WHERE d.status <> 'ENDED' ORDER BY (d.status='ACTIVE') DESC, s.code, i.symbol""", (day, day)).fetchall()
+    pos = {}
+    for p in portfolio.positions(db, open_only=False):
+        if p.get('deployment_id'):
+            k = str(p['deployment_id'])
+            cur = pos.setdefault(k, {'quantity': ZERO, 'unrealised': ZERO, 'realised': ZERO, 'currency': p.get('account_currency')})
+            cur['quantity'] += D(p['quantity']) or ZERO
+            cur['unrealised'] += D(p.get('unrealised_account')) or ZERO
+            cur['realised'] += D(p.get('realised_account')) or ZERO
+    out = []
+    for r in rows:
+        x = store.clean(r)
+        x['handoff'] = (r['execution'] or {}).get('handoff', 'AUTO')
+        x['position'] = pos.get(str(r['id']), {'quantity': ZERO, 'unrealised': ZERO, 'realised': ZERO, 'currency': None})
+        x['live'] = _live(db, r['id'])
+        x['drift'] = r['drift'] or {'status': 'NOT_CHECKED'}
+        out.append(x)
+    active = [x for x in out if x['status'] == 'ACTIVE']
+    return {'items': out, 'summary': {
+        'active': len(active), 'paused': sum(1 for x in out if x['status'] == 'PAUSED'), 'proposed': sum(1 for x in out if x['status'] == 'PROPOSED'),
+        'paper': sum(1 for x in active if x['mode'] != 'BROKER'), 'real': sum(1 for x in active if x['mode'] == 'BROKER'),
+        'long': sum(1 for x in active if x['position']['quantity'] > 0), 'short': sum(1 for x in active if x['position']['quantity'] < 0),
+        'drifting': sum(1 for x in active if (x['drift'] or {}).get('status') == 'DRIFT'), 'errors': sum(1 for x in active if x['last_error']),
+        'pending': sum(x['pending'] for x in out), 'signals_today': sum(x['signals_today'] for x in out), 'orders_today': sum(x['orders_today'] for x in out),
+        'pnl_by_currency': _by_currency(out)}}
+
+
+def _by_currency(rows: list[dict]) -> dict:
+    """Unrealised and realised P&L per account currency — never added across currencies."""
+    out: dict = {}
+    for x in rows:
+        p = x['position']
+        if not p.get('currency'):
+            continue
+        c = out.setdefault(p['currency'], {'unrealised': ZERO, 'realised': ZERO})
+        c['unrealised'] += p['unrealised']
+        c['realised'] += p['realised']
+    return out
+

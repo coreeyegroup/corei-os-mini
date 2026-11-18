@@ -2,7 +2,9 @@
 
 Why it exists: the stage screens and the system map read and control the trading core through one place.
 Purpose: /api/trading/* — overview KPIs per stage; every formula by stage (/formulas); the signal library (catalogue,
-definitions, live board, explain one instrument with worked equations, research: IC, hit rate, quintiles); settings; runtime state and Run now; signals (list, detail,
+definitions, overview, live board, one instrument across timeframes, flips, correlation, explain with worked equations,
+research of one or all signals: IC, hit rate, quintiles); the strategy monitor; the execution handoff (decision flow,
+execute / decline a waiting decision, execution policy per deployment); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
 dispatcher status); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
@@ -27,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
-from .trading import (algorithms, backtest, brokers, copytrade, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
+from .trading import (algorithms, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
                       signal_library, strategy_health, var)
 from . import formulas
 from .trading.common import settings as read_settings
@@ -254,9 +256,12 @@ def signal_explain(response: Response, account_id: UUID, symbol: str = Query(...
                     'equation': d.get('equation'), 'score': None if score is None else round(score, 1),
                     'direction': signal_library.direction(score, float(d['threshold'])), 'inputs': inputs,
                     'worked': signal_library.worked(d['kind'], params, score, inputs),
-                    'recent': [None if x is None else round(x[0], 1) for x in series[-60:]]})
+                    'recent': [None if x is None else round(x[0], 1) for x in series[-60:]],
+                    'history': [None if x is None else round(x[0], 1) for x in series[-200:]]})
     return _j({'symbol': symbol, 'timeframe': timeframe, 'bars': len(bars), 'bar_source': source,
-               'last_bar': bars[-1]['bar_time'] if bars else None, 'last_close': bars[-1]['close'] if bars else None, 'items': out})
+               'last_bar': bars[-1]['bar_time'] if bars else None, 'last_close': bars[-1]['close'] if bars else None, 'items': out,
+               'closes': [{'t': b['bar_time'], 'close': b['close']} for b in bars[-200:]],
+               'consensus': signal_library.consensus([x['score'] for x in out])})
 
 
 class BlendPreviewIn(BaseModel):
@@ -294,6 +299,65 @@ def blend_preview(payload: dict, _: str = Depends(require_operator)):
                'equation': algorithms.EQUATIONS['SIGNAL_BLEND'][0]})
 
 
+TF = Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
+
+
+@router.get('/signal-library/overview')
+def signal_overview(response: Response, timeframe: TF = 'H1', _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(signal_library.overview(db, timeframe))
+
+
+@router.get('/signal-library/instrument')
+def signal_instrument(response: Response, account_id: UUID, symbol: str = Query(..., min_length=1, max_length=64), _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(signal_library.instrument_matrix(db, account_id, symbol))
+
+
+@router.get('/signal-library/events')
+def signal_events(response: Response, limit: int = Query(200, ge=1, le=2000), timeframe: TF | None = None, code: str | None = Query(None, max_length=40),
+                  symbol: str | None = Query(None, max_length=64), _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(signal_library.events(db, limit, timeframe, code, symbol))}
+
+
+@router.get('/signal-library/correlation')
+def signal_correlation(response: Response, account_id: UUID, symbol: str = Query(..., min_length=1, max_length=64), timeframe: TF = 'H1',
+                       _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        end = _last_bar_time(db, account_id, symbol)
+        bars, source = backtest.load_bars(db, account_id, symbol, timeframe, end - timedelta(minutes=_TF_MIN[timeframe] * 1000), end)
+        defs = signal_library.definitions(db, active_only=True)
+    return _j({**signal_library.correlation(defs, bars), 'symbol': symbol, 'timeframe': timeframe, 'bar_source': source})
+
+
+class ResearchAllIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_id: UUID
+    symbol: str = Field(min_length=1, max_length=64)
+    timeframe: TF = 'H1'
+    days: int = Field(180, ge=1, le=3650)
+    horizons: list[int] = Field(default_factory=lambda: [1, 2, 5, 10, 20])
+
+
+@router.post('/signal-library/research-all')
+def signal_research_all(payload: dict, _: str = Depends(require_operator)):
+    data = parse(ResearchAllIn, payload)
+    hz = sorted({h for h in data.horizons if 1 <= h <= 500})[:8] or [1, 5, 20]
+    with store.transaction('read') as db:
+        end = _last_bar_time(db, data.account_id, data.symbol)
+        bars, source = backtest.load_bars(db, data.account_id, data.symbol, data.timeframe, end - timedelta(days=data.days), end)
+        defs = signal_library.definitions(db, active_only=True)
+    if len(bars) < 60:
+        raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
+    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'horizons': hz,
+               'items': signal_library.research_all(defs, bars, hz)})
+
+
 @router.post('/signal-library/research')
 def signal_research(payload: dict, _: str = Depends(require_operator)):
     data = parse(ResearchIn, payload)
@@ -308,6 +372,45 @@ def signal_research(payload: dict, _: str = Depends(require_operator)):
     out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold)
     out.update(symbol=data.symbol, timeframe=data.timeframe, bar_source=source)
     return _j(out)
+
+
+@router.get('/strategies/monitor')
+def strategy_monitor(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(strategy_health.monitor(db))
+
+
+# ----- Stage 4 → Stage 7: the execution handoff -----
+
+@router.get('/execution/flow')
+def execution_flow(response: Response, outcome: str | None = Query(None, max_length=120, pattern=r'^[A-Z_,]+$'), limit: int = Query(200, ge=1, le=2000),
+                   _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(handoff.flow(db, outcome, limit)), 'summary': _j(handoff.summary(db))}
+
+
+@router.post('/execution/decisions/{intent_id}/execute')
+def execute_decision(intent_id: UUID, payload: dict, user: Principal = Depends(_ops_or_risk)):
+    return _j(handoff.execute(user.username, intent_id, parse(handoff.ExecuteIn, payload or {})))
+
+
+@router.post('/execution/decisions/{intent_id}/decline')
+def decline_decision(intent_id: UUID, payload: dict, user: Principal = Depends(_ops_or_risk)):
+    return _j(handoff.decline(user.username, intent_id, parse(ReasonIn, payload).reason))
+
+
+@router.get('/execution/policies')
+def execution_policies(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(handoff.policies(db))}
+
+
+@router.put('/execution/policies/{deployment_id}')
+def put_execution_policy(deployment_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    return _j(handoff.set_policy(user.username, deployment_id, parse(handoff.PolicyIn, payload)))
 
 
 @router.post('/backtests', status_code=201)

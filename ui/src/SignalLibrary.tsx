@@ -8,7 +8,7 @@
  * predict? IC, t-stat, hit rate, quintiles, turnover, cost, verdict, chart), BlendEditor (the SIGNAL_BLEND recipe of a
  * strategy: components, weights, entry/exit, with the combined score worked out live on a chosen instrument).
  * Must never: compute a score itself (the backend computes; these screens show and ask). */
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Field } from './Configuration';
 import { Kpis, Msg, num, pill, useData, when, type Ctx, type Row } from './StageShell';
 
@@ -127,23 +127,58 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
   </section>;
 }
 
+/* One instrument and timeframe in focus, shared by every Stage 3 panel (a click on the board focuses it everywhere). */
+const FOCUS_KEY = 'corei.signals.focus';
+let focus: { src: string; tf: string } = (() => { try { return JSON.parse(localStorage.getItem(FOCUS_KEY) ?? '') ?? { src: '', tf: 'H1' }; } catch { return { src: '', tf: 'H1' }; } })();
+export function useFocus(): [{ src: string; tf: string }, (f: Partial<{ src: string; tf: string }>) => void] {
+  const [f, setF] = useState(focus);
+  useEffect(() => { const on = () => setF(focus); window.addEventListener('corei-signal-focus', on); return () => window.removeEventListener('corei-signal-focus', on); }, []);
+  return [f, (next) => { focus = { ...focus, ...next }; try { localStorage.setItem(FOCUS_KEY, JSON.stringify(focus)); } catch { /* private window */ } window.dispatchEvent(new Event('corei-signal-focus')); }];
+}
+function FocusBar({ label, children }: { label: string; children?: ReactNode }) {
+  const [f, set] = useFocus();
+  return <div className="intel-bar"><SourcePick value={f.src} change={v => set({ src: v })} label={`${label} instrument`} /><TfPick value={f.tf} change={v => set({ tf: v })} label={`${label} timeframe`} />{children}</div>;
+}
+const dirPill = (d?: string) => d ? pill(d, d === 'LONG' ? 'ok' : d === 'SHORT' ? 'live' : 'off') : null;
+function Legend() {
+  return <span className="sig-legend" aria-label="Score colours">{[['sig-s3', '≤ −60'], ['sig-s2', '−20…−60'], ['sig-s1', '0…−20'], ['sig-l1', '0…+20'], ['sig-l2', '+20…+60'], ['sig-l3', '≥ +60']].map(([c, l]) =>
+    <span key={c} className={c}>{l}</span>)}</span>;
+}
+
 export function SignalBoardLive() {
-  const [tf, setTf] = useState('H1'), [data, error] = useData<Row>(`trading/signal-library/board?timeframe=${tf}`, 30_000, [tf]);
-  const [cell, setCell] = useState<Row | null>(null);
+  const [f, setFocus] = useFocus();
+  const [tf, setTf] = useState(f.tf || 'H1'), [data, error] = useData<Row>(`trading/signal-library/board?timeframe=${tf}`, 30_000, [tf]);
+  const [cell, setCell] = useState<Row | null>(null), [q, setQ] = useState(''), [fam, setFam] = useState(''), [side, setSide] = useState(''), [sort, setSort] = useState('consensus');
   const items: Row[] = data?.items ?? [];
-  const codes = useMemo(() => [...new Set(items.map(r => r.code as string))], [items]);
-  const rows = useMemo(() => { const m = new Map<string, Row>(); items.forEach(r => { const k = `${r.account_code} · ${r.broker_symbol}`; const x = m.get(k) ?? { key: k, cells: {} as Row }; x.cells[r.code] = r; m.set(k, x); }); return [...m.values()]; }, [items]);
+  const codes = useMemo(() => [...new Set(items.filter(r => !fam || r.family === fam).map(r => r.code as string))], [items, fam]);
+  const families = useMemo(() => [...new Set(items.map(r => r.family as string).filter(Boolean))], [items]);
+  const rows = useMemo(() => {
+    const m = new Map<string, Row>();
+    items.forEach(r => { const k = `${r.account_code} · ${r.broker_symbol}`; const x = m.get(k) ?? { key: k, src: `${r.account_id}|${r.broker_symbol}`, cells: {} as Row }; x.cells[r.code] = r; m.set(k, x); });
+    const out: Row[] = [...m.values()].map((x: Row) => { const v = codes.map(c => x.cells[c]?.score).filter((s: any) => s != null).map(Number);
+      const mean = v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; const agree = mean == null ? null : Math.round(100 * v.filter(s => s !== 0 && (s > 0) === (mean > 0)).length / v.length);
+      return { ...x, mean, agree } as Row; });
+    return out.filter(x => (!q || x.key.toLowerCase().includes(q.toLowerCase())) && (!side || (side === 'LONG' ? (x.mean ?? 0) >= 20 : side === 'SHORT' ? (x.mean ?? 0) <= -20 : Math.abs(x.mean ?? 0) < 20)))
+      .sort((a: Row, b: Row) => sort === 'name' ? a.key.localeCompare(b.key) : sort === 'agree' ? (b.agree ?? -1) - (a.agree ?? -1) : Math.abs(b.mean ?? 0) - Math.abs(a.mean ?? 0));
+  }, [items, codes, q, side, sort]);
   return <section className="intel">
-    <div className="intel-bar"><TfPick value={tf} change={v => { setTf(v); setCell(null); }} label="Signal board timeframe" />
-      <small className="cfg-note">{rows.length} instruments × {codes.length} signals · recomputed after every closed bar · click a score for its working</small></div>
+    <div className="intel-bar"><TfPick value={tf} change={v => { setTf(v); setCell(null); setFocus({ tf: v }); }} label="Signal board timeframe" />
+      <input aria-label="Find an instrument" placeholder="Instrument or account…" value={q} onChange={e => setQ(e.target.value)} />
+      <select aria-label="Signal family" value={fam} onChange={e => setFam(e.target.value)}><option value="">Every family</option>{families.map(x => <option key={x}>{x}</option>)}</select>
+      <select aria-label="Composite side" value={side} onChange={e => setSide(e.target.value)}><option value="">Any composite</option><option value="LONG">Composite long (≥ +20)</option><option value="SHORT">Composite short (≤ −20)</option><option value="FLAT">Composite flat</option></select>
+      <select aria-label="Sort board" value={sort} onChange={e => setSort(e.target.value)}><option value="consensus">Strongest composite first</option><option value="agree">Most agreement first</option><option value="name">By name</option></select>
+      <Legend /></div>
     <Msg error={error} />
-    <div className="cfg-scroll"><table className="cfg-table compact intel-table sig-board"><thead><tr><th>Instrument</th>{codes.map(c => <th key={c} title={c}><small>{c.replace(/_/g, ' ')}</small></th>)}</tr></thead><tbody>
-      {rows.map(r => <tr key={r.key}><td><b>{r.key}</b></td>{codes.map(c => { const x = r.cells[c];
-        return <td key={c} className={`sig-cell ${scoreCls(x?.score)} ${cell && cell === x ? 'sel' : ''}`} onClick={() => x && setCell(x)} title={x?.worked}>{x ? fmtScore(x.score) : ''}</td>; })}</tr>)}
-      {data && !rows.length && <tr><td colSpan={codes.length + 1} className="cfg-note">No scores on {tf} yet. They are written by the intelligence engine after each run for every collected instrument (Market intelligence › Engine settings: timeframes).</td></tr>}
+    <div className="cfg-scroll"><table className="cfg-table compact intel-table sig-board"><thead><tr><th>Instrument</th><th title="Mean of the signals shown, and the share agreeing with its sign">Composite</th>{codes.map(c => <th key={c} title={c}><small>{c.replace(/_/g, ' ')}</small></th>)}</tr></thead><tbody>
+      {rows.map(r => <tr key={r.key}><td><button className="link" title="Focus this instrument in every Signals panel" onClick={() => setFocus({ src: r.src, tf })}><b>{r.key}</b></button></td>
+        <td className={`sig-cell sig-comp ${scoreCls(r.mean)}`}>{fmtScore(r.mean)}{r.agree != null && <small> {r.agree}%</small>}</td>
+        {codes.map(c => { const x = r.cells[c];
+        return <td key={c} className={`sig-cell ${scoreCls(x?.score)} ${cell && cell === x ? 'sel' : ''}`} onClick={() => { if (x) { setCell(x); setFocus({ src: r.src, tf }); } }} title={x?.worked}>{x ? fmtScore(x.score) : ''}</td>; })}</tr>)}
+      {data && !rows.length && <tr><td colSpan={codes.length + 2} className="cfg-note">{items.length ? 'No instrument matches the filters.' : `No scores on ${tf} yet. They are written by the intelligence engine after each run for every collected instrument (Market intelligence › Engine settings: timeframes).`}</td></tr>}
     </tbody></table></div>
+    <small className="cfg-note">{rows.length} instruments × {codes.length} signals · recomputed after every closed bar · click a score for its working; click an instrument to focus it in Explain, Timeframes, Correlation and Research.</small>
     {cell && <div className="sig-detail"><h4>{cell.code} · {cell.account_code} · {cell.broker_symbol} · {tf} <small className="cfg-note">bar {when(cell.bar_time)}</small></h4>
-      <p><b className={Number(cell.score) > 0 ? 'up' : Number(cell.score) < 0 ? 'down' : ''}>{fmtScore(cell.score)}</b> → {pill(cell.direction, cell.direction === 'LONG' ? 'ok' : cell.direction === 'SHORT' ? 'live' : 'off')}
+      <p><b className={Number(cell.score) > 0 ? 'up' : Number(cell.score) < 0 ? 'down' : ''}>{fmtScore(cell.score)}</b> → {dirPill(cell.direction)}
         <small className="cfg-note"> threshold ±{num(cell.threshold, 0)} · previous {fmtScore(cell.previous_score)}</small></p>
       <p className="sig-eqline"><code className="sig-eq">{cell.worked}</code></p>
       <Inputs inputs={cell.inputs} /></div>}
@@ -156,21 +191,136 @@ function Inputs({ inputs }: { inputs?: Row | null }) {
 }
 
 export function SignalExplain() {
-  const [src, setSrc] = useState(''), [tf, setTf] = useState('H1');
-  const [account, symbol] = src.split('|');
-  const [data, error] = useData<Row>(src ? `trading/signal-library/explain?account_id=${account}&symbol=${encodeURIComponent(symbol)}&timeframe=${tf}` : null, 60_000, [src, tf]);
+  const [f] = useFocus();
+  const [account, symbol] = f.src.split('|');
+  const [data, error] = useData<Row>(f.src ? `trading/signal-library/explain?account_id=${account}&symbol=${encodeURIComponent(symbol)}&timeframe=${f.tf}` : null, 60_000, [f.src, f.tf]);
+  const [big, setBig] = useState('');
+  const chosen = (data?.items ?? []).find((r: Row) => r.code === big);
+  const cons = data?.consensus;
   return <section className="intel">
-    <div className="intel-bar"><SourcePick value={src} change={setSrc} label="Explain instrument" /><TfPick value={tf} change={setTf} label="Explain timeframe" />
-      {data && <small className="cfg-note">{data.bars} bars ({String(data.bar_source).toLowerCase().replace(/_/g, ' ')}) · last close {fmtVal(Number(data.last_close))} at {when(data.last_bar)}</small>}</div>
+    <FocusBar label="Explain">{data && <small className="cfg-note">{data.bars} bars ({String(data.bar_source).toLowerCase().replace(/_/g, ' ')}) · last close {fmtVal(Number(data.last_close))} at {when(data.last_bar)}</small>}</FocusBar>
     <Msg error={error} />
-    {!src && <p className="cfg-note">Choose an instrument: every active signal is computed from its stored bars, with the formula, the inputs on the last closed bar, the arithmetic and the last 60 scores.</p>}
-    {data && <div className="sig-cards">{(data.items ?? []).map((r: Row) => <div key={r.code} className="sig-card">
-      <header><b>{r.code}</b> <small className="cfg-note">{r.family}</small><span className={`sig-badge ${scoreCls(r.score)}`}>{fmtScore(r.score)}</span>{pill(r.direction, r.direction === 'LONG' ? 'ok' : r.direction === 'SHORT' ? 'live' : 'off')}</header>
+    {!f.src && <p className="cfg-note">Choose an instrument (or click one on the live board): every active signal is computed from its stored bars, with the formula, the inputs on the last closed bar, the arithmetic and its recent scores.</p>}
+    {cons && cons.score != null && <p className="sig-consensus">Composite of {cons.n} signals <span className={`sig-badge ${scoreCls(cons.score)}`}>{fmtScore(cons.score)}</span> · {cons.agree_pct}% agree · <small className="cfg-note">composite = mean of every score; agreement = share with the composite's sign</small></p>}
+    {chosen && data && <div className="sig-detail"><h4>{chosen.code} on {data.symbol} {data.timeframe} — last {Math.min(200, data.closes?.length ?? 0)} bars <button className="link" onClick={() => setBig('')}>close</button></h4>
+      <ScoreChart series={(data.closes ?? []).map((c: Row, k: number) => ({ close: c.close, score: chosen.history?.[k - ((data.closes?.length ?? 0) - (chosen.history?.length ?? 0))] ?? null }))} threshold={Number(chosen.threshold)} /></div>}
+    {data && <div className="sig-cards">{(data.items ?? []).map((r: Row) => <div key={r.code} className={`sig-card ${big === r.code ? 'sel' : ''}`}>
+      <header><b>{r.code}</b> <small className="cfg-note">{r.family}</small><span className={`sig-badge ${scoreCls(r.score)}`}>{fmtScore(r.score)}</span>{dirPill(r.direction)}</header>
       <p className="sig-eqline"><small>Formula</small><code className="sig-eq">{r.equation}</code></p>
       <p className="sig-eqline"><small>This bar</small><code className="sig-eq">{r.worked}</code></p>
       <Inputs inputs={r.inputs} />
-      <MiniSpark values={r.recent ?? []} threshold={Number(r.threshold)} />
+      <span className="sig-cardfoot"><MiniSpark values={r.recent ?? []} threshold={Number(r.threshold)} /><button className="link" onClick={() => setBig(r.code)}>chart with price →</button></span>
     </div>)}</div>}
+  </section>;
+}
+
+export function SignalTimeframes() {
+  const [f] = useFocus();
+  const [account, symbol] = f.src.split('|');
+  const [data, error] = useData<Row>(f.src ? `trading/signal-library/instrument?account_id=${account}&symbol=${encodeURIComponent(symbol)}` : null, 60_000, [f.src]);
+  const [cell, setCell] = useState<Row | null>(null);
+  const tfs: string[] = data?.timeframes ?? [];
+  return <section className="intel">
+    <FocusBar label="Timeframes"><Legend /></FocusBar>
+    <Msg error={error} />
+    {!f.src || !data ? <p className="cfg-note">Choose an instrument: every signal on every scored timeframe, and the composite of each timeframe — do the short and long horizons agree?</p>
+      : <div className="cfg-scroll"><table className="cfg-table compact intel-table sig-board"><thead><tr><th>Signal</th>{tfs.map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>
+        <tr className="sig-comprow"><td><b>Composite</b> <small className="cfg-note">mean · agree</small></td>{tfs.map(t => { const c = data.consensus?.[t]; return <td key={t} className={`sig-cell ${scoreCls(c?.score)}`}>{fmtScore(c?.score)}{c?.agree_pct != null && <small> {c.agree_pct}%</small>}</td>; })}</tr>
+        {(data.signals ?? []).map((code: string) => <tr key={code}><td>{code}</td>{tfs.map(t => { const x = data.cells?.[code]?.[t];
+          return <td key={t} className={`sig-cell ${scoreCls(x?.score)} ${cell === x && x ? 'sel' : ''}`} title={x?.worked} onClick={() => x && setCell(x)}>{x ? fmtScore(x.score) : ''}</td>; })}</tr>)}
+        {data && !(data.signals ?? []).length && <tr><td colSpan={tfs.length + 1} className="cfg-note">No scores for this instrument yet.</td></tr>}
+      </tbody></table></div>}
+    {data?.overall?.score != null && <p className="sig-consensus">All timeframes together <span className={`sig-badge ${scoreCls(data.overall.score)}`}>{fmtScore(data.overall.score)}</span> · {data.overall.agree_pct}% of {data.overall.n} scores agree</p>}
+    {cell && <div className="sig-detail"><h4>{cell.code} · {cell.timeframe} <small className="cfg-note">bar {when(cell.bar_time)}</small></h4><p className="sig-eqline"><code className="sig-eq">{cell.worked}</code></p><Inputs inputs={cell.inputs} /></div>}
+  </section>;
+}
+
+export function SignalCorrelation() {
+  const [f] = useFocus();
+  const [account, symbol] = f.src.split('|');
+  const [data, error] = useData<Row>(f.src ? `trading/signal-library/correlation?account_id=${account}&symbol=${encodeURIComponent(symbol)}&timeframe=${f.tf}` : null, 0, [f.src, f.tf]);
+  const codes: string[] = data?.codes ?? [];
+  const cls = (r: number | null) => r == null ? 'sig-none' : r >= 0.8 ? 'sig-l3' : r >= 0.5 ? 'sig-l2' : r >= 0.2 ? 'sig-l1' : r <= -0.5 ? 'sig-s2' : r <= -0.2 ? 'sig-s1' : 'sig-zero';
+  return <section className="intel">
+    <FocusBar label="Correlation">{data && <small className="cfg-note">{data.bars} bars</small>}</FocusBar>
+    <Msg error={error} />
+    {!f.src || !data ? <p className="cfg-note">Choose an instrument: how alike the signals' scores are. Two signals at r ≥ 0.8 say the same thing — a blend of both counts it twice; low or negative r adds information.</p>
+      : <>
+        <div className="cfg-scroll"><table className="cfg-table compact intel-table sig-board sig-corr"><thead><tr><th />{codes.map(c => <th key={c} title={c}><small>{c.replace(/_/g, ' ')}</small></th>)}</tr></thead><tbody>
+          {codes.map((a, i) => <tr key={a}><td><small><b>{a}</b></small></td>{codes.map((b, j) => <td key={b} className={`sig-cell ${i === j ? 'sig-none' : cls(data.matrix[i][j])}`} title={`r(${a}, ${b})`}>{i === j ? '·' : data.matrix[i][j] == null ? '–' : data.matrix[i][j].toFixed(2)}</td>)}</tr>)}
+        </tbody></table></div>
+        {(data?.redundant ?? []).length > 0 && <p className="cfg-note"><b>Redundant pairs (|r| ≥ 0.8):</b> {data.redundant.map((x: Row) => `${x.a} ~ ${x.b} (${x.r})`).join(' · ')}</p>}
+        <p className="cfg-note">r = Pearson correlation of the two score series on the same bars.</p></>}
+  </section>;
+}
+
+export function SignalFlips() {
+  const [tf, setTf] = useState(''), [code, setCode] = useState('');
+  const [data, error] = useData<Row>(`trading/signal-library/events?limit=300${tf ? `&timeframe=${tf}` : ''}${code ? `&code=${code}` : ''}`, 30_000, [tf, code]);
+  const [defs] = useData<Row>('trading/signal-library/definitions', 0);
+  return <section className="intel">
+    <div className="intel-bar"><select aria-label="Flips timeframe" value={tf} onChange={e => setTf(e.target.value)}><option value="">Every timeframe</option>{TFS.map(t => <option key={t}>{t}</option>)}</select>
+      <select aria-label="Flips signal" value={code} onChange={e => setCode(e.target.value)}><option value="">Every signal</option>{(defs?.items ?? []).map((d: Row) => <option key={d.id}>{d.code}</option>)}</select>
+      <small className="cfg-note">Every time a library signal changed side on a closed bar (crossed its ± threshold).</small></div>
+    <Msg error={error} />
+    <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Bar</th><th>Signal</th><th>Instrument</th><th>Timeframe</th><th>Change</th><th>Score</th></tr></thead><tbody>
+      {(data?.items ?? []).map((e: Row) => <tr key={e.id}><td><small>{when(e.bar_time)}</small></td><td><b>{e.code}</b></td><td>{e.account_code} · {e.broker_symbol}</td><td>{e.timeframe}</td>
+        <td>{dirPill(e.from_direction)} → {dirPill(e.to_direction)}</td><td><small>{fmtScore(e.previous_score)} →</small> <b className={Number(e.score) > 0 ? 'up' : Number(e.score) < 0 ? 'down' : ''}>{fmtScore(e.score)}</b></td></tr>)}
+      {data && !(data.items ?? []).length && <tr><td colSpan={6} className="cfg-note">No flips recorded yet. They are written as the engine scores each new bar.</td></tr>}</tbody></table></div>
+  </section>;
+}
+
+export function SignalDashboard() {
+  const [f, setFocus] = useFocus();
+  const [tf, setTf] = useState(f.tf || 'H1'), [data, error] = useData<Row>(`trading/signal-library/overview?timeframe=${tf}`, 30_000, [tf]);
+  const [flips] = useData<Row>(`trading/signal-library/events?limit=8&timeframe=${tf}`, 30_000, [tf]);
+  const d = data ?? {};
+  return <section className="intel">
+    <div className="intel-bar"><TfPick value={tf} change={v => { setTf(v); setFocus({ tf: v }); }} label="Signal dashboard timeframe" />
+      <small className="cfg-note">Last scored {when(d.last_computed)} · instruments per timeframe: {Object.entries(d.instruments_by_timeframe ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}</small></div>
+    <Msg error={error} />
+    <Kpis items={[['Signals in the library', `${d.definitions_active ?? 0} active`, `${d.definitions_total ?? 0} in all; Signal library below`], ['Instruments scored', d.instruments ?? 0, `on ${tf}`],
+      ['Long', d.long ?? 0, 'Scores ≥ +threshold', 'up'], ['Short', d.short ?? 0, 'Scores ≤ −threshold', 'down'], ['Flat', d.flat ?? 0], ['Flips in 24 h', d.flips_24h ?? 0, 'Signals that changed side']]} />
+    <div className="sig-split">
+      <div><h4>Strongest scores now</h4>
+        <table className="cfg-table compact intel-table"><tbody>{(d.strongest ?? []).map((r: Row, i: number) => <tr key={i} title={r.worked}><td><b>{r.code}</b><br /><small className="cfg-note">{r.account_code} · {r.broker_symbol}</small></td>
+          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td>{dirPill(r.direction)}</td></tr>)}
+          {data && !(d.strongest ?? []).length && <tr><td className="cfg-note">No scores on {tf} yet.</td></tr>}</tbody></table></div>
+      <div><h4>Composite per instrument</h4>
+        <table className="cfg-table compact intel-table"><tbody>{(d.consensus ?? []).slice(0, 12).map((r: Row) => <tr key={r.account_code + r.broker_symbol}>
+          <td><button className="link" title="Focus this instrument in every Signals panel" onClick={() => setFocus({ src: `${r.account_id}|${r.broker_symbol}`, tf })}>{r.account_code} · {r.broker_symbol}</button></td>
+          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td><span className="sig-bar"><i style={{ width: `${r.agree_pct ?? 0}%` }} /></span> <small>{r.agree_pct ?? '–'}% agree of {r.n}</small></td></tr>)}</tbody></table></div>
+      <div><h4>Latest flips</h4>
+        <table className="cfg-table compact intel-table"><tbody>{(flips?.items ?? []).map((e: Row) => <tr key={e.id}><td><small>{new Date(e.bar_time).toISOString().slice(5, 16).replace('T', ' ')}</small></td>
+          <td><b>{e.code}</b> <small>{e.broker_symbol}</small></td><td>{dirPill(e.from_direction)} → {dirPill(e.to_direction)}</td></tr>)}
+          {flips && !(flips.items ?? []).length && <tr><td className="cfg-note">None yet.</td></tr>}</tbody></table></div>
+    </div>
+    <p className="cfg-note">Stage 3 scores every collected instrument with every library formula on each closed bar (−100 strong short … +100 strong long). Stage 4 strategies combine these scores into decisions; Stage 5 checks them; Stage 7 executes them.</p>
+  </section>;
+}
+
+export function ResearchAll() {
+  const [f] = useFocus();
+  const [days, setDays] = useState(180), [hz, setHz] = useState('1, 2, 5, 10, 20');
+  const [res, setRes] = useState<Row | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
+  const run = async () => {
+    const [account_id, symbol] = f.src.split('|'); setBusy(true); setErr('');
+    try { setRes(await api('trading/signal-library/research-all', 'POST', { account_id, symbol, timeframe: f.tf, days, horizons: hz.split(/[ ,]+/).filter(Boolean).map(Number) })); }
+    catch (x) { setErr((x as Error).message); setRes(null); } finally { setBusy(false); }
+  };
+  const vcls = (v?: string) => v === 'PREDICTIVE' ? 'ok' : v === 'WEAK' ? 'warn' : 'off';
+  return <section className="intel">
+    <FocusBar label="Research all"><label><small>Days</small> <input aria-label="Research all days" type="number" min={1} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} /></label>
+      <label><small>Horizons</small> <input aria-label="Research all horizons" value={hz} onChange={e => setHz(e.target.value)} /></label>
+      <button className="primary" disabled={busy || !f.src} onClick={() => void run()}>{busy ? 'Researching…' : 'Rank every signal'}</button></FocusBar>
+    <Msg error={err} />
+    {!res && <p className="cfg-note">Every active signal researched on the same bars, ranked by the strength of its best horizon (|IC t-stat|). Use it to pick the components of a signal blend (Strategies).</p>}
+    {res && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>#</th><th>Signal</th><th>Verdict</th><th>Best horizon</th><th>IC</th><th>t</th><th>Hit rate</th><th>Edge / cost (bp)</th><th>Coverage</th><th>Turnover</th><th>IC by horizon</th></tr></thead><tbody>
+      {(res.items ?? []).map((r: Row, i: number) => <tr key={r.code}><td>{i + 1}</td><td><b>{r.code}</b><br /><small className="cfg-note">{r.family}</small></td><td>{r.error ? <small className="cfg-error-text">{r.error}</small> : pill(r.verdict ?? '–', vcls(r.verdict))}</td>
+        <td>{r.best_horizon ?? '–'}</td><td>{r.ic ?? '–'}</td><td>{r.ic_t ?? '–'}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td>{r.edge_bp ?? '–'} / {r.cost_bp ?? '–'}</td>
+        <td>{r.coverage_pct == null ? '–' : `${r.coverage_pct}%`}</td><td>{r.turnover_per_bar ?? '–'}</td>
+        <td><span className="sig-icbars">{Object.entries(r.ic_by_horizon ?? {}).map(([h, v]) => <span key={h} title={`h=${h}: IC ${v ?? '–'}`}><i className={Number(v) >= 0 ? 'up' : 'down'} style={{ height: `${Math.min(18, 2 + Math.abs(Number(v ?? 0)) * 180)}px` }} /><small>{h}</small></span>)}</span></td></tr>)}</tbody></table>
+      <p className="cfg-note">{res.bars} {res.timeframe} bars of {res.symbol}. IC = rank correlation of the score with the return h bars later; |t| ≥ 2 is unlikely by chance; the edge must beat the spread.</p></div>}
   </section>;
 }
 

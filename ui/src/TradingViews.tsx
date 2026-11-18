@@ -1,5 +1,6 @@
-/* Stages 3–7 screens: Signals, Strategies, Risk, Portfolio, Orders — each in the same StageShell (Stage 8 and the 0.45
- * additions live in TradingExtras.tsx).
+/* Stages 3–7 screens: Signals, Strategies, Risk, Portfolio, Orders — each in the same StageShell. Panels live beside:
+ * Stage 3 in SignalLibrary.tsx, the Stage 4 desk in StrategyDesk.tsx, the decision flow and execution policy in
+ * ExecutionFlow.tsx, Stage 8 and the 0.45 additions in TradingExtras.tsx.
  * Why: the trading core (signals → risk → orders → portfolio) is visible and controllable step by step, with the
  * reason for every refusal on screen.
  * Purpose: each stage's Overview / Work / Monitor / Configure sections over /api/trading.
@@ -9,7 +10,9 @@ import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 import { goto } from './nav';
-import { AlgorithmEquations, BlendEditor, Formulas, SignalBoardLive, SignalExplain, SignalLibrary, SignalResearch } from './SignalLibrary';
+import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
+import { DecisionFlow, DecisionQueue, ExecutionPolicies } from './ExecutionFlow';
+import { BacktestCompare, StrategyDashboard } from './StrategyDesk';
 import { Allocation, Attribution, BrokerBook, Connections, CopyTrading, Drift, Optimise, Routing, Stress, Unknown, VarMargin, Waiting } from './TradingExtras';
 
 /* ---------- shared ---------- */
@@ -94,21 +97,7 @@ function RuntimeLine({ canRun }: { canRun: boolean }) {
   </div>;
 }
 
-/* ---------- Stage 3 · Signals ---------- */
-
-function SignalOverview({ ctx }: { ctx: Ctx }) {
-  const [ov] = useData<Row>('trading/overview', 15_000), [list] = useData<Row>('trading/signals?limit=12', 15_000);
-  const s = ov?.signals_today ?? {};
-  return <section className="intel">
-    <RuntimeLine canRun={ctx.canOps || ctx.canRisk} />
-    <Kpis items={[['Signals today', Object.values(s).reduce((a: number, b: any) => a + Number(b), 0)], ['Acted on', s.ACTED ?? 0, 'Turned into an order or kept the position', 'up'],
-      ['Refused', s.REJECTED ?? 0, 'By validation or risk: see the reasons', s.REJECTED ? 'warn' : ''], ['Waiting', (s.VALID ?? 0) + (s.NEW ?? 0)], ['Expired', s.EXPIRED ?? 0],
-      ['Active deployments', ov?.deployments?.ACTIVE ?? 0, 'Strategies running (Setup › Deployments)']]} />
-    <h4>Latest signals</h4><SignalTable rows={list?.items ?? []} />
-    <p className="cfg-note">A signal is born on a closed bar when a running strategy changes its target (or by hand). It is checked (price fresh, spread, market open, events, duplicates),
-      the decision compares the target with the position held, and Risk sizes and approves the order. Every refusal says why.</p>
-  </section>;
-}
+/* ---------- Stage 4 output: strategy signals and their quality (Stage 3 lives in SignalLibrary.tsx) ---------- */
 
 function SignalTable({ rows, open }: { rows: Row[]; open?: (r: Row) => void }) {
   if (!rows.length) return <p className="cfg-note">No signals yet. They appear when an active deployment's strategy changes its target on a closed bar (Strategies › Runtime shows each deployment's state).</p>;
@@ -165,15 +154,6 @@ function SignalBoard({ ctx }: { ctx: Ctx }) {
   </section>;
 }
 
-function Intents() {
-  const [data, error] = useData<Row>('trading/intents', 20_000);
-  return <section className="intel"><Msg error={error} />
-    <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Target</th><th>Held → wanted</th><th>Outcome</th><th>Reasons</th></tr></thead><tbody>
-      {(data?.items ?? []).map((r: Row) => <tr key={r.id}><td><small>{when(r.created_at)}</small></td><td>{r.strategy_code ?? 'manual'}</td><td>{r.symbol}</td><td>{r.account_code}</td><td>{r.target}</td>
-        <td>{num(r.current_qty, 2)} → {num(r.target_qty, 2)}</td><td>{statePill(r.outcome)}</td><td><small>{(r.reasons ?? []).join('; ')}</small></td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={8} className="cfg-note">No decisions yet.</td></tr>}</tbody></table></div></section>;
-}
-
 function Quality() {
   const [data, error] = useData<Row>('trading/signals/quality', 60_000);
   return <section className="intel"><Msg error={error} />
@@ -186,17 +166,16 @@ function Quality() {
 
 export function SignalsView() {
   const sections: Section[] = [
-    { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Today\'s signals, what happened to them, and the runtime.', render: ctx => <SignalOverview ctx={ctx} /> },
-    { id: 'board', label: 'Live signal board', group: 'Overview', hint: 'Every collected instrument × every library signal: the score now (−100…+100); click one for its equation with this bar’s numbers.', render: () => <SignalBoardLive /> },
-    { id: 'explain', label: 'Explain an instrument', group: 'Work', hint: 'One instrument: each signal’s formula, its inputs on the last bar, the arithmetic, the side and the last 60 scores.', render: () => <SignalExplain /> },
-    { id: 'research', label: 'Signal research', group: 'Work', hint: 'Does a signal predict? Information coefficient, t-stat, hit rate, quintiles, turnover and cost over several horizons.', render: () => <SignalResearch /> },
-    { id: 'signals', label: 'Strategy signals', group: 'Work', hint: 'Signals raised by running strategies (and by hand) with their state and reasons; open one for its history.', render: ctx => <SignalBoard ctx={ctx} /> },
-    { id: 'intents', label: 'Decisions', group: 'Work', hint: 'What each acted signal decided: target position, position held, the order needed.', render: () => <Intents /> },
-    { id: 'quality', label: 'Signal quality', group: 'Monitor', hint: 'Were the signals right? Forward move and hit rate per strategy and instrument.', render: () => <Quality /> },
-    { id: 'checks', label: 'Checks and decision', group: 'Configure', hint: 'The checks every signal passes, and how signals become a decision.',
-      render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['max_quote_age_seconds', 'max_spread_atr_pct', 'block_on_event', 'min_strength', 'decision_mode', 'agree_count']} /> },
+    { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'What the library says now: long, short and flat scores, the strongest scores, the composite of each instrument and the latest flips.', render: () => <SignalDashboard /> },
+    { id: 'board', label: 'Live signal board', group: 'Overview', hint: 'Every collected instrument × every library signal with its composite: filter, sort, click a score for its equation with this bar’s numbers.', render: () => <SignalBoardLive /> },
+    { id: 'explain', label: 'Explain an instrument', group: 'Work', hint: 'One instrument: each signal’s formula, its inputs on the last bar, the arithmetic, the side, and a chart against price.', render: () => <SignalExplain /> },
+    { id: 'timeframes', label: 'Across timeframes', group: 'Work', hint: 'One instrument: every signal on every timeframe and the composite of each — do the horizons agree?', render: () => <SignalTimeframes /> },
+    { id: 'research', label: 'Signal research', group: 'Work', hint: 'Does one signal predict? Information coefficient, t-stat, hit rate, quintiles, turnover and cost over several horizons.', render: () => <SignalResearch /> },
+    { id: 'rank', label: 'Rank every signal', group: 'Work', hint: 'Every active signal researched on the same bars and ranked: the candidates for a strategy’s signal blend.', render: () => <ResearchAll /> },
+    { id: 'correlation', label: 'Signal correlation', group: 'Monitor', hint: 'How alike the signals are on one instrument: redundant pairs count twice in a blend.', render: () => <SignalCorrelation /> },
+    { id: 'flips', label: 'Signal flips', group: 'Monitor', hint: 'Every time a signal changed side on a closed bar.', render: () => <SignalFlips /> },
     { id: 'library', label: 'Signal library', group: 'Configure', hint: 'Every signal formula with its parameters, threshold and timeframes: tune, pause or add your own.', render: ctx => <SignalLibrary ctx={ctx} /> },
-    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every signal formula, the side rule, the checks and the decision, and how research measures prediction.', render: () => <Formulas stage="Signals" /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every signal formula, the side rule, the composite, flips, correlation and how research measures prediction.', render: () => <Formulas stage="Signals" /> },
   ];
   return <StageShell view="Signals" sections={sections} />;
 }
@@ -313,11 +292,18 @@ function Performance() {
 
 export function StrategiesView() {
   const sections: Section[] = [
+    { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Every strategy at once: position and P&L, last signal and decision, drift, and how its decisions reach execution — pause, resume, change handoff.', render: ctx => <StrategyDashboard ctx={ctx} /> },
     { id: 'runtime', label: 'Runtime', group: 'Overview', hint: 'Every deployment: is it running, on which bar, what target, and what needs attention.', render: ctx => <Runtime ctx={ctx} /> },
+    { id: 'signals', label: 'Strategy signals', group: 'Work', hint: 'Signals raised by running strategies (and by hand) with their state and reasons; open one for its history; raise one by hand.', render: ctx => <SignalBoard ctx={ctx} /> },
+    { id: 'intents', label: 'Decisions', group: 'Work', hint: 'What each signal decided: target, position held, the order needed, and how it went to execution.', render: ctx => <DecisionFlow ctx={ctx} compact /> },
     { id: 'backtest', label: 'Backtest', group: 'Work', hint: 'A version, or an idea, on stored history with costs; trades, equity and metrics.', render: ctx => <Backtest ctx={ctx} /> },
+    { id: 'compare', label: 'Compare backtests', group: 'Work', hint: 'Up to four saved backtests side by side: every metric and the equity curves.', render: () => <BacktestCompare /> },
     { id: 'optimise', label: 'Optimise', group: 'Work', hint: 'Every combination of parameter values, and walk-forward: chosen on one part, tested on the next.', render: ctx => <Optimise ctx={ctx} /> },
     { id: 'performance', label: 'Performance', group: 'Monitor', hint: 'Live results per strategy, instrument and account (paper and real).', render: () => <Performance /> },
+    { id: 'quality', label: 'Signal quality', group: 'Monitor', hint: 'Were the strategies\' signals right? Forward move and hit rate per strategy and instrument.', render: () => <Quality /> },
     { id: 'drift', label: 'Drift', group: 'Monitor', hint: 'Is each running strategy still behaving like its backtest?', render: () => <Drift /> },
+    { id: 'checks', label: 'Checks and decision', group: 'Configure', hint: 'The checks every strategy signal passes, and how signals become a decision.',
+      render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['max_quote_age_seconds', 'max_spread_atr_pct', 'block_on_event', 'min_strength', 'decision_mode', 'agree_count']} /> },
     { id: 'drift-settings', label: 'Drift settings', group: 'Configure', hint: 'When live results count as drift.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['drift_min_trades', 'drift_tolerance_pct']} /> },
     { id: 'algorithms', label: 'Algorithms', group: 'Configure', hint: 'The rule sets a version can use, each with its equation, strength formula and parameters.', render: () => <AlgorithmEquations /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every algorithm’s rule, sizing (fixed, value, % of equity at an ATR stop), protective exits, backtest fills and metrics, walk-forward and drift.', render: () => <Formulas stage="Strategies" /> },
@@ -641,6 +627,8 @@ function WithDetail({ ctx, body }: { ctx: Ctx; body: (open: (id: string) => void
 export function OrdersView() {
   const sections: Section[] = [
     { id: 'today', label: 'Dashboard', group: 'Overview', hint: 'Orders today, working orders and anything that needs a person.', render: ctx => <OrdersOverview ctx={ctx} /> },
+    { id: 'flow', label: 'From strategies', group: 'Overview', hint: 'Every decision coming from the strategies: signal → decision → risk → order → fill, with what waits for you.', render: ctx => <DecisionFlow ctx={ctx} /> },
+    { id: 'queue', label: 'Decision queue', group: 'Work', hint: 'Decisions waiting for a trader: execute (full or smaller, market or limit) or decline — one or all.', render: ctx => <DecisionQueue ctx={ctx} /> },
     { id: 'orders', label: 'Orders', group: 'Work', hint: 'Every order with its full history: open one to see each step, the risk check and the fills.', render: ctx => <Blotter ctx={ctx} /> },
     { id: 'ticket', label: 'Order ticket', group: 'Work', hint: 'Place a paper or real order by hand, on one account or routed; same risk check.', render: ctx => <Ticket ctx={ctx} /> },
     { id: 'waiting', label: 'Waiting', group: 'Work', hint: 'Real orders waiting for a second person (four-eyes) or for the dispatcher.', render: ctx => <WithDetail ctx={ctx} body={open => <Waiting ctx={ctx} open={open} />} /> },
@@ -648,6 +636,7 @@ export function OrdersView() {
     { id: 'fills', label: 'Fills', group: 'Monitor', hint: 'Every fill with the price at the time, the slippage and the latency.', render: () => <Fills /> },
     { id: 'connections', label: 'Broker connections', group: 'Monitor', hint: 'The dispatcher, order sending, and which accounts can take real orders through what.', render: () => <Connections /> },
     { id: 'routing', label: 'Routing', group: 'Monitor', hint: 'Compare accounts for one order: price, spread, slippage, eligibility.', render: () => <Routing /> },
+    { id: 'policy', label: 'Execution policy', group: 'Configure', hint: 'Per strategy: automatic, trader approves or signal only; market or limit, offset, time in force, approval window.', render: ctx => <ExecutionPolicies ctx={ctx} /> },
     { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills, real orders (pre-check, four-eyes, timeouts, magic number), reconciliation.', render: ctx => <ExecutionSettings ctx={ctx} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Client order ID, paper fill price, slippage, latency, routing scores and the UNKNOWN look-up.', render: () => <Formulas stage="Execution" /> },
   ];

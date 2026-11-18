@@ -1,4 +1,4 @@
-"""Signals and decisions (Stage 3 · Signal intelligence).
+"""Strategy signals and decisions (Stage 4 · the output of a running strategy).
 
 Why it exists: a strategy's output must be recorded, checked and turned into exactly one decision per deployment,
 with the reason for every refusal visible, before anything is sized or sent.
@@ -11,7 +11,10 @@ Responsibilities: tr_signals, tr_signal_events, tr_intents. Signal states: NEW �
 Must never: size or send an order itself (risk sizes, execution sends), or skip validation for a manual signal.
 Dependencies: trading.common, trading.risk, trading.oms, trading.portfolio, md.markets, intel.workspace.
 Consumers: trading.runtime, trading_api.
-Architectural position: Stage 3, between strategies (Stage 4, which produce signals) and risk (Stage 5).
+Architectural position: the output side of Stage 4 (a running strategy's signal and its decision), before risk (Stage
+5) and execution (Stage 7). How the decision reaches execution is the deployment's execution policy (trading.handoff):
+AUTO places the order now, APPROVE leaves it waiting in the execution queue, SIGNAL_ONLY records it. Manual signals are
+an operator's decision and are always placed.
 Note on time: a signal is stamped with its bar's close time (event time); the freshness of the live price is
 measured against the time of the decision, which is the only place the machine clock enters a decision.
 """
@@ -28,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .. import config_store as store
 from ..md import markets
-from . import oms, portfolio, risk
+from . import handoff, oms, portfolio, risk
 from .common import D, TIMEFRAME_SECONDS, ZERO, data_source, deployments, instrument, quote, settings
 
 SIDE_TARGET = {'BUY': 'LONG', 'SELL': 'SHORT', 'FLAT': 'FLAT'}
@@ -155,12 +158,22 @@ def process(db, sig: dict, dep: dict, now: datetime, actor: str = 'runtime') -> 
         return _intent(db, sig, dep, target, current, want, 'NO_CHANGE', [])
     intent_id = uuid4()
     stop_loss, take_profit = protective_levels(dep, target, want, current, q, (sig.get('features') or {}).get('atr14'))
-    order = oms.place(db, account_id=dep['account_id'], instrument_id=dep['instrument_id'], side='BUY' if delta > 0 else 'SELL', quantity=abs(delta),
-                      mode=dep.get('mode') or 'PAPER', deployment=dep, intent_id=intent_id, seed=f"intent:{dep['id']}:{sig['id']}", actor=actor,
+    pol = handoff.policy(dep)
+    if sig['source'] == 'RUNTIME' and pol['handoff'] == 'APPROVE':
+        return handoff.pend(db, sig, dep, target=target, current=current, want=want, stop=stop_loss, take=take_profit, q=q, note=note, now=now)
+    if sig['source'] == 'RUNTIME' and pol['handoff'] == 'SIGNAL_ONLY':
+        return handoff.record(db, sig, dep, target=target, current=current, want=want, stop=stop_loss, take=take_profit, q=q, note=note)
+    side = 'BUY' if delta > 0 else 'SELL'
+    otype, limit, tif = handoff.order_terms(pol, side, q, D(instrument(db, dep['instrument_id']).get('tick_size')) or Decimal('0.00001'))
+    order = oms.place(db, account_id=dep['account_id'], instrument_id=dep['instrument_id'], side=side, quantity=abs(delta), order_type=otype, limit_price=limit,
+                      time_in_force=tif, mode=dep.get('mode') or 'PAPER', deployment=dep, intent_id=intent_id, seed=f"intent:{dep['id']}:{sig['id']}", actor=actor,
                       source=('REALIGN' if sig.get('realign') else 'RUNTIME') if sig['source'] == 'RUNTIME' else 'MANUAL', at=now, data_source=src,
                       stop_loss=stop_loss, take_profit=take_profit)
     refused = order['state'] == 'REJECTED'
     _intent(db, sig, dep, target, current, want, 'REFUSED' if refused else 'ORDERED', order.get('reasons') or [], intent_id=intent_id, order_id=order['id'])
+    db.execute('UPDATE tr_intents SET side=%s, quantity=%s, order_type=%s, limit_price=%s, time_in_force=%s, stop_loss=%s, take_profit=%s, decision_bid=%s, '
+               'decision_ask=%s, sizing_note=%s, decided_by=%s, decided_at=now() WHERE id=%s',
+               (side, abs(delta), otype, limit, tif, stop_loss, take_profit, q and q['bid'], q and q['ask'], note or None, actor, str(intent_id)))
     _set(db, sig['id'], 'REJECTED' if refused else 'ACTED', 'risk' if refused else 'execution',
          ('; '.join(order.get('reasons') or [])) if refused else f"order {order['client_order_id']} {order['state'].lower()} ({note or 'kept size'})",
          order.get('reasons') if refused else None)

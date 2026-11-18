@@ -13,6 +13,9 @@ Purpose:
                correlation), its t-statistic, hit rate, average return by score quintile, turnover, coverage, and
                the typical move against the typical spread (cost).
   definitions  the library itself (built-in presets plus the desk's own), versioned and audited.
+  overview, instrument_matrix, events, correlation, research_all
+               the dashboard (strongest scores, consensus per instrument), one instrument across timeframes, every flip
+               of side (sig_events), how alike the signals are, and every signal researched on the same bars.
 Must never: use money values (scores are dimensionless analytics), peek at future bars when computing a score
 (forward returns are used only in research, never inside a score), or hide how a number was made.
 Dependencies: intel.indicators (the same indicators as Stage 2), config_store. Consumers: intel.engine (live
@@ -431,6 +434,13 @@ def live_update(db, account_id, symbol: str, tf: str, bars: list[dict], defs: li
             continue
         last, prev = res[-1], (res[-2] if len(res) > 1 else None)
         score = None if last is None else round(last[0], 2)
+        if last is not None and prev is not None:
+            th = float(d['threshold'])
+            was, now_dir = direction(prev[0], th), direction(last[0], th)
+            if was != now_dir:  # a flip on this bar: kept once per bar, so a re-run never doubles it
+                db.execute('INSERT INTO sig_events(definition_id, account_id, broker_symbol, timeframe, bar_time, from_direction, to_direction, score, previous_score) '
+                           'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+                           (str(d['id']), str(account_id), symbol, tf, bars[-1]['bar_time'], was, now_dir, score, round(prev[0], 2)))
         db.execute("""INSERT INTO sig_live(definition_id, account_id, broker_symbol, timeframe, bar_time, score, previous_score, direction, inputs, computed_at)
                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
                       ON CONFLICT (definition_id, account_id, broker_symbol, timeframe) DO UPDATE SET bar_time=EXCLUDED.bar_time, score=EXCLUDED.score,
@@ -451,8 +461,107 @@ def board(db, timeframe: str) -> dict:
     for r in rows:
         x = store.clean(r)
         x['worked'] = worked(r['kind'], params_of(r['kind'], r['parameters']), None if r['score'] is None else float(r['score']), r['inputs'])
+        x['family'] = KINDS.get(r['kind'], {}).get('family')
         out.append(x)
     return {'timeframe': timeframe, 'items': out}
+
+
+def consensus(scores: list[float]) -> dict:
+    """Composite of several signals on one instrument: mean score, and the share agreeing with its sign."""
+    xs = [x for x in scores if x is not None]
+    if not xs:
+        return {'score': None, 'agree_pct': None, 'n': 0}
+    m = sum(xs) / len(xs)
+    same = sum(1 for x in xs if (x > 0) == (m > 0) and x != 0)
+    return {'score': round(m, 1), 'agree_pct': round(100 * same / len(xs)), 'n': len(xs)}
+
+
+def overview(db, timeframe: str) -> dict:
+    """Stage 3 dashboard: what the library says now on one timeframe."""
+    defs = db.execute("SELECT count(*) FILTER (WHERE status='ACTIVE') AS active, count(*) AS total FROM sig_definitions").fetchone()
+    rows = board(db, timeframe)['items']
+    by_inst: dict = {}
+    for r in rows:
+        k = (r['account_code'], r['broker_symbol'], str(r['account_id']))
+        by_inst.setdefault(k, []).append(float(r['score']) if r['score'] is not None else None)
+    cons = sorted(({'account_code': k[0], 'broker_symbol': k[1], 'account_id': k[2], **consensus(v)} for k, v in by_inst.items()),
+                  key=lambda x: -abs(x['score'] or 0))
+    scored = [r for r in rows if r['score'] is not None]
+    strongest = sorted(scored, key=lambda r: -abs(float(r['score'])))[:12]
+    flips = db.execute("SELECT count(*) AS n FROM sig_events WHERE at >= now() - interval '24 hours' AND timeframe=%s", (timeframe,)).fetchone()['n']
+    last = db.execute('SELECT max(computed_at) AS t FROM sig_live WHERE timeframe=%s', (timeframe,)).fetchone()['t']
+    tfs = {r['timeframe']: r['n'] for r in db.execute('SELECT timeframe, count(DISTINCT (account_id, broker_symbol)) AS n FROM sig_live GROUP BY 1').fetchall()}
+    return {'timeframe': timeframe, 'definitions_active': defs['active'], 'definitions_total': defs['total'], 'instruments': len(by_inst),
+            'scores': len(scored), 'long': sum(1 for r in scored if r['direction'] == 'LONG'), 'short': sum(1 for r in scored if r['direction'] == 'SHORT'),
+            'flat': sum(1 for r in scored if r['direction'] == 'FLAT'), 'flips_24h': flips, 'last_computed': last, 'instruments_by_timeframe': tfs,
+            'strongest': [{k: r[k] for k in ('code', 'account_code', 'broker_symbol', 'score', 'direction', 'worked', 'bar_time', 'threshold')} for r in strongest],
+            'consensus': cons}
+
+
+def instrument_matrix(db, account_id, symbol: str) -> dict:
+    """One instrument: every active signal × every timeframe scored, with the consensus per timeframe."""
+    rows = db.execute("""SELECT l.*, d.code, d.kind, d.threshold, d.parameters FROM sig_live l JOIN sig_definitions d ON d.id=l.definition_id
+                         WHERE l.account_id=%s AND l.broker_symbol=%s AND d.status='ACTIVE' ORDER BY d.code""", (str(account_id), symbol)).fetchall()
+    order = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
+    tfs = [t for t in order if any(r['timeframe'] == t for r in rows)]
+    cells: dict = {}
+    for r in rows:
+        x = store.clean(r)
+        x['worked'] = worked(r['kind'], params_of(r['kind'], r['parameters']), None if r['score'] is None else float(r['score']), r['inputs'])
+        cells.setdefault(r['code'], {})[r['timeframe']] = x
+    cons = {t: consensus([float(c[t]['score']) for c in cells.values() if t in c and c[t]['score'] is not None]) for t in tfs}
+    allv = [float(c[t]['score']) for c in cells.values() for t in c if c[t]['score'] is not None]
+    return {'broker_symbol': symbol, 'timeframes': tfs, 'signals': sorted(cells), 'cells': cells, 'consensus': cons, 'overall': consensus(allv)}
+
+
+def events(db, limit: int = 200, timeframe: str | None = None, code: str | None = None, symbol: str | None = None) -> list[dict]:
+    where, args = ['TRUE'], []
+    for col, v in (('e.timeframe', timeframe), ('d.code', code), ('e.broker_symbol', symbol)):
+        if v:
+            where.append(f'{col}=%s'); args.append(v)
+    rows = db.execute(f"""SELECT e.*, d.code, d.name, a.code AS account_code FROM sig_events e JOIN sig_definitions d ON d.id=e.definition_id
+                          JOIN cfg_accounts a ON a.id=e.account_id WHERE {' AND '.join(where)} ORDER BY e.bar_time DESC, e.id DESC LIMIT %s""", [*args, limit]).fetchall()
+    return [store.clean(r) for r in rows]
+
+
+def correlation(defs: list[dict], bars: list[dict]) -> dict:
+    """Pairwise correlation of the signals' score series on one instrument: two signals at 0.9 say the same thing
+    twice (a blend would double-count it); low or negative correlation adds information."""
+    series = {}
+    for d in defs:
+        try:
+            series[d['code']] = [None if x is None else x[0] for x in compute(d['kind'], d['parameters'], bars)]
+        except Exception:  # noqa: BLE001
+            continue
+    codes = list(series)
+    m = []
+    for a in codes:
+        row = []
+        for b in codes:
+            pairs = [(x, y) for x, y in zip(series[a], series[b]) if x is not None and y is not None]
+            c = _corr([x for x, _ in pairs], [y for _, y in pairs]) if len(pairs) >= 20 else None
+            row.append(None if c is None else round(c, 2))
+        m.append(row)
+    redundant = [{'a': codes[i], 'b': codes[j], 'r': m[i][j]} for i in range(len(codes)) for j in range(i + 1, len(codes))
+                 if m[i][j] is not None and abs(m[i][j]) >= 0.8]
+    return {'codes': codes, 'matrix': m, 'redundant': redundant, 'bars': len(bars)}
+
+
+def research_all(defs: list[dict], bars: list[dict], horizons: list[int]) -> list[dict]:
+    """Every signal researched on the same bars, ranked by the strength of its best horizon (|IC t-stat|)."""
+    out = []
+    for d in defs:
+        try:
+            r = research(d['kind'], d['parameters'], bars, horizons, float(d['threshold']))
+        except Exception as exc:  # noqa: BLE001
+            out.append({'code': d['code'], 'kind': d['kind'], 'error': str(exc)[:200]})
+            continue
+        best = next((h for h in r['horizons'] if h['horizon'] == r['best_horizon']), None) or {}
+        out.append({'code': d['code'], 'name': d['name'], 'kind': d['kind'], 'family': KINDS[d['kind']]['family'], 'verdict': r['verdict'],
+                    'best_horizon': r['best_horizon'], 'ic': best.get('ic'), 'ic_t': best.get('ic_t'), 'hit_rate_pct': best.get('hit_rate_pct'),
+                    'edge_bp': best.get('avg_signed_return_bp'), 'cost_bp': r['avg_spread_bp'], 'coverage_pct': r['coverage_pct'],
+                    'turnover_per_bar': r['turnover_per_bar'], 'ic_by_horizon': {h['horizon']: h.get('ic') for h in r['horizons']}})
+    return sorted(out, key=lambda x: -abs(x.get('ic_t') or 0))
 
 
 Fn = Callable[..., Any]
