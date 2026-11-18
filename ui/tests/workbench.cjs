@@ -131,7 +131,21 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  sqa('.cfg-nav button').find(b=>b.textContent==='Stage map').click();for(let i=0;i<4;i++)await tick();
  assert.equal(sqa('.pl-flow .pl-node').length,8);assert.ok(sq('.pl-node.on').textContent.includes('Risk')&&sq('.pl-head').textContent.includes('Risk intelligence'));
  assert.ok(sqa('.pl-table tbody tr').some(r=>r.textContent.includes('Constraint engine')&&r.textContent.includes('built')));
- assert.ok(sqa('.sb-row.selected').some(r=>r.textContent.includes('Risk intelligence')),'flow list highlights the stage');
+ assert.ok(sqa('.sb-row.selected').some(r=>r.textContent==='Stage map'),'the side bar lists the stage\'s own items, the open one selected');
+ assert.ok(!sqa('.sb-title').some(x=>/Trading flow/i.test(x.textContent)),'the main workspaces are not repeated in a stage\'s side bar');
+ // Market data: its side bar lists its own items with the same names and order as its sub-tabs.
+ sq('nav.activity [aria-label="Market data"]').click();for(let i=0;i<8;i++)await tick();
+ const mdSide=[...sw.document.querySelectorAll('.sb-pane')].find(p=>p.querySelector('.sb-title')?.textContent==='Market data');
+ assert.deepEqual([...mdSide.querySelectorAll('.sb-row')].map(b=>b.textContent.trim()),
+   [...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),'side bar = sub-tabs');
+ assert.ok(![...sw.document.querySelectorAll('.sb-title')].some(t=>/Trading flow|Problems/.test(t.textContent)));
+ // Every stage: its side bar and its sub-tabs list the same items in the same order.
+ for(const v of ['Signals','Strategies','Risk','Portfolio','Execution','Post-trade']){
+   sq(`nav.activity [aria-label="${v}"]`).click();for(let i=0;i<8;i++)await tick();
+   const side=[...sw.document.querySelectorAll('.sb-pane')][0];
+   assert.deepEqual([...side.querySelectorAll('.sb-row')].map(b=>b.textContent.trim()),
+     [...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),`${v}: side bar = sub-tabs`);
+ }
  sqa('.tabs-mini button').find(b=>b.textContent.startsWith('Build plan')).click();await tick();
  assert.equal(sqa('.pl-step').length,7);
  sqa('.pl-node').find(n=>n.textContent.includes('Post-trade')).click();for(let i=0;i<4;i++)await tick();

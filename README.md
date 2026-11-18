@@ -1121,3 +1121,14 @@ Two levels, as in VS Code (DEC-91):
    keeps its state, stops polling and reloads when shown. *All panels* stays as the first sub-tab (every item on one
    page). The 0.48 "panes by purpose" inside All panels are replaced by this.
 
+### 0.49.1 — navigation audit: nothing repeated, one order everywhere
+
+- Main workspaces (stages, Setup, System) live only in the rail and the main tabs; they are no longer repeated inside
+  a workspace (the 1 → 8 row and the side bar's *Trading flow* and *Problems* are gone from domain screens; Home keeps
+  them). A small breadcrumb (*Stage 3 · Signal intelligence ›*) says where you are.
+- A domain's side bar lists only its own items, with the same names and order as its sub-tabs (Market data, System
+  and every stage now publish one list; Market data's order fixed). *All panels* no longer repeats the items as chips.
+- Market data's saved board views are labelled *Views* (not another "workspace"). The Execution tab is named
+  *Execution*. Sub-tab layouts start fresh once (new storage key) so every domain opens in the aligned order.
+- Tests check, for Market data and every stage, that the side bar equals the sub-tabs.
+

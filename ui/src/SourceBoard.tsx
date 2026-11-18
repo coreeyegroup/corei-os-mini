@@ -165,7 +165,8 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
   const classItems = Object.entries(CLASS_LABEL).map(([id, label]) => ({ id, label, group: '' }));
 
   return <div className="mb sb">
-    <div className="mb-tabs" role="tablist" aria-label="Workspaces">
+    <div className="mb-tabs" role="tablist" aria-label="Board views">
+      <span className="mb-tabs-label" title="Saved views of this board: which sources, instruments and columns">Views</span>
       {list.map(w => <button key={w.id} role="tab" aria-selected={w.id === ws.id} onClick={() => { setActive(w.id); setRenaming(false); }} onDoubleClick={() => setRenaming(true)} title="Double-click to rename">{w.name}</button>)}
       <button className="mb-new" onClick={() => { const w = blank({ name: `Workspace ${list.length + 1}`, all: false }); commit([...list, w]); setActive(w.id); }} title="New empty workspace: add the sources you want">+ New</button>
       <button className="mb-new" onClick={() => { const w = { ...ws, id: blank().id, name: ws.name + ' copy' }; commit([...list, w]); setActive(w.id); }}>Duplicate</button>

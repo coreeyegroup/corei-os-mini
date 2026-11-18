@@ -71,7 +71,7 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     <section className="cfg-main">
       <StageBar view="Intelligence" title={LABELS[tab]} hint={HINTS[tab]} />
       <SubWorkspace view="Intelligence" label="Market intelligence" tab={tab} setTab={id => setTab(id as Tab)}
-        initial={TABS.filter(t => t !== 'stage')} items={INTEL_GROUPS.flatMap(([g, its]) => its.map(([id]) => ({ id, label: LABELS[id as Tab], group: g, hint: HINTS[id as Tab] })))}
+        items={INTEL_GROUPS.flatMap(([g, its]) => its.map(([id]) => ({ id, label: LABELS[id as Tab], group: g, hint: HINTS[id as Tab] })))}
         render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view="Intelligence" groups={INTEL_GROUPS.map(([g]) => g)} alone={x => setTab(x as Tab)} sections={INTEL_GROUPS.flatMap(([g, its]) =>
           its.filter(([x]) => x !== 'stage' && x !== 'workspace').map(([x, label]) => ({ id: x, label, group: g, hint: HINTS[x as Tab], render: () => panel(x as Tab) })))} />
           : id === 'stage' ? <Stage view="Intelligence" open={open} /> : panel(id as Tab)}</div>} />

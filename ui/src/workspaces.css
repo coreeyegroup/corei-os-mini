@@ -92,3 +92,9 @@
 .sw-item { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .sw-item[hidden] { display: none; }
 .sw-multi .sw-body { padding: 6px; }
+/* "All panels": the sub-tabs already list the items, so its bar holds only open/close all. */
+.ws-index.ws-index-slim { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; }
+.mb-tabs-label { align-self: center; padding: 0 8px 0 2px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+/* One left edge for header, sub-tab bar and items on every domain screen. */
+.cfg-main > .cfg-head, .cfg-main > .st-bar, .cfg-main > .sw, .cfg-main > .st-start { margin-left: 0; margin-right: 0; }
+.st-crumb { color: var(--muted); font-size: 12px; white-space: nowrap; }

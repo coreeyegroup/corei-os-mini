@@ -144,28 +144,20 @@ function TablesList() {
 
 export default function Sidebar({ view, overview }: { view: View; overview: Overview | null }) {
   const problems = overview?.attention.length ?? 0;
+  // A domain's side bar lists that domain's own items — the same names and order as its sub-tabs — then its own tools.
+  // The main workspaces (stages, Setup, System) are in the rail and the main tabs, not repeated here.
   if (view === 'Market data') return <>
+    <Pane title="Market data"><StageTree view="Market data" /></Pane>
     <Pane title="Market watch"><MarketWatch /></Pane>
     <Pane title="Feeds" count={overview ? `${overview.feeds.live}/${overview.feeds.collectors}` : undefined}><Feeds /></Pane>
-    <Pane title="Market data"><Sections view="Market data" /></Pane>
-    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
   </>;
   if (view === 'Configuration') return <Pane title="Setup"><SetupTree /></Pane>;
   if (view === 'Infrastructure') return <>
-    <Pane title="System"><Sections view="Infrastructure" /></Pane>
+    <Pane title="System"><StageTree view="Infrastructure" /></Pane>
     <Pane title="Tables"><TablesList /></Pane>
   </>;
-  if (view === 'Intelligence') return <>
-    <Pane title="Market intelligence"><IntelTree /></Pane>
-    <Pane title="Market watch"><MarketWatch /></Pane>
-    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
-  </>;
-  if (stageOf(view)) return <>
-    <Pane title={stageOf(view)!.title}><StageTree view={view} /></Pane>
-    <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>
-    <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
-    <Pane title="Market watch"><MarketWatch /></Pane>
-  </>;
+  if (view === 'Intelligence') return <Pane title="Market intelligence"><IntelTree /></Pane>;
+  if (stageOf(view)) return <Pane title={stageOf(view)!.title}><StageTree view={view} /></Pane>;
   if (view === 'Overview' || view === 'Operations') return <>
     <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
     <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>

@@ -40,7 +40,7 @@ export function normaliseSub(saved: unknown, ids: string[], initial: string[], f
 export function SubWorkspace({ view, items, tab, setTab, render, initial, label }: {
   view: View; items: SubItem[]; tab: string; setTab: (id: string) => void; render: (id: string) => ReactNode; initial?: string[]; label: string;
 }) {
-  const ids = items.map(i => i.id), key = `corei.subworkspace.${view}`;
+  const ids = items.map(i => i.id), key = `corei.subworkspace.v2.${view}`;
   const [st, setSt] = useState<State>(() => normaliseSub(read(key), ids, initial ?? ids, tab));
   const [drag, setDrag] = useState<string | null>(null), [over, setOver] = useState<number | null>(null);
   const mounted = useRef(new Set<string>());

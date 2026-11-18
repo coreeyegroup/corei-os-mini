@@ -172,7 +172,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: workspace: every panel of a stage — dashboards, work, monitors, settings — open on one page, each closable, remembered.');
  // Sub-workspace: inside the Signals workspace, every Signals item is its own sub-tab; split side by side; remembered.
  const subTabs=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden]) .sw-pane')].map(p=>[...p.querySelectorAll('.sw-tab button[role=tab]')].map(b=>b.textContent));
- assert.deepEqual(subTabs(),[['All panels',...PANELS]]);
+ assert.deepEqual(subTabs(),[['All panels',...PANELS,'Stage map']]);
  nav('Signal flips').click();await settle(4);
  assert.equal(w.document.querySelector('.view > div:not([hidden]) .sw-tab.active button').textContent,'Signal flips','the side bar opens the item as a sub-tab');
  assert.match($('.sw-item:not([hidden])').textContent,/RSI_REVERSION/);
@@ -182,7 +182,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok(subTabs()[0].includes('Signal flips'),'and opens again from + Open…');
  w.document.querySelector('.view > div:not([hidden]) [aria-label="Split Signal flips to the right"]').click();await settle(4);
  assert.equal(subTabs().length,2);assert.deepEqual(subTabs()[1],['Signal flips'],'split: the item moves to a pane on the right');
- let sub=JSON.parse(w.localStorage.getItem('corei.subworkspace.Signals'));assert.equal(sub.panes.length,2);assert.equal(sub.focus,1);
+ let sub=JSON.parse(w.localStorage.getItem('corei.subworkspace.v2.Signals'));assert.equal(sub.panes.length,2);assert.equal(sub.focus,1);
  const opened=[];w.open=(...a)=>{opened.push(a);return null;};
  w.document.querySelector('.view > div:not([hidden]) [aria-label="Open Signal flips in new tab"]').click();
  w.document.querySelector('.view > div:not([hidden]) [aria-label="Open Signal flips in new window"]').click();
@@ -195,7 +195,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Signals: the frame, then the reason a signal was refused, in plain words.
  assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);
- assert.match($('.st-head').textContent,/2Intelligence3Stage 3 · Signal intelligence4Strategies/);
+ assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence ›All panels/);
+ assert.equal($('.st-steps'),null,'the stages are the main workspaces, not repeated inside one');
  assert.deepEqual($$('.cfg-nav .cfg-nav-group').map(g=>g.textContent),['Overview','Work','Monitor','Configure']);
  // Stage 4 owns what a strategy decides: its signals, their checks and the decisions; the desk shows every strategy at once.
  await go('Strategies');

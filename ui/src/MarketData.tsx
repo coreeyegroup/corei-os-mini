@@ -11,6 +11,7 @@ import { digitsOf, goto, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
 import { Formulas } from './SignalLibrary';
 import { SubWorkspace } from './SubWorkspace';
+import { publishSections } from './nav';
 import { useViewVisible } from './visibility';
 import './configuration.css';
 import './infrastructure.css';
@@ -23,12 +24,12 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: 'dashboard', label: 'Dashboard', hint: 'Stage 1 · collect and watch: workspaces › sources › instruments. Add instruments per source, pause, backfill, details. Comparing and charting across sources is Stage 2 · Market intelligence.' },
   { id: 'live', label: 'Table', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
   { id: 'plans', label: 'Collection plans', hint: 'What is collected, from which account, when, and how long it is kept.' },
+  { id: 'backfill', label: 'Backfill', hint: 'Fetch bars from the broker’s history. Live bars are never overwritten.' },
   { id: 'quality', label: 'Quality', hint: 'Latency, gaps, frozen prices, spreads, spikes and deviation from other sources — compare brokers.' },
   { id: 'events', label: 'Events', hint: 'Outages, gaps, feed switches, backfills, archive, fingerprint checks, backups and disk.' },
-  { id: 'backfill', label: 'Backfill', hint: 'Fetch bars from the broker’s history. Live bars are never overwritten.' },
+  { id: 'formulas', label: 'Calculations & formulas', hint: 'How bars, latency, the feed quality score, spikes and deviation are calculated.' },
   { id: 'controls', label: 'Controls', hint: 'Pause collection for everything or one account. Separate from order sending.' },
   { id: 'archive', label: 'Archive', hint: 'History files with fingerprints, and backups. Query history under Infrastructure › History.' },
-  { id: 'formulas', label: 'Calculations & formulas', hint: 'How bars, latency, the feed quality score, spikes and deviation are calculated.' },
 ];
 const FRAMES = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']] as const;
@@ -40,6 +41,7 @@ const scoreClass = (v?: number | string | null) => { const s = v == null ? null 
 const groupOf = (id: string) => id === 'workspace' ? 'All' : ['dashboard', 'live'].includes(id) ? 'Watch' : ['plans', 'backfill'].includes(id) ? 'Collect' : ['quality', 'events', 'formulas'].includes(id) ? 'Check' : 'Control';
 
 export default function MarketData() {
+  useEffect(() => { publishSections('Market data', TABS.map(t => ({ id: t.id, label: t.label, group: groupOf(t.id) }))); }, []);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'workspace', TABS.map(t => t.id));
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);

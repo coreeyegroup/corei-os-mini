@@ -36,11 +36,9 @@ export function Workspace({ view, sections, alone, groups = GROUPS }: { view: Vi
   const [closed, setClosed] = useState<string[]>(() => readJson(storeKey, []));
   const save = (next: string[]) => { setClosed(next); writeJson(storeKey, next); };
   const toggle = (id: string) => save(closed.includes(id) ? closed.filter(x => x !== id) : [...closed, id]);
-  const jump = (id: string) => { if (closed.includes(id)) save(closed.filter(x => x !== id)); window.setTimeout(() => document.getElementById(`ws-${view}-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); };
   return <div className="ws">
-    <nav className="ws-index" aria-label="Workspace index">
-      {groups.map(g => <span key={g} className="ws-index-group"><b>{g}</b>{sections.filter(x => x.group === g).map(x =>
-        <button key={x.id} className={closed.includes(x.id) ? 'off' : ''} onClick={() => jump(x.id)} title={x.hint}>{x.label}</button>)}</span>)}
+    <nav className="ws-index ws-index-slim" aria-label="All panels">
+      <small className="cfg-note">Every item below, each opens and closes · open one as its own sub-tab with ⤢</small>
       <span className="ws-index-all"><button onClick={() => save([])}>Open all</button><button onClick={() => save(sections.map(x => x.id))}>Close all</button></span>
     </nav>
     {sections.map(s => <section key={s.id} id={`ws-${view}-${s.id}`} className={`ws-panel ${closed.includes(s.id) ? 'closed' : ''}`} aria-label={s.label}>
@@ -57,16 +55,13 @@ export function Workspace({ view, sections, alone, groups = GROUPS }: { view: Vi
   </div>;
 }
 
-/* The same header on every stage workspace: the trading flow 1 → 8 (click to go; the current stage is marked), then
- * what is shown, what this stage answers and what it hands on. */
+/* The same header on every stage workspace: the item shown and what it is for, then what this stage answers and what
+ * it hands on. The stages themselves are the main workspaces (rail and main tabs), so they are not repeated here. */
 export function StageBar({ view, title, hint }: { view: View; title: string; hint: string }) {
   const stage = stageOf(view);
   if (!stage) return <header className="cfg-head"><div><h1>{title}</h1><p>{hint}</p></div></header>;
   return <header className="cfg-head st-head st-bar">
-    <ol className="st-steps" aria-label="Trading flow">{PIPELINE.map((p, k) => <li key={p.view} className={p.view === view ? 'on' : k < PIPELINE.indexOf(stage) ? 'before' : ''}>
-      <button onClick={() => goto(p.view)} aria-current={p.view === view ? 'step' : undefined} title={`${p.n} · ${p.title}\n${p.question}`}>
-        <span className="st-n">{p.n}</span><span className="st-l">{p.view === view ? `Stage ${p.n} · ${p.title}` : p.short ?? p.title}</span></button></li>)}</ol>
-    <div className="st-title"><h1>{title}</h1><p>{hint}</p></div>
+    <div className="st-title"><span className="st-crumb">Stage {stage.n} · {stage.title} ›</span><h1>{title}</h1><p>{hint}</p></div>
     <p className="st-question" title={`${stage.question} It hands on: ${stage.feeds}.`}><b>Answers:</b> {stage.question} <b>Hands on:</b> {stage.feeds}.</p>
   </header>;
 }
@@ -74,6 +69,8 @@ export function StageBar({ view, title, hint }: { view: View; title: string; hin
 export default function StageShell({ view, sections }: { view: View; sections: Section[] }) {
   const all = [{ id: 'workspace', label: 'All panels', group: 'Overview' as const, hint: 'Every item of this stage on one page — dashboards, work, monitors and settings — each opens and closes.', render: () => null },
     ...sections, { id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }];
+  // One order everywhere: by group (Overview, Work, Monitor, Configure), as the side bar shows them.
+  all.sort((a, b) => GROUPS.indexOf(a.group as typeof GROUPS[number]) - GROUPS.indexOf(b.group as typeof GROUPS[number]));
   const [tab, setTab] = useSection<string>(view, 'workspace', all.map(s => s.id));
   useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
@@ -98,7 +95,7 @@ export default function StageShell({ view, sections }: { view: View; sections: S
     <section className="cfg-main">
       <StageBar view={view} title={current.label} hint={current.hint} />
       <StartHere ctx={ctx} />
-      <SubWorkspace view={view} label={stage.title} tab={tab} setTab={setTab} initial={all.filter(x => x.id !== 'stage').map(x => x.id)}
+      <SubWorkspace view={view} label={stage.title} tab={tab} setTab={setTab} initial={all.map(x => x.id)}
         items={all.map(x => ({ id: x.id, label: x.label, group: x.group, hint: x.hint }))}
         render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view={view} sections={sections.map(x => ({ ...x, render: () => x.render(ctx) }))} alone={setTab} />
           : id === 'stage' ? <Stage view={view} open={v => goto(v)} /> : (all.find(x => x.id === id) ?? all[0]).render(ctx)}</div>} />

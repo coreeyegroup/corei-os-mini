@@ -227,7 +227,8 @@ export default function MarketBoard() {
   }
 
   return <div className="mb">
-    <div className="mb-tabs" role="tablist" aria-label="Workspaces">
+    <div className="mb-tabs" role="tablist" aria-label="Board views">
+      <span className="mb-tabs-label" title="Saved views of this board: which sources, instruments and columns">Views</span>
       {list.map(w => <button key={w.id} role="tab" aria-selected={w.id === ws.id} onClick={() => { setActive(w.id); setRenaming(false); }} onDoubleClick={() => setRenaming(true)} title="Double-click to rename">{w.name}</button>)}
       <button className="mb-new" onClick={() => { const w = blankWs({ name: `Workspace ${list.length + 1}` }); commit([...list, w]); setActive(w.id); }} title="New workspace with every source and instrument">+ New</button>
       <button className="mb-new" onClick={() => { const w = { ...ws, id: blankWs().id, name: ws.name + ' copy' }; commit([...list, w]); setActive(w.id); }} title="Copy this workspace with its selection, filters and layout">Duplicate</button>

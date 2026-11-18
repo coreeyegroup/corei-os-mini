@@ -5,7 +5,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
-import { takeTable, useSection } from './nav';
+import { publishSections, takeTable, useSection } from './nav';
 import { SubWorkspace } from './SubWorkspace';
 import './configuration.css';
 import './infrastructure.css';
@@ -46,6 +46,7 @@ export default function Infrastructure() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       {!admin && <p className="cfg-note">The database views are for administrators.</p>}
+      <PublishTabs list={tabs} />
       <SubWorkspace view="Infrastructure" label="Infrastructure" tab={current.id} setTab={id => setTab(id as Tab)} items={tabs.map(t => ({ id: t.id, label: t.label, hint: t.hint }))}
         render={id => id === 'health' ? <div className="cfg-pane"><Health /></div>
           : id === 'tables' ? <Tables />
@@ -417,4 +418,9 @@ function Edits() {
       <tbody>{items.map(e => <tr key={e.id}><td>{when(e.edited_at)}</td><td>{e.actor}</td><td>{e.table_name}</td><td>{e.action}</td><td>{Object.values(e.row_key ?? {}).join(', ')}</td>
         <td className="infra-diff">{diff(e).map(d => <div key={d}>{d}</div>)}</td><td>{e.reason}</td></tr>)}</tbody></table> : <p className="cfg-note">No edits yet.</p>)}
   </>;
+}
+
+function PublishTabs({ list }: { list: { id: string; label: string }[] }) {
+  useEffect(() => { publishSections('Infrastructure', list.map(t => ({ id: t.id, label: t.label, group: 'System' }))); }, [list.map(t => t.id).join()]);
+  return null;
 }
