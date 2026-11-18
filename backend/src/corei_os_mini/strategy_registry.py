@@ -43,6 +43,10 @@ def validate_parameters(algorithm: str, parameters: object) -> dict:
     spec = ALGORITHMS.get(algorithm)
     if not spec:
         raise HTTPException(422, f'Unknown algorithm {algorithm}. Choose one of: {", ".join(ALGORITHMS)}.')
+    if algorithm == 'GRAPH':   # pin the approved calculation graph version inside the strategy version (DEC-93)
+        from .trading.algorithms import resolve_graph
+        with store.transaction('read') as db:
+            parameters = resolve_graph(db, parameters if isinstance(parameters, dict) else {})
     try:
         return spec['model'].model_validate(parameters).model_dump(mode='json')
     except ValidationError as exc:

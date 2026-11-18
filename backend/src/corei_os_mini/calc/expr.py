@@ -45,6 +45,7 @@ FUNCTIONS: dict[str, dict] = {
     'round': {'args': (1, 2), 'doc': 'round(x, n) — rounded to n decimals (half to even)'},
     'sign': {'args': (1, 1), 'doc': 'sign(x) — −1, 0 or +1'},
     'if': {'args': (3, 3), 'doc': 'if(condition, a, b) — a when the condition holds, otherwise b'},
+    'coalesce': {'args': (2, 2), 'doc': 'coalesce(x, y) — x, or y when x is missing (warming up)'},
 }
 KEYWORDS = {'and', 'or', 'not', 'true', 'false', 't'}
 _TOKEN = re.compile(r'\s*(?:(\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?|([A-Za-z_][A-Za-z0-9_]*)|(<=|>=|==|!=|[-+*/^()<>\[\],]))')
@@ -327,6 +328,15 @@ class _Parser:
         if not lo <= len(args) <= hi:
             raise ExprError(f"{name}() takes {lo if lo == hi else f'{lo} to {hi}'} values, not {len(args)}", pos)
         back = max(a[2] for a in args)
+        if name == 'coalesce':
+            if args[0][1] != args[1][1]:
+                raise ExprError('coalesce(x, y): x and y must be of the same kind', pos)
+            a, b = args[0][0], args[1][0]
+
+            def run(env, i):
+                v = a(env, i)
+                return b(env, i) if v is None else v
+            return run, args[0][1], back
         if name == 'if':
             cond = self.need(args[0], 'bool', 'if()', pos)
             if args[1][1] != args[2][1]:

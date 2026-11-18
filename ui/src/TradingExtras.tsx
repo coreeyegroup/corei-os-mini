@@ -5,6 +5,7 @@
  * Attribution, Broker book; Execution › Waiting for approval, Unknown, Connections, Routing; Post-trade (Stage 8):
  * dashboard, breaks, reconciliation runs, broker book, TCA, trade journal, statements, order audit trail, exports.
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
+import GraphWorkbench from './calc/GraphWorkbench';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { Formulas } from './SignalLibrary';
@@ -454,6 +455,7 @@ export function PostTradeView() {
     { id: 'audit', label: 'Order audit trail', group: 'Monitor', hint: 'Every order event, searchable by order, tag, state, person or account.', render: () => <AuditTrail /> },
     { id: 'exports', label: 'Exports', group: 'Configure', hint: 'CSV of every post-trade report.', render: () => <Exports /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Reconciliation, TCA slippage in bp and money, fill and refusal rates, latency and the trade journal.', render: () => <Formulas stage="Post-trade" /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Post-trade measures as graphs.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['MEASURE']} /> },
   ];
   return <StageShell view="Post-trade" sections={sections} />;
 }

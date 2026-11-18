@@ -3,7 +3,8 @@
 Why it exists: strategy rules and filters are yes/no decisions made from numbers; these nodes make each decision
 visible with the values that drove it on the bar being looked at.
 Purpose: Compare, Crosses (above, below, either), And, Or, Not, If (number), Between, Side from score (threshold, as
-the signal library's direction), Side with hysteresis (enter at one level, leave at another).
+the signal library's direction), Side with hysteresis (enter at one level, leave at another), Latch (the strategy
+algorithms' target state machine: go LONG on one event, SHORT on another, hold otherwise; long-only / short-only).
 Missing values: a comparison with a missing value is missing; And is false when either side is false, Or is true when
 either side is true (otherwise missing) — the same three-valued logic as calc.expr.
 Must never: read a later bar (Crosses reads t and t−1; hysteresis carries state forward only).
@@ -122,3 +123,34 @@ register(NodeType('logic.hysteresis', 'logic', 'Side with hysteresis', 'Enter LO
                   'to ±exit. Holds the side in between, so a score near the line does not flip every bar.', [Port('score', S)], [Port('out', SD)],
                   [Param('entry', 'float', 30.0, 0, 100), Param('exit', 'float', 5.0, -100, 100)], _hysteresis,
                   lambda p: f"enter at ±{p.get('entry')}, leave at ±{p.get('exit')}", check=_hyst_check))
+
+
+def _latch(ctx: Ctx, ins: dict, p: dict) -> dict:
+    """The target state machine of trading.algorithms._walk: bar 0 never changes; a LONG event in SHORT_ONLY (or a SHORT
+    event in LONG_ONLY) only closes the opposite position."""
+    lg, sh, d = ins['long'], ins['short'], p['direction']
+    state, target, changed = 'FLAT', [], []
+    for i in range(ctx.n):
+        new = None
+        if i:
+            if lg[i] is True:
+                new = 'LONG'
+            elif sh[i] is True:
+                new = 'SHORT'
+        if new == 'LONG' and d == 'SHORT_ONLY':
+            new = 'FLAT' if state == 'SHORT' else None
+        if new == 'SHORT' and d == 'LONG_ONLY':
+            new = 'FLAT' if state == 'LONG' else None
+        ch = new is not None and new != state
+        if ch:
+            state = new
+        target.append(state)
+        changed.append(ch)
+    return {'target': target, 'changed': changed}
+
+
+register(NodeType('logic.latch', 'logic', 'Latch (target)', 'Go LONG when "long" is true, SHORT when "short" is true, otherwise hold the last target '
+                  '(the strategy algorithms\' state machine). Long only: a short event only closes a long; short only: the reverse.',
+                  [Port('long', B), Port('short', B)], [Port('target', SD, 'LONG, SHORT or FLAT, held'), Port('changed', B, 'true on the bar the target changes')],
+                  [Param('direction', 'choice', 'BOTH', choices=('BOTH', 'LONG_ONLY', 'SHORT_ONLY'))], _latch,
+                  lambda p: f"target ← LONG on long, SHORT on short, else held ({p.get('direction', 'BOTH').lower().replace('_', ' ')})"))

@@ -10,7 +10,9 @@ Architectural position: the type layer under the executor.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID
 
 SERIES_FLOAT, SERIES_BOOL, SERIES_SIDE = 'series<float>', 'series<bool>', 'series<side>'
 FLOAT, BOOL, SIDE, TEXT = 'float', 'bool', 'side', 'text'
@@ -39,6 +41,10 @@ def to_jsonable(v):
         return v if v == v and v not in (float('inf'), float('-inf')) else None
     if isinstance(v, (list, tuple)):
         return [to_jsonable(x) for x in v]
+    if isinstance(v, UUID):
+        return str(v)
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
     if isinstance(v, dict):
         return {k: to_jsonable(x) for k, x in v.items()}
     return v

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import math
 import re
 import statistics
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from corei_os_mini import config_store as store
 from corei_os_mini.calc import expr as E, types as T
 from corei_os_mini.calc.builtin import BUILTINS
 from corei_os_mini.calc.model import LIMITS
@@ -293,17 +295,52 @@ def test_deterministic_and_hash_ignores_layout():
     assert definition_hash({**g, 'notes': 'other'}) != definition_hash(g)
 
 
-@pytest.mark.parametrize('params', [{}, {'fast': 5, 'slow': 13, 'scale': 2.0}, {'fast': 20, 'slow': 50, 'scale': 0.5}])
-def test_builtin_ema_trend_equals_the_signal_library(params):
-    bars = wave()
-    res = run(BUILTINS['SIG_EMA_TREND']['definition'], Ctx(bars, 'M5'), params)
-    ref = signal_library.compute('EMA_TREND', params, bars)
-    assert [x is None for x in res.outputs['score']] == [x is None for x in ref]
-    for got, want in zip(res.outputs['score'], ref):
+ALT = {'EMA_TREND': {'fast': 5, 'slow': 13, 'scale': 2.0}, 'SMA_TREND': {'fast': 10, 'slow': 30, 'scale': 0.5},
+       'MACD_MOMENTUM': {'fast': 8, 'slow': 21, 'signal': 5, 'scale': 1.0}, 'RSI_REVERSION': {'period': 7}, 'RSI_MOMENTUM': {'period': 21},
+       'BOLLINGER_REVERSION': {'period': 30, 'deviations': 2.5}, 'ZSCORE_REVERSION': {'period': 10, 'zmax': 3.0}, 'DONCHIAN_BREAKOUT': {'period': 55},
+       'MOMENTUM_TSTAT': {'period': 10, 'scale': 1.5}, 'STOCHASTIC_REVERSION': {'period': 9, 'smooth': 2}, 'ADX_DIRECTION': {'period': 10, 'full_at': 25.0},
+       'VWAP_REVERSION': {'period': 30, 'scale': 2.0}}
+
+
+def test_every_library_signal_is_a_builtin_graph():
+    assert sorted(b['kind'] for b in BUILTINS.values() if b['purpose'] == 'SIGNAL') == sorted(signal_library.KINDS)
+    for code, b in ((c, b) for c, b in BUILTINS.items() if b['purpose'] == 'SIGNAL'):
+        names = {p['name']: p['default'] for p in b['definition']['parameters']}
+        assert names == signal_library.KINDS[b['kind']]['defaults'], f'{code}: the graph parameters must be the library parameters'
+
+
+@pytest.mark.parametrize('code', sorted(c for c, b in BUILTINS.items() if b['purpose'] == 'FEATURE'))
+@pytest.mark.parametrize('volume', [False, True])
+def test_builtin_feature_graph_equals_the_feature_engine(code, volume):
+    from corei_os_mini.intel import engine
+    bars = wave(400, volume=volume)
+    res = run(BUILTINS[code]['definition'], Ctx(bars, 'M5'))
+    assert res.ok, res.errors
+    ref = [f[BUILTINS[code]['feature']] for f in engine.features(bars, 'M5')]
+    for i, (got, want) in enumerate(zip(res.outputs['value'], ref)):
+        assert (got is None) == (want is None), f'{code} bar {i}: warm-up differs'
         if want is not None:
-            assert abs(got - want[0]) <= 1e-9
-    i = len(bars) - 1
-    assert res.outputs['inputs'][i]['fast'] == pytest.approx(ref[i][1]['ema_fast'], abs=1e-5)
+            assert abs(got - want) <= 1e-9, f'{code} bar {i}: {got} vs {want}'
+
+
+@pytest.mark.parametrize('code', sorted(c for c, b in BUILTINS.items() if b['purpose'] == 'SIGNAL'))
+@pytest.mark.parametrize('variant', ['defaults', 'other settings', 'real volume'])
+def test_builtin_signal_graph_equals_the_library(code, variant):
+    """Parity (DEC-93): every bar, warm-up included, to 1e-9; and the same values shown beside the score."""
+    kind = BUILTINS[code]['kind']
+    params = ALT[kind] if variant == 'other settings' else {}
+    bars = wave(600, volume=variant == 'real volume')
+    res = run(BUILTINS[code]['definition'], Ctx(bars, 'M5'), params)
+    assert res.ok, res.errors
+    ref = signal_library.compute(kind, params, bars)
+    assert [x is None for x in res.outputs['score']] == [x is None for x in ref], f'{code}: warm-up differs'
+    for i, (got, want) in enumerate(zip(res.outputs['score'], ref)):
+        if want is not None:
+            assert abs(got - want[0]) <= 1e-9, f'{code} bar {i}: graph {got} vs library {want[0]}'
+    last = res.outputs['inputs'][-1]
+    assert set(last) == set(ref[-1][1]), f'{code}: values shown differ'
+    for k, v in ref[-1][1].items():
+        assert last[k] == pytest.approx(v, abs=0.006), (code, k)   # the library rounds what it shows
 
 
 def test_graph_parameters_are_bounded():
@@ -368,7 +405,7 @@ class CalcApi(tt.Trading):
         self.assertEqual(len(cat['items']), len(REGISTRY))
         self.assertIn('SIGNAL', cat['purposes'])
         lib = self.ok(self.alice.get('/api/calc/graphs'))['items']
-        self.assertTrue(any(g['code'] == 'SIG_EMA_TREND' and g['builtin'] and g['versions'][0]['status'] == 'APPROVED' for g in lib))
+        self.assertEqual(sum(1 for g in lib if g['builtin'] and g['purpose'] == 'SIGNAL' and g['versions'][0]['status'] == 'APPROVED'), 12)
         v1 = self.ok(self.alice.get('/api/calc/graphs/SIG_EMA_TREND/versions/1'))
         self.assertEqual(v1['definition']['purpose'], 'SIGNAL')
         self.assertEqual(self.alice.get('/api/calc/graphs/NOPE').status_code, 404)
@@ -402,6 +439,7 @@ class CalcApi(tt.Trading):
         self.assertEqual(self.alice.post('/api/calc/preview', json={'code': 'SIG_EMA_TREND', 'account_id': a['id'], 'symbol': 'GBPUSD'}).status_code, 409)
         runs = self.ok(self.alice.get('/api/calc/runs'))['items']
         self.assertEqual(len(runs), 3)
+        self.assertTrue(all(r['graph_version_id'] for r in runs if r['graph_code']))
         self.assertTrue(all(r['kind'] == 'PREVIEW' and r['actor'] == 'alice' for r in runs))
         with self.connect() as db:
             with self.assertRaises(Exception):
@@ -429,3 +467,116 @@ class CalcApi(tt.Trading):
                            "VALUES (%s, 2, 'APPROVED', '{}', %s, 'alice')", (gid, h))
         lib = self.ok(self.alice.get('/api/calc/graphs'))['items']
         self.assertTrue(any(g['code'] == 'MY_SIG' and g['versions'][0]['status'] == 'RETIRED' for g in lib))
+
+    def test_life_cycle_four_eyes_binding_and_engine_use(self):
+        _connection, (a, _b, _c), ins = self.setup_accounts()
+        self.start(self.plan(a, ins, 'EU_CALC2'))
+        closes = [1.10 + 0.01 * math.sin(i / 9) for i in range(300)]
+        self.bars(a['id'], closes, NOW - timedelta(minutes=5 * 300))
+        why = {'reason': 'desk version of EMA trend'}
+        # A built-in is read-only; a copy is the desk's own draft.
+        self.assertEqual(self.alice.put('/api/calc/graphs/SIG_EMA_TREND/draft', json={'definition': BUILTINS['SIG_EMA_TREND']['definition'], **why}).status_code, 409)
+        v1 = self.ok(self.alice.post('/api/calc/graphs/SIG_EMA_TREND/copy', json={'code': 'DESK_EMA', 'name': 'Desk EMA trend', **why}), 201)
+        self.assertEqual((v1['version'], v1['status']), (1, 'DRAFT'))
+        d = dict(v1['definition'])
+        d['nodes'] = [{**n, 'params': {**n['params'], 'hi': 50, 'lo': -50}} if n['id'] == 'clamp' else n for n in d['nodes']]
+        v1b = self.ok(self.alice.put('/api/calc/graphs/DESK_EMA/draft', json={'definition': d, 'notes': 'clamped to ±50', **why}))
+        self.assertEqual((v1b['version'], v1b['status']), (1, 'DRAFT'))
+        broken = {**d, 'edges': d['edges'][:-3]}
+        self.assertEqual(self.alice.put('/api/calc/graphs/DESK_EMA/draft', json={'definition': {**broken, 'edges': []}, **why}).status_code, 422)
+        # Four-eyes: the proposer cannot approve.
+        self.ok(self.bob.post('/api/calc/graphs/DESK_EMA/versions/1/propose', json=why))
+        self.assertEqual(self.bob.post('/api/calc/graphs/DESK_EMA/versions/1/approve', json=why).status_code, 409)
+        self.assertEqual(self.alice.post('/api/calc/bindings', json={'kind': 'SIGNAL_DEFINITION', 'target': 'EMA_TREND', 'code': 'DESK_EMA', **why}).status_code, 409)
+        self.ok(self.alice.post('/api/calc/graphs/DESK_EMA/versions/1/approve', json=why))
+        g = self.ok(self.alice.get('/api/calc/graphs/DESK_EMA'))
+        self.assertEqual(g['versions'][0]['status'], 'APPROVED')
+        # Bind it to the EMA_TREND signal definition: the signal is now scored by the graph.
+        b = self.ok(self.bob.post('/api/calc/bindings', json={'kind': 'SIGNAL_DEFINITION', 'target': 'EMA_TREND', 'code': 'DESK_EMA', **why}), 201)
+        self.assertEqual(self.bob.post('/api/calc/graphs/DESK_EMA/versions/1/retire', json=why).status_code, 409, 'a bound version cannot be retired')
+        ex = self.ok(self.alice.get('/api/trading/signal-library/explain', params={'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5'}))
+        row = next(r for r in ex['items'] if r['code'] == 'EMA_TREND')
+        self.assertEqual(row['graph']['code'], 'DESK_EMA')
+        self.assertTrue(all(x is None or -50 <= x <= 50 for x in row['history']), 'scored by the bound graph (clamped to ±50)')
+        self.assertTrue(any(x is not None and abs(x) == 50 for x in row['history']))
+        defs = self.ok(self.alice.get('/api/trading/signal-library/definitions'))['items']
+        self.assertEqual(next(x for x in defs if x['code'] == 'EMA_TREND')['graph']['code'], 'DESK_EMA')
+        with store.transaction('write') as db:
+            bars = [dict(r) for r in db.execute("SELECT * FROM md_bars WHERE account_id=%s AND timeframe='M5' ORDER BY bar_time", (a['id'],)).fetchall()]
+            signal_library.live_update(db, a['id'], 'EURUSD', 'M5', bars, signal_library.definitions(db, active_only=True))
+        board = self.ok(self.alice.get('/api/trading/signal-library/board', params={'timeframe': 'M5'}))['items']
+        self.assertTrue(any(r['code'] == 'EMA_TREND' and r['score'] is not None and abs(float(r['score'])) <= 50 for r in board))
+        usage = self.ok(self.alice.get('/api/calc/graphs/DESK_EMA/usage'))['items']
+        self.assertEqual(len(usage), 1)
+        par = self.ok(self.alice.post('/api/calc/parity', json={'code': 'SIG_MOMENTUM_TSTAT', 'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5', 'bars': 300}))
+        self.assertTrue(par['ok'] and par['max_difference'] <= 1e-9, par)
+        par2 = self.ok(self.alice.post('/api/calc/parity', json={'code': 'DESK_EMA', 'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5', 'bars': 300}))
+        self.assertFalse(par2['ok'], 'the desk copy clamps at ±50, so it differs from the library — and parity says so')
+        self.ok(self.bob.delete(f"/api/calc/bindings/{b['id']}", params={'reason': 'back to the library formula'}))
+        self.ok(self.bob.post('/api/calc/graphs/DESK_EMA/versions/1/retire', json=why))
+        audit = [r['action'] for r in self.connect().execute("SELECT action FROM cfg_audit_log WHERE action LIKE '%CALC%' ORDER BY id").fetchall()]
+        for want in ('CREATE_CALC_GRAPH', 'UPDATE_CALC_DRAFT', 'PROPOSE_CALC_VERSION', 'APPROVE_CALC_VERSION', 'BIND_CALC_GRAPH', 'UNBIND_CALC_GRAPH',
+                     'RETIRE_CALC_VERSION'):
+            self.assertIn(want, audit)
+
+
+@pytest.mark.parametrize('algo,params', [('EMA_CROSSOVER', {}), ('EMA_CROSSOVER', {'fast': 5, 'slow': 13}), ('MA_CROSSOVER', {'fast_window': 20, 'slow_window': 50}),
+                                         ('MA_CROSSOVER', {'fast_window': 10, 'slow_window': 30})])
+@pytest.mark.parametrize('direction', ['BOTH', 'LONG_ONLY', 'SHORT_ONLY'])
+def test_builtin_strategy_rule_equals_the_algorithm(algo, params, direction):
+    """Parity (DEC-93, phase 4 start): the same target and the same strength on every bar as trading.algorithms."""
+    from corei_os_mini.intel import engine
+    from corei_os_mini.trading import algorithms
+    bars = wave(600)
+    d = json.loads(json.dumps(BUILTINS[f'STRAT_{algo}']['definition']))
+    d['nodes'] = [{**n, 'params': {**n['params'], 'direction': direction}} if n['id'] == 'latch' else n for n in d['nodes']]
+    res = run(d, Ctx(bars, 'M5'), params)
+    assert res.ok, res.errors
+    ref = algorithms.run(algo, {'timeframe': 'M5', 'direction': direction, **({'fast_window': 20, 'slow_window': 50} if algo == 'MA_CROSSOVER' else {}), **params},
+                         bars, engine.features(bars, 'M5'))
+    assert sum(x['change'] for x in ref) > 5
+    assert res.outputs['target'] == [x['target'] for x in ref]
+    assert res.outputs['strength'] == [x['strength'] for x in ref]
+
+
+class GraphStrategy(tt.Trading):
+    test_paper_trade_end_to_end = None
+    test_tickets_limits_and_unknown = None
+    test_broker_mode_refused_and_loss_limit_stops = None
+    test_backtest_no_look_ahead = None
+
+    def test_a_strategy_runs_an_approved_graph_end_to_end(self):
+        """Graph → strategy version (pinned) → deployment → signal → risk → paper order; and the backtest equals the code's."""
+        from corei_os_mini.trading import runtime
+        connection, (a, _b, _c), ins = self.setup_accounts()
+        self.start(self.plan(a, ins, 'EU_GRAPH'))
+        mapping = self.ok(self.alice.post('/api/config/mappings', json={'connection_id': connection['id'], 'instrument_id': ins['id'], 'broker_symbol': 'EURUSD', 'usage': 'BOTH'}), 201)
+        strat = self.ok(self.alice.post('/api/config/strategies', json={'code': 'EMA_GRAPH', 'name': 'EMA 3/5 as a graph'}), 201)
+        params = {'timeframe': 'M5', 'graph_code': 'STRAT_EMA_CROSSOVER', 'graph_version': 1, 'graph_parameters': {'fast': 3, 'slow': 5}}
+        bad = self.alice.post(f"/api/config/strategies/{strat['id']}/versions", json={'algorithm': 'GRAPH', 'parameters': {**params, 'graph_code': 'SIG_EMA_TREND'}})
+        self.assertEqual(bad.status_code, 422, 'a signal graph is not a strategy rule')
+        ver = self.ok(self.alice.post(f"/api/config/strategies/{strat['id']}/versions", json={'algorithm': 'GRAPH', 'parameters': params}), 201)
+        self.assertEqual(len(ver['parameters']['graph_hash']), 64, 'the approved version is pinned in the strategy version')
+        self.ok(self.bob.post(f"/api/config/strategy-versions/{ver['id']}/approve", json={'version': ver['version']}))
+        dep = self.ok(self.alice.post('/api/config/deployments', json={'strategy_id': strat['id'], 'strategy_version_id': ver['id'], 'instrument_id': ins['id'],
+                                                                       'account_id': a['id'], 'data_mapping_id': mapping['id'], 'sizing': {'method': 'FIXED_QTY', 'quantity': '0.10'}}), 201)
+        self.ok(self.bob.post(f"/api/config/deployments/{dep['id']}/activate", json={'version': dep['version'], 'reason': 'paper test of a graph'}))
+        start = NOW - timedelta(minutes=5 * 41)
+        self.bars(a['id'], tt.series(40, False), start)
+        self.quote(a['id'], 1.08000, 1.08010)
+        runtime.cycle(NOW)
+        self.bars(a['id'], tt.series(41, True)[40:], start + timedelta(minutes=5 * 40))
+        out = runtime.cycle(NOW)
+        self.assertEqual((out['signals'], out['orders']), (1, 1), out)
+        sig = self.ok(self.alice.get('/api/trading/signals'))['items'][0]
+        self.assertIn('STRAT_EMA_CROSSOVER v1', ' '.join(sig['explanation']))
+        orders = self.ok(self.alice.get('/api/trading/orders'))['items']
+        self.assertEqual((orders[0]['side'], orders[0]['state']), ('BUY', 'FILLED'))
+        # The backtest of the graph strategy equals the backtest of the code it draws.
+        closes = [1.10 + 0.01 * math.sin(i / 7) for i in range(400)]
+        self.bars(a['id'], closes, NOW - timedelta(days=5))
+        rng = {'account_id': a['id'], 'broker_symbol': 'EURUSD', 'range_from': (NOW - timedelta(days=6)).isoformat(), 'range_to': NOW.isoformat(), 'quantity': '0.10'}
+        g = self.ok(self.alice.post('/api/trading/backtests', json={**rng, 'algorithm': 'GRAPH', 'parameters': params}), 201)
+        c = self.ok(self.alice.post('/api/trading/backtests', json={**rng, 'algorithm': 'EMA_CROSSOVER', 'parameters': {'timeframe': 'M5', 'fast': 3, 'slow': 5}}), 201)
+        self.assertEqual(g['metrics']['trades'], c['metrics']['trades'])
+        self.assertEqual(g['metrics']['net_pnl'], c['metrics']['net_pnl'], 'to the cent')

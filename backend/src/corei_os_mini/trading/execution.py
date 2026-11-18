@@ -414,6 +414,8 @@ def _loop() -> None:
         try:
             with store.transaction('write') as db:
                 oms.protect(db, _now())  # paper and Upstox stops between trading cycles
+            from . import algos
+            algos.tick(_now())        # execution algorithms between trading cycles (TWAP slices, iceberg clips)
             dispatch()
             sync()
             if _time.monotonic() - last_recon > 60:

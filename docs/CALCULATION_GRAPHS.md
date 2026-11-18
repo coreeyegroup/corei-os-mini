@@ -79,11 +79,29 @@ come from code (`calc/builtin.py`), are APPROVED and read-only.
 
 ## API (`/api/calc`)
 
-`GET /nodes`, `GET /graphs`, `GET /graphs/{code}`, `GET /graphs/{code}/versions/{n}`, `POST /validate`,
+Life cycle: `POST /graphs` (new draft), `POST /graphs/{code}/copy`, `PUT /graphs/{code}/draft`,
+`POST /graphs/{code}/versions/{n}/{propose|approve|reject|retire}` (approve, reject and retire need the Risk approver
+role; approval is never by the person who proposed it), `GET|POST /bindings`, `DELETE /bindings/{id}`,
+`GET /graphs/{code}/usage`, `POST /parity`. Reads: `GET /nodes`, `GET /graphs`, `GET /graphs/{code}`, `GET /graphs/{code}/versions/{n}`, `POST /validate`,
 `POST /preview` (stored bars ending at the newest stored bar — market time, never the machine clock; the latest stored
 quote fills Quote; money values sent by the caller must be decimal strings; every preview is recorded in `calc_runs` in
 the same transaction), `GET /runs`. Proposing, approving, retiring and binding arrive with the editor (phase 3) and
 the signal phase (phase 2).
+
+## On screen (ui/src/calc)
+
+`GraphWorkbench`: the library, the canvas (@xyflow/react) with each node's value on the chosen bar, the selected
+node's formula with its numbers, the result; *Plain* lists the steps in the order they run (also used where no canvas
+can be drawn). Edit mode adds the node palette, wiring with an immediate type check, parameters, check, save,
+propose, approve, retire, *Put to use* (signal definitions) and *Check parity*.
+
+## In the stages
+
+* **Signals**: a signal definition bound to an approved SIGNAL graph is scored by it everywhere (`signal_library.score_series`).
+* **Strategies**: algorithm `GRAPH` pins an approved STRATEGY_RULE version (definition + hash) inside the strategy
+  version; runtime and backtest run it with the algorithms' target state machine (HOLD keeps the target).
+* Node `logic.latch` is that state machine as a node; Expression inputs may be true/false (`name:bool`); function
+  `coalesce(x, y)`.
 
 ## Guardrails
 

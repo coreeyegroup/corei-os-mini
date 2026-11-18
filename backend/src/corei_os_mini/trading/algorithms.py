@@ -310,6 +310,61 @@ def rules(bars, rows, p: Rules):
     return _walk(len(bars), step, p.direction)
 
 
+class GraphRule(_P):
+    """Run an approved strategy-rule calculation graph (DEC-93): the version is pinned, its definition kept with the strategy version."""
+    graph_code: str = Field(pattern=r'^[A-Z][A-Z0-9_]{1,59}$', description='Calculation graph (purpose STRATEGY_RULE)')
+    graph_version: int = Field(ge=1, description='Its approved version')
+    graph_parameters: dict[str, float] = Field(default_factory=dict, description='Values for the graph parameters')
+    graph_hash: str = Field('', description='Filled from the approved version when the strategy version is saved')
+    definition: dict | None = Field(None, description='Filled from the approved version when the strategy version is saved')
+
+    @model_validator(mode='after')
+    def _pinned(self) -> 'GraphRule':
+        if not self.definition or not self.graph_hash:
+            raise ValueError('the graph version is filled in from the approved calculation graph when the strategy version is saved')
+        from ..calc.run import definition_hash
+        if definition_hash(self.definition) != self.graph_hash:
+            raise ValueError('the graph definition does not match its approved version')
+        return self
+
+
+def resolve_graph(db, parameters: dict) -> dict:
+    """Fill a GRAPH strategy's pinned definition and hash from its APPROVED calculation graph version."""
+    from fastapi import HTTPException
+    from ..calc import store as calc_store
+    p = dict(parameters or {})
+    code, n = p.get('graph_code'), p.get('graph_version')
+    if not code or not n:
+        raise HTTPException(422, 'A graph strategy needs the calculation graph and its approved version.')
+    v = calc_store.version(db, str(code), int(n))
+    if v is None:
+        raise HTTPException(404, f'Calculation graph {code} has no version {n}.')
+    if v['status'] != 'APPROVED':
+        raise HTTPException(409, f"{code} v{n} is {v['status']}: a strategy runs only an approved graph version.")
+    if v['purpose'] != 'STRATEGY_RULE':
+        raise HTTPException(422, f"{code} is a {v['purpose']} graph; a strategy needs a STRATEGY_RULE graph.")
+    return {**p, 'definition': v['definition'], 'graph_hash': v['hash']}
+
+
+def graph_rule(bars, rows, p: GraphRule):
+    from ..calc import engine as calc_engine
+    from ..calc.nodes import Ctx
+    from ..calc.run import execute
+    res = execute(calc_engine.plan_for(p.definition, p.graph_hash, p.graph_parameters), Ctx(bars, p.timeframe))
+    if not res.ok:
+        node, err = next(iter(res.errors.items()), ('graph', 'failed'))
+        raise ValueError(f'Graph {p.graph_code} v{p.graph_version}: node {node}: {err}')
+    target, strength, reason = res.outputs['target'], res.outputs.get('strength'), res.outputs.get('reason') or 'graph rule'
+
+    def step(i, state):
+        t = target[i]
+        if t in ('HOLD', state):
+            return None, 0, ''
+        s = strength[i] if strength and strength[i] is not None else 50
+        return t, int(round(s)), f'{reason} ({p.graph_code} v{p.graph_version})'
+    return _walk(len(bars), step, p.direction)
+
+
 ALGORITHMS: dict[str, dict] = {
     'MA_CROSSOVER': {'label': 'Moving-average crossover (SMA)', 'model': MaCross, 'run': ma_cross},
     'EMA_CROSSOVER': {'label': 'EMA crossover', 'model': EmaCross, 'run': ema_cross},
@@ -318,6 +373,7 @@ ALGORITHMS: dict[str, dict] = {
     'BOLLINGER_REVERSION': {'label': 'Bollinger band reversion', 'model': BollingerReversion, 'run': bollinger_reversion},
     'RULES': {'label': 'Rule builder (any feature)', 'model': Rules, 'run': rules},
     'SIGNAL_BLEND': {'label': 'Signal blend (Stage 3 signals combined)', 'model': SignalBlend, 'run': signal_blend},
+    'GRAPH': {'label': 'Calculation graph (an approved strategy-rule graph)', 'model': GraphRule, 'run': graph_rule},
 }
 
 # The decision rule of each algorithm, in words and symbols (shown on the Strategies workspace).
@@ -333,6 +389,8 @@ EQUATIONS = {
     'BOLLINGER_REVERSION': ('LONG when closeₜ₋₁ < lowerₜ₋₁ and closeₜ ≥ lowerₜ; SHORT at the upper band; FLAT at the middle. Bands = SMA(n) ± k·σ(n)',
                             'strength = clamp(200 × |close − middle| ÷ (upper − lower), 10, 100)'),
     'RULES': ('LONG when every long-entry condition holds; FLAT when any long-exit condition holds (shorts the same)', 'strength = 60 on entry, 50 on exit'),
+    'GRAPH': ('target = the graph\'s output on each bar (LONG, SHORT, FLAT, or HOLD = keep), changed when it differs from the target held; '
+              'the graph is the approved version pinned in the strategy version', 'strength = the graph\'s strength output (50 when it has none)'),
     'SIGNAL_BLEND': ('combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ| (scores from the Stage 3 library); LONG when combined ≥ entry, SHORT when ≤ −entry; '
                      'FLAT when it falls back inside ±exit; reverse when it crosses the opposite entry', 'strength = clamp(|combined|, 10, 100)'),
 }
@@ -350,6 +408,14 @@ def run(algorithm: str, parameters: dict, bars: list[dict], rows: list[dict]) ->
 def warmup(algorithm: str, parameters: dict) -> int:
     """Bars a decision needs before it means anything (the window must be longer)."""
     p = parameters
+    if algorithm == 'GRAPH' and p.get('definition'):
+        from ..calc import engine as calc_engine
+        try:   # the graph's own warm-up (its longest chain of look-backs), and 3 × its longest moving average for convergence
+            plan = calc_engine.plan_for(p['definition'], p.get('graph_hash') or '', p.get('graph_parameters') or {})
+            emas = [int(pn.params.get('n') or 0) for pn in plan.order if pn.nt.type == 'ind.ema']
+            return max(plan.warmup + 2, 3 * max(emas or [0]))
+        except Exception:  # noqa: BLE001 - an invalid graph is refused when it runs, with its reason
+            return 250
     return {'MA_CROSSOVER': p.get('slow_window', 50), 'EMA_CROSSOVER': 3 * p.get('slow', 21), 'RSI_REVERSION': 3 * p.get('period', 14),
             'DONCHIAN_BREAKOUT': p.get('entry', 20) + 1, 'BOLLINGER_REVERSION': p.get('period', 20) + 1,
             'SIGNAL_BLEND': 3 * max([max([v for v in (c.get('parameters') or {}).values() if isinstance(v, (int, float))] or [26])

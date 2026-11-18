@@ -10,6 +10,8 @@ import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 import { goto } from './nav';
+import GraphWorkbench from './calc/GraphWorkbench';
+import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
 import { DecisionFlow, DecisionQueue, ExecutionPolicies } from './ExecutionFlow';
 import { BacktestCompare, StrategyDashboard } from './StrategyDesk';
@@ -168,6 +170,7 @@ export function SignalsView() {
   const sections: Section[] = [
     { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'What the library says now: long, short and flat scores, the strongest scores, the composite of each instrument and the latest flips.', render: () => <SignalDashboard /> },
     { id: 'board', label: 'Live signal board', group: 'Overview', hint: 'Every collected instrument × every library signal with its composite: filter, sort, click a score for its equation with this bar’s numbers.', render: () => <SignalBoardLive /> },
+    { id: 'graphs', label: 'Signal graphs', group: 'Work', hint: 'Every signal as nodes and wires (n8n-style) with each node’s value on the bar you choose: inspect, copy, change, check, propose, approve, put to use.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['SIGNAL']} intro="Every library signal is drawn here as a graph and is equal to its code on every bar. Copy one to make your own; once approved it can score a signal definition instead of the library formula." /> },
     { id: 'explain', label: 'Explain an instrument', group: 'Work', hint: 'One instrument: each signal’s formula, its inputs on the last bar, the arithmetic, the side, and a chart against price.', render: () => <SignalExplain /> },
     { id: 'timeframes', label: 'Across timeframes', group: 'Work', hint: 'One instrument: every signal on every timeframe and the composite of each — do the horizons agree?', render: () => <SignalTimeframes /> },
     { id: 'research', label: 'Signal research', group: 'Work', hint: 'Does one signal predict? Information coefficient, t-stat, hit rate, quintiles, turnover and cost over several horizons.', render: () => <SignalResearch /> },
@@ -307,6 +310,7 @@ export function StrategiesView() {
     { id: 'drift-settings', label: 'Drift settings', group: 'Configure', hint: 'When live results count as drift.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['drift_min_trades', 'drift_tolerance_pct']} /> },
     { id: 'algorithms', label: 'Algorithms', group: 'Configure', hint: 'The rule sets a version can use, each with its equation, strength formula and parameters.', render: () => <AlgorithmEquations /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every algorithm’s rule, sizing (fixed, value, % of equity at an ATR stop), protective exits, backtest fills and metrics, walk-forward and drift.', render: () => <Formulas stage="Strategies" /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Strategy rules, sizing and stop/target as graphs (n8n-style): draft, check on stored bars, propose and approve; an approved rule graph runs as a strategy (Setup › Strategies › algorithm Calculation graph).', render: ctx => <GraphWorkbench ctx={ctx} purposes={['STRATEGY_RULE', 'SIZING', 'PROTECTIVE']} /> },
     { id: 'runtime-settings', label: 'Runtime switch', group: 'Configure', hint: 'Pause or resume every strategy at once.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['runtime_enabled']} intro="Paused: no deployment is evaluated and no new signal is raised; orders already working stay as they are. Pause one deployment from Setup › Deployments." /> },
   ];
@@ -422,6 +426,7 @@ export function RiskView() {
     { id: 'stress', label: 'Stress tests', group: 'Monitor', hint: 'Today\'s positions under price shocks: everything, an asset class, a currency or one symbol.', render: ctx => <Stress ctx={ctx} /> },
     { id: 'var-settings', label: 'VaR settings', group: 'Configure', hint: 'Confidence, horizon and look-back of the VaR.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['var_confidence', 'var_timeframe', 'var_lookback_bars']} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every pre-trade check: limits, loss and drawdown, exposure, margin and leverage, price deviation, stale price, VaR, ES and stress.', render: () => <Formulas stage="Risk" /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Extra risk refusals as graphs: they can only refuse, fail closed, and the built-in limits always run.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['RISK_CHECK']} /> },
   ];
   return <StageShell view="Risk" sections={sections} />;
 }
@@ -477,6 +482,7 @@ export function PortfolioView() {
     { id: 'capital', label: 'Paper capital', group: 'Configure', hint: 'Starting equity of accounts without their own.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="Each account's own starting capital is set on its card (Overview › Accounts)." /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Average cost, realised and unrealised P&L, equity, drawdown, partitions, allocation, copy size and attribution.', render: () => <Formulas stage="Portfolio" /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Allocation weights and portfolio measures as graphs.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['ALLOCATION', 'MEASURE']} /> },
   ];
   return <StageShell view="Portfolio" sections={sections} />;
 }
@@ -493,11 +499,17 @@ function OrderTable({ rows, open }: { rows: Row[]; open: (r: Row) => void }) {
 
 function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: Ctx }) {
   const [o, error, reload] = useData<Row>(`trading/orders/${id}`, 0, [id]);
-  const [err, setErr] = useState(''), [res, setRes] = useState<Row | null>(null);
+  const [err, setErr] = useState(''), [res, setRes] = useState<Row | null>(null), [amend, setAmend] = useState<Row | null>(null);
   if (!o) return <Msg error={error} />;
+  const working = ['ACKNOWLEDGED', 'PARTIALLY_FILLED'].includes(o.state);
+  const sendAmend = async (e: FormEvent) => { e.preventDefault(); setErr('');
+    const body: Row = { reason: amend!.reason };
+    for (const k of ['limit_price', 'stop_price', 'stop_loss', 'take_profit', 'quantity']) if (String(amend![k] ?? '').trim() !== '') body[k] = String(amend![k]).trim();
+    try { await api(`trading/orders/${id}/modify`, 'POST', body); setAmend(null); reload(); } catch (x) { setErr((x as Error).message); } };
   const cancel = () => { const reason = window.prompt('Reason for cancelling'); if (reason) void api(`trading/orders/${id}/cancel`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); };
   return <FloatingWindow storageKey="corei.order.v1" title={`Order · ${o.symbol} ${o.side} ${o.quantity}`} subtitle={o.client_order_id} onClose={close}
     footer={<div className="cfg-actions">{(['ACKNOWLEDGED', 'PARTIALLY_FILLED'].includes(o.state) || (o.state === 'SUBMITTED' && o.mode === 'PAPER') || (o.state === 'APPROVED' && o.mode === 'BROKER')) && (ctx.canOps || ctx.canRisk) && <button onClick={cancel}>Cancel order</button>}
+      {working && (ctx.canOps || ctx.canRisk) && !amend && <button onClick={() => setAmend({ limit_price: o.limit_price ?? '', stop_price: o.stop_price ?? '', stop_loss: o.stop_loss ?? '', take_profit: o.take_profit ?? '', quantity: '', reason: '' })}>Amend</button>}
       {o.hold_for_approval && o.state === 'APPROVED' && ctx.canRisk && <button className="primary" onClick={() => { const reason = window.prompt('Release this LIVE order to the broker? Reason:'); if (reason) void api(`trading/orders/${id}/release`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); }}>Release to broker</button>}
       {o.mode === 'BROKER' && o.broker_tag && !['FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'APPROVED'].includes(o.state) && (ctx.canOps || ctx.canRisk) && <button onClick={() => void api(`trading/orders/${id}/check-broker`, 'POST').then(reload).catch(e => setErr((e as Error).message))}>Look up at the broker</button>}
       {o.state === 'UNKNOWN' && ctx.canRisk && <button onClick={() => setRes({ outcome: 'FILLED', price: '', quantity: '', reason: '' })}>Resolve</button>}<button onClick={close}>Close</button></div>}>
@@ -512,10 +524,20 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
       <h4>What happened</h4>
       <ol className="st-timeline">{o.events.map((e: Row) => <li key={e.id}><b>{e.state_to.toLowerCase().replace(/_/g, ' ')}</b> <small className="cfg-note">{when(e.at)} · {e.actor}</small>
         {e.detail?.price && <small> · price {e.detail.price}{e.detail.slippage ? ` (slippage ${e.detail.slippage})` : ''}</small>}{e.detail?.reason && <small> · {e.detail.reason}</small>}{e.detail?.reasons && <small> · {e.detail.reasons.join('; ')}</small>}
+        {e.detail?.modified && <small> · amended {Object.entries(e.detail.modified).map(([k, v]: [string, any]) => `${k.replace('_', ' ')} ${v[0] ?? '–'} → ${v[1] ?? '–'}`).join(', ')}</small>}
         {e.detail?.deal && <small> · deal {e.detail.deal}</small>}{e.detail?.found && <small> · {e.detail.found}</small>}{e.detail?.not_sent && <small> · not sent</small>}</li>)}</ol>
       {o.risk && <><h4>Risk check</h4><p className="cfg-note">{o.risk.approved ? 'Approved' : 'Refused'} · position {o.risk.inputs?.position_before} → {o.risk.inputs?.position_after}
         {o.risk.inputs?.limits && Object.keys(o.risk.inputs.limits).length ? ` · limits ${Object.entries(o.risk.inputs.limits).map(([k, v]) => `${k} ${v}`).join(', ')}` : ' · no limits set'}</p></>}
       {o.fills.length > 0 && <><h4>Fills</h4><table className="cfg-table compact"><tbody>{o.fills.map((f: Row) => <tr key={f.id}><td>{f.quantity} at {f.price}</td><td><small>bid {f.quote_bid ?? '–'} / ask {f.quote_ask ?? '–'}</small></td><td><small>realised {f.realised_pnl} {f.currency}</small></td><td><small>{f.broker_deal_id ? `deal ${f.broker_deal_id}` : ''}{f.latency_ms != null ? ` · ${f.latency_ms} ms` : ''}</small></td></tr>)}</tbody></table></>}
+      {amend && <form className="intel-edit" onSubmit={sendAmend} aria-label="Amend order">
+        <p className="cfg-note">The same order with new terms: new prices pass the price-deviation and kill-switch checks again; a real MT5 order is amended at the broker first and recorded only when the broker accepts.</p>
+        <div className="cfg-pair">{o.order_type === 'LIMIT' && <Field label="Limit price"><input aria-label="Amend limit price" inputMode="decimal" value={amend.limit_price} onChange={e => setAmend({ ...amend, limit_price: e.target.value })} /></Field>}
+          {o.order_type === 'STOP' && <Field label="Stop price"><input aria-label="Amend stop price" inputMode="decimal" value={amend.stop_price} onChange={e => setAmend({ ...amend, stop_price: e.target.value })} /></Field>}
+          {o.mode === 'PAPER' && <Field label="Smaller quantity" hint={`Above ${o.filled_qty} filled, below ${o.quantity}`}><input aria-label="Amend quantity" inputMode="decimal" value={amend.quantity} onChange={e => setAmend({ ...amend, quantity: e.target.value })} /></Field>}</div>
+        <div className="cfg-pair"><Field label="Stop-loss (0 removes)"><input aria-label="Amend stop loss" inputMode="decimal" value={amend.stop_loss} onChange={e => setAmend({ ...amend, stop_loss: e.target.value })} /></Field>
+          <Field label="Take-profit (0 removes)"><input aria-label="Amend take profit" inputMode="decimal" value={amend.take_profit} onChange={e => setAmend({ ...amend, take_profit: e.target.value })} /></Field></div>
+        <Field label="Reason (audit log)"><input aria-label="Amend reason" value={amend.reason} onChange={e => setAmend({ ...amend, reason: e.target.value })} /></Field>
+        <div className="cfg-actions"><button className="primary" disabled={amend.reason.trim().length < 5}>Amend order</button><button type="button" onClick={() => setAmend(null)}>Cancel</button></div></form>}
       {res && <form className="intel-edit" onSubmit={e => { e.preventDefault(); void api(`trading/orders/${id}/resolve`, 'POST', { outcome: res.outcome, reason: res.reason, price: res.price || null, quantity: res.quantity || null })
         .then(() => { setRes(null); reload(); }).catch(x => setErr((x as Error).message)); }}>
         <p className="cfg-note">Use "Look up at the broker" first; resolve by hand only when the broker shows nothing. COREI never sends an order with an unknown outcome again.</p>
@@ -619,6 +641,11 @@ function ExecutionSettings({ ctx }: { ctx: Ctx }) {
   </section>;
 }
 
+function AlgoDesk({ ctx }: { ctx: Ctx }) {
+  const { accounts, instruments } = Lists();
+  return <section className="intel"><AlgoBlotter ctx={ctx} /><h4>Start an algorithm</h4><AlgoTicket ctx={ctx} accounts={accounts} instruments={instruments} /></section>;
+}
+
 function WithDetail({ ctx, body }: { ctx: Ctx; body: (open: (id: string) => void) => ReactNode }) {
   const [id, setId] = useState<string | null>(null);
   return <>{body(setId)}{id && <OrderDetail id={id} close={() => setId(null)} ctx={ctx} />}</>;
@@ -630,6 +657,7 @@ export function OrdersView() {
     { id: 'flow', label: 'From strategies', group: 'Overview', hint: 'Every decision coming from the strategies: signal → decision → risk → order → fill, with what waits for you.', render: ctx => <DecisionFlow ctx={ctx} /> },
     { id: 'queue', label: 'Decision queue', group: 'Work', hint: 'Decisions waiting for a trader: execute (full or smaller, market or limit) or decline — one or all.', render: ctx => <DecisionQueue ctx={ctx} /> },
     { id: 'orders', label: 'Orders', group: 'Work', hint: 'Every order with its full history: open one to see each step, the risk check and the fills.', render: ctx => <Blotter ctx={ctx} /> },
+    { id: 'algos', label: 'Algorithms', group: 'Work', hint: 'Work an order over time as child orders: TWAP, VWAP, POV or iceberg, with a price cap; progress, average against arrival in bp, pause, resume, cancel.', render: ctx => <AlgoDesk ctx={ctx} /> },
     { id: 'ticket', label: 'Order ticket', group: 'Work', hint: 'Place a paper or real order by hand, on one account or routed; same risk check.', render: ctx => <Ticket ctx={ctx} /> },
     { id: 'waiting', label: 'Waiting', group: 'Work', hint: 'Real orders waiting for a second person (four-eyes) or for the dispatcher.', render: ctx => <WithDetail ctx={ctx} body={open => <Waiting ctx={ctx} open={open} />} /> },
     { id: 'unknown', label: 'Unknown', group: 'Work', hint: 'Orders sent with no answer: looked up at the broker, never sent again.', render: ctx => <WithDetail ctx={ctx} body={open => <Unknown ctx={ctx} open={open} />} /> },
@@ -639,6 +667,7 @@ export function OrdersView() {
     { id: 'policy', label: 'Execution policy', group: 'Configure', hint: 'Per strategy: automatic, trader approves or signal only; market or limit, offset, time in force, approval window.', render: ctx => <ExecutionPolicies ctx={ctx} /> },
     { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills, real orders (pre-check, four-eyes, timeouts, magic number), reconciliation.', render: ctx => <ExecutionSettings ctx={ctx} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Client order ID, paper fill price, slippage, latency, routing scores and the UNKNOWN look-up.', render: () => <Formulas stage="Execution" /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Execution measures as graphs (slippage, cost, fill quality) on stored bars.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['MEASURE']} /> },
   ];
   return <StageShell view="Execution" sections={sections} />;
 }

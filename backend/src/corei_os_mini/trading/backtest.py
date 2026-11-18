@@ -145,6 +145,8 @@ def run(actor: str, data: BacktestIn) -> dict:
             algo, params = v['algorithm'], dict(v['parameters'])
         if algo not in algorithms.ALGORITHMS:
             raise HTTPException(422, f'Unknown algorithm {algo}.')
+        if algo == 'GRAPH' and not params.get('definition'):
+            params = algorithms.resolve_graph(db, params)
         try:
             params = algorithms.ALGORITHMS[algo]['model'].model_validate(params).model_dump(mode='json')
         except Exception as exc:  # noqa: BLE001 - pydantic

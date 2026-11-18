@@ -59,7 +59,7 @@ const descriptions: Record<View, string> = {
 const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
 /* The rail: home, then the trading flow in order (1 market data → 8 post-trade), watching, setting up. */
 const RAIL:(View|'-')[]=['Overview','-','Market data','Intelligence','Signals','Strategies','Risk','Portfolio','Execution','Post-trade','-','Operations','-','Configuration','Infrastructure'];
-const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies',Risk:'Risk',Portfolio:'Portfolio',Execution:'Orders','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
+const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings'};
 const iconIndex:Record<View,number>={Overview:0,'Market data':1,Intelligence:11,Signals:12,Strategies:5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9};
 function stored() {
   try {

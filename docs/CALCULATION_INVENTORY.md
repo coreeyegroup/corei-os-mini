@@ -14,11 +14,11 @@ stage run the graph instead of the code. Money stays exact decimal in both.
 | Phase | Release | What becomes a graph | Status |
 |---|---|---|---|
 | 1 Foundation | 0.50 | Engine, node catalogue (sources, indicators, series, maths, logic, combine, convert, outputs), expression language, checks, trace, migration 038, `/api/calc` read + validate + preview. One built-in drawn as proof: **EMA trend**, equal to `signal_library.compute('EMA_TREND')` to 1e-9. | Done |
-| 2 Signals | 0.51 | The 12 library signals as built-in SIGNAL graphs (parity ≤ 1e-9); bindings; the engine scores graph-bound signals; the UI shows the trace. | Next |
-| 3 Editor | 0.52 | Canvas editor (React Flow), plain view, library, versions DRAFT → PROPOSED → APPROVED → RETIRED with four-eyes. | Planned |
-| 4 Strategies | 0.53 | Algorithms and the rule builder as STRATEGY_RULE graphs; backtest parity to the cent. | Planned |
+| 2 Signals | 0.51 | The 12 library signals as built-in SIGNAL graphs (parity ≤ 1e-9); bindings; the engine scores graph-bound signals; the UI shows the trace. | Done |
+| 3 Editor | 0.51 | Canvas editor (React Flow), plain view, library, versions DRAFT → PROPOSED → APPROVED → RETIRED with four-eyes. | Done |
+| 4 Strategies | 0.51–0.53 | Strategy algorithm GRAPH (pinned approved version) in runtime and backtest — done, backtest equal to the cent; EMA and SMA crossover drawn (same target and strength every bar) — done; RSI, Donchian, Bollinger, rules, signal blend drawn — next. | Partly done |
 | 5 Risk, sizing, portfolio, execution, post-trade | 0.54 | SIZING, PROTECTIVE, RISK_CHECK (extra refusals only; the built-in limits always run), ALLOCATION, MEASURE. | Planned |
-| 6 Features and market data | 0.55 | Platform and custom features as FEATURE graphs; market-data quality measures. | Planned |
+| 6 Features and market data | 0.51–0.55 | 6 platform features drawn (equal to the feature engine every bar) — done; the rest of the features, custom indicators and market-data measures — next. | Partly done |
 
 ## What stays code (and why)
 

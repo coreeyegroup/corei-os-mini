@@ -86,9 +86,24 @@ register(NodeType('math.round', 'maths', 'Round', 'x rounded to a number of deci
 _NAME = re.compile(r'^[a-z][a-z0-9_]{0,23}$')
 
 
+def _typed(p: dict) -> list[tuple[str, str]]:
+    """The inputs as (name, 'num' | 'bool'): "fast, slow, crossed:bool" — a true/false input is marked :bool."""
+    out = []
+    for raw in (p.get('inputs') or '').split(','):
+        raw = raw.strip()
+        if not raw:
+            continue
+        name, _, kind = raw.partition(':')
+        out.append((name.strip(), 'bool' if kind.strip() == 'bool' else 'num' if not kind.strip() else '?' + kind.strip()))
+    return out
+
+
 def _names(p: dict) -> list[str]:
-    raw = [n.strip() for n in (p.get('inputs') or '').split(',') if n.strip()]
-    return raw
+    return [n for n, _k in _typed(p)]
+
+
+def _kinds(p: dict) -> dict[str, str]:
+    return dict(_typed(p))
 
 
 def _expr_check(p: dict) -> None:
@@ -100,8 +115,11 @@ def _expr_check(p: dict) -> None:
             raise ValueError(f"input name '{n}' must be lower-case letters, digits or _, start with a letter, and not be a word of the language")
     if len(set(names)) != len(names):
         raise ValueError('input names must be different')
+    bad = [n for n, k in _typed(p) if k.startswith('?')]
+    if bad:
+        raise ValueError(f"input {bad[0]}: the only marker is :bool (a true/false input)")
     try:
-        parsed = E.parse(p['expression'], {n: 'num' for n in names})
+        parsed = E.parse(p['expression'], _kinds(p))
     except E.ExprError as exc:
         raise ValueError(f'expression: {exc}') from None
     want = 'bool' if p['output'] == 'true/false' else 'num'
@@ -110,21 +128,21 @@ def _expr_check(p: dict) -> None:
 
 
 def _expr_ports(p: dict):
-    names = _names(p) or ['a']
+    typed = _typed(p) or [('a', 'num')]
     out = T.SERIES_BOOL if p.get('output') == 'true/false' else S
-    return [Port(n, S) for n in names], [Port('out', out)]
+    return [Port(n, T.SERIES_BOOL if k == 'bool' else S) for n, k in typed], [Port('out', out)]
 
 
 def _expr_run(ctx: Ctx, ins: dict, p: dict) -> dict:
     names = _names(p)
-    parsed = E.parse(p['expression'], {n: 'num' for n in names})
+    parsed = E.parse(p['expression'], _kinds(p))
     env = {n: ins[n] for n in names}
     return {'out': parsed.series(env, ctx.n)}
 
 
 def _expr_lookback(p: dict) -> int:
     try:
-        return E.parse(p['expression'], {n: 'num' for n in _names(p)}).lookback
+        return E.parse(p['expression'], _kinds(p)).lookback
     except E.ExprError:
         return 0
 
@@ -139,10 +157,10 @@ def _expr_explain(p: dict, ins: dict, outs: dict) -> str:
 
 
 register(NodeType('math.expression', 'maths', 'Expression',
-                  'One line of the formula language over named inputs: + − × ÷ ^, comparisons, and/or/not, x[t-k] for k bars ago, and '
+                  'One line of the formula language over named inputs (mark a true/false input name:bool): + − × ÷ ^, comparisons, and/or/not, x[t-k] for k bars ago, and '
                   + ', '.join(E.FUNCTIONS) + '. No other names, no code.',
                   [Port('a', S)], [Port('out', S)],
-                  [Param('inputs', 'text', 'a', doc='the input names, comma-separated, e.g. "fast, slow, atr"'),
+                  [Param('inputs', 'text', 'a', doc='the input names, comma-separated, e.g. "fast, slow, atr" (a true/false input as "crossed:bool")'),
                    Param('expression', 'expr', 'a', doc='e.g. 100 * (fast - slow) / atr'),
                    Param('output', 'choice', 'number', choices=('number', 'true/false'))],
                   _expr_run, lambda p: f"out = {p.get('expression')}", _expr_lookback, _expr_explain, _expr_ports, _expr_check))

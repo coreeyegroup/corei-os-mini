@@ -57,6 +57,7 @@ class ExecuteIn(BaseModel):
     order_type: Literal['MARKET', 'LIMIT'] | None = None
     limit_price: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=12)
     note: str = Field('', max_length=500)
+    algo: dict | None = None   # work the decision with an execution algorithm (trading.algos.AlgoIn): TWAP, VWAP, POV or ICEBERG
 
 
 def policy(dep: dict) -> dict:
@@ -160,6 +161,9 @@ def execute(actor: str, intent_id: UUID, data: ExecuteIn) -> dict:
                              (str(dep['id']), list(oms.OPEN))).fetchone()
         if working:
             raise HTTPException(409, f"Order {working['client_order_id'][:12]}… of this deployment is {working['state'].lower()}: it settles first.")
+        busy = db.execute("SELECT algo, state FROM ex_parent_orders WHERE deployment_id=%s AND state IN ('WORKING','PAUSED') LIMIT 1", (str(dep['id']),)).fetchone()
+        if busy:
+            raise HTTPException(409, f"A {busy['algo']} execution of this deployment is {busy['state'].lower()}: it finishes or is cancelled first.")
         mode = dep.get('mode') or 'PAPER'
         current = portfolio.position_qty(db, dep['account_id'], dep['instrument_id'], dep['id'], mode)
         delta = D(it['target_qty']) - current
@@ -176,6 +180,27 @@ def execute(actor: str, intent_id: UUID, data: ExecuteIn) -> dict:
             qty, problem = risk.lot(db, dep['instrument_id'], data.quantity)
             if problem:
                 raise HTTPException(422, problem)
+        if data.algo is not None:
+            from . import algos
+            try:
+                spec = algos.AlgoIn.model_validate(data.algo)
+            except Exception as exc:  # noqa: BLE001 - pydantic names the field
+                raise HTTPException(422, f'Execution algorithm: {exc}'[:500]) from None
+            parent = algos.create(db, actor, spec, account_id=dep['account_id'], instrument_id=dep['instrument_id'], side=side, quantity=qty, mode=mode,
+                                  key=f"intent:{dep['id']}:{sig['id']}", now=now, deployment_id=dep['id'], intent_id=it['id'],
+                                  stop_loss=it['stop_loss'], take_profit=it['take_profit'], reason=data.note or 'executed from the execution queue')
+            locked = db.execute('SELECT * FROM ex_parent_orders WHERE id=%s FOR UPDATE', (str(parent['id']),)).fetchone()
+            parent = store.clean(algos.step(db, dict(locked), now))
+            db.execute("UPDATE tr_intents SET outcome='ORDERED', parent_id=%s, current_qty=%s, quantity=%s, side=%s, order_type=%s, decided_by=%s, decided_at=now(), "
+                       'decision_note=%s WHERE id=%s', (str(parent['id']), current, qty, side, spec.algo, actor,
+                                                         f"worked by {spec.algo}" + (f' · {data.note}' if data.note else ''), str(intent_id)))
+            signals._set(db, sig['id'], 'ACTED', actor, f"executed by {actor} with {spec.algo}: {qty.normalize()} over {spec.duration_minutes} min")
+            store.audit(db, actor, 'EXECUTE_DECISION', 'intent', intent_id, store.clean(it), {'algo_order_id': str(parent['id']), 'algo': spec.algo,
+                        'quantity': str(qty)}, data.note or 'executed from the execution queue')
+            if mode == 'BROKER':
+                from . import execution
+                execution.dispatch_soon()
+            return {'state': 'ORDERED', 'algo_order': parent}
         src = data_source(db, dep)
         q = quote(db, dep['account_id'], dep['instrument_id'], src)
         pol = policy(dep)

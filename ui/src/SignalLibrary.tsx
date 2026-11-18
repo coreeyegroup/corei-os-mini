@@ -11,21 +11,23 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Field } from './Configuration';
 import { Kpis, Msg, num, pill, useData, when, type Ctx, type Row } from './StageShell';
+import { goto } from './nav';
+import { openGraph } from './calc/ports';
 
 const TFS = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const scoreCls = (s: any) => s == null ? 'sig-none' : s >= 60 ? 'sig-l3' : s >= 20 ? 'sig-l2' : s > 0 ? 'sig-l1' : s <= -60 ? 'sig-s3' : s <= -20 ? 'sig-s2' : s < 0 ? 'sig-s1' : 'sig-zero';
 const fmtScore = (s: any) => s == null ? '–' : `${Number(s) > 0 ? '+' : ''}${Number(s).toFixed(1)}`;
 const fmtVal = (v: any) => v == null ? '–' : typeof v === 'number' ? (Math.abs(v) >= 1000 ? v.toFixed(2) : Number(v.toPrecision(6)).toString()) : String(v);
 
-function SourcePick({ value, change, label = 'Instrument' }: { value: string; change: (v: string) => void; label?: string }) {
+export function SourcePick({ value, change, label = 'Instrument' }: { value: string; change: (v: string) => void; label?: string }) {
   const [sources] = useData<Row>('trading/sources', 0);
   return <select aria-label={label} value={value} onChange={e => change(e.target.value)}><option value="">Choose an instrument…</option>
     {(sources?.items ?? []).map((s: Row) => <option key={s.account_id + s.broker_symbol} value={`${s.account_id}|${s.broker_symbol}`}>{s.account_code} · {s.broker_symbol}</option>)}</select>;
 }
-const TfPick = ({ value, change, label = 'Timeframe' }: { value: string; change: (v: string) => void; label?: string }) =>
+export const TfPick = ({ value, change, label = 'Timeframe' }: { value: string; change: (v: string) => void; label?: string }) =>
   <select aria-label={label} value={value} onChange={e => change(e.target.value)}>{TFS.map(t => <option key={t}>{t}</option>)}</select>;
 
-function MiniSpark({ values, threshold }: { values: (number | null)[]; threshold?: number }) {
+export function MiniSpark({ values, threshold }: { values: (number | null)[]; threshold?: number }) {
   const pts = values.map((v, i) => [i, v] as const).filter(([, v]) => v != null) as [number, number][];
   if (pts.length < 2) return null;
   const W = 140, H = 34, x = (i: number) => (i / Math.max(1, values.length - 1)) * W, y = (v: number) => H / 2 - (v / 100) * (H / 2 - 2);
@@ -34,6 +36,9 @@ function MiniSpark({ values, threshold }: { values: (number | null)[]; threshold
     {threshold != null && <><line x1="0" x2={W} y1={y(threshold)} y2={y(threshold)} className="sig-thr" /><line x1="0" x2={W} y1={y(-threshold)} y2={y(-threshold)} className="sig-thr" /></>}
     <polyline fill="none" strokeWidth="1.4" className="sig-line" points={pts.map(([i, v]) => `${x(i)},${y(v)}`).join(' ')} /></svg>;
 }
+
+/** Open a signal's calculation graph in Signals › Signal graphs. */
+function showGraph(code: string) { openGraph(code); goto('Signals', 'graphs'); }
 
 /* ---------- every stage: Calculations & formulas ---------- */
 
@@ -117,7 +122,8 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
       <div className="cfg-actions"><button className="primary" disabled={(edit.reason ?? '').trim().length < 5}>Save</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
     </form>}
     <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Signal</th><th>Family</th><th>Formula</th><th>Parameters</th><th>Threshold</th><th>Timeframes</th><th>Status</th><th /></tr></thead><tbody>
-      {(defs?.items ?? []).map((d: Def) => <tr key={d.id}><td><b>{d.code}</b><br /><small>{d.name}</small>{d.builtin && <> {pill('built-in', 'demo')}</>}</td><td><small>{d.family}</small></td>
+      {(defs?.items ?? []).map((d: Def) => <tr key={d.id}><td><b>{d.code}</b><br /><small>{d.name}</small>{d.builtin && <> {pill('built-in', 'demo')}</>}
+        <br /><button className="linkish" onClick={() => showGraph(d.graph?.code ?? `SIG_${d.kind}`)} title="Open its calculation graph">{d.graph ? `graph ${d.graph.code} v${d.graph.version}` : 'graph ↗'}</button></td><td><small>{d.family}</small></td>
         <td><code className="sig-eq">{d.equation}</code></td><td><small>{Object.entries(d.parameters ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ')}</small></td><td>±{num(d.threshold, 0)}</td>
         <td><small>{(d.timeframes ?? []).join(' ')}</small></td><td>{pill(d.status, d.status === 'ACTIVE' ? 'ok' : 'off')}</td>
         <td>{ctx.canRisk && <span className="sig-acts"><button onClick={() => start(d)}>Edit</button><button onClick={() => void act(d, 'pause')}>{d.status === 'ACTIVE' ? 'Pause' : 'Resume'}</button>
@@ -205,7 +211,7 @@ export function SignalExplain() {
     {chosen && data && <div className="sig-detail"><h4>{chosen.code} on {data.symbol} {data.timeframe} — last {Math.min(200, data.closes?.length ?? 0)} bars <button className="link" onClick={() => setBig('')}>close</button></h4>
       <ScoreChart series={(data.closes ?? []).map((c: Row, k: number) => ({ close: c.close, score: chosen.history?.[k - ((data.closes?.length ?? 0) - (chosen.history?.length ?? 0))] ?? null }))} threshold={Number(chosen.threshold)} /></div>}
     {data && <div className="sig-cards">{(data.items ?? []).map((r: Row) => <div key={r.code} className={`sig-card ${big === r.code ? 'sel' : ''}`}>
-      <header><b>{r.code}</b> <small className="cfg-note">{r.family}</small><span className={`sig-badge ${scoreCls(r.score)}`}>{fmtScore(r.score)}</span>{dirPill(r.direction)}</header>
+      <header><b>{r.code}</b> <small className="cfg-note">{r.family}</small><button className="linkish" onClick={() => showGraph(r.graph?.code ?? `SIG_${r.kind}`)} title="Open as a graph with these numbers">{r.graph ? `graph ${r.graph.code}` : 'graph'}</button><span className={`sig-badge ${scoreCls(r.score)}`}>{fmtScore(r.score)}</span>{dirPill(r.direction)}</header>
       <p className="sig-eqline"><small>Formula</small><code className="sig-eq">{r.equation}</code></p>
       <p className="sig-eqline"><small>This bar</small><code className="sig-eq">{r.worked}</code></p>
       <Inputs inputs={r.inputs} />

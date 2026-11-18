@@ -18,12 +18,13 @@ import { INTEL_GROUPS, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
 import { SubWorkspace } from './SubWorkspace';
 import { Formulas } from './SignalLibrary';
+import GraphWorkbench from './calc/GraphWorkbench';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
 type Tab = 'workspace' | 'dashboard' | 'screener' | 'instrument' | 'sources' | 'correlation' | 'strength' | 'watchlists' | 'rules' | 'calendar' | 'sessions' | 'compare'
-  | 'indicators' | 'settings' | 'formulas' | 'stage';
+  | 'indicators' | 'settings' | 'formulas' | 'graphs' | 'stage';
 const HINTS: Record<Tab, string> = {
   workspace: 'Every panel of market intelligence on one page — dashboard, screener, analysis, monitors and settings — each opens and closes.',
   dashboard: 'Coverage, regime mix per timeframe, what needs history (one click, or all at once), top attention, biggest moves, events and fired rules.',
@@ -40,6 +41,7 @@ const HINTS: Record<Tab, string> = {
   indicators: 'The standard set every screen shares, and your own indicators with the lengths each strategy needs (EMA 9/21, Bollinger 20/2.5, MACD 8/21/5…), per timeframe.',
   settings: 'The feature engine: on or paused, how often it runs, which timeframes, which instruments, how long history is kept, the event-risk window.',
   formulas: 'Every feature and regime formula (EMA, RSI, ATR, Bollinger, ADX, efficiency ratio, volatility, MACD, stochastic, Donchian, z-score, VWAP, OBV, regime, attention) with its value on the instrument you choose.',
+  graphs: 'Features as calculation graphs (n8n-style): every step with its value on the chosen bar; draft your own, check, propose and approve.',
   stage: 'What this stage does, its components and how far each is built.',
 };
 const LABELS = { workspace: 'All panels', ...Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) } as Record<Tab, string>;
@@ -65,7 +67,8 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     : t === 'screener' ? <Screener canRefresh={canEdit} openInstrument={openInstrument} /> : t === 'instrument' ? <InstrumentView pick={pick} items={items} setPick={setPick} />
     : t === 'sources' ? <SourcesView /> : t === 'correlation' ? <CorrelationView /> : t === 'strength' ? <StrengthView /> : t === 'sessions' ? <SessionsView />
     : t === 'compare' ? <MarketBoard /> : t === 'watchlists' ? <WatchlistsView canEdit={canEdit} /> : t === 'rules' ? <RulesView canEdit={canEdit} />
-    : t === 'calendar' ? <CalendarView canEdit={canEdit} /> : t === 'indicators' ? <IndicatorsView canEdit={canEdit} /> : t === 'settings' ? <EngineSettings canEdit={canEdit} /> : t === 'formulas' ? <Formulas stage="Intelligence" features /> : null;
+    : t === 'calendar' ? <CalendarView canEdit={canEdit} /> : t === 'indicators' ? <IndicatorsView canEdit={canEdit} /> : t === 'settings' ? <EngineSettings canEdit={canEdit} /> : t === 'formulas' ? <Formulas stage="Intelligence" features />
+    : t === 'graphs' ? <GraphWorkbench ctx={{ user: user ?? {}, canOps: canEdit, canRisk: (user?.roles ?? []).includes('RISK_APPROVER'), open: () => undefined }} purposes={['FEATURE']} /> : null;
   return <div className="cfg md">
     {nav}
     <section className="cfg-main">

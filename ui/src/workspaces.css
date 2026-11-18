@@ -98,3 +98,9 @@
 /* One left edge for header, sub-tab bar and items on every domain screen. */
 .cfg-main > .cfg-head, .cfg-main > .st-bar, .cfg-main > .sw, .cfg-main > .st-start { margin-left: 0; margin-right: 0; }
 .st-crumb { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+/* Execution algorithms: progress of a parent order; its events. */
+.ex-bar { width: 110px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 2px; }
+.ex-bar i { display: block; height: 100%; background: var(--ready); }
+.ex-events { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; font-size: 12px; }
+.ex-events li { padding: 2px 0; border-bottom: 1px solid var(--line); }

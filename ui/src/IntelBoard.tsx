@@ -272,7 +272,7 @@ export function IntelDashboard({ openInstrument, canEdit, gotoScreener, gotoSett
   const st = data.engine ?? {}, s = data.settings ?? {}, mix = data.by_timeframe?.[tf] ?? { regime: {}, volatility: {}, total: 0 };
   const age = st.last_run_at ? Math.round((Date.now() - Date.parse(st.last_run_at)) / 1000) : null;
   const kpi = (label: string, value: any, hint?: string, cls = '') => <div className={`intel-kpi ${cls}`} title={hint}><small>{label}</small><b>{value}</b></div>;
-  const small = (rows: Row[], cols: [string, (r: Row) => any][]) => rows.length ? <table className="cfg-table compact intel-table"><thead><tr>{cols.map(c => <th key={c[0]}>{c[0]}</th>)}</tr></thead>
+  const small = (rows: Row[] | undefined, cols: [string, (r: Row) => any][]) => rows?.length ? <table className="cfg-table compact intel-table"><thead><tr>{cols.map(c => <th key={c[0]}>{c[0]}</th>)}</tr></thead>
     <tbody>{rows.map(r => <tr key={r.account_id + r.broker_symbol} className="clickable" onClick={() => openInstrument(r)} title={(r.reasons ?? []).join(' · ')}>{cols.map(c => <td key={c[0]}>{c[1](r)}</td>)}</tr>)}</tbody></table>
     : <p className="cfg-note">Nothing yet.</p>;
   return <section className="intel">
@@ -302,7 +302,7 @@ export function IntelDashboard({ openInstrument, canEdit, gotoScreener, gotoSett
             <td>{m.regime.WARMING_UP ?? 0}</td><td>{m.volatility.HIGH ?? 0}</td><td>{m.volatility.LOW ?? 0}</td></tr>; })}
         </tbody></table></div>
       <div><h4>Needs history ({tf})</h4>
-        {data.warming_up.length ? <>
+        {data.warming_up?.length ? <>
           <p className="cfg-note">Fewer than 60 closed {tf} bars. <em>Get history</em> asks the broker for 14 days of M1 (builds M5–H1) and a year of H4 and D1;
             the jobs run in Market data › Jobs and features warm up within a few minutes. Each request is audited.</p>
           {canEdit && <div className="cfg-actions"><button className="primary" disabled={!!busy}

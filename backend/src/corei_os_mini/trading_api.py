@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
-from .trading import (algorithms, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
+from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
                       signal_library, strategy_health, var)
 from . import formulas
 from .trading.common import settings as read_settings
@@ -208,7 +208,8 @@ def signal_catalogue(response: Response, _: str = Depends(require_operator)):
 def signal_definitions(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        return {'items': _j(signal_library.definitions(db))}
+        return {'items': _j([{**d, 'graph': None if not d.get('graph') else {k: v for k, v in d['graph'].items() if k != 'definition'}}
+                             for d in signal_library.definitions(db)])}
 
 
 @router.post('/signal-library/definitions', status_code=201)
@@ -249,10 +250,12 @@ def signal_explain(response: Response, account_id: UUID, symbol: str = Query(...
     out = []
     for d in defs:
         params = signal_library.params_of(d['kind'], d['parameters'])
-        series = signal_library.compute(d['kind'], params, bars) if bars else []
+        series = signal_library.score_series(d, bars, timeframe) if bars else []
         last = series[-1] if series else None
         score, inputs = (last if last else (None, None))
+        g = d.get('graph')
         out.append({'code': d['code'], 'name': d['name'], 'kind': d['kind'], 'family': d.get('family'), 'parameters': params, 'threshold': d['threshold'],
+                    'graph': None if not g else {'code': g['code'], 'version': g['version'], 'hash': g['hash']},
                     'equation': d.get('equation'), 'score': None if score is None else round(score, 1),
                     'direction': signal_library.direction(score, float(d['threshold'])), 'inputs': inputs,
                     'worked': signal_library.worked(d['kind'], params, score, inputs),
@@ -394,6 +397,43 @@ def execution_flow(response: Response, outcome: str | None = Query(None, max_len
 @router.post('/execution/decisions/{intent_id}/execute')
 def execute_decision(intent_id: UUID, payload: dict, user: Principal = Depends(_ops_or_risk)):
     return _j(handoff.execute(user.username, intent_id, parse(handoff.ExecuteIn, payload or {})))
+
+
+# ---------- execution algorithms (DEC-94) ----------
+
+@router.get('/execution/algos')
+def algo_orders(response: Response, active: bool = False, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'items': algos.parents(db, active=active), 'algos': algos.ALGOS})
+
+
+@router.get('/execution/algos/{parent_id}')
+def algo_order(parent_id: UUID, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(algos.detail(db, parent_id))
+
+
+@router.post('/execution/algos', status_code=201)
+def place_algo_order(payload: dict, user: Principal = Depends(_ops_or_risk)):
+    return _j(algos.ticket(user.username, parse(algos.ParentIn, payload)))
+
+
+class AlgoAction(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post('/execution/algos/{parent_id}/{action}')
+def control_algo_order(parent_id: UUID, action: Literal['pause', 'resume', 'cancel'], payload: dict, user: Principal = Depends(_ops_or_risk)):
+    return _j(algos.control(user.username, parent_id, action, parse(AlgoAction, payload).reason))
+
+
+@router.post('/execution/algos-tick')
+def tick_algo_orders(user: Principal = Depends(_ops_or_risk)):
+    """Look at every working algorithm now (the execution loop does this every 2 s; the runtime every cycle)."""
+    return algos.tick()
 
 
 @router.post('/execution/decisions/{intent_id}/decline')
@@ -597,6 +637,12 @@ def order_ticket(payload: dict, user: Principal = Depends(_ops)):
 @router.post('/orders/{order_id}/cancel')
 def cancel_order(order_id: UUID, payload: dict, user: Principal = Depends(_ops_or_risk)):
     return _j(oms.cancel(user.username, order_id, parse(ReasonIn, payload).reason))
+
+
+@router.post('/orders/{order_id}/modify')
+def modify_order(order_id: UUID, payload: dict, user: Principal = Depends(_ops_or_risk)):
+    """Amend a working order: limit / stop price, stop-loss / take-profit, a smaller paper quantity."""
+    return _j(oms.modify(user.username, order_id, parse(oms.ModifyIn, payload)))
 
 
 @router.post('/orders/{order_id}/resolve')

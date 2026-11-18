@@ -308,10 +308,11 @@ def _corr(a: list[float], b: list[float]) -> float | None:
     return sum((x - ma) * (y - mb) for x, y in zip(a, b)) / math.sqrt(va * vb)
 
 
-def research(kind: str, params: dict | None, bars: list[dict], horizons: list[int], threshold: float) -> dict:
-    """Forward-looking statistics of the score. Forward returns use later bars — that is the test, never the score."""
+def research(kind: str, params: dict | None, bars: list[dict], horizons: list[int], threshold: float, series: list | None = None) -> dict:
+    """Forward-looking statistics of the score. Forward returns use later bars — that is the test, never the score.
+    `series` is the score already computed (a graph-bound signal); otherwise the library formula computes it."""
     p = params_of(kind, params)
-    s = compute(kind, p, bars)
+    s = series if series is not None else compute(kind, p, bars)
     c = [float(b['close']) for b in bars]
     spreads = [float(b['spread_avg']) for b in bars if b.get('spread_avg')]
     out_h = []
@@ -379,9 +380,34 @@ class DefinitionIn(BaseModel):
 
 
 def definitions(db, active_only: bool = False) -> list[dict]:
-    rows = db.execute('SELECT * FROM sig_definitions' + (" WHERE status='ACTIVE'" if active_only else '') + ' ORDER BY builtin DESC, code').fetchall()
-    return [{**store.clean(r), 'equation': KINDS.get(r['kind'], {}).get('equation'), 'family': KINDS.get(r['kind'], {}).get('family'),
-             'label': KINDS.get(r['kind'], {}).get('label')} for r in rows]
+    """Signal definitions, each with the calculation graph version it is bound to (DEC-93), if any: a bound signal is
+    scored by that approved graph version instead of the library formula."""
+    rows = db.execute('SELECT d.*, b.id AS binding_id, v.id AS graph_version_id, g.code AS graph_code, v.version AS graph_version, v.hash AS graph_hash, '
+                      'v.definition AS graph_definition, b.parameters AS graph_parameters FROM sig_definitions d '
+                      "LEFT JOIN calc_bindings b ON b.kind = 'SIGNAL_DEFINITION' AND b.target = d.code AND b.active "
+                      'LEFT JOIN calc_graph_versions v ON v.id = b.graph_version_id LEFT JOIN calc_graphs g ON g.id = v.graph_id'
+                      + (" WHERE d.status='ACTIVE'" if active_only else '') + ' ORDER BY d.builtin DESC, d.code').fetchall()
+    out = []
+    for r in rows:
+        r = dict(r)
+        graph = r.pop('graph_definition')
+        row = {**store.clean(r), 'equation': KINDS.get(r['kind'], {}).get('equation'), 'family': KINDS.get(r['kind'], {}).get('family'),
+               'label': KINDS.get(r['kind'], {}).get('label')}
+        if graph is not None:
+            row['graph'] = {'code': r['graph_code'], 'version': r['graph_version'], 'hash': r['graph_hash'], 'definition': graph,
+                            'parameters': r['graph_parameters'] or {}, 'version_id': str(r['graph_version_id'])}
+        out.append(row)
+    return out
+
+
+def score_series(d: dict, bars: list[dict], tf: str = 'H1') -> list:
+    """Per bar: None or (score, inputs) — from the bound graph version when the definition has one, otherwise from
+    the library formula. Both have the same shape, so every screen and the engine treat them alike."""
+    g = d.get('graph')
+    if not g:
+        return compute(d['kind'], d['parameters'], bars)
+    from ..calc import engine as calc_engine
+    return calc_engine.signal_series(g, {**(d.get('parameters') or {}), **(g.get('parameters') or {})}, bars, tf)
 
 
 def save(actor: str, data: DefinitionIn, def_id: UUID | None = None) -> dict:
@@ -429,7 +455,7 @@ def live_update(db, account_id, symbol: str, tf: str, bars: list[dict], defs: li
         if tf not in (d.get('timeframes') or []):
             continue
         try:
-            res = compute(d['kind'], d['parameters'], bars)
+            res = score_series(d, bars, tf)
         except Exception:  # noqa: BLE001 - one bad definition never stops the others
             continue
         last, prev = res[-1], (res[-2] if len(res) > 1 else None)
@@ -530,7 +556,7 @@ def correlation(defs: list[dict], bars: list[dict]) -> dict:
     series = {}
     for d in defs:
         try:
-            series[d['code']] = [None if x is None else x[0] for x in compute(d['kind'], d['parameters'], bars)]
+            series[d['code']] = [None if x is None else x[0] for x in score_series(d, bars)]
         except Exception:  # noqa: BLE001
             continue
     codes = list(series)
@@ -552,7 +578,7 @@ def research_all(defs: list[dict], bars: list[dict], horizons: list[int]) -> lis
     out = []
     for d in defs:
         try:
-            r = research(d['kind'], d['parameters'], bars, horizons, float(d['threshold']))
+            r = research(d['kind'], d['parameters'], bars, horizons, float(d['threshold']), score_series(d, bars) if d.get('graph') else None)
         except Exception as exc:  # noqa: BLE001
             out.append({'code': d['code'], 'kind': d['kind'], 'error': str(exc)[:200]})
             continue

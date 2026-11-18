@@ -137,6 +137,11 @@ def process(db, sig: dict, dep: dict, now: datetime, actor: str = 'runtime') -> 
     # position alone could double it.
     working = db.execute("SELECT client_order_id, state FROM oms_orders WHERE deployment_id=%s AND state = ANY(%s) ORDER BY created_at DESC LIMIT 1",
                          (str(dep['id']), list(oms.OPEN))).fetchone()
+    if not working:
+        algo = db.execute("SELECT algo, state FROM ex_parent_orders WHERE deployment_id=%s AND state IN ('WORKING','PAUSED') LIMIT 1", (str(dep['id']),)).fetchone()
+        if algo:
+            return _intent(db, sig, dep, target, current, None, 'REFUSED',
+                           [f"WORKING_ORDER: a {algo['algo']} execution of this deployment is {algo['state'].lower()}; the next decision waits for it"])
     if working:
         why = (f"WORKING_ORDER: order {working['client_order_id'][:12]}… is {working['state'].lower().replace('_', ' ')}"
                + ('; its outcome at the broker is being looked up' if working['state'] == 'UNKNOWN' else '; the next decision waits for it'))

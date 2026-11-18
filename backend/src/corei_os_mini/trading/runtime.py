@@ -166,6 +166,14 @@ def cycle(now: datetime | None = None, force: bool = False) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.exception('Trading housekeeping failed')
         errors.append(f'housekeeping: {type(exc).__name__}: {exc}'[:300])
+    try:
+        from . import algos
+        a = algos.tick(now)   # execution algorithms: each working parent sends its next child (own transactions)
+        out['algo_children'] = a['children']
+        errors.extend(f'algo {e}' for e in a['errors'])
+    except Exception as exc:  # noqa: BLE001
+        log.exception('Execution algorithms failed')
+        errors.append(f'algos: {type(exc).__name__}: {exc}'[:300])
     if out['orders'] and any(d.get('mode') == 'BROKER' for d in deps):
         from . import execution
         execution.dispatch_soon()

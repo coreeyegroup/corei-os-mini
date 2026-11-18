@@ -1711,19 +1711,43 @@ function AuditLog() {
 
 /* ---------- strategies ---------- */
 
+/* A GRAPH strategy: choose an approved strategy-rule calculation graph and its version; its parameters come from the graph. */
+function GraphRulePicker({ value, change, disabled }: { value: Row; change: (v: Row) => void; disabled?: boolean }) {
+  const [lib, setLib] = useState<Row[]>([]), [ver, setVer] = useState<Row | null>(null);
+  useEffect(() => { void api('calc/graphs').then(d => setLib((d.items ?? []).filter((g: Row) => g.purpose === 'STRATEGY_RULE'))).catch(() => undefined); }, []);
+  useEffect(() => { if (value.graph_code && value.graph_version) void api(`calc/graphs/${value.graph_code}/versions/${value.graph_version}`).then(setVer).catch(() => setVer(null)); else setVer(null); }, [value.graph_code, value.graph_version]);
+  const g = lib.find(x => x.code === value.graph_code);
+  const approved: Row[] = (g?.versions ?? []).filter((v: Row) => v.status === 'APPROVED');
+  const gp: Row = value.graph_parameters ?? {};
+  return <>
+    <Field label="Calculation graph" hint="An approved strategy-rule graph (Strategies › Calculation graphs); the version is pinned in this strategy version">
+      <select aria-label="Strategy graph" required disabled={disabled} value={value.graph_code ?? ''} onChange={e => { const n = lib.find(x => x.code === e.target.value);
+        const last = (n?.versions ?? []).filter((v: Row) => v.status === 'APPROVED').pop(); change({ ...value, graph_code: e.target.value, graph_version: last?.version ?? '', graph_parameters: {} }); }}>
+        <option value="">Choose…</option>{lib.map(x => <option key={x.code} value={x.code}>{x.name} · {x.code}</option>)}</select></Field>
+    {g && <Field label="Graph version"><select aria-label="Strategy graph version" required disabled={disabled} value={value.graph_version ?? ''} onChange={e => change({ ...value, graph_version: Number(e.target.value) })}>
+      <option value="">Choose…</option>{approved.map((v: Row) => <option key={v.version} value={v.version}>v{v.version} · approved by {v.approved_by}</option>)}</select></Field>}
+    {(ver?.definition?.parameters ?? []).map((p: Row) => <Field key={p.name} label={p.name} hint={`${p.doc ?? ''} (default ${p.default})`}>
+      <input aria-label={`Graph parameter ${p.name}`} type="number" step="any" disabled={disabled} placeholder={String(p.default)} value={gp[p.name] ?? ''}
+        onChange={e => { const n = { ...gp }; if (e.target.value === '') delete n[p.name]; else n[p.name] = Number(e.target.value); change({ ...value, graph_parameters: n }); }} /></Field>)}
+    {ver && <p className="cfg-note">{ver.definition?.notes}</p>}
+  </>;
+}
+
 function ParameterFields({ schema, value, change, disabled }: { schema: Row; value: Row; change: (v: Row) => void; disabled?: boolean }) {
-  const all: Row = schema?.properties ?? {}, blend = 'components' in all;
-  const shown = Object.entries<Row>(all).filter(([k]) => !(blend && ['components', 'entry', 'exit'].includes(k)));
+  const all: Row = schema?.properties ?? {}, blend = 'components' in all, graph = 'graph_code' in all;
+  const shown = Object.entries<Row>(all).filter(([k]) => !(blend && ['components', 'entry', 'exit'].includes(k))
+    && !(graph && ['graph_code', 'graph_version', 'graph_parameters', 'graph_hash', 'definition'].includes(k)));
   return <>{shown.map(([key, prop]) => {
     const label = detailLabel(key);
     return <Field key={key} label={label} hint={prop.description}>{prop.enum
       ? <Choice label={label} value={value[key] ?? ''} disabled={disabled} options={['', ...prop.enum].map(v => [v, v || 'Select…'] as [string, string])} onChange={v => change({ ...value, [key]: v })} />
       : <input aria-label={label} required disabled={disabled} type={prop.type === 'integer' || prop.type === 'number' ? 'number' : 'text'} min={prop.minimum} max={prop.maximum}
           value={value[key] ?? ''} onChange={e => change({ ...value, [key]: prop.type === 'integer' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value })} />}</Field>;
-  })}{blend && !disabled && <BlendEditor value={value} change={change} />}</>;
+  })}{blend && !disabled && <BlendEditor value={value} change={change} />}{graph && <GraphRulePicker value={value} change={change} disabled={disabled} />}</>;
 }
 
-function paramSummary(p: Row) { return Object.entries(p ?? {}).map(([k, v]) => `${detailLabel(k)} ${v}`).join(' · '); }
+function paramSummary(p: Row) { return Object.entries(p ?? {}).filter(([k]) => !['definition', 'graph_hash'].includes(k))
+  .map(([k, v]) => `${detailLabel(k)} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · '); }
 
 function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => void }) {
   const canEdit = roles.includes('TRADING_OPS'), canApprove = roles.includes('RISK_APPROVER');

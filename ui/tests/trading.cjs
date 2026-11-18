@@ -28,8 +28,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const order={id:'o1',client_order_id:'CABC',created_at:now,source:'MANUAL',strategy_code:null,mode:'PAPER',account_code:'VTM_A',symbol:'EURUSD',side:'BUY',quantity:'0.1',order_type:'MARKET',
    state:'FILLED',filled_qty:'0.1',avg_fill_price:'1.08011',reasons:[],time_in_force:'GTC'};
  const kills=[];
+ const CALC=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/calc.json'),'utf8'));
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;calls.push({url,method,body});
+   if(url.endsWith('/calc/nodes'))return ok(CALC.nodes);
+   if(url.endsWith('/calc/graphs')&&method==='GET')return ok({items:[{code:'SIG_EMA_TREND',name:'EMA trend',purpose:'SIGNAL',builtin:true,bound:0,versions:[{version:1,status:'APPROVED'}]}]});
+   if(url.includes('/calc/graphs/SIG_EMA_TREND/copy'))return ok({...CALC.version,code:body.code,builtin:false,status:'DRAFT'},201);
+   if(url.includes('/calc/graphs/SIG_EMA_TREND/versions/'))return ok(CALC.version);
+   if(url.endsWith('/calc/graphs/SIG_EMA_TREND'))return ok({...CALC.version,versions:[{version:1,status:'APPROVED',approved_by:'platform'}]});
+   if(url.endsWith('/calc/preview'))return ok(CALC.preview);
+   if(url.includes('/calc/bindings'))return ok({items:[],targets:{SIGNAL_DEFINITION:['EMA_TREND']}});
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
    if(url.endsWith('/operator/session'))return ok({username:'risk-ops',display_name:'Risk',roles:['ADMIN','TRADING_OPS','RISK_APPROVER'],must_change_password:false});
    if(url.endsWith('/trading/overview'))return ok({deployments:{ACTIVE:1},active_modes:{PAPER:1},signals_today:{REJECTED:1,ACTED:2},orders_today:{FILLED:2},open_orders:0,unknown_orders:0,
@@ -131,11 +139,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: start here: an empty trading stage starts a paper strategy on a collected instrument in one step.');
 
  // Every stage opens as one workspace: every panel (dashboard, work, monitor, settings) on one page.
- const PANELS=['Dashboard','Live signal board','Explain an instrument','Across timeframes','Signal research','Rank every signal','Signal correlation','Signal flips','Signal library','Calculations & formulas'];
+ const PANELS=['Dashboard','Live signal board','Signal graphs','Explain an instrument','Across timeframes','Signal research','Rank every signal','Signal correlation','Signal flips','Signal library','Calculations & formulas'];
  assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent),PANELS);
  assert.ok($$('.ws-panel .ws-body').length===PANELS.length,'all panels open');
  assert.ok($('.ws-panel [aria-label="Min strength"], .ws-panel input')!==null,'settings controls are on the workspace');
- $$('.ws-head')[6].click();await settle(2);
+ $$('.ws-head')[7].click();await settle(2);
  assert.equal($$('.ws-panel .ws-body').length,PANELS.length-1,'a panel closes');
  assert.match(w.localStorage.getItem('corei.workspace.closed.Signals'),/correlation/);
  button('Open all').click();await settle(2);
@@ -330,6 +338,18 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await go('Market data');
  ['Dashboard','Collection plans','Quality','Backfill','Controls','Archive','Calculations & formulas'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'market data panel '+t));
  console.log('PASS: market data and market intelligence: every panel on one workspace page too.');
+
+ // Signals › Signal graphs: every library signal as a graph; each step with its formula and this bar's numbers (plain view without a canvas).
+ await go('Signals');
+ w.dispatchEvent(new w.CustomEvent('corei-goto',{detail:{view:'Signals',section:'graphs'}}));await settle(16);
+ assert.ok($$('.cg-lib button').some(b=>/EMA trend/.test(b.textContent)),'the graph library lists the built-in');
+ const steps=$('.cg-plain');assert.ok(steps,'the plain view lists the steps');
+ assert.match(steps.textContent,/100 \* \(fast - slow\) \/ \(scale \* atr\)  =  100 \* \(/);
+ assert.equal(calls.filter(c=>c.url.endsWith('/calc/preview')).pop().body.account_id,'a1');
+ assert.match($('.cg-out').textContent,/Signal on the last bar/);
+ promptAnswer='DESK_EMA';button('Copy to change').click();await settle(8);
+ const cp=calls.find(c=>c.url.includes('/calc/graphs/SIG_EMA_TREND/copy'));assert.equal(cp.body.code,'DESK_EMA');
+ console.log('PASS: signal graphs: the library signal is a graph with every step\'s numbers; a built-in is copied to change it.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);

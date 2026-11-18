@@ -1156,3 +1156,33 @@ in our own code). This release is the foundation; the screens adopt it from 0.51
   `POST /api/calc/preview`, `GET /api/calc/runs`.
 - Nothing changes on the trading path: no stage runs a graph yet, the code stays the reference until parity is
   proven per formula, and live trading stays off by default.
+
+## Calculation graphs on screen, execution algorithms, amend — release 0.51.0
+
+Every calculation can now be opened as nodes and wires (n8n-style), and execution works orders over time.
+
+- **Graph canvas** (Signals › Signal graphs, and *Calculation graphs* in Market intelligence, Strategies, Risk,
+  Portfolio, Execution and Post-trade): the library on the left, the canvas with each node's value on the bar you
+  choose (bar slider), the selected node's formula with its numbers on the right, the result and a sparkline below;
+  *Plain* lists the same steps in the order they run; *Wide canvas* hides the side panels. Edit mode: node palette,
+  drag wires (impossible wires refused at once, named), parameters (fixed or `{{graph parameter}}`), check, save
+  draft, propose; a second person approves (four-eyes); *Put to use* scores a signal definition with the approved
+  graph; *Check parity* compares a graph with the code it draws on stored bars.
+- **Built-in graphs**, each equal to its code on every bar (tests): the 12 library signals (1e-9), 6 features
+  (ATR %, Bollinger width %, 1- and 20-bar returns, distance from VWAP, relative volume) and 2 strategy rules (EMA and
+  SMA crossover — the same target and strength on every bar).
+- **Strategies can run a graph**: Setup › Strategies › algorithm *Calculation graph* pins an approved strategy-rule
+  graph version inside the strategy version; the runtime and the backtest run it (backtest equal to the code's to
+  the cent).
+- **Graph-bound signals**: a signal definition bound to an approved graph is scored by it on the board, flips,
+  explain, correlation and research; the binding is audited and can be stopped at any time.
+- **Execution algorithms** (Execution › Algorithms, and *Worked by an algorithm* when executing a decision from the
+  queue): TWAP, VWAP (weights from the usual volume at that time of day), POV (a share of the market volume) and
+  iceberg (one visible clip), with a price cap and market or limit children. Each child is an ordinary order with its
+  own risk check and client order ID; a refused or unknown child pauses the parent until a person resumes it.
+  Progress, average price against arrival in bp, plan, children and events are on screen; pause, resume, cancel.
+- **Amend a working order** (order detail › Amend): limit / stop price, stop-loss / take-profit, a smaller paper
+  quantity; new prices pass the price-deviation and kill-switch checks again; a real MT5 order is amended at the
+  broker first (by its ticket) and recorded only when the broker accepts.
+- The Execution workspace is named *Execution* in its tab and side bar (it said "Orders").
+- Migration 039 (execution algorithms). Live trading stays off by default; order sending per environment unchanged.

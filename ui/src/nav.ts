@@ -145,7 +145,7 @@ export const INTEL_GROUPS: [string, [string, string][]][] = [
   ['Overview', [['workspace', 'All panels'], ['dashboard', 'Dashboard'], ['screener', 'Screener'], ['instrument', 'Instrument']]],
   ['Analyse', [['sources', 'Sources'], ['correlation', 'Correlation'], ['strength', 'Currency strength'], ['sessions', 'Sessions'], ['compare', 'Select & compare']]],
   ['Monitor', [['watchlists', 'Watchlists'], ['rules', 'Rules & alerts'], ['calendar', 'Calendar']]],
-  ['Configure', [['indicators', 'Indicators'], ['settings', 'Engine settings'], ['formulas', 'Calculations & formulas'], ['stage', 'Stage map']]],
+  ['Configure', [['indicators', 'Indicators'], ['settings', 'Engine settings'], ['formulas', 'Calculations & formulas'], ['graphs', 'Calculation graphs'], ['stage', 'Stage map']]],
 ];
 export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
 /** The side-bar row a Setup section belongs to (the record lists highlight "Connectivity"). */

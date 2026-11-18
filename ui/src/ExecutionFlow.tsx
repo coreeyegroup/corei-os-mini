@@ -7,6 +7,7 @@
  * all), ExecutionPolicies (per deployment: handoff AUTO / APPROVE / SIGNAL_ONLY, order type, limit mode and offset,
  * time in force, approval window; versioned, with a reason).
  * Must never: size or check risk itself (the backend does), or offer to execute a decision that is not waiting. */
+import { ALGO_DEFAULTS, AlgoFields, algoBody } from './ExecutionAlgos';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Field } from './Configuration';
 import { Kpis, Msg, Reasons, num, pill, useData, when, type Ctx, type Row } from './StageShell';
@@ -79,12 +80,13 @@ export function DecisionFlow({ ctx, compact = false }: { ctx: Ctx; compact?: boo
 }
 
 function ActDialog({ r, done }: { r: Row; done: () => void }) {
-  const [f, setF] = useState<Row>({ quantity: '', order_type: r.order_type ?? 'MARKET', limit_price: r.limit_price ?? '', note: '', reason: '' });
+  const [f, setF] = useState<Row>({ quantity: '', order_type: r.order_type ?? 'MARKET', limit_price: r.limit_price ?? '', note: '', reason: '', how: 'ONCE', ...ALGO_DEFAULTS });
   const [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setErr('');
     try {
       if (r.declining) await api(`trading/execution/decisions/${r.id}/decline`, 'POST', { reason: f.reason });
+      else if (f.how === 'ALGO') await api(`trading/execution/decisions/${r.id}/execute`, 'POST', { ...(f.quantity ? { quantity: f.quantity } : {}), algo: algoBody(f), note: f.note });
       else await api(`trading/execution/decisions/${r.id}/execute`, 'POST', { ...(f.quantity ? { quantity: f.quantity } : {}), order_type: f.order_type,
         ...(f.order_type === 'LIMIT' && f.limit_price ? { limit_price: String(f.limit_price) } : {}), note: f.note });
       done();
@@ -99,9 +101,12 @@ function ActDialog({ r, done }: { r: Row; done: () => void }) {
       {r.declining ? <Field label="Reason (kept in the audit log)"><input aria-label="Decline reason" value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
         : <>
           <p className="cfg-note">The order is the target minus the position <b>now</b>; it goes through the same risk check as an automatic order and can never be sent twice.</p>
+          <Field label="How"><select aria-label="Execute how" value={f.how} onChange={e => setF({ ...f, how: e.target.value })}><option value="ONCE">At once — one order</option><option value="ALGO">Worked by an algorithm (TWAP, VWAP, POV, iceberg)</option></select></Field>
+          {f.how === 'ALGO' ? <><Field label="Quantity" hint={`Up to ${num(r.quantity, 2)}; empty = all`}><input aria-label="Execute quantity" inputMode="decimal" placeholder={String(Number(r.quantity))} value={f.quantity} onChange={e => setF({ ...f, quantity: e.target.value })} /></Field>
+            <AlgoFields f={f} set={p => setF({ ...f, ...p })} prefix="Execute" /></> : <>
           <div className="cfg-pair"><Field label="Quantity" hint={`Up to ${num(r.quantity, 2)}; empty = all`}><input aria-label="Execute quantity" inputMode="decimal" placeholder={String(Number(r.quantity))} value={f.quantity} onChange={e => setF({ ...f, quantity: e.target.value })} /></Field>
             <Field label="Order type"><select aria-label="Execute order type" value={f.order_type} onChange={e => setF({ ...f, order_type: e.target.value })}><option value="MARKET">Market</option><option value="LIMIT">Limit</option></select></Field></div>
-          {f.order_type === 'LIMIT' && <Field label="Limit price" hint="Empty = by the strategy's policy (offset from the live price)"><input aria-label="Execute limit price" inputMode="decimal" value={f.limit_price ?? ''} onChange={e => setF({ ...f, limit_price: e.target.value })} /></Field>}
+          {f.order_type === 'LIMIT' && <Field label="Limit price" hint="Empty = by the strategy's policy (offset from the live price)"><input aria-label="Execute limit price" inputMode="decimal" value={f.limit_price ?? ''} onChange={e => setF({ ...f, limit_price: e.target.value })} /></Field>}</>}
           <Field label="Note (optional)"><input aria-label="Execute note" value={f.note} onChange={e => setF({ ...f, note: e.target.value })} /></Field></>}
       <Msg error={err} />
       <div className="cfg-actions"><button className="primary" disabled={busy || (r.declining && f.reason.trim().length < 5)}>{busy ? 'Working…' : r.declining ? 'Decline' : 'Execute now'}</button>

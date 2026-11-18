@@ -302,6 +302,109 @@ def cancel(actor: str, order_id: UUID, reason: str) -> dict:
     return execution.cancel_at_broker(actor, order_id)
 
 
+class ModifyIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    limit_price: Decimal | None = Field(None, gt=0, max_digits=38, decimal_places=12)
+    stop_price: Decimal | None = Field(None, gt=0, max_digits=38, decimal_places=12)
+    stop_loss: Decimal | None = Field(None, ge=0, max_digits=38, decimal_places=12)     # 0 removes it
+    take_profit: Decimal | None = Field(None, ge=0, max_digits=38, decimal_places=12)
+    quantity: Decimal | None = Field(None, gt=0, max_digits=38, decimal_places=12)      # paper only; smaller, never below what is filled
+    reason: str = Field(min_length=5, max_length=500)
+
+
+MODIFIABLE = ('ACKNOWLEDGED', 'PARTIALLY_FILLED')
+
+
+def _modified(db, o: dict, changes: dict, actor: str, reason: str, at_broker: dict | None = None) -> dict:
+    """Write the new terms and an event (the state is unchanged: the same order, amended)."""
+    sets = ', '.join([f'{k}=%s' for k in changes] + ['version=version+1', 'updated_at=now()'])
+    row = dict(db.execute(f'UPDATE oms_orders SET {sets} WHERE id=%s RETURNING *', (*changes.values(), str(o['id']))).fetchone())
+    txt = lambda v: None if v is None else format(D(v).normalize(), 'f')  # noqa: E731 - exact, as people write it
+    detail = {'modified': {k: [txt(o.get(k)), txt(v)] for k, v in changes.items()}, 'reason': reason}
+    if at_broker:
+        detail['broker'] = at_broker
+    db.execute('INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,%s,%s,%s,%s)',
+               (str(o['id']), o['state'], o['state'], json.dumps(detail, default=str), actor))
+    store.audit(db, actor, 'MODIFY_ORDER', 'order', o['id'], store.clean(o), store.clean(row), reason)
+    return row
+
+
+def modify(actor: str, order_id: UUID, data: ModifyIn) -> dict:
+    """Amend a working order: its limit or stop price, its stop-loss / take-profit, and (paper) a smaller quantity.
+    New prices pass the pre-trade check again (price deviation, limits) before anything changes. A real MT5 order is
+    amended at the broker first (TRADE_ACTION_MODIFY by its ticket) and recorded only when the broker accepts."""
+    changes: dict = {}
+    with store.transaction('write') as db:
+        o = db.execute('SELECT * FROM oms_orders WHERE id=%s FOR UPDATE', (str(order_id),)).fetchone()
+        if not o:
+            raise HTTPException(404, 'Order not found.')
+        o = dict(o)
+        if o['state'] not in MODIFIABLE:
+            raise HTTPException(409, f"Only a working order can be amended; this one is {o['state'].lower().replace('_', ' ')}.")
+        ins = instrument(db, o['instrument_id'])
+        tick = D(ins.get('tick_size')) or Decimal('0.00001')
+        if data.limit_price is not None:
+            if o['order_type'] != 'LIMIT':
+                raise HTTPException(422, 'Only a limit order has a limit price.')
+            changes['limit_price'] = quantize(data.limit_price, tick)
+        if data.stop_price is not None:
+            if o['order_type'] != 'STOP':
+                raise HTTPException(422, 'Only a stop order has a stop price.')
+            changes['stop_price'] = quantize(data.stop_price, tick)
+        for k in ('stop_loss', 'take_profit'):
+            v = getattr(data, k)
+            if v is not None:
+                changes[k] = None if v == 0 else quantize(v, tick)
+        if data.quantity is not None:
+            if o['mode'] != 'PAPER':
+                raise HTTPException(409, 'The quantity of a real order is changed by cancelling it and placing a new one.')
+            q, problem = risk.lot(db, o['instrument_id'], data.quantity)
+            if problem:
+                raise HTTPException(422, problem)
+            if q >= D(o['quantity']):
+                raise HTTPException(422, 'An amendment can only make the order smaller; place a new order for more.')
+            if q <= D(o['filled_qty']):
+                raise HTTPException(422, f"{q.normalize()} is not above what is already filled ({D(o['filled_qty']).normalize()}).")
+            changes['quantity'] = q
+        if not changes:
+            raise HTTPException(422, 'Nothing to change.')
+        if 'limit_price' in changes or 'stop_price' in changes:
+            q = quote(db, o['account_id'], o['instrument_id'])
+            probe = {**o, **changes, 'quantity': D(o['quantity']) - D(o['filled_qty'])}
+            verdict = risk.check(db, probe, None, datetime.now(timezone.utc), q, flatten=bool(o.get('reduce_only')))
+            bad = [r for r in verdict['reasons'] if r.startswith(('MAX_PRICE_DEVIATION_PCT', 'KILL_SWITCH', 'MAX_ORDER_VALUE', 'NO_PRICE'))]
+            if bad:
+                raise HTTPException(409, 'The new price is refused: ' + '; '.join(bad))
+        if o['mode'] == 'PAPER':
+            row = _modified(db, o, changes, actor, data.reason)
+            return store.clean(row)
+        if o.get('adapter') == 'UPSTOX':
+            raise HTTPException(409, 'Upstox orders are amended by cancelling and placing a new one.')
+        if not o.get('broker_order_id'):
+            raise HTTPException(409, 'The broker has not given this order a ticket yet: look it up at the broker, then amend.')
+        snapshot = o
+    from . import brokers   # outside the transaction: the broker is asked first, COREI records only what it accepted
+    sym = snapshot['broker_symbol']
+    payload = {'action': 'modify', 'order': {'ticket': snapshot['broker_order_id'], 'tag': snapshot['broker_tag'], 'symbol': sym,
+                                             'price': str(changes.get('limit_price', changes.get('stop_price', snapshot.get('limit_price') or snapshot.get('stop_price') or 0))),
+                                             'sl': str(changes.get('stop_loss', snapshot.get('stop_loss')) or 0), 'tp': str(changes.get('take_profit', snapshot.get('take_profit')) or 0)}}
+    try:
+        reply = brokers.mt5_call(snapshot['account_id'], actor, 'trade', payload, 'Amend an order at the broker', 30)
+    except (brokers.NotSent, brokers.Refused) as exc:
+        raise HTTPException(409, f'The broker did not amend it: {exc}') from None
+    except brokers.Lost:
+        with store.transaction('write') as db:
+            db.execute('INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,%s,%s,%s,%s)',
+                       (str(order_id), snapshot['state'], snapshot['state'], json.dumps({'modify_unanswered': {k: str(v) for k, v in changes.items()}, 'reason': data.reason}), actor))
+        raise HTTPException(504, 'No answer from the broker: the amendment may or may not have been made. Look the order up at the broker.') from None
+    res = (reply.get('results') or [{}])[0]
+    if not res.get('ok'):
+        raise HTTPException(409, f"The broker refused the amendment: {res.get('text') or res.get('retcode')}")
+    with store.transaction('write') as db:
+        o = dict(db.execute('SELECT * FROM oms_orders WHERE id=%s FOR UPDATE', (str(order_id),)).fetchone())
+        return store.clean(_modified(db, o, changes, actor, data.reason, {'retcode': res.get('retcode'), 'text': res.get('text')}))
+
+
 class ResolveIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     outcome: Literal['FILLED', 'NOT_FILLED']
