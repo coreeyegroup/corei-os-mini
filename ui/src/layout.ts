@@ -12,6 +12,7 @@ export const views = [
   "Operations",
   "Infrastructure",
   "Settings",
+  "Flow",
 ] as const;
 export type View = (typeof views)[number];
 export type Layout = {

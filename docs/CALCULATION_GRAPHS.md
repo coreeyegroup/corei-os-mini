@@ -103,6 +103,15 @@ propose, approve, retire, *Put to use* (signal definitions) and *Check parity*.
 * Node `logic.latch` is that state machine as a node; Expression inputs may be true/false (`name:bool`); function
   `coalesce(x, y)`.
 
+## Every formula and the platform flow (DEC-96)
+
+`calc/formula_graphs.py` holds every calculation of the formula registry (101) as inputs (with an example and its
+meaning) and ordered steps in the expression language, plus which calculations it feeds. `/api/calc/formulas` lists
+them; `/api/calc/formulas/{id}/evaluate` works every step out for given numbers (and returns each step with the
+numbers put in); `/api/calc/flow` is the platform as one workflow; `/api/calc/flow/live` gives the features and signal
+scores of one instrument's newest stored bar. On screen: *Calculation flow* › Platform flow, Every formula,
+Bar-by-bar graphs (`ui/src/calc/PlatformFlow.tsx`, `FormulaGraph.tsx`, `FlowCanvas.tsx`).
+
 ## Guardrails
 
 * No Docker, Kubernetes, Kafka, Redis or workflow server: a library inside the backend.

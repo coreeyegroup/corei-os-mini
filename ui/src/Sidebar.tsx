@@ -158,6 +158,7 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
   </>;
   if (view === 'Intelligence') return <Pane title="Market intelligence"><IntelTree /></Pane>;
   if (stageOf(view)) return <Pane title={stageOf(view)!.title}><StageTree view={view} /></Pane>;
+  if (view === 'Flow') return <Pane title="Calculation flow"><StageTree view={view} /></Pane>;
   if (view === 'Overview' || view === 'Operations') return <>
     <Pane title="Problems" count={problems || undefined}><Problems overview={overview} /></Pane>
     <Pane title="Trading flow"><FlowList view={view} open={v => goto(v)} /></Pane>

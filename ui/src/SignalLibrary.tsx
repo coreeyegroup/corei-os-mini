@@ -13,6 +13,7 @@ import { api, Field } from './Configuration';
 import { Kpis, Msg, num, pill, useData, when, type Ctx, type Row } from './StageShell';
 import { goto } from './nav';
 import { openGraph } from './calc/ports';
+import { openFormula } from './calc/FormulaGraph';
 
 const TFS = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const scoreCls = (s: any) => s == null ? 'sig-none' : s >= 60 ? 'sig-l3' : s >= 20 ? 'sig-l2' : s > 0 ? 'sig-l1' : s <= -60 ? 'sig-s3' : s <= -20 ? 'sig-s2' : s < 0 ? 'sig-s1' : 'sig-zero';
@@ -44,6 +45,8 @@ function showGraph(code: string) { openGraph(code); goto('Signals', 'graphs'); }
 
 export function Formulas({ stage, features = false }: { stage: string; features?: boolean }) {
   const [data, error] = useData<Row>('trading/formulas', 0);
+  const [fg] = useData<Row>('calc/formulas', 0);
+  const graphOf: Record<string, string> = useMemo(() => Object.fromEntries((Object.values(fg?.items ?? {}) as Row[][]).flat().map((f: Row) => [f.name, f.id])), [fg]);
   const [q, setQ] = useState(''), [src, setSrc] = useState(''), [tf, setTf] = useState('H1'), [live, setLive] = useState<Row | null>(null), [liveErr, setLiveErr] = useState('');
   useEffect(() => {
     if (!features || !src) { setLive(null); return; }
@@ -66,7 +69,7 @@ export function Formulas({ stage, features = false }: { stage: string; features?
     </div>
     <Msg error={error || liveErr} />
     <div className="cfg-scroll"><table className="cfg-table compact intel-table sig-formulas"><thead><tr><th>Calculation</th><th>Formula</th>{features && <th>This bar</th>}<th>Inputs, notes</th><th>Code</th></tr></thead><tbody>
-      {rows.map((f, i) => <tr key={i}><td><b>{f.name}</b></td><td><code className="sig-eq">{f.equation}</code></td>{features && <td>{valuesOf(f.name) ?? <small className="cfg-note">—</small>}</td>}
+      {rows.map((f, i) => <tr key={i}><td><b>{f.name}</b>{graphOf[f.name] && <><br /><button className="linkish" onClick={() => { openFormula(graphOf[f.name]); goto('Flow', 'formulas'); }} title="Open as nodes and wires and try it with numbers">as a graph ↗</button></>}</td><td><code className="sig-eq">{f.equation}</code></td>{features && <td>{valuesOf(f.name) ?? <small className="cfg-note">—</small>}</td>}
         <td><small>{[f.variables, f.notes].filter(Boolean).join(' · ')}</small></td><td><small className="cfg-note">{f.code}</small></td></tr>)}
       {data && !rows.length && <tr><td colSpan={5} className="cfg-note">No formula matches.</td></tr>}</tbody></table></div>
     <p className="cfg-note">These are the formulas the code uses, kept in one registry beside the code (a change to a calculation changes its entry in the same release). Numbers are worked out on live data in each panel.</p>

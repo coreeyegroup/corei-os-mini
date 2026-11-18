@@ -102,3 +102,66 @@
 .cg-canvas .react-flow__panel.left { left: 0; right: auto; } .cg-canvas .react-flow__panel.right { right: 0; left: auto; }
 .cg-main.wide { grid-template-columns: minmax(0, 1fr); } .cg-main.wide .cg-left, .cg-main.wide .cg-right { display: none; }
 .cg-main.wide .cg-canvas { height: 760px; }
+/* Steady layout (0.52): fixed node width, a one-line status, a fixed-height canvas, a light summary in "All panels". */
+.cg-node { width: 210px; min-width: 0; max-width: none; }
+.cg-status { min-height: 20px; line-height: 20px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 2px 0 6px; }
+.cg-ok { color: var(--ready); }
+.cg-canvas-wait { height: 100%; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.cg-result { min-height: 46px; }
+.cg-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.cg-chips button { font-size: 11.5px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; }
+.cg-chips button:hover { border-color: var(--accent); }
+
+/* ---- Platform flow (one workflow of the whole platform) ---- */
+.pf-main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 8px; }
+@media (max-width: 1100px) { .pf-main { grid-template-columns: 1fr; } }
+.pf-side { max-height: 700px; }
+.pf-group { width: 100%; height: 100%; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border-top: 3px solid var(--pf-c, var(--accent)); }
+.pf-group.closed { background: var(--surface); }
+.pf-group-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12.5px; white-space: nowrap; }
+.pf-group-head small { color: var(--muted); }
+.pf-group-head .linkish { margin-left: auto; font-size: 11px; }
+.pf-no { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--pf-c, var(--accent)); color: var(--canvas, #000); font-weight: 700; font-size: 11px; }
+.st-1 { --pf-c: #4f8cff; } .st-2 { --pf-c: #a46cff; } .st-3 { --pf-c: #e0a030; } .st-4 { --pf-c: #22a6b3; }
+.st-5 { --pf-c: #e5677a; } .st-6 { --pf-c: #36b37e; } .st-7 { --pf-c: #f08a4b; } .st-8 { --pf-c: #8892a6; }
+.pf-calc { height: 74px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 5px 8px; font-size: 11px; cursor: pointer; color: var(--text); }
+.pf-calc:hover { border-color: var(--accent); }
+.pf-calc.hit { outline: 2px solid var(--accent); }
+.pf-calc.dim { opacity: .35; }
+.pf-calc.sel { outline: 2px solid var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+.pf-calc-head { display: flex; align-items: center; gap: 6px; }
+.pf-calc-head b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+.pf-calc-eq code { display: block; font-size: 9.5px; color: var(--muted); line-height: 13px; max-height: 26px; overflow: hidden; }
+.pf-live { font-size: 10.5px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-edge path { stroke: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.pf-edge.on path { stroke: var(--accent); stroke-width: 2.5; }
+.pf-edge.faint path { opacity: .15; }
+.pf-stage-edge path { stroke: var(--muted); stroke-width: 3; stroke-dasharray: 8 6; }
+.pf-steps { margin: 4px 0; padding-left: 18px; font-size: 11.5px; }
+.pf-steps li { margin: 2px 0; }
+.pf-mini { border-top: 1px solid var(--line); padding-top: 6px; }
+.pf-plain { height: 100%; overflow: auto; padding: 8px; text-align: left; place-self: stretch; }
+.pf-plain h5 { margin: 8px 0 2px; }
+.pf-plain ul { margin: 0; padding-left: 16px; font-size: 12px; }
+
+/* ---- Every formula (inputs → steps → result) ---- */
+.fg-main { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 8px; }
+@media (max-width: 1000px) { .fg-main { grid-template-columns: 1fr; } }
+.fg-list { max-height: 680px; }
+.fg-list button { display: flex; justify-content: space-between; align-items: center; gap: 4px; width: 100%; text-align: left; border: 1px solid transparent; background: transparent;
+  color: var(--text); padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.fg-list button:hover { background: var(--hover); }
+.fg-list button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.fg-stage { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 8px 2px 2px; }
+.fg-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.fg-in .fg-in-body { padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; }
+.fg-in input:not([type="checkbox"]) { width: 100%; font-variant-numeric: tabular-nums; }
+.fg-in small { color: var(--muted); font-size: 9.5px; line-height: 12px; max-height: 24px; overflow: hidden; }
+.fg-expr { padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.fg-expr code { font-size: 10px; white-space: normal; word-break: break-word; line-height: 13px; }
+.fg-worked { color: var(--muted); }
+.fg-value { padding: 2px 8px 6px; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fg-result { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.fg-plain td { vertical-align: top; }
+.cg-tag { white-space: nowrap; flex: 0 0 auto; }

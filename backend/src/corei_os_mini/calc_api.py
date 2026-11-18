@@ -369,3 +369,69 @@ def _copied(v: dict, field: str) -> str | None:
         if f'copy of {code} v' in text:
             return b.get(field)
     return None
+
+
+# ---------- every formula as a graph, and the platform flow (DEC-96) ----------
+from .calc import formula_graphs as fg  # noqa: E402
+
+LIVE_FEATURES = {'in_ema': 'ema20', 'in_rsi': 'rsi14', 'in_atr': 'atr_pct', 'in_atr_rank': 'atr_pct_rank100', 'in_bollinger': 'bb_width_pct', 'in_adx': 'adx14', 'in_er': 'er20',
+                 'in_rv': 'rv20_pct', 'in_range_pos': 'range_pos20', 'in_returns': 'ret_20_pct', 'in_macd': 'macd_hist', 'in_stoch': 'stoch_k', 'in_donchian': 'donchian_high20',
+                 'in_zscore': 'zscore20', 'in_volume': 'rel_volume20', 'in_vwap': 'vwap_dev_pct', 'in_obv': 'obv', 'in_sma': 'bb_mid'}
+
+
+@router.get('/formulas')
+def formula_graphs(response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'private, max-age=300'
+    return {'stages': fg.STAGES, 'items': fg.catalogue(), 'functions': {k: v['doc'] for k, v in E.FUNCTIONS.items()}}
+
+
+class FormulaIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    values: dict[str, float | bool] = Field(default_factory=dict)
+
+
+@router.post('/formulas/{fid}/evaluate')
+def evaluate_formula(fid: str, body: FormulaIn, _: str = Depends(require_operator)):
+    """Work out every step of one formula for the numbers given (the examples where none is given). Pure arithmetic in
+    the platform's expression language; nothing is stored or sent."""
+    f = fg.get(fid)
+    if f is None:
+        raise HTTPException(404, f'There is no formula {fid}.')
+    unknown = set(body.values) - {i['name'] for i in f['inputs']}
+    if unknown:
+        raise HTTPException(422, f"{fid} has no input {', '.join(sorted(unknown))}.")
+    r = fg.evaluate(fid, body.values)
+    return T.to_jsonable({**r, 'worked': fg.worked(f, {**r['inputs'], **r['steps']})})
+
+
+@router.get('/flow')
+def platform_flow(response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'private, max-age=300'
+    return fg.flow()
+
+
+@router.get('/flow/live')
+def platform_flow_live(response: Response, account_id: UUID, symbol: str = Query(..., min_length=1, max_length=64),
+                       timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1', _: str = Depends(require_operator)):
+    """Live values for the flow on one instrument: every feature and every active signal on its newest stored bar."""
+    _no_store(response)
+    from .intel import engine
+    with store.transaction('read') as db:
+        bars, source = _bars(db, account_id, symbol, timeframe, 600)
+        defs = signal_library.definitions(db, active_only=True)
+    feats = engine.features(bars, timeframe)[-1] if bars else {}
+    values: dict[str, dict] = {}
+    for fid, key in LIVE_FEATURES.items():
+        v = feats.get(key)
+        values[fid] = {'value': v, 'label': key}
+    for d in defs:
+        fid = f"sig_{d['kind']}"
+        if fid in values or fg.get(fid) is None:
+            continue
+        try:
+            s = signal_library.score_series(d, bars, timeframe)[-1]
+        except Exception:  # noqa: BLE001 - a failing definition shows no value
+            s = None
+        values[fid] = {'value': None if s is None else round(s[0], 2), 'label': d['code']}
+    return T.to_jsonable({'bars': len(bars), 'source': source, 'bar_time': bars[-1]['bar_time'] if bars else None, 'close': bars[-1]['close'] if bars else None,
+                          'values': values})

@@ -32,6 +32,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;calls.push({url,method,body});
    if(url.endsWith('/calc/nodes'))return ok(CALC.nodes);
+   if(url.endsWith('/calc/flow'))return ok(CALC.flow);
+   if(url.includes('/calc/flow/live'))return ok({bars:600,bar_time:now,close:'1.0853',values:{in_atr:{value:0.0912,label:'atr_pct'}}});
+   if(url.endsWith('/calc/formulas'))return ok(CALC.formulas);
+   if(url.includes('/calc/formulas/')&&url.endsWith('/evaluate'))return ok(CALC.evaluate);
    if(url.endsWith('/calc/graphs')&&method==='GET')return ok({items:[{code:'SIG_EMA_TREND',name:'EMA trend',purpose:'SIGNAL',builtin:true,bound:0,versions:[{version:1,status:'APPROVED'}]}]});
    if(url.includes('/calc/graphs/SIG_EMA_TREND/copy'))return ok({...CALC.version,code:body.code,builtin:false,status:'DRAFT'},201);
    if(url.includes('/calc/graphs/SIG_EMA_TREND/versions/'))return ok(CALC.version);
@@ -350,6 +354,19 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  promptAnswer='DESK_EMA';button('Copy to change').click();await settle(8);
  const cp=calls.find(c=>c.url.includes('/calc/graphs/SIG_EMA_TREND/copy'));assert.equal(cp.body.code,'DESK_EMA');
  console.log('PASS: signal graphs: the library signal is a graph with every step\'s numbers; a built-in is copied to change it.');
+
+ // Calculation flow (n8n): the whole platform as one workflow, and every formula as its own graph worked out with numbers.
+ await go('Flow');await settle(10);
+ const plain=$('.pf-plain');assert.ok(plain,'the flow lists every stage where no canvas is drawn');
+ assert.equal($$('.pf-plain h5').length,8);
+ assert.equal($$('.pf-plain li').length,CALC.flow.nodes.length);
+ assert.match(plain.textContent,/ATR\(14\).*0\.0912/s);
+ $$('.pf-plain button').find(b=>b.textContent==='Sizing: % of equity at an ATR stop').click();await settle(4);
+ assert.match($('.pf-side').textContent,/quantity = risk_money \/ \(stop_distance \* contract \* fx\)/);
+ $$('.pf-side button').find(b=>b.textContent==='Try it with numbers').click();await settle(10);
+ assert.ok(calls.some(c=>c.url.includes('/calc/formulas/rk_size_pct/evaluate')),'the formula is worked out by the server');
+ assert.match($('.fg-plain').textContent,/risk_money = equity \* r_pct \/ 100 \* weight/);
+ console.log('PASS: calculation flow: every calculation of the 8 stages in one workflow; each formula opens as inputs → steps → result with numbers.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);

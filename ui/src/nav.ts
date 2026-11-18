@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type { View } from './layout';
 
 const pending: Partial<Record<View, string>> = {};
+const pendingAt: Partial<Record<View, number>> = {};
 /* The section each screen is showing now (for the side bar's highlight). */
 export const current: Partial<Record<View, string>> = {};
 
@@ -18,17 +19,16 @@ export function publishSections(view: View, list: StageSection[]) {
 }
 
 export function goto(view: View, section?: string) {
-  if (section) pending[view] = section;
+  if (section) { pending[view] = section; pendingAt[view] = Date.now(); }
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));
 }
 
 export function useSection<T extends string>(view: View, initial: T, valid: readonly T[]): [T, (s: T) => void] {
-  const take = () => {
-    const s = pending[view] as T | undefined;
-    delete pending[view];
-    return s && valid.includes(s) ? s : undefined;
-  };
-  const [section, setSection] = useState<T>(() => take() ?? initial);
+  // A requested section stays available for a few seconds, so a screen that mounts twice while it opens (sign-in check,
+  // layout change) still opens at it; the event below consumes it for a screen that is already open.
+  const peek = () => { const s = pending[view] as T | undefined; return s && valid.includes(s) && Date.now() - (pendingAt[view] ?? 0) < 4000 ? s : undefined; };
+  const take = () => { const s = peek(); delete pending[view]; return s; };
+  const [section, setSection] = useState<T>(() => peek() ?? initial);
   useEffect(() => {
     current[view] = section;
     window.dispatchEvent(new CustomEvent('corei-section', { detail: { view, section } }));
@@ -99,6 +99,8 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Execution', label: '7 Orders (execution)', group: 'Trading flow', keywords: 'oms ems order fill routing' },
   { view: 'Portfolio', label: '6 Portfolio', group: 'Trading flow', keywords: 'positions pnl exposure capital' },
   { view: 'Post-trade', label: '8 Post-trade', group: 'Trading flow', keywords: 'reconciliation tca reports compliance' },
+  { view: 'Flow', label: 'Calculation flow (n8n)', group: 'Trading flow', keywords: 'n8n graph nodes formula equation calculation workflow canvas' },
+  { view: 'Flow', section: 'formulas', label: 'Flow › Every formula', group: 'Trading flow', keywords: 'formula equation calculation try numbers' },
   { view: 'Settings', label: 'Appearance & layout', group: 'Settings', keywords: 'theme font density' },
 ];
 

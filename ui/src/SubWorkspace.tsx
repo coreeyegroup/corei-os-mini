@@ -67,7 +67,14 @@ export function SubWorkspace({ view, items, tab, setTab, render, initial, label 
     window.addEventListener('corei-goto', on); return () => window.removeEventListener('corei-goto', on);
   }, [view, ids.join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const focusedActive = st.panes[st.focus]?.active;
-  useEffect(() => { if (focusedActive && focusedActive !== tab) setTab(focusedActive); }, [focusedActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The sub-tab in focus tells the domain which item is shown — but only when it changes, never on the first render:
+  // a link that opened this domain at an item (goto) must not be overridden by the remembered layout's active tab.
+  const lastActive = useRef(focusedActive);
+  useEffect(() => {
+    if (lastActive.current === focusedActive) return;
+    lastActive.current = focusedActive;
+    if (focusedActive && focusedActive !== tab) setTab(focusedActive);
+  }, [focusedActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activate = (k: number, id: string) => commit({ ...st, focus: k, panes: st.panes.map((p, j) => j === k ? { ...p, active: id } : p) });
   const close = (k: number, id: string) => {

@@ -66,12 +66,13 @@ export function StageBar({ view, title, hint }: { view: View; title: string; hin
   </header>;
 }
 
-export default function StageShell({ view, sections }: { view: View; sections: Section[] }) {
-  const all = [{ id: 'workspace', label: 'All panels', group: 'Overview' as const, hint: 'Every item of this stage on one page — dashboards, work, monitors and settings — each opens and closes.', render: () => null },
-    ...sections, { id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }];
+export default function StageShell({ view, sections, title, allPanels = true }: { view: View; sections: Section[]; title?: string; allPanels?: boolean }) {
+  const isStage = Boolean(stageOf(view));
+  const all = [...(allPanels ? [{ id: 'workspace', label: 'All panels', group: 'Overview' as const, hint: 'Every item of this stage on one page — dashboards, work, monitors and settings — each opens and closes.', render: () => null }] : []),
+    ...sections, ...(isStage ? [{ id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }] : [])];
   // One order everywhere: by group (Overview, Work, Monitor, Configure), as the side bar shows them.
   all.sort((a, b) => GROUPS.indexOf(a.group as typeof GROUPS[number]) - GROUPS.indexOf(b.group as typeof GROUPS[number]));
-  const [tab, setTab] = useSection<string>(view, 'workspace', all.map(s => s.id));
+  const [tab, setTab] = useSection<string>(view, all[0].id, all.map(s => s.id));
   useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
@@ -79,7 +80,7 @@ export default function StageShell({ view, sections }: { view: View; sections: S
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check(); window.addEventListener('corei-session', check); return () => window.removeEventListener('corei-session', check);
   }, []);
-  const stage = stageOf(view)!;
+  const stage = stageOf(view) ?? { title: title ?? String(view) };
   const current = all.find(s => s.id === tab) ?? all[0];
   const nav = <nav className="cfg-nav" aria-label={`${stage.title} sections`}>
     {GROUPS.map(g => <Fragment key={g}><span className="cfg-nav-group">{g}</span>
@@ -94,7 +95,7 @@ export default function StageShell({ view, sections }: { view: View; sections: S
     {nav}
     <section className="cfg-main">
       <StageBar view={view} title={current.label} hint={current.hint} />
-      <StartHere ctx={ctx} />
+      {isStage && tab === 'workspace' && <StartHere ctx={ctx} />}
       <SubWorkspace view={view} label={stage.title} tab={tab} setTab={setTab} initial={all.map(x => x.id)}
         items={all.map(x => ({ id: x.id, label: x.label, group: x.group, hint: x.hint }))}
         render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view={view} sections={sections.map(x => ({ ...x, render: () => x.render(ctx) }))} alone={setTab} />

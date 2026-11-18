@@ -46,6 +46,8 @@ FUNCTIONS: dict[str, dict] = {
     'sign': {'args': (1, 1), 'doc': 'sign(x) — −1, 0 or +1'},
     'if': {'args': (3, 3), 'doc': 'if(condition, a, b) — a when the condition holds, otherwise b'},
     'coalesce': {'args': (2, 2), 'doc': 'coalesce(x, y) — x, or y when x is missing (warming up)'},
+    'floor': {'args': (1, 1), 'doc': 'floor(x) — the whole number at or below x'},
+    'ceil': {'args': (1, 1), 'doc': 'ceil(x) — the whole number at or above x'},
 }
 KEYWORDS = {'and', 'or', 'not', 'true', 'false', 't'}
 _TOKEN = re.compile(r'\s*(?:(\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?|([A-Za-z_][A-Za-z0-9_]*)|(<=|>=|==|!=|[-+*/^()<>\[\],]))')
@@ -125,7 +127,7 @@ def _safe1(fn):
 
 _F1 = {'abs': abs, 'sqrt': _safe1(lambda x: math.sqrt(x) if x >= 0 else None),
        'log': _safe1(lambda x: math.log(x) if x > 0 else None), 'exp': _safe1(math.exp),
-       'sign': lambda x: (x > 0) - (x < 0)}
+       'sign': lambda x: (x > 0) - (x < 0), 'floor': lambda x: float(math.floor(x)), 'ceil': lambda x: float(math.ceil(x))}
 
 
 class _Parser:

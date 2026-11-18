@@ -437,6 +437,19 @@ class CalcApi(tt.Trading):
                                                                       'symbol': 'EURUSD', 'timeframe': 'M5'}))
         self.assertFalse(invalid['valid'])
         self.assertEqual(self.alice.post('/api/calc/preview', json={'code': 'SIG_EMA_TREND', 'account_id': a['id'], 'symbol': 'GBPUSD'}).status_code, 409)
+        fl = self.ok(self.alice.get('/api/calc/flow'))
+        self.assertEqual(len(fl['stages']), 8)
+        cat = self.ok(self.alice.get('/api/calc/formulas'))
+        self.assertEqual(sum(len(v) for v in cat['items'].values()), len(fl['nodes']))
+        ev = self.ok(self.alice.post('/api/calc/formulas/pf_unrealised/evaluate', json={'values': {'qty': 0.5}}))
+        self.assertAlmostEqual(ev['steps']['unrealised'], 0.5 * (1.08560 - 1.08447) * 100000, places=4)
+        self.assertIn('0.5 *', ev['worked']['unrealised'])
+        self.assertEqual(self.alice.post('/api/calc/formulas/pf_unrealised/evaluate', json={'values': {'nope': 1}}).status_code, 422)
+        self.assertEqual(self.alice.post('/api/calc/formulas/nope/evaluate', json={}).status_code, 404)
+        lv = self.ok(self.alice.get('/api/calc/flow/live', params={'account_id': a['id'], 'symbol': 'EURUSD', 'timeframe': 'M5'}))
+        self.assertEqual(lv['bars'], 300)
+        self.assertIsNotNone(lv['values']['in_atr']['value'])
+        self.assertIn('sig_EMA_TREND', lv['values'])
         runs = self.ok(self.alice.get('/api/calc/runs'))['items']
         self.assertEqual(len(runs), 3)
         self.assertTrue(all(r['graph_version_id'] for r in runs if r['graph_code']))
@@ -580,3 +593,30 @@ class GraphStrategy(tt.Trading):
         c = self.ok(self.alice.post('/api/trading/backtests', json={**rng, 'algorithm': 'EMA_CROSSOVER', 'parameters': {'timeframe': 'M5', 'fast': 3, 'slow': 5}}), 201)
         self.assertEqual(g['metrics']['trades'], c['metrics']['trades'])
         self.assertEqual(g['metrics']['net_pnl'], c['metrics']['net_pnl'], 'to the cent')
+
+
+def test_every_registry_formula_is_a_formula_graph_that_works_out():
+    """DEC-96: every calculation of the formula registry is present as inputs → steps → result, and every one of them
+    works out on its example numbers (no step left missing)."""
+    from corei_os_mini import formulas
+    from corei_os_mini.calc import formula_graphs as fg
+    names = {f['name'] for fs in fg.FORMULAS.values() for f in fs}
+    for stage, entries in formulas.all_formulas().items():
+        for e in entries:
+            assert e['name'] in names, f'{stage}: "{e["name"]}" has no formula graph'
+    for fid in fg._BY_ID:
+        r = fg.evaluate(fid)
+        assert all(v is not None for v in r['steps'].values()), (fid, r)
+        f = fg.get(fid)
+        assert f['steps'] and all(st['uses'] for st in f['steps']), fid
+        for t in f['feeds']:
+            assert fg.get(t), f'{fid} feeds an unknown calculation {t}'
+        if f['graph']:
+            assert f['graph'] in BUILTINS, f'{fid} links a graph that does not exist'
+    flow = fg.flow()
+    assert [s['name'] for s in flow['stages']] == fg.STAGES and len(flow['nodes']) == len(fg._BY_ID) and len(flow['edges']) > 40
+    # The numbers are the platform's: % of equity at an ATR stop.
+    r = fg.evaluate('rk_size_pct', {'equity': 10000, 'r_pct': 1, 'k': 2, 'atr': 0.001})
+    assert r['steps']['quantity'] == pytest.approx(100 / (0.002 * 100000))
+    w = fg.worked(fg.get('rk_size_pct'), {**r['inputs'], **r['steps']})
+    assert w['risk_money'] == '10000 * 1 / 100 * 1'

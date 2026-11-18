@@ -1186,3 +1186,28 @@ Every calculation can now be opened as nodes and wires (n8n-style), and executio
   broker first (by its ticket) and recorded only when the broker accepts.
 - The Execution workspace is named *Execution* in its tab and side bar (it said "Orders").
 - Migration 039 (execution algorithms). Live trading stays off by default; order sending per environment unchanged.
+
+## Calculation flow: every calculation as nodes and wires — release 0.52.0
+
+A new main workspace, **Calculation flow** (rail, after Post-trade), where every calculation, formula and equation of
+the platform is present n8n-style (DEC-96):
+
+- **Platform flow** — the whole platform as one workflow: Market data → Intelligence → Signals → Strategies → Risk →
+  Portfolio → Execution → Post-trade. Each stage is a box holding every calculation it makes (101 in all), each card
+  with its last steps written out; lines show where one calculation feeds another. Choose an instrument and the
+  features and signal scores show their live value on its newest bar. Search lights up matches; double-click a stage
+  to fold it (Expand / Collapse all); click a card for its steps, where it comes from and where it goes, and a small
+  working graph of it.
+- **Every formula** — each of the 101 calculations as its own graph: input boxes you type into → a node per step
+  showing its expression, the expression with your numbers put in and its value → the result. The server works the
+  steps out in the platform's own expression language. *Calculations & formulas* in every stage links each row here
+  ("as a graph ↗").
+- **Bar-by-bar graphs** — the executable graphs of 0.51 (every node's value on any stored bar; copy, change, approve,
+  put to use).
+
+Steadier screens:
+- Graph canvases draw only while on screen, fit once per graph (not on every update), never animate wires, keep a
+  fixed height and a one-line status, so nothing around them moves; nodes have a fixed width.
+- *All panels* shows a light summary of the graphs with *Open* instead of a full canvas in a panel.
+- "Nothing is running yet" shows only on *All panels*, not above every item.
+- A link that opens a domain at an item now opens that item even while the domain is still loading.

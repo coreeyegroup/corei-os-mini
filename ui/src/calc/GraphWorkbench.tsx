@@ -6,14 +6,14 @@
  * Why: the owner wants every formula visible and changeable without code, the same way everywhere.
  * Purpose: GraphWorkbench (canvas or plain view), openGraph (open a graph from any screen).
  * Must never: decide anything — the server checks, versions, approves and runs; built-ins are read-only (copy them). */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { applyNodeChanges, Background, Controls, Handle, MiniMap, Position, ReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { applyNodeChanges, Handle, Position, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react';
 import './graph.css';
+import FlowCanvas from './FlowCanvas';
 import { api } from '../Configuration';
-import { Msg, pill, useData, type Ctx, type Row } from '../StageShell';
+import { pill, useData, type Ctx, type Row } from '../StageShell';
 import { MiniSpark, SourcePick, TfPick } from '../SignalLibrary';
-import { compatible, FAMILY_ICON, FAMILY_LABEL, fmt, isSeries, newId, OUTPUT_OF, PENDING, portsOf, PURPOSE_LABEL, type Definition, type GNode, type NodeType, type Param, type Port } from './ports';
+import { compatible, FAMILY_ICON, FAMILY_LABEL, fmt, isSeries, newId, openGraph, OUTPUT_OF, PENDING, portsOf, PURPOSE_LABEL, type Definition, type GNode, type NodeType, type Param, type Port } from './ports';
 
 
 type Trace = Record<string, { type: string; label: string; formula?: string; inputs?: Row; outputs?: Row; explain?: string; error?: string; ms: number }>;
@@ -68,10 +68,29 @@ function ParamInput({ p, value, change, disabled, graphParams }: { p: Param; val
 
 /* ---------- the workbench ---------- */
 
-export default function GraphWorkbench({ ctx, purposes, intro }: { ctx: Ctx; purposes?: string[]; intro?: string }) {
+type WbProps = { ctx: Ctx; purposes?: string[]; intro?: string; section?: string };
+
+/* In "All panels" (every item of a domain on one page) the workbench shows a light summary with Open: a full canvas,
+ * its previews and polling per panel would make that page heavy and jumpy. Its own sub-tab shows the whole workbench. */
+export default function GraphWorkbench(props: WbProps) {
+  const ref = useRef<HTMLDivElement>(null), [inAll, setInAll] = useState<boolean | null>(null);
+  useLayoutEffect(() => { setInAll(Boolean(ref.current?.closest('.ws-panel'))); }, []);
+  return <div ref={ref} className="cg-host">{inAll === null ? null : inAll ? <GraphSummary {...props} /> : <Workbench {...props} />}</div>;
+}
+
+function GraphSummary({ ctx, purposes, section = 'graphs' }: WbProps) {
+  const [lib] = useData<Row>('calc/graphs', 0);
+  const graphs: Row[] = (lib?.items ?? []).filter((g: Row) => !purposes || purposes.includes(g.purpose));
+  return <section className="intel cg-summary">
+    <p className="cfg-note">{graphs.length} graph{graphs.length === 1 ? '' : 's'} here, each drawn as nodes and wires with live numbers. <button className="primary" onClick={() => ctx.open(section)}>Open the graph canvas</button></p>
+    <div className="cg-chips">{graphs.slice(0, 24).map(g => <button key={g.code} onClick={() => { openGraph(g.code); ctx.open(section); }} title={g.description}>{g.name}</button>)}</div>
+  </section>;
+}
+
+function Workbench({ ctx, purposes, intro }: WbProps) {
   const [cat] = useData<Row>('calc/nodes', 0);
-  const [lib, libErr, reloadLib] = useData<Row>('calc/graphs', 60_000);
-  const [bindings, , reloadBind] = useData<Row>('calc/bindings', 60_000);
+  const [lib, libErr, reloadLib] = useData<Row>('calc/graphs', 0);
+  const [bindings, , reloadBind] = useData<Row>('calc/bindings', 0);
   const types: Record<string, NodeType> = useMemo(() => Object.fromEntries((cat?.items ?? []).map((n: NodeType) => [n.type, n])), [cat]);
   const graphs: Row[] = useMemo(() => (lib?.items ?? []).filter((g: Row) => !purposes || purposes.includes(g.purpose)), [lib, purposes]);
   const [code, setCode] = useState<string>(''), [ver, setVer] = useState<number | null>(null);
@@ -137,8 +156,8 @@ export default function GraphWorkbench({ ctx, purposes, intro }: { ctx: Ctx; pur
     const [s, sh] = e.from.split('.'), [t, th] = e.to.split('.');
     const nt = types[def!.nodes.find(n => n.id === s)?.type ?? ''];
     const typ = portsOf(nt, def!.nodes.find(n => n.id === s)?.params ?? {}).outputs.find(p => p.name === sh)?.type ?? '';
-    return { id: `${e.from}->${e.to}`, source: s, sourceHandle: sh, target: t, targetHandle: th, className: `cg-edge t-${typ.replace(/[^a-z]/g, '')}`, animated: running };
-  }), [def, types, running]);
+    return { id: `${e.from}->${e.to}`, source: s, sourceHandle: sh, target: t, targetHandle: th, className: `cg-edge t-${typ.replace(/[^a-z]/g, '')}` };
+  }), [def, types]);
 
   const change = (fn: (d: Definition) => Definition) => { if (!def) return; setDef(fn(structuredClone(def))); setDirty(true); };
   const onNodesChange = (changes: NodeChange<Node<NodeData>>[]) => {
@@ -242,8 +261,9 @@ export default function GraphWorkbench({ ctx, purposes, intro }: { ctx: Ctx; pur
       {canvasAvailable() && <span className="cg-toggle" role="group" aria-label="Graph view">
         <button className={view === 'canvas' ? 'on' : ''} onClick={() => setView('canvas')}>Canvas</button><button className={view === 'plain' ? 'on' : ''} onClick={() => setView('plain')}>Plain</button></span>}
     </div>
-    <Msg error={err || libErr} notice={msg} />
-    {!src && <p className="cfg-note">Choose an instrument to see every node's value on its stored bars. The graph shows without one.</p>}
+    <div className="cg-status" role="status">{err || libErr ? <span className="cfg-error-text">{err || libErr}</span> : msg ? <span className="cg-ok">{msg}</span>
+      : !src ? <span className="cfg-note">Choose an instrument to see every node's value on its stored bars.</span> : running ? <span className="cfg-note">Working out every node…</span>
+      : <span className="cfg-note">{preview?.valid ? `Values on the bar ${preview.trace_time ? new Date(preview.trace_time).toISOString().slice(0, 16).replace('T', ' ') : ''} · ${preview.bars} bars · ${preview.ms} ms` : ' '}</span>}</div>
     <div className={`cg-main${wide ? ' wide' : ''}`}>
       <aside className="cg-left">
         {!editing ? <>
@@ -279,13 +299,10 @@ export default function GraphWorkbench({ ctx, purposes, intro }: { ctx: Ctx; pur
           <span className="cg-sp" />{dirty && <small className="cg-dirty">unsaved changes</small>}
           <small className="cfg-note">{def?.nodes.length ?? 0} nodes · {def?.edges.length ?? 0} wires{preview?.warmup != null ? ` · warm-up ${preview.warmup} bars` : ''}{preview?.ms != null ? ` · ${preview.ms} ms` : ''}</small>
         </div>}
-        {def && view === 'canvas' ? <div className="cg-canvas" aria-label="Graph canvas">
-          <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={NODE_TYPES} onNodesChange={onNodesChange} onConnect={onConnect}
+        {def && view === 'canvas' ? <FlowCanvas label="Graph canvas" nodes={rfNodes} edges={rfEdges} nodeTypes={NODE_TYPES} height={wide ? 760 : 640}
+            onNodesChange={c => onNodesChange(c as NodeChange<Node<NodeData>>[])} onConnect={onConnect} editable={editing} fitKey={`${code}|${ver}|${wide}`}
             onEdgesDelete={es => editing && change(d => ({ ...d, edges: d.edges.filter(e => !es.some(x => x.id === `${e.from}->${e.to}`)) }))}
-            nodesDraggable={editing} nodesConnectable={editing} edgesFocusable={editing} deleteKeyCode={editing ? ['Backspace', 'Delete'] : null}
-            onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.06, maxZoom: 1 }} minZoom={0.2} proOptions={{ hideAttribution: true }}>
-            <Background gap={20} size={1} /><Controls showInteractive={false} /><MiniMap position="bottom-right" pannable zoomable className="cg-minimap" style={{ width: 150, height: 96 }} nodeColor="var(--line)" maskColor="rgba(0,0,0,.35)" />
-          </ReactFlow></div>
+            onPaneClick={() => setSelected(null)} />
           : def ? <PlainView def={def} types={types} trace={trace} select={setSelected} selected={selected} /> : <p className="cfg-note">Choose a graph.</p>}
         <div className="cg-result">
           {validationErrors.length > 0 && <div className="cg-errors" role="alert"><b>The graph has errors</b><ul>{validationErrors.map((e, i) => <li key={i}>{e.node ? <button className="linkish" onClick={() => setSelected(e.node)}>{e.node}</button> : null} {e.message}</li>)}</ul></div>}
