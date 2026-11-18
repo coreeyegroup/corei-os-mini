@@ -516,7 +516,7 @@ class EndToEnd(Execution):
 
     def test_stale_price_and_paper_stop(self):
         _c, a, _b, ins = self.real_account()
-        stale = self.place(a, ins, 'stale-1', mode='PAPER', at=NOW + timedelta(minutes=10))
+        stale = self.place(a, ins, 'stale-1', mode='PAPER', at=max(NOW, datetime.now(timezone.utc)) + timedelta(minutes=10))  # 10 min after the price was received
         self.assertTrue(any(r.startswith('STALE_PRICE') for r in stale['reasons']), stale['reasons'])
         o = self.place(a, ins, 'sl-1', mode='PAPER', stop_loss=Decimal('1.07900'), take_profit=Decimal('1.08300'))
         self.assertEqual(o['state'], 'FILLED')

@@ -39,10 +39,14 @@ class Trading(tmd.MarketData):
                                 [(account_id, start + timedelta(minutes=5 * i), c, c + 0.0003, c - 0.0003, c) for i, c in enumerate(closes)])
 
     def quote(self, account_id, bid, ask, at=NOW):
+        # The tests run their strategies at a fixed market time (NOW); actions a person takes (a ticket, a manual
+        # signal) are checked against the real clock. A default quote is therefore received at whichever is later, so
+        # it is fresh for both, whatever day the suite runs. An explicit time is kept as given.
+        received = max(at, datetime.now(UTC)) if at is NOW else at
         with self.connect() as db:
             db.execute("INSERT INTO md_latest(account_id, broker_symbol, bid, ask, source_time, received_at, seq) VALUES (%s,'EURUSD',%s,%s,%s,%s,1) "
                        'ON CONFLICT (account_id, broker_symbol) DO UPDATE SET bid=EXCLUDED.bid, ask=EXCLUDED.ask, received_at=EXCLUDED.received_at',
-                       (account_id, bid, ask, at, at))
+                       (account_id, bid, ask, at, received))
 
     def deploy(self, connection, account, instrument, **extra):
         mapping = self.ok(self.alice.post('/api/config/mappings', json={'connection_id': connection['id'], 'instrument_id': instrument['id'],
