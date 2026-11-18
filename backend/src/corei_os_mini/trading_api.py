@@ -1,7 +1,8 @@
 """HTTP API for the trading core, Stages 3–8 (signals, strategies, risk, portfolio, execution, post-trade).
 
 Why it exists: the stage screens and the system map read and control the trading core through one place.
-Purpose: /api/trading/* — overview KPIs per stage; settings; runtime state and Run now; signals (list, detail,
+Purpose: /api/trading/* — overview KPIs per stage; every formula by stage (/formulas); the signal library (catalogue,
+definitions, live board, explain one instrument with worked equations, research: IC, hit rate, quintiles); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
 dispatcher status); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
@@ -27,7 +28,8 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
 from .trading import (algorithms, backtest, brokers, copytrade, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      strategy_health, var)
+                      signal_library, strategy_health, var)
+from . import formulas
 from .trading.common import settings as read_settings
 
 router = APIRouter(prefix='/api/trading', tags=['trading'])
@@ -159,8 +161,153 @@ def run_now(user: Principal = Depends(_ops_or_risk)):
 @router.get('/algorithms')
 def algorithm_list(response: Response, _: str = Depends(require_operator)):
     _no_store(response)
-    return {'items': [{'id': k, 'label': v['label'], 'description': v['description'], 'schema': v['model'].model_json_schema()}
+    return {'items': [{'id': k, 'label': v['label'], 'description': v['description'], 'equation': v.get('equation'), 'strength_equation': v.get('strength_equation'), 'schema': v['model'].model_json_schema()}
                       for k, v in algorithms.ALGORITHMS.items()]}
+
+
+# ----- every calculation, by stage (shown in each workspace) -----
+
+@router.get('/formulas')
+def formula_list(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    return {'stages': formulas.all_formulas()}
+
+
+# ----- Stage 3: the signal library -----
+
+_TF_MIN = {'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60, 'H4': 240, 'D1': 1440}
+
+
+def _last_bar_time(db, account_id, symbol: str) -> datetime:
+    """Windows end at the newest stored bar (market time), not the machine clock."""
+    row = db.execute('SELECT max(bar_time) AS t FROM md_bars WHERE account_id=%s AND broker_symbol=%s', (str(account_id), symbol)).fetchone()
+    return (row['t'] if row and row['t'] else datetime.now(timezone.utc)) + timedelta(minutes=1)
+
+
+class ResearchIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_id: UUID
+    symbol: str = Field(min_length=1, max_length=64)
+    timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1'
+    kind: str
+    parameters: dict = Field(default_factory=dict)
+    threshold: float = Field(20, ge=1, le=99)
+    days: int = Field(180, ge=1, le=3650)
+    horizons: list[int] = Field(default_factory=lambda: [1, 2, 5, 10, 20])
+
+
+@router.get('/signal-library/catalogue')
+def signal_catalogue(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    return {'items': signal_library.catalogue()}
+
+
+@router.get('/signal-library/definitions')
+def signal_definitions(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return {'items': _j(signal_library.definitions(db))}
+
+
+@router.post('/signal-library/definitions', status_code=201)
+def add_signal_definition(payload: dict, user: Principal = Depends(_risk)):
+    return _j(signal_library.save(user.username, parse(signal_library.DefinitionIn, payload)))
+
+
+@router.put('/signal-library/definitions/{def_id}')
+def change_signal_definition(def_id: UUID, payload: dict, user: Principal = Depends(_risk)):
+    payload = dict(payload)
+    payload.pop('version', None)
+    return _j(signal_library.save(user.username, parse(signal_library.DefinitionIn, payload), def_id))
+
+
+@router.delete('/signal-library/definitions/{def_id}', status_code=204)
+def remove_signal_definition(def_id: UUID, reason: str = Query(..., min_length=5, max_length=500), user: Principal = Depends(_risk)):
+    signal_library.delete(user.username, def_id, reason)
+    return Response(status_code=204)
+
+
+@router.get('/signal-library/board')
+def signal_board(response: Response, timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1', _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(signal_library.board(db, timeframe))
+
+
+@router.get('/signal-library/explain')
+def signal_explain(response: Response, account_id: UUID, symbol: str = Query(..., min_length=1, max_length=64),
+                   timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1', _: str = Depends(require_operator)):
+    """Every active signal of one instrument computed now from its stored bars, with the equation filled in and the last 60 scores."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        end = _last_bar_time(db, account_id, symbol)
+        start = end - timedelta(minutes=_TF_MIN[timeframe] * 600)
+        bars, source = backtest.load_bars(db, account_id, symbol, timeframe, start, end)
+        defs = signal_library.definitions(db, active_only=True)
+    out = []
+    for d in defs:
+        params = signal_library.params_of(d['kind'], d['parameters'])
+        series = signal_library.compute(d['kind'], params, bars) if bars else []
+        last = series[-1] if series else None
+        score, inputs = (last if last else (None, None))
+        out.append({'code': d['code'], 'name': d['name'], 'kind': d['kind'], 'family': d.get('family'), 'parameters': params, 'threshold': d['threshold'],
+                    'equation': d.get('equation'), 'score': None if score is None else round(score, 1),
+                    'direction': signal_library.direction(score, float(d['threshold'])), 'inputs': inputs,
+                    'worked': signal_library.worked(d['kind'], params, score, inputs),
+                    'recent': [None if x is None else round(x[0], 1) for x in series[-60:]]})
+    return _j({'symbol': symbol, 'timeframe': timeframe, 'bars': len(bars), 'bar_source': source,
+               'last_bar': bars[-1]['bar_time'] if bars else None, 'last_close': bars[-1]['close'] if bars else None, 'items': out})
+
+
+class BlendPreviewIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_id: UUID
+    symbol: str = Field(min_length=1, max_length=64)
+    timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1'
+    components: list[dict] = Field(min_length=1, max_length=12)
+    entry: float = 40
+    exit: float = 10
+
+
+@router.post('/signal-library/blend-preview')
+def blend_preview(payload: dict, _: str = Depends(require_operator)):
+    """A SIGNAL_BLEND recipe on the newest bars of one instrument: each component's score with its working, the
+    combined score and what the rule would do — the strategy's arithmetic, shown before it is saved."""
+    data = parse(BlendPreviewIn, payload)
+    blend = parse(algorithms.SignalBlend, {'timeframe': data.timeframe, 'components': data.components, 'entry': data.entry, 'exit': data.exit})
+    with store.transaction('read') as db:
+        end = _last_bar_time(db, data.account_id, data.symbol)
+        bars, source = backtest.load_bars(db, data.account_id, data.symbol, data.timeframe, end - timedelta(minutes=_TF_MIN[data.timeframe] * 600), end)
+    parts, total_w = [], sum(abs(c.weight) for c in blend.components)
+    for c in blend.components:
+        p = signal_library.params_of(c.kind, c.parameters)
+        series = signal_library.compute(c.kind, p, bars) if bars else []
+        score, inputs = series[-1] if series and series[-1] else (None, None)
+        parts.append({'kind': c.kind, 'weight': c.weight, 'parameters': p, 'equation': signal_library.KINDS[c.kind]['equation'],
+                      'score': None if score is None else round(score, 1), 'worked': signal_library.worked(c.kind, p, score, inputs)})
+    ready = bool(parts) and all(x['score'] is not None for x in parts) and total_w > 0
+    combined = round(sum(x['weight'] * x['score'] for x in parts) / total_w, 1) if ready else None
+    side = None if combined is None else 'LONG' if combined >= blend.entry else 'SHORT' if combined <= -blend.entry else 'FLAT or hold (inside ±entry)'
+    worked = (' + '.join(f"{x['weight']:g} × {x['score']:+.1f}" for x in parts) + f' ÷ {total_w:g} = {combined:+.1f}') if ready else 'warming up: not enough bars yet'
+    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'last_bar': bars[-1]['bar_time'] if bars else None,
+               'components': parts, 'combined': combined, 'worked': worked, 'side': side, 'entry': blend.entry, 'exit': blend.exit,
+               'equation': algorithms.EQUATIONS['SIGNAL_BLEND'][0]})
+
+
+@router.post('/signal-library/research')
+def signal_research(payload: dict, _: str = Depends(require_operator)):
+    data = parse(ResearchIn, payload)
+    if data.kind not in signal_library.KINDS:
+        raise HTTPException(422, f'Unknown signal kind {data.kind}.')
+    hz = sorted({h for h in data.horizons if 1 <= h <= 500})[:8] or [1, 5, 20]
+    with store.transaction('read') as db:
+        end = _last_bar_time(db, data.account_id, data.symbol)
+        bars, source = backtest.load_bars(db, data.account_id, data.symbol, data.timeframe, end - timedelta(days=data.days), end)
+    if len(bars) < 60:
+        raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
+    out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold)
+    out.update(symbol=data.symbol, timeframe=data.timeframe, bar_source=source)
+    return _j(out)
 
 
 @router.post('/backtests', status_code=201)

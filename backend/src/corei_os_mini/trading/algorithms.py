@@ -210,6 +210,62 @@ def bollinger_reversion(bars, rows, p: BollingerReversion):
     return _walk(len(bars), step, p.direction)
 
 
+class BlendComponent(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    kind: str = Field(description='A signal formula from the Stage 3 library (EMA_TREND, RSI_REVERSION, …)')
+    parameters: dict = Field(default_factory=dict, description='Its parameters (blank: the library defaults)')
+    weight: float = Field(1.0, ge=-10, le=10, description='Weight in the combined score (negative inverts the signal)')
+
+
+class SignalBlend(_P):
+    """Combine Stage 3 signals: combined = Σ wᵢ·scoreᵢ ÷ Σ|wᵢ| (−100…+100). Enter long at or above the entry level,
+    short at or below −entry; exit when it falls back inside ±exit (or reverses)."""
+    components: list[BlendComponent] = Field(min_length=1, max_length=12)
+    entry: float = Field(40, gt=0, le=100, description='Enter when |combined| ≥ this')
+    exit: float = Field(10, ge=0, lt=100, description='Exit when |combined| falls below this (or the sign turns)')
+
+    @model_validator(mode='after')
+    def _check(self) -> 'SignalBlend':
+        from .signal_library import params_of
+        for c in self.components:
+            c.parameters = params_of(c.kind, c.parameters)
+        if self.exit >= self.entry:
+            raise ValueError('exit must be below entry')
+        if not any(c.weight for c in self.components):
+            raise ValueError('at least one weight must be non-zero')
+        return self
+
+
+def signal_blend(bars, rows, p: SignalBlend):
+    from .signal_library import compute
+    series = [compute(c.kind, c.parameters, bars) for c in p.components]
+    total_w = sum(abs(c.weight) for c in p.components)
+
+    def combined(i):
+        parts = [(c, s[i]) for c, s in zip(p.components, series)]
+        if any(v is None for _, v in parts):
+            return None, ''
+        score = sum(c.weight * v[0] for c, v in parts) / total_w
+        text = ' + '.join(f'{c.kind} {v[0]:+.1f}×{c.weight:g}' for c, v in parts) + f' ÷ {total_w:g} = {score:+.1f}'
+        return score, text
+
+    def step(i, state):
+        score, text = combined(i)
+        if score is None:
+            return None, 0, ''
+        strength = max(10, min(100, round(abs(score))))
+        if state == 'LONG' and (score < p.exit or score <= -p.entry):
+            return ('SHORT' if score <= -p.entry else 'FLAT'), strength, f'Combined score {score:+.1f} (exit {p.exit:g}): {text}'
+        if state == 'SHORT' and (score > -p.exit or score >= p.entry):
+            return ('LONG' if score >= p.entry else 'FLAT'), strength, f'Combined score {score:+.1f} (exit {p.exit:g}): {text}'
+        if state == 'FLAT' and score >= p.entry:
+            return 'LONG', strength, f'Combined score {score:+.1f} ≥ entry {p.entry:g}: {text}'
+        if state == 'FLAT' and score <= -p.entry:
+            return 'SHORT', strength, f'Combined score {score:+.1f} ≤ −{p.entry:g}: {text}'
+        return None, 0, ''
+    return _walk(len(bars), step, p.direction)
+
+
 def _value(v: str, row: dict):
     try:
         return float(v)
@@ -261,7 +317,27 @@ ALGORITHMS: dict[str, dict] = {
     'DONCHIAN_BREAKOUT': {'label': 'Donchian channel breakout', 'model': DonchianBreakout, 'run': donchian_breakout},
     'BOLLINGER_REVERSION': {'label': 'Bollinger band reversion', 'model': BollingerReversion, 'run': bollinger_reversion},
     'RULES': {'label': 'Rule builder (any feature)', 'model': Rules, 'run': rules},
+    'SIGNAL_BLEND': {'label': 'Signal blend (Stage 3 signals combined)', 'model': SignalBlend, 'run': signal_blend},
 }
+
+# The decision rule of each algorithm, in words and symbols (shown on the Strategies workspace).
+EQUATIONS = {
+    'MA_CROSSOVER': ('LONG when SMA(fast)ₜ₋₁ ≤ SMA(slow)ₜ₋₁ and SMA(fast)ₜ > SMA(slow)ₜ; SHORT on the opposite cross',
+                     'strength = clamp(100 × |SMA(fast) − SMA(slow)| ÷ ATR14, 10, 100)'),
+    'EMA_CROSSOVER': ('LONG when EMA(fast)ₜ₋₁ ≤ EMA(slow)ₜ₋₁ and EMA(fast)ₜ > EMA(slow)ₜ; SHORT on the opposite cross. EMA(n)ₜ = EMA(n)ₜ₋₁ + 2÷(n+1)·(closeₜ − EMA(n)ₜ₋₁)',
+                      'strength = clamp(100 × |EMA(fast) − EMA(slow)| ÷ ATR14, 10, 100)'),
+    'RSI_REVERSION': ('LONG when RSIₜ₋₁ < lower ≤ RSIₜ; SHORT when RSIₜ₋₁ > upper ≥ RSIₜ; FLAT when RSI reaches exit_level. RSI = 100 − 100 ÷ (1 + avg gain ÷ avg loss), Wilder',
+                      'strength = clamp(2 × (exit_level − min(RSIₜ₋₁, RSIₜ)), 10, 100) for longs'),
+    'DONCHIAN_BREAKOUT': ('LONG when closeₜ > max(high of the previous entry bars); SHORT when closeₜ < min(low of the previous entry bars); '
+                          'FLAT when the close crosses the exit channel the other way', 'strength = clamp(100 × (close − channel) ÷ ATR14, 10, 100)'),
+    'BOLLINGER_REVERSION': ('LONG when closeₜ₋₁ < lowerₜ₋₁ and closeₜ ≥ lowerₜ; SHORT at the upper band; FLAT at the middle. Bands = SMA(n) ± k·σ(n)',
+                            'strength = clamp(200 × |close − middle| ÷ (upper − lower), 10, 100)'),
+    'RULES': ('LONG when every long-entry condition holds; FLAT when any long-exit condition holds (shorts the same)', 'strength = 60 on entry, 50 on exit'),
+    'SIGNAL_BLEND': ('combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ| (scores from the Stage 3 library); LONG when combined ≥ entry, SHORT when ≤ −entry; '
+                     'FLAT when it falls back inside ±exit; reverse when it crosses the opposite entry', 'strength = clamp(|combined|, 10, 100)'),
+}
+for _k, (_rule, _strength_eq) in EQUATIONS.items():
+    ALGORITHMS[_k]['equation'], ALGORITHMS[_k]['strength_equation'] = _rule, _strength_eq
 for _k, _v in ALGORITHMS.items():
     _v['description'] = _v['model'].__doc__
 
@@ -275,4 +351,6 @@ def warmup(algorithm: str, parameters: dict) -> int:
     """Bars a decision needs before it means anything (the window must be longer)."""
     p = parameters
     return {'MA_CROSSOVER': p.get('slow_window', 50), 'EMA_CROSSOVER': 3 * p.get('slow', 21), 'RSI_REVERSION': 3 * p.get('period', 14),
-            'DONCHIAN_BREAKOUT': p.get('entry', 20) + 1, 'BOLLINGER_REVERSION': p.get('period', 20) + 1}.get(algorithm, 210)
+            'DONCHIAN_BREAKOUT': p.get('entry', 20) + 1, 'BOLLINGER_REVERSION': p.get('period', 20) + 1,
+            'SIGNAL_BLEND': 3 * max([max([v for v in (c.get('parameters') or {}).values() if isinstance(v, (int, float))] or [26])
+                                     for c in p.get('components') or [{}]] or [26])}.get(algorithm, 210)

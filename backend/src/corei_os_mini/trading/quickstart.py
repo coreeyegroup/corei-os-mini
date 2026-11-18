@@ -35,6 +35,10 @@ PRESETS: dict[str, dict] = {
                  'why': 'Enters on a 20-bar high or low, exits on a 10-bar opposite. Classic trend breakout.'},
     'BOLLINGER': {'label': 'Band reversion · Bollinger 20/2', 'algorithm': 'BOLLINGER_REVERSION', 'parameters': {'period': 20, 'deviations': 2.0},
                   'why': 'Fades moves outside the bands back to the middle.'},
+    'BLEND': {'label': 'Signal blend · EMA trend + momentum + RSI', 'algorithm': 'SIGNAL_BLEND',
+              'parameters': {'components': [{'kind': 'EMA_TREND', 'parameters': {}, 'weight': 1}, {'kind': 'MOMENTUM_TSTAT', 'parameters': {}, 'weight': 1},
+                                            {'kind': 'RSI_REVERSION', 'parameters': {}, 'weight': 0.5}], 'entry': 40, 'exit': 10},
+              'why': 'Three Stage 3 signals combined: (EMA trend + momentum + ½ RSI reversion) ÷ 2.5; long at ≥ +40, short at ≤ −40, flat inside ±10.'},
 }
 
 
@@ -42,7 +46,7 @@ class QuickIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     account_id: UUID                       # the collected source: account + broker symbol (the paper book is on this account)
     broker_symbol: str = Field(min_length=1, max_length=64)
-    preset: Literal['EMA_TREND', 'EMA_FAST', 'RSI_REVERSION', 'BREAKOUT', 'BOLLINGER'] = 'EMA_TREND'
+    preset: Literal['EMA_TREND', 'EMA_FAST', 'RSI_REVERSION', 'BREAKOUT', 'BOLLINGER', 'BLEND'] = 'EMA_TREND'
     timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'M5'
     quantity: str | None = Field(default=None, pattern=r'^\d+(\.\d{1,12})?$')   # blank: the instrument's smallest size
     activate: bool = True

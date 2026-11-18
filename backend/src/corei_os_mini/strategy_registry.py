@@ -150,7 +150,7 @@ STRATEGY_SELECT = '''SELECT s.*,
 @router.get('/algorithms')
 def algorithms(response: Response, _: Principal = Depends(current_user)):
     _no_store(response)
-    return {'items': [{'id': key, 'label': spec['label'], 'description': spec['description'],
+    return {'items': [{'id': key, 'label': spec['label'], 'description': spec['description'], 'equation': spec.get('equation'), 'strength_equation': spec.get('strength_equation'),
                        'schema': spec['model'].model_json_schema()} for key, spec in ALGORITHMS.items()]}
 
 

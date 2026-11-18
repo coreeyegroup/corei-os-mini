@@ -1041,3 +1041,27 @@ waiting for it; paper-only accounts reconcile against their own fills; bridge no
 
 **0.45.4 — everything on one page** (DEC-87): Market data, Market intelligence and every trading stage open on
 *Workspace (all)*: every panel — dashboards, work screens, monitors, settings — on one page, each closable, with an index.
+
+## Every calculation on the workspace; Stage 3 owns the signal maths — release 0.46.0
+
+The flow stays **1 Market data → 2 Features → 3 Signals → 4 Strategies → 5 Risk → 6 Portfolio → 7 Execution → 8 Post-trade**,
+and every formula is on the workspace with live numbers (DEC-88, migration 036).
+
+- **Stage 3 · Signal library.** Each signal is a formula that turns features into a score from −100 (strong short) to +100
+  (strong long) for every collected instrument and closed bar: EMA/SMA trend, MACD momentum, RSI reversion and momentum,
+  Bollinger and z-score reversion, Donchian breakout, momentum t-stat, stochastic, ADX direction, VWAP reversion. Twelve
+  built-ins, tunable and pausable; the desk adds its own (Risk approver, reason, versioned, audited).
+  - *Live signal board*: instrument × signal; click a score for its equation filled in with that bar's numbers.
+  - *Explain an instrument*: every signal's formula, inputs, arithmetic, side and last 60 scores.
+  - *Signal research*: IC (Spearman), its t-stat, hit rate, quintile returns, turnover, coverage, cost; PREDICTIVE / WEAK / NO_EDGE.
+- **Stage 4 · Signal blend.** A strategy algorithm that combines library signals: combined = Σ wᵢ·scoreᵢ ÷ Σ|wᵢ|, LONG at
+  ≥ entry, SHORT at ≤ −entry, flat inside ±exit. The recipe editor (Backtest and Setup › Strategies) works the combined
+  score out on the last bar before saving. Every algorithm now lists its rule and strength equations.
+- **Calculations & formulas** panel on Market data, Market intelligence (with each feature's value on a chosen instrument)
+  and Stages 3–8: bars and the quality score; every feature and the regime; signals, gates and decision; algorithms,
+  sizing, protective exits, backtest metrics, walk-forward and drift; limits, margin, VaR/ES and stress; average cost,
+  P&L, equity, allocation and copy size; client order ID, paper fills, slippage, routing; reconciliation and TCA. One
+  registry (`formulas.py`) beside the code; a test checks every algorithm and signal is listed.
+- API: `/api/trading/formulas`, `/api/trading/signal-library/{catalogue,definitions,board,explain,research,blend-preview}`.
+  Scores are computed by the intelligence engine after each run (`sig_live`); windows end at the newest stored bar.
+

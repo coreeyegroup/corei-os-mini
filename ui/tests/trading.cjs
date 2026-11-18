@@ -47,8 +47,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/risk/kill-switches'))return ok({items:kills});
    if(url.includes('/trading/risk/exposure'))return ok({instruments:[],accounts:[]});
    if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
-   if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',
-     schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}}]});
+   if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
+     schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}},
+     {id:'SIGNAL_BLEND',label:'Signal blend',description:'Weighted Stage 3 signals',equation:'combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ|',strength_equation:'strength = clamp(|combined|, 10, 100)',
+     schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},components:{type:'array'},entry:{type:'number',default:40},exit:{type:'number',default:10}}}}]});
    if(url.includes('/trading/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',first_bar:now,last_bar:now}]});
    if(url.endsWith('/trading/backtests')&&method==='POST')return ok({id:'b1',metrics:{net_pnl:'812.40',return_pct:'0.81',trades:14,win_rate_pct:57.1,profit_factor:1.6,max_drawdown_pct:'0.42',sharpe:1.3,exposure_pct:48,currency:'USD'},
      equity:[{t:now,equity:'100000'},{t:now,equity:'100812.4'}],trades:[{side:'LONG',entry_time:now,entry:'1.08',exit_time:now,exit:'1.081',pnl:'100.00',reason:'EMA cross'}]},201);
@@ -65,6 +67,17 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/posttrade/tca'))return ok({by:'account',currency:'USD',slippage_cost_total:'12.5',commission_total:'-2.1',rows:[{label:'VTM_A',orders:4,fill_rate_pct:'100',reject_rate_pct:0,fills:4,
      avg_slippage_bps:'0.19',slippage_cost:'12.5',price_improved:1,worse_than_arrival:3,latency_avg_ms:140,latency_p95_ms:210,latency_max_ms:230,commission:'-2.1'}],note:'Slippage = fill vs arrival.'});
    if(url.includes('/trading/risk/stress'))return ok({scenarios:[{id:'s1',name:'Everything −5%',description:'',builtin:true,shocks:[{match:'ALL',value:'',pct:'-5'}],total:'-540.20',by_account:[{account:'VTM_A',pnl:'-540.20'}]}],missing:[]});
+   if(url.includes('/trading/formulas'))return ok({stages:{Signals:[{name:'EMA trend (EMA_TREND)',equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)',variables:'fast = 9, slow = 21',code:'trading/signal_library.py · EMA_TREND'}],
+     Risk:[{name:'Margin and leverage',equation:'margin = Σ value ÷ account leverage',code:'trading/risk.py: margin'}],Intelligence:[{name:'RSI(14) — rsi14',equation:'RSI = 100 − 100 ÷ (1 + RS)',code:'intel/indicators.py: rsi'}]}});
+   if(url.includes('/trading/signal-library/catalogue'))return ok({items:[{kind:'EMA_TREND',label:'EMA trend',family:'Trend',defaults:{fast:9,slow:21,scale:1},equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)',detail:'Trend',horizon:'days'},
+     {kind:'RSI_REVERSION',label:'RSI reversion',family:'Mean reversion',defaults:{period:14},equation:'score = 2 × (50 − RSI)',detail:'Reversion',horizon:'hours'}]});
+   if(url.includes('/trading/signal-library/definitions')&&method==='POST')return ok({id:'d9',...body,version:1},201);
+   if(url.includes('/trading/signal-library/definitions'))return ok({items:[{id:'d1',code:'EMA_TREND',name:'EMA trend 9/21',kind:'EMA_TREND',family:'Trend',parameters:{fast:9,slow:21,scale:1},threshold:'20',timeframes:['M5','H1'],status:'ACTIVE',builtin:true,
+     equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)'}]});
+   if(url.includes('/trading/signal-library/board'))return ok({timeframe:'H1',items:[{definition_id:'d1',code:'EMA_TREND',account_code:'VTM_A',broker_symbol:'EURUSD',score:'62.4',previous_score:'40',direction:'LONG',threshold:'20',bar_time:now,
+     inputs:{ema_fast:1.0861,ema_slow:1.0842,atr14:0.003},worked:'100 × (1.0861 − 1.0842) ÷ (1 × 0.003) = +62.4'}]});
+   if(url.includes('/trading/signal-library/blend-preview'))return ok({components:[{kind:'EMA_TREND',weight:2,score:62.4,worked:'100 × (1.0861 − 1.0842) ÷ (1 × 0.003) = +62.4'},{kind:'RSI_REVERSION',weight:1,score:-10,worked:'2 × (50 − 55) = -10.0'}],
+     combined:38.3,worked:'2 × +62.4 + 1 × -10.0 ÷ 3 = +38.3',side:'FLAT or hold (inside ±entry)',entry:40,exit:10,symbol:'EURUSD',timeframe:'H1',last_bar:now});
    if(url.includes('/trading/'))return ok({items:[]});
    if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'},{id:'a2',code:'ICM_L',environment:'LIVE',platform:'MT5',status:'ACTIVE'}]});
    if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'}]});
@@ -92,13 +105,26 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: start here: an empty trading stage starts a paper strategy on a collected instrument in one step.');
 
  // Every stage opens as one workspace: every panel (dashboard, work, monitor, settings) on one page.
- assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent),['Dashboard','Signals','Decisions','Signal quality','Checks and decision']);
- assert.ok($$('.ws-panel .ws-body').length===5,'all panels open');
+ const PANELS=['Dashboard','Live signal board','Explain an instrument','Signal research','Strategy signals','Decisions','Signal quality','Checks and decision','Signal library','Calculations & formulas'];
+ assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent),PANELS);
+ assert.ok($$('.ws-panel .ws-body').length===PANELS.length,'all panels open');
  assert.ok($('.ws-panel [aria-label="Min strength"], .ws-panel input')!==null,'settings controls are on the workspace');
- $$('.ws-head')[3].click();await settle(2);
- assert.equal($$('.ws-panel .ws-body').length,4,'a panel closes');
+ $$('.ws-head')[6].click();await settle(2);
+ assert.equal($$('.ws-panel .ws-body').length,PANELS.length-1,'a panel closes');
  assert.match(w.localStorage.getItem('corei.workspace.closed.Signals'),/quality/);
  button('Open all').click();await settle(2);
+ // Stage 3 owns the maths: the live board shows each score and, on a click, the equation with this bar's numbers.
+ const cell=$$('.sig-board td.sig-cell')[0];assert.equal(cell.textContent,'+62.4');cell.click();await settle(2);
+ assert.match($('.sig-detail').textContent,/100 × \(1\.0861 − 1\.0842\) ÷ \(1 × 0\.003\) = \+62\.4/);
+ assert.match($('.sig-detail').textContent,/ema_fast 1\.0861/);
+ assert.match($$('.ws-panel').find(p=>/Signal library/.test(p.querySelector('.ws-head').textContent)).textContent,/EMA\(fast\) − EMA\(slow\).*fast 9 · slow 21.*±20/);
+ assert.match($$('.ws-panel').find(p=>/Calculations/.test(p.querySelector('.ws-head').textContent)).textContent,/EMA trend \(EMA_TREND\).*score = clamp/);
+ button('+ New signal').click();await settle(2);
+ fill($('[aria-label="Signal code"]'),'EMA_FAST');fill($('[aria-label="Signal name"]'),'Fast EMA');fill($('[aria-label="Signal parameter fast"]'),'5');fill($('[aria-label="Signal reason"]'),'desk preset');await settle();
+ await submit($('.sig-edit'));
+ const def=calls.find(c=>c.url.endsWith('/trading/signal-library/definitions')&&c.method==='POST').body;
+ assert.equal(def.kind,'EMA_TREND');assert.equal(def.parameters.fast,5);assert.equal(def.parameters.slow,21);assert.equal(def.reason,'desk preset');
+ console.log('PASS: signal library: live board with worked equations, the formulas with parameters, a new signal saved with its reason, every formula listed.');
  console.log('PASS: workspace: every panel of a stage — dashboards, work, monitors, settings — open on one page, each closable, remembered.');
 
  // Signals: the frame, then the reason a signal was refused, in plain words.
@@ -107,7 +133,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual($$('.cfg-nav .cfg-nav-group').map(g=>g.textContent),['Overview','Work','Monitor','Configure']);
  assert.match($('.intel-kpis').textContent,/Signals today3/);
  assert.match($('.intel-table').textContent,/STALE_PRICE: the last price is 95 s old/);
- nav('Signals').click();await settle(6);
+ nav('Strategy signals').click();await settle(6);
  $$('.intel-table tbody tr')[0].click();await settle(6);
  assert.match($('.fw').textContent,/Why it was refused:STALE_PRICE/);
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
@@ -181,12 +207,27 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(bt.algorithm,'EMA_CROSSOVER');assert.equal(bt.broker_symbol,'EURUSD');
  assert.match($('.intel-kpis').textContent,/Trades14/);assert.ok($('.st-spark'));
  console.log('PASS: strategies: a backtest runs an algorithm on a collected source and shows metrics, trades and equity.');
+ // Stage 4 combines Stage 3 signals: the SIGNAL_BLEND recipe with weights, and the combined score worked out on the last bar.
+ fill($('[aria-label="Backtest algorithm"]'),'SIGNAL_BLEND');await settle(4);
+ assert.match($('.sig-blend').textContent,/combined = \(1 × EMA_TREND\) ÷ 1/);
+ button('+ Add signal').click();await settle(2);
+ fill($('[aria-label="Blend component 2"]'),'RSI_REVERSION');fill($('[aria-label="Blend weight 1"]'),'2');await settle(2);
+ assert.match($('.sig-blend').textContent,/combined = \(2 × EMA_TREND \+ 1 × RSI_REVERSION\) ÷ 3/);
+ fill($('[aria-label="Blend preview instrument"]'),'a1|EURUSD');await settle(2);
+ button('Work it out on the last bar').click();await settle(4);
+ assert.match($('.sig-blend .sig-detail').textContent,/÷ 3 = \+38\.3/);
+ const prev=calls.find(c=>c.url.endsWith('/signal-library/blend-preview')).body;
+ assert.deepEqual(prev.components.map(c=>[c.kind,c.weight]),[['EMA_TREND',2],['RSI_REVERSION',1]]);
+ await submit($('.intel form'));
+ const bt2=calls.filter(c=>c.url.endsWith('/trading/backtests')&&c.method==='POST').pop().body;
+ assert.equal(bt2.algorithm,'SIGNAL_BLEND');assert.equal(bt2.parameters.components.length,2);assert.equal(bt2.parameters.entry,40);
+ console.log('PASS: strategies: a signal-blend recipe combines library signals with weights and shows the combined score worked out.');
 
  // Market data and Market intelligence open the same way: every panel on one page.
  await go('Intelligence');
- ['Dashboard','Screener','Correlation','Rules & alerts','Indicators','Engine settings'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'intelligence panel '+t));
+ ['Dashboard','Screener','Correlation','Rules & alerts','Indicators','Engine settings','Calculations & formulas'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'intelligence panel '+t));
  await go('Market data');
- ['Dashboard','Collection plans','Quality','Backfill','Controls','Archive'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'market data panel '+t));
+ ['Dashboard','Collection plans','Quality','Backfill','Controls','Archive','Calculations & formulas'].forEach(t=>assert.ok($$('.ws-head b').some(b=>b.textContent===t),'market data panel '+t));
  console.log('PASS: market data and market intelligence: every panel on one workspace page too.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.

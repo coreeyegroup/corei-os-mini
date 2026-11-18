@@ -9,12 +9,13 @@ import SourceBoard from './SourceBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
 import { Workspace } from './StageShell';
+import { Formulas } from './SignalLibrary';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 
 type Row = Record<string, any>;
-type Tab = 'workspace' | 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive';
+type Tab = 'workspace' | 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive' | 'formulas';
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: 'workspace', label: 'Workspace (all)', hint: 'Every panel of market data on one page — sources, live table, plans, quality, events, backfill, controls, archive — each opens and closes.' },
   { id: 'dashboard', label: 'Dashboard', hint: 'Stage 1 · collect and watch: workspaces › sources › instruments. Add instruments per source, pause, backfill, details. Comparing and charting across sources is Stage 2 · Market intelligence.' },
@@ -25,6 +26,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: 'backfill', label: 'Backfill', hint: 'Fetch bars from the broker’s history. Live bars are never overwritten.' },
   { id: 'controls', label: 'Controls', hint: 'Pause collection for everything or one account. Separate from order sending.' },
   { id: 'archive', label: 'Archive', hint: 'History files with fingerprints, and backups. Query history under Infrastructure › History.' },
+  { id: 'formulas', label: 'Calculations & formulas', hint: 'How bars, latency, the feed quality score, spikes and deviation are calculated.' },
 ];
 const FRAMES = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']] as const;
@@ -48,7 +50,7 @@ export default function MarketData() {
   const canEdit = (user.roles ?? []).includes('TRADING_OPS');
   const current = TABS.find(t => t.id === tab)!;
   const panel = (t: Tab) => t === 'dashboard' ? <SourceBoard canEdit={canEdit} /> : t === 'live' ? <Live /> : t === 'plans' ? <Plans canEdit={canEdit} /> : t === 'quality' ? <Quality />
-    : t === 'events' ? <Events /> : t === 'backfill' ? <Backfill canEdit={canEdit} /> : t === 'controls' ? <Controls canEdit={canEdit} /> : <Archive />;
+    : t === 'events' ? <Events /> : t === 'backfill' ? <Backfill canEdit={canEdit} /> : t === 'controls' ? <Controls canEdit={canEdit} /> : t === 'formulas' ? <Formulas stage="Market data" /> : <Archive />;
   return <div className="cfg md">
     <div className="cfg-topbar"><span className="eyebrow">MARKET DATA</span>
       <nav className="cfg-nav" aria-label="Market data sections">{TABS.map(t =>
@@ -59,7 +61,7 @@ export default function MarketData() {
       <div className="cfg-pane">
         {tab === 'workspace' ? <Workspace view="Market data" groups={['Watch', 'Collect', 'Check', 'Control']} alone={id => setTab(id as Tab)}
           sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id),
-            group: ['dashboard', 'live'].includes(t.id) ? 'Watch' : ['plans', 'backfill'].includes(t.id) ? 'Collect' : ['quality', 'events'].includes(t.id) ? 'Check' : 'Control' }))} />
+            group: ['dashboard', 'live'].includes(t.id) ? 'Watch' : ['plans', 'backfill'].includes(t.id) ? 'Collect' : ['quality', 'events', 'formulas'].includes(t.id) ? 'Check' : 'Control' }))} />
           : panel(tab)}
       </div>
     </section>

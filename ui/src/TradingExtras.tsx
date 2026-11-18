@@ -7,6 +7,7 @@
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
+import { Formulas } from './SignalLibrary';
 import StageShell, { ago, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 
 export function Table({ cols, rows, empty, rowKey }: { cols: [string, (r: Row) => ReactNode][]; rows: Row[]; empty: string; rowKey?: (r: Row, i: number) => string }) {
@@ -452,6 +453,7 @@ export function PostTradeView() {
     { id: 'runs', label: 'Reconciliation runs', group: 'Monitor', hint: 'Every run, what it checked and what it found.', render: () => <Runs /> },
     { id: 'audit', label: 'Order audit trail', group: 'Monitor', hint: 'Every order event, searchable by order, tag, state, person or account.', render: () => <AuditTrail /> },
     { id: 'exports', label: 'Exports', group: 'Configure', hint: 'CSV of every post-trade report.', render: () => <Exports /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Reconciliation, TCA slippage in bp and money, fill and refusal rates, latency and the trade journal.', render: () => <Formulas stage="Post-trade" /> },
   ];
   return <StageShell view="Post-trade" sections={sections} />;
 }

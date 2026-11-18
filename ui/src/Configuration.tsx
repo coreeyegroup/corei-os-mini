@@ -14,6 +14,7 @@ import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
 import ConnectTree from './ConnectTree';
 import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import { BlendEditor } from './SignalLibrary';
 
 export type Row = Record<string, any>;
 type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
@@ -1708,13 +1709,15 @@ function AuditLog() {
 /* ---------- strategies ---------- */
 
 function ParameterFields({ schema, value, change, disabled }: { schema: Row; value: Row; change: (v: Row) => void; disabled?: boolean }) {
-  return <>{Object.entries<Row>(schema?.properties ?? {}).map(([key, prop]) => {
+  const all: Row = schema?.properties ?? {}, blend = 'components' in all;
+  const shown = Object.entries<Row>(all).filter(([k]) => !(blend && ['components', 'entry', 'exit'].includes(k)));
+  return <>{shown.map(([key, prop]) => {
     const label = detailLabel(key);
     return <Field key={key} label={label} hint={prop.description}>{prop.enum
       ? <Choice label={label} value={value[key] ?? ''} disabled={disabled} options={['', ...prop.enum].map(v => [v, v || 'Select…'] as [string, string])} onChange={v => change({ ...value, [key]: v })} />
       : <input aria-label={label} required disabled={disabled} type={prop.type === 'integer' || prop.type === 'number' ? 'number' : 'text'} min={prop.minimum} max={prop.maximum}
           value={value[key] ?? ''} onChange={e => change({ ...value, [key]: prop.type === 'integer' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value })} />}</Field>;
-  })}</>;
+  })}{blend && !disabled && <BlendEditor value={value} change={change} />}</>;
 }
 
 function paramSummary(p: Row) { return Object.entries(p ?? {}).map(([k, v]) => `${detailLabel(k)} ${v}`).join(' · '); }

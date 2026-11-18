@@ -4,7 +4,8 @@ Why it exists: the indicators and regimes must be computed once, from the stored
 signal and strategy reads the same numbers and any past decision can be replayed against the features it saw.
 Purpose: for every collected instrument (each plan's source × broker symbol) and timeframe M1…D1, take the closed
 bars (the broker's own bars when there are enough, else bars built from the source's M1), compute the features,
-classify the regime, and store a per-bar history (M5 and up) and the latest snapshot.
+classify the regime, and store a per-bar history (M5 and up) and the latest snapshot; then score every active signal
+of the Stage 3 library on the same bars (sig_live).
 Responsibilities: bar loading and resampling, feature rows, snapshot and history writes, the refresh cycle and its
 status. Only closed bars are used; the bar still forming is ignored.
 Must never: use the machine clock in a feature (bar times only; the clock only stamps computed_at), write outside
@@ -215,6 +216,12 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
             'SELECT timeframe, bar_time FROM intel_snapshot WHERE account_id=%s AND broker_symbol=%s', (account_id, symbol)).fetchall()}
     snaps = hist = 0
     custom = custom_definitions() if custom is None else custom
+    try:  # Stage 3 signal library: scored on the same bars, right after the features
+        from ..trading import signal_library
+        with store.transaction('read') as db:
+            signal_defs = signal_library.definitions(db, active_only=True)
+    except Exception:  # noqa: BLE001 - not migrated yet
+        signal_defs = []
     for tf in timeframes:
         built = resample(m1, tf)
         nat = native.get(tf) or []
@@ -244,6 +251,8 @@ def refresh_instrument(account_id, symbol: str, timeframes: tuple[str, ...] = TI
                        (account_id, symbol, tf, bar_time, ind.FEATURE_VERSION, len(bars), source, Jsonb(f), cls['regime'], cls['volatility'],
                         cls['confidence'], Jsonb(cls['reasons']), sessions.sessions_at(bar_time)['label']))
             snaps += 1
+            if signal_defs:
+                signal_library.live_update(db, account_id, symbol, tf, bars, signal_defs)
             if tf in HISTORY_TIMEFRAMES:
                 stored = latest.get(tf)
                 # A custom indicator added since the last run: rewrite the window so its history starts now, not at the next bar.

@@ -9,6 +9,7 @@ import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 import { goto } from './nav';
+import { AlgorithmEquations, BlendEditor, Formulas, SignalBoardLive, SignalExplain, SignalLibrary, SignalResearch } from './SignalLibrary';
 import { Allocation, Attribution, BrokerBook, Connections, CopyTrading, Drift, Optimise, Routing, Stress, Unknown, VarMargin, Waiting } from './TradingExtras';
 
 /* ---------- shared ---------- */
@@ -186,11 +187,16 @@ function Quality() {
 export function SignalsView() {
   const sections: Section[] = [
     { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Today\'s signals, what happened to them, and the runtime.', render: ctx => <SignalOverview ctx={ctx} /> },
-    { id: 'signals', label: 'Signals', group: 'Work', hint: 'Every signal with its state and reasons; open one for its history; raise one by hand.', render: ctx => <SignalBoard ctx={ctx} /> },
+    { id: 'board', label: 'Live signal board', group: 'Overview', hint: 'Every collected instrument × every library signal: the score now (−100…+100); click one for its equation with this bar’s numbers.', render: () => <SignalBoardLive /> },
+    { id: 'explain', label: 'Explain an instrument', group: 'Work', hint: 'One instrument: each signal’s formula, its inputs on the last bar, the arithmetic, the side and the last 60 scores.', render: () => <SignalExplain /> },
+    { id: 'research', label: 'Signal research', group: 'Work', hint: 'Does a signal predict? Information coefficient, t-stat, hit rate, quintiles, turnover and cost over several horizons.', render: () => <SignalResearch /> },
+    { id: 'signals', label: 'Strategy signals', group: 'Work', hint: 'Signals raised by running strategies (and by hand) with their state and reasons; open one for its history.', render: ctx => <SignalBoard ctx={ctx} /> },
     { id: 'intents', label: 'Decisions', group: 'Work', hint: 'What each acted signal decided: target position, position held, the order needed.', render: () => <Intents /> },
     { id: 'quality', label: 'Signal quality', group: 'Monitor', hint: 'Were the signals right? Forward move and hit rate per strategy and instrument.', render: () => <Quality /> },
     { id: 'checks', label: 'Checks and decision', group: 'Configure', hint: 'The checks every signal passes, and how signals become a decision.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['max_quote_age_seconds', 'max_spread_atr_pct', 'block_on_event', 'min_strength', 'decision_mode', 'agree_count']} /> },
+    { id: 'library', label: 'Signal library', group: 'Configure', hint: 'Every signal formula with its parameters, threshold and timeframes: tune, pause or add your own.', render: ctx => <SignalLibrary ctx={ctx} /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every signal formula, the side rule, the checks and the decision, and how research measures prediction.', render: () => <Formulas stage="Signals" /> },
   ];
   return <StageShell view="Signals" sections={sections} />;
 }
@@ -214,8 +220,9 @@ function Runtime({ ctx }: { ctx: Ctx }) {
 }
 
 function ParamInputs({ schema, value, change }: { schema: Row; value: Row; change: (v: Row) => void }) {
-  const props: Row = schema?.properties ?? {};
-  return <div className="st-params">{Object.entries(props).map(([k, p]: [string, any]) => {
+  const all: Row = schema?.properties ?? {}, blend = 'components' in all;
+  const props: Row = blend ? Object.fromEntries(Object.entries(all).filter(([k]) => !['components', 'entry', 'exit'].includes(k))) : all;
+  return <><div className="st-params">{Object.entries(props).map(([k, p]: [string, any]) => {
     const enumOf = p.enum ?? p.anyOf?.find((x: Row) => x.enum)?.enum ?? (p.$ref ? undefined : undefined);
     if (p.type === 'array') return <Field key={k} label={k.replace(/_/g, ' ')} hint="Conditions as JSON: [{&quot;field&quot;:&quot;rsi14&quot;,&quot;op&quot;:&quot;<&quot;,&quot;value&quot;:&quot;30&quot;}]">
       <textarea aria-label={`Parameter ${k}`} rows={2} value={JSON.stringify(value[k] ?? [])} onChange={e => { try { change({ ...value, [k]: JSON.parse(e.target.value) }); } catch { /* keep typing */ } }} /></Field>;
@@ -223,7 +230,7 @@ function ParamInputs({ schema, value, change }: { schema: Row; value: Row; chang
     return <Field key={k} label={k.replace(/_/g, ' ')} hint={p.description}>{opts ? <select aria-label={`Parameter ${k}`} value={value[k] ?? p.default ?? opts[0]} onChange={e => change({ ...value, [k]: e.target.value })}>
       {opts.map((o: string) => <option key={o}>{o}</option>)}</select>
       : <input aria-label={`Parameter ${k}`} inputMode="decimal" value={value[k] ?? p.default ?? ''} onChange={e => change({ ...value, [k]: e.target.value === '' ? undefined : Number(e.target.value) })} />}</Field>;
-  })}</div>;
+  })}</div>{blend && <BlendEditor value={value} change={change} />}</>;
 }
 
 function Sparkline({ points }: { points: { t: string; equity: string }[] }) {
@@ -304,14 +311,6 @@ function Performance() {
     <p className="cfg-note">P&L in the instrument's quote currency (EURUSD in USD, NIFTY in INR). Win rate and profit factor count closing fills.</p></section>;
 }
 
-function Algorithms() {
-  const [data] = useData<Row>('trading/algorithms', 0);
-  return <section className="intel"><table className="cfg-table compact intel-table"><thead><tr><th>Algorithm</th><th>What it does</th><th>Parameters</th></tr></thead><tbody>
-    {(data?.items ?? []).map((a: Row) => <tr key={a.id}><td><b>{a.label}</b><br /><code>{a.id}</code></td><td>{a.description}</td>
-      <td><small>{Object.entries(a.schema.properties ?? {}).map(([k, p]: [string, any]) => `${k}${p.default != null ? ` (${p.default})` : ''}`).join(', ')}</small></td></tr>)}</tbody></table>
-    <p className="cfg-note">Each version of a strategy names one algorithm and its parameters (Setup › Strategies). The rule builder takes conditions on any feature, including your own indicators (Market intelligence › Indicators).</p></section>;
-}
-
 export function StrategiesView() {
   const sections: Section[] = [
     { id: 'runtime', label: 'Runtime', group: 'Overview', hint: 'Every deployment: is it running, on which bar, what target, and what needs attention.', render: ctx => <Runtime ctx={ctx} /> },
@@ -320,7 +319,8 @@ export function StrategiesView() {
     { id: 'performance', label: 'Performance', group: 'Monitor', hint: 'Live results per strategy, instrument and account (paper and real).', render: () => <Performance /> },
     { id: 'drift', label: 'Drift', group: 'Monitor', hint: 'Is each running strategy still behaving like its backtest?', render: () => <Drift /> },
     { id: 'drift-settings', label: 'Drift settings', group: 'Configure', hint: 'When live results count as drift.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['drift_min_trades', 'drift_tolerance_pct']} /> },
-    { id: 'algorithms', label: 'Algorithms', group: 'Configure', hint: 'The rule sets a version can use and their parameters.', render: () => <Algorithms /> },
+    { id: 'algorithms', label: 'Algorithms', group: 'Configure', hint: 'The rule sets a version can use, each with its equation, strength formula and parameters.', render: () => <AlgorithmEquations /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every algorithm’s rule, sizing (fixed, value, % of equity at an ATR stop), protective exits, backtest fills and metrics, walk-forward and drift.', render: () => <Formulas stage="Strategies" /> },
     { id: 'runtime-settings', label: 'Runtime switch', group: 'Configure', hint: 'Pause or resume every strategy at once.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['runtime_enabled']} intro="Paused: no deployment is evaluated and no new signal is raised; orders already working stay as they are. Pause one deployment from Setup › Deployments." /> },
   ];
@@ -435,6 +435,7 @@ export function RiskView() {
     { id: 'var', label: 'VaR and margin', group: 'Monitor', hint: 'How much each account could lose in a bad bar, and the margin in use.', render: () => <VarMargin /> },
     { id: 'stress', label: 'Stress tests', group: 'Monitor', hint: 'Today\'s positions under price shocks: everything, an asset class, a currency or one symbol.', render: ctx => <Stress ctx={ctx} /> },
     { id: 'var-settings', label: 'VaR settings', group: 'Configure', hint: 'Confidence, horizon and look-back of the VaR.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['var_confidence', 'var_timeframe', 'var_lookback_bars']} /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every pre-trade check: limits, loss and drawdown, exposure, margin and leverage, price deviation, stale price, VaR, ES and stress.', render: () => <Formulas stage="Risk" /> },
   ];
   return <StageShell view="Risk" sections={sections} />;
 }
@@ -489,6 +490,7 @@ export function PortfolioView() {
     { id: 'broker', label: 'Broker positions', group: 'Monitor', hint: 'What the broker itself holds for a real account.', render: ctx => <BrokerBook ctx={ctx} /> },
     { id: 'capital', label: 'Paper capital', group: 'Configure', hint: 'Starting equity of accounts without their own.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="Each account's own starting capital is set on its card (Overview › Accounts)." /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Average cost, realised and unrealised P&L, equity, drawdown, partitions, allocation, copy size and attribution.', render: () => <Formulas stage="Portfolio" /> },
   ];
   return <StageShell view="Portfolio" sections={sections} />;
 }
@@ -647,6 +649,7 @@ export function OrdersView() {
     { id: 'connections', label: 'Broker connections', group: 'Monitor', hint: 'The dispatcher, order sending, and which accounts can take real orders through what.', render: () => <Connections /> },
     { id: 'routing', label: 'Routing', group: 'Monitor', hint: 'Compare accounts for one order: price, spread, slippage, eligibility.', render: () => <Routing /> },
     { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills, real orders (pre-check, four-eyes, timeouts, magic number), reconciliation.', render: ctx => <ExecutionSettings ctx={ctx} /> },
+    { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Client order ID, paper fill price, slippage, latency, routing scores and the UNKNOWN look-up.', render: () => <Formulas stage="Execution" /> },
   ];
   return <StageShell view="Execution" sections={sections} />;
 }

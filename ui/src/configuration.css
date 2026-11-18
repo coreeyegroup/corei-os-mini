@@ -364,3 +364,46 @@ button.cfg-tile { cursor: pointer; }
 .bn-cmd code { flex: 1; display: block; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 12px; user-select: all; }
 .bn-live { padding: 10px 12px; border: 1px dashed var(--line); border-radius: 6px; }
 .bn-live.ok { border-style: solid; border-color: var(--ready); }
+
+/* Stage 3 signal library: scores, equations and their working (SignalLibrary.tsx). */
+.sig-eq { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95em; white-space: normal; overflow-wrap: anywhere; color: var(--text); }
+.sig-eqline { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; flex-wrap: wrap; }
+.sig-eqline > small { color: var(--muted); min-width: 72px; }
+.sig-formulas td:nth-child(2) { min-width: 280px; }
+.sig-kv { display: inline-block; margin: 0 10px 2px 0; white-space: nowrap; }
+.sig-kv code { color: var(--muted); }
+.sig-inputs { margin: 4px 0; }
+.sig-board th, .sig-board td.sig-cell { text-align: center; min-width: 54px; }
+.sig-cell { cursor: pointer; font-variant-numeric: tabular-nums; }
+.sig-cell.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sig-l3 { background: color-mix(in srgb, var(--ready) 45%, transparent); }
+.sig-l2 { background: color-mix(in srgb, var(--ready) 25%, transparent); }
+.sig-l1 { background: color-mix(in srgb, var(--ready) 10%, transparent); }
+.sig-s3 { background: color-mix(in srgb, var(--danger) 45%, transparent); }
+.sig-s2 { background: color-mix(in srgb, var(--danger) 25%, transparent); }
+.sig-s1 { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.sig-none, .sig-zero { color: var(--muted); }
+.sig-detail { border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; margin: 8px 0; background: var(--surface); }
+.sig-detail h4 { margin: 0 0 4px; }
+.sig-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
+.sig-card { border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; background: var(--surface); }
+.sig-card header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sig-badge { margin-left: auto; padding: 1px 8px; border-radius: 3px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sig-spark { width: 140px; height: 34px; display: block; margin-top: 4px; }
+.sig-chart { width: 100%; max-width: 760px; height: auto; display: block; margin: 8px 0; border: 1px solid var(--line); }
+.sig-axis { stroke: var(--line); stroke-width: 1; }
+.sig-thr { stroke: var(--muted); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.sig-line { stroke: var(--accent); }
+.sig-price { stroke: var(--text); opacity: 0.7; }
+.sig-label { fill: var(--muted); font-size: 10px; }
+.sig-quint { display: inline-flex; gap: 6px; align-items: flex-end; }
+.sig-quint > span { display: inline-flex; flex-direction: column; align-items: center; min-width: 30px; }
+.sig-quint i { display: block; width: 12px; background: currentColor; }
+.sig-tfs { display: inline-flex; gap: 10px; flex-wrap: wrap; }
+.sig-acts { display: inline-flex; gap: 4px; }
+.sig-params { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.sig-params label { display: inline-flex; flex-direction: column; }
+.sig-params input { width: 64px; }
+.sig-blend { border: 1px dashed var(--line); border-radius: 4px; padding: 8px; margin: 6px 0; }
+.sig-blend input[type="number"] { width: 70px; }
+@media (max-width: 640px) { .sig-cards { grid-template-columns: 1fr; } }

@@ -32,8 +32,11 @@ export const PIPELINE: Stage[] = [
       { step: 3, name: 'Correlation and cross-asset', does: 'Correlation matrix of collected instruments, currency strength, the same instrument compared across sources (deviation, spread, latency, quality)', state: 'BUILT', where: ['Intelligence', 'correlation'] },
       { step: 4, name: 'News and sentiment', does: 'Headlines and scheduled events tagged to instruments', state: 'PLANNED' },
     ] },
-  { view: 'Signals', n: 3, short: 'Signals', title: 'Signal intelligence', question: 'Is there a trade, how strong, and does it agree with the others?', feeds: 'Trade intents (instrument, side, strength, horizon) to risk',
+  { view: 'Signals', n: 3, short: 'Signals', title: 'Signal intelligence', question: 'What does each formula forecast for each instrument now, and does it predict?', feeds: 'Scores (−100…+100) per signal, instrument and bar to strategies; trade intents to risk',
     components: [
+      { step: 2, name: 'Signal library', does: 'Twelve formulas (EMA/SMA trend, MACD, RSI reversion and momentum, Bollinger, z-score, Donchian, momentum t-stat, stochastic, ADX direction, VWAP) with parameters, threshold and timeframes; your own presets; every formula shown', state: 'BUILT', where: ['Signals', 'library'] },
+      { step: 2, name: 'Live signal board', does: 'Every collected instrument × every signal scored on each closed bar, with the equation worked out with that bar\'s numbers', state: 'BUILT', where: ['Signals', 'board'] },
+      { step: 2, name: 'Signal research', does: 'Information coefficient, t-stat, hit rate, quintiles, turnover, coverage and cost over several horizons; verdict', state: 'BUILT', where: ['Signals', 'research'] },
       { step: 3, name: 'Signal model', does: 'One shape for every signal: instrument, side, strength, horizon, expiry, source, the features and reasons behind it', state: 'BUILT', where: ['Signals', 'signals'] },
       { step: 3, name: 'Signal lifecycle', does: 'New → valid → acted, or refused / expired / cancelled, each step kept', state: 'BUILT', where: ['Signals', 'signals'] },
       { step: 3, name: 'Validation', does: 'Stale price, spread vs ATR, market closed, event risk, duplicates, minimum strength', state: 'BUILT', where: ['Signals', 'checks'] },
@@ -45,7 +48,7 @@ export const PIPELINE: Stage[] = [
     components: [
       { step: 1, name: 'Strategy registry and versions', does: 'Rules, parameters, approval of each version', state: 'BUILT', where: ['Configuration', 'strategies'] },
       { step: 1, name: 'Deployments', does: 'Version × instrument × account × data source; paper or broker; sizing', state: 'BUILT', where: ['Configuration', 'deployments'] },
-      { step: 3, name: 'Algorithms', does: 'SMA and EMA cross, RSI and Bollinger reversion, Donchian breakout, rule builder on any feature', state: 'BUILT', where: ['Strategies', 'algorithms'] },
+      { step: 3, name: 'Algorithms', does: 'Signal blend (weighted Stage 3 signals, entry/exit), SMA and EMA cross, RSI and Bollinger reversion, Donchian breakout, rule builder on any feature — each with its equation', state: 'BUILT', where: ['Strategies', 'algorithms'] },
       { step: 3, name: 'Strategy runtime', does: 'Runs each active deployment on every newly closed bar, emits signals', state: 'BUILT', where: ['Strategies', 'runtime'] },
       { step: 3, name: 'Backtest', does: 'Same code on stored history, point in time, with costs; trades, equity, metrics', state: 'BUILT', where: ['Strategies', 'backtest'] },
       { step: 4, name: 'Paper and forward test', does: 'Live data, simulated fills, full risk and order path', state: 'BUILT', where: ['Strategies', 'performance'] },
