@@ -10,6 +10,8 @@ import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
 import { Formulas } from './SignalLibrary';
+import { SubWorkspace } from './SubWorkspace';
+import { useViewVisible } from './visibility';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
@@ -17,7 +19,7 @@ import './marketdata.css';
 type Row = Record<string, any>;
 type Tab = 'workspace' | 'dashboard' | 'live' | 'plans' | 'quality' | 'events' | 'backfill' | 'controls' | 'archive' | 'formulas';
 const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: 'workspace', label: 'Workspace (all)', hint: 'Every panel of market data on one page — sources, live table, plans, quality, events, backfill, controls, archive — each opens and closes.' },
+  { id: 'workspace', label: 'All panels', hint: 'Every item of market data on one page — sources, live table, plans, quality, events, backfill, controls, archive — each opens and closes.' },
   { id: 'dashboard', label: 'Dashboard', hint: 'Stage 1 · collect and watch: workspaces › sources › instruments. Add instruments per source, pause, backfill, details. Comparing and charting across sources is Stage 2 · Market intelligence.' },
   { id: 'live', label: 'Table', hint: 'Latest price per account and symbol, its age and quality, and each collector.' },
   { id: 'plans', label: 'Collection plans', hint: 'What is collected, from which account, when, and how long it is kept.' },
@@ -34,6 +36,8 @@ const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';
 const ago = (v?: number | string | null) => { const s = v == null || v === '' ? null : Math.max(0, Number(v)); return s == null || !Number.isFinite(s) ? '—' : s < 1 ? 'now' : s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; };
 const num = (v: any, d: any = 5) => v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(Number(d) || 0);
 const scoreClass = (v?: number | string | null) => { const s = v == null ? null : Number(v); return s == null || !Number.isFinite(s) ? '' : s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad'; };
+
+const groupOf = (id: string) => id === 'workspace' ? 'All' : ['dashboard', 'live'].includes(id) ? 'Watch' : ['plans', 'backfill'].includes(id) ? 'Collect' : ['quality', 'events', 'formulas'].includes(id) ? 'Check' : 'Control';
 
 export default function MarketData() {
   const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'workspace', TABS.map(t => t.id));
@@ -58,12 +62,10 @@ export default function MarketData() {
       <div className="cfg-user">{user.username}</div></div>
     <section className="cfg-main">
       <StageBar view="Market data" title={current.label} hint={current.hint} />
-      <div className="cfg-pane">
-        {tab === 'workspace' ? <Workspace view="Market data" groups={['Watch', 'Collect', 'Check', 'Control']} alone={id => setTab(id as Tab)}
-          sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id),
-            group: ['dashboard', 'live'].includes(t.id) ? 'Watch' : ['plans', 'backfill'].includes(t.id) ? 'Collect' : ['quality', 'events', 'formulas'].includes(t.id) ? 'Check' : 'Control' }))} />
-          : panel(tab)}
-      </div>
+      <SubWorkspace view="Market data" label="Market data" tab={tab} setTab={id => setTab(id as Tab)} items={TABS.map(t => ({ id: t.id, label: t.label, hint: t.hint, group: groupOf(t.id) }))}
+        render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view="Market data" groups={['Watch', 'Collect', 'Check', 'Control']} alone={x => setTab(x as Tab)}
+          sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id), group: groupOf(t.id) }))} />
+          : panel(id as Tab)}</div>} />
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
@@ -72,7 +74,8 @@ export default function MarketData() {
 function useLoad<T>(path: string, every = 0): [T | null, string, () => Promise<void>] {
   const [data, setData] = useState<T | null>(null), [error, setError] = useState('');
   const load = async () => { try { setData(await api(path)); setError(''); } catch (e) { setError((e as Error).message); } };
-  useEffect(() => { void load(); if (!every) return; const t = window.setInterval(() => void load(), every); return () => window.clearInterval(t); }, [path]);
+  const visible = useViewVisible(); // a hidden sub-tab does not poll; shown again, it reloads
+  useEffect(() => { if (!visible) return; void load(); if (!every) return; const t = window.setInterval(() => void load(), every); return () => window.clearInterval(t); }, [path, visible]);
   return [data, error, load];
 }
 

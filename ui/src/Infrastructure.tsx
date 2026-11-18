@@ -6,6 +6,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from '
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import { takeTable, useSection } from './nav';
+import { SubWorkspace } from './SubWorkspace';
 import './configuration.css';
 import './infrastructure.css';
 
@@ -45,12 +46,13 @@ export default function Infrastructure() {
     <section className="cfg-main">
       <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
       {!admin && <p className="cfg-note">The database views are for administrators.</p>}
-      {current.id === 'health' ? <div className="cfg-pane"><Health /></div>
-        : current.id === 'tables' ? <Tables />
-        : current.id === 'history' ? <div className="cfg-pane"><History /></div>
-        : current.id === 'sql' ? <div className="cfg-pane"><Console /></div>
-        : current.id === 'database' ? <div className="cfg-pane"><Database /></div>
-        : <div className="cfg-pane"><Edits /></div>}
+      <SubWorkspace view="Infrastructure" label="Infrastructure" tab={current.id} setTab={id => setTab(id as Tab)} items={tabs.map(t => ({ id: t.id, label: t.label, hint: t.hint }))}
+        render={id => id === 'health' ? <div className="cfg-pane"><Health /></div>
+          : id === 'tables' ? <Tables />
+          : id === 'history' ? <div className="cfg-pane"><History /></div>
+          : id === 'sql' ? <div className="cfg-pane"><Console /></div>
+          : id === 'database' ? <div className="cfg-pane"><Database /></div>
+          : <div className="cfg-pane"><Edits /></div>} />
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;

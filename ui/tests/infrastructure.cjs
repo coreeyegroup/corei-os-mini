@@ -50,8 +50,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  };
  w.eval(js);await tick();await tick();
  // Every screen is its own workspace tab now: look inside the screen on show (overlays fall back to the page).
- const shown=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
- const $=s=>shown().querySelector(s)||w.document.querySelector(s),$$=s=>{const a=[...shown().querySelectorAll(s)];return a.length?a:[...w.document.querySelectorAll(s)];};
+ const shownView=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
+ const shownItem=()=>shownView().querySelector('.sw-pane.focused .sw-item:not([hidden])');
+ const shown=()=>shownView();
+ const $=s=>(shownItem()&&shownItem().querySelector(s))||shown().querySelector(s)||w.document.querySelector(s),$$=s=>{const i=shownItem();const b=i?[...i.querySelectorAll(s)]:[];const a=[...shown().querySelectorAll(s)].filter(x=>!x.closest('.sw-item[hidden]')&&!b.includes(x));const r=[...b,...a];return r.length?r:[...w.document.querySelectorAll(s)];};
  const fill=(el,value)=>{const proto=el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:el.tagName==='SELECT'?w.HTMLSelectElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const nav=label=>$$('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);

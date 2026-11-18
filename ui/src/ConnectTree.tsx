@@ -10,6 +10,7 @@
  * Left: the tree (keyboard: arrows, Enter). Right: the selected item and its next step. The same tree can be
  * grouped by technology or by provider type. Data: GET /api/config/tree.
  */
+import { useViewVisible } from './visibility';
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { AccountAddresses, api, BLOCKERS, Choice, Env, envOfServer, Field, FIX_BLANK, FixFields, pendingMessage, PURPOSE_LABEL, ROLE_OPTIONS,
   toPayload, type Navigate, type Row } from './Configuration';
@@ -96,7 +97,8 @@ export default function ConnectTree({ navigate, canEdit, changed, focus }: { nav
   const [selected, setSelected] = useState<string>(() => readPref().selected ?? ''), [filter, setFilter] = useState('');
   const save = (patch: Row) => setPref(p => { const next = { ...p, ...patch }; writePref({ ...next, selected }); return next; });
   const load = async () => { try { setData(await api('config/tree')); setError(''); } catch (e) { setError((e as Error).message); } };
-  useEffect(() => { void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, []);
+  const onShow = useViewVisible(); // a hidden sub-tab does not poll; shown again, it reloads
+  useEffect(() => { if (!onShow) return; void load(); const t = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(t); }, [onShow]);
   useEffect(() => { writePref({ ...pref, selected }); }, [selected]);
   const roots = useMemo(() => data ? build(data, pref.group) : [], [data, pref.group]);
   // Opened from a record (e.g. a provider's next step): select that node once the tree is loaded.

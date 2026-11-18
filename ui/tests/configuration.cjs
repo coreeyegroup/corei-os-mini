@@ -154,21 +154,25 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  };
 
  w.eval(js);await tick();await tick();
- const shown=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
- const $=s=>shown().querySelector(s)||w.document.querySelector(s);
+ const shownView=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
+ const shownItem=()=>shownView().querySelector('.sw-pane.focused .sw-item:not([hidden])');
+ const shown=()=>shownView();
+ const $=s=>(shownItem()&&shownItem().querySelector(s))||shown().querySelector(s)||w.document.querySelector(s);
  const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const byLabel=l=>$(`.cfg-detail [aria-label="${l}"]`)||$(`[aria-label="${l}"]`);
- const nav=label=>[...w.document.querySelectorAll('.cfg-nav button')].find(b=>b.querySelector('span').textContent===label);
- const tab=label=>[...w.document.querySelectorAll('.cfg-views button')].find(b=>b.querySelector('span').textContent===label);
+ const nav=label=>vis('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
+ const tab=label=>vis('.cfg-views button').filter(x=>!x.closest('[hidden]')).find(b=>b.querySelector('span').textContent===label);
  // The three record lists are tabs of the Connect screen (Connectivity): open it, then the tab.
  const open2=async label=>{nav('Connectivity').click();await tick();await tick();tab(label).click();await tick();await tick();};
- const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
+ const vis=sel=>[...w.document.querySelectorAll(sel)].filter(x=>!x.closest('[hidden]'));
+ const visibleFirst=sel=>{const all=[...w.document.querySelectorAll(sel)];return [...all.filter(x=>!x.closest('[hidden]')),...all.filter(x=>x.closest('[hidden]'))];};
+ const button=text=>visibleFirst('button').find(b=>b.textContent.trim()===text);
  // The one Add account form: provider, technology (and API), then Continue (MT5, Upstox) or fill in here.
  const startAdd=async(techLabel,apiId,go=true)=>{button('Add account').click();await tick();await tick();await tick();
    fill($('#cfg-add-account [aria-label="Provider"]'),db.providers[0].id);await tick();await tick();
-   [...w.document.querySelectorAll('#cfg-add-account [role=radio]')].find(b=>b.querySelector('b').textContent===techLabel).click();await tick();
+   vis('#cfg-add-account [role=radio]').find(b=>b.querySelector('b').textContent===techLabel).click();await tick();
    if(apiId){fill(byLabel('Which API'),apiId);await tick();}
-   if(go){[...w.document.querySelectorAll('.fw button.primary')].find(b=>b.textContent.startsWith('Continue')).click();await tick();await tick();}};
+   if(go){vis('.fw button.primary').find(b=>b.textContent.startsWith('Continue')).click();await tick();await tick();}};
  const submit=async form=>{form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();};
 
  // Sign in
@@ -211,14 +215,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  fill(byLabel('Provider'),db.providers[0].id);await tick();
  assert.equal(byLabel('Connection ID').value,'ICM_MT5_DEMO');  // suggested from provider, platform, environment
  assert.equal(byLabel('Connection name').value,'IC Markets (Raw Trading Ltd) · MT5 demo');  // name suggested too
- assert.deepEqual([...w.document.querySelectorAll('.cfg-section h4')].map(h=>h.textContent),['1Broker','2Server and addresses','3Name','4Method, clock and limits']);
+ assert.deepEqual(vis('.cfg-section h4').map(h=>h.textContent),['1Broker','2Server and addresses','3Name','4Method, clock and limits']);
  button('Enter server and addresses manually').click();await tick();
  fill(byLabel('Connection name'),'ICM MT5 demo');
  fill(byLabel('Broker server name'),'ICMarketsSC-Demo');
  fill(byLabel('Access point 1 host'),'192.0.2.10');await tick();
  button('+ Add address').click();await tick();
  fill(byLabel('Access point 2 host'),'192.0.2.11');fill(byLabel('Access point 2 port'),'444');await tick();
- [...w.document.querySelectorAll('[aria-label="Move up"]')][1].click();await tick();
+ vis('[aria-label="Move up"]')[1].click();await tick();
  // The editor is a movable, resizable window: Alt+arrows move it, Shift+arrows resize it, dock and maximise toggle.
  const win=$('.fw.fw-float');assert.equal(win.getAttribute('role'),'dialog');assert.equal(w.document.querySelectorAll('.fw-edge').length,8,'eight resize handles');
  const title=$('.fw-title');const x0=parseFloat(win.style.left),w0=parseFloat(win.style.width);
@@ -245,7 +249,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-picker').textContent,/servers\.dat4 servers · 57 addresses/);
  assert.equal(w.document.querySelectorAll('.cfg-picker-servers [role="option"]').length,4);
  fill(byLabel('Filter servers'),'market');await new Promise(r=>setTimeout(r,350));await tick();
- assert.deepEqual([...w.document.querySelectorAll('.cfg-picker-name')].map(x=>x.textContent),['ICMarketsSC-Demo','MarketEquityInc-Demo','Marketmates-Live']);
+ assert.deepEqual(vis('.cfg-picker-name').map(x=>x.textContent),['ICMarketsSC-Demo','MarketEquityInc-Demo','Marketmates-Live']);
  fill(byLabel('Filter servers'),'142.91');await new Promise(r=>setTimeout(r,350));await tick();await tick();
  assert.match($('.cfg-picker-server').textContent,/Marketmates-Live/);  // a single match opens itself
  fill(byLabel('Filter servers'),'icmarkets');await new Promise(r=>setTimeout(r,350));await tick();await tick();
@@ -254,7 +258,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(byLabel('Select 10.30.210.41:443 on ICMarketsSC-Demo').checked,false);
  assert.match($('.cfg-picker-points').textContent,/Private/);
  fill(byLabel('Filter servers'),'');await new Promise(r=>setTimeout(r,350));await tick();
- [...w.document.querySelectorAll('.cfg-picker-servers [role="option"]')].find(b=>b.textContent.includes('MetaQuotes-Demo')).click();await tick();await tick();
+ vis('.cfg-picker-servers [role="option"]').find(b=>b.textContent.includes('MetaQuotes-Demo')).click();await tick();await tick();
  assert.match($('.cfg-picker').textContent,/MetaTrader 5 demo server operated by MetaQuotes Ltd\. for testing and evaluation/);
  assert.match($('.cfg-picker').textContent,/Time zone120/);
  button('None').click();await tick();
@@ -288,7 +292,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  button('Change server…').click();await tick();
  const file2=$('.cfg-finder input[type="file"]');Object.defineProperty(file2,'files',{value:[new w.File(['x'],'servers.dat')]});
  file2.dispatchEvent(new w.Event('change',{bubbles:true}));await tick();await tick();await new Promise(r=>setTimeout(r,300));
- [...w.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent==='All addresses').click();await new Promise(r=>setTimeout(r,350));await tick();
+ vis('[role="tab"]').find(b=>b.textContent==='All addresses').click();await new Promise(r=>setTimeout(r,350));await tick();
  assert.equal(w.document.querySelectorAll('.cfg-picker-flat tbody tr').length,57);
  fill(byLabel('Filter servers'),'marketmates');await new Promise(r=>setTimeout(r,350));await tick();
  assert.equal(w.document.querySelectorAll('.cfg-picker-flat tbody tr').length,3);
@@ -339,15 +343,15 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Account address choice: server's / fastest / own list; latency test recorded on the connection.
  assert.match($('.cfg-route').textContent,/This account will connect through/);
- assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
+ assert.deepEqual(vis('.cfg-route-preview .cfg-mono').map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
  button('Test latency').click();await tick();await tick();
  assert.equal(latencyCalls.at(-1).connection_id,conn.id);
  // New accounts default to fastest: the measured order applies at once.
- assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-latency')].map(x=>x.textContent),['11 ms','12 ms']);
+ assert.deepEqual(vis('.cfg-route-preview .cfg-latency').map(x=>x.textContent),['11 ms','12 ms']);
  $('.cfg-route input[value="SERVER"]').click();await tick();
- assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
+ assert.deepEqual(vis('.cfg-route-preview .cfg-mono').map(x=>x.textContent),['192.0.2.11:444','192.0.2.10:443']);
  $('.cfg-route input[value="FASTEST"]').click();await tick();
- assert.deepEqual([...w.document.querySelectorAll('.cfg-route-preview .cfg-mono')].map(x=>x.textContent),['192.0.2.10:443','192.0.2.11:444']);
+ assert.deepEqual(vis('.cfg-route-preview .cfg-mono').map(x=>x.textContent),['192.0.2.10:443','192.0.2.11:444']);
  $('.cfg-route input[value="ACCOUNT"]').click();await tick();
  byLabel('Account uses 192.0.2.11:444').click();await tick();
  await submit($('.cfg-detail .cfg-form'));
@@ -433,8 +437,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // The same Add account form for other technologies: an Angel One API account and an MT4 account, each with a new server and its login.
  await startAdd('Broker & exchange APIs','ANGELONE',false);
- assert.ok([...w.document.querySelectorAll('#cfg-add-account [role=radio]')].some(b=>b.querySelector('b').textContent==='cTrader'),'cTrader offered');
- assert.ok([...w.document.querySelectorAll('#cfg-add-account [role=radio]')].find(b=>b.querySelector('b').textContent==='Fast feeds & data vendors').disabled,'feeds: planned, not recordable');
+ assert.ok(vis('#cfg-add-account [role=radio]').some(b=>b.querySelector('b').textContent==='cTrader'),'cTrader offered');
+ assert.ok(vis('#cfg-add-account [role=radio]').find(b=>b.querySelector('b').textContent==='Fast feeds & data vendors').disabled,'feeds: planned, not recordable');
  fill($('#cfg-add-account [aria-label="Environment"]'),'DEMO');fill(byLabel('Account number or ID'),'A123456');await tick();
  assert.equal(byLabel('Account ID').value,'ICM_DEMO_A123456');assert.equal(byLabel('Account currency').value,'INR');
  fill(byLabel('Server'),'new');await tick();
@@ -461,7 +465,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  await open2('Servers');
  button('New server (advanced)').click();await tick();
  fill(byLabel('Provider'),db.providers[0].id);fill(byLabel('Platform'),'FIX');await tick();
- assert.deepEqual([...w.document.querySelectorAll('.fw .cfg-section h4')].map(h=>h.textContent).slice(0,2),['1Broker','2FIX session']);
+ assert.deepEqual(vis('.fw .cfg-section h4').map(h=>h.textContent).slice(0,2),['1Broker','2FIX session']);
  fill(byLabel('Environment'),'DEMO');fill(byLabel('FIX host'),'fix.example.net');fill(byLabel('FIX port'),'5201');
  fill(byLabel('SenderCompID'),'COREI');fill(byLabel('TargetCompID'),'FASTFEED');fill(byLabel('TargetSubID'),'QUOTE');
  fill(byLabel('Role'),'MARKET_DATA');fill(byLabel('Connection name'),'Fast feed FIX');fill(byLabel('Connection ID'),'FAST_FIX_DEMO');await tick();
@@ -471,16 +475,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual([fixRow.settings.host,fixRow.settings.port,fixRow.settings.sender_comp_id,fixRow.settings.target_comp_id,fixRow.settings.target_sub_id,fixRow.settings.begin_string],
    ['fix.example.net',5201,'COREI','FASTFEED','QUOTE','FIX.4.4']);
  assert.match($('.cfg-detail').textContent,/FIX session login/,'the FIX login is saved on the connection');
- assert.ok([...w.document.querySelectorAll('.cfg-table tbody tr')].some(r=>r.textContent.includes('FAST_FIX_DEMO')&&r.textContent.includes('Data source')));
+ assert.ok(vis('.cfg-table tbody tr').some(r=>r.textContent.includes('FAST_FIX_DEMO')&&r.textContent.includes('Data source')));
  $('[aria-label="Close window"]')?.click();await tick();
  console.log('PASS: a FIX connection is created with its session settings and the Data source role.');
  // Connectivity tree: technology › who › server › account; add a who (new ECN + FIX session) in one step; add an account on a server.
  nav('Connectivity').click();await tick();await tick();await tick();
- const rows=()=>[...w.document.querySelectorAll('.ct-row')];const row=t=>rows().find(r=>r.querySelector('.ct-label').textContent===t);
+ const rows=()=>vis('.ct-row');const row=t=>rows().find(r=>r.querySelector('.ct-label').textContent===t);
  // Default: provider › account › server; the overview shows the six steps; + Provider opens the one provider form.
  assert.match($('.ct-head').textContent,/Provider › account › server/);
- assert.deepEqual([...w.document.querySelectorAll('.ct-flow b')].map(b=>b.textContent),['1 · Provider','2 · Account','3 · Server','4 · Login','5 · Test','6 · Collect']);
- [...w.document.querySelectorAll('.ct-tools button')].find(b=>b.textContent==='+ Provider').click();await tick();await tick();await tick();
+ assert.deepEqual(vis('.ct-flow b').map(b=>b.textContent),['1 · Provider','2 · Account','3 · Server','4 · Login','5 · Test','6 · Collect']);
+ vis('.ct-tools button').find(b=>b.textContent==='+ Provider').click();await tick();await tick();await tick();
  assert.match($('.fw-title').textContent,/New provider/,'the same form as Providers › New provider');
  assert.equal(w.document.querySelectorAll('[aria-label="Provider name"]').length,1,'one provider form only');
  fill(byLabel('Provider name'),'Exness Global');fill(byLabel('Regulator'),'FSA');await tick();
@@ -489,16 +493,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const exn=db.providers.find(p=>p.name==='Exness Global');
  assert.ok(exn&&exn.code==='EXNESS_GLOBAL'&&exn.regulator==='FSA');assert.deepEqual(exn.technologies,['MT5','MT4'],'technologies offered saved');
  assert.match($('.cfg-detail').textContent,/Next · step 2: Add account at Exness Global \(choose its technology: MT5, MT4 offered\)/);
- [...w.document.querySelectorAll('.cfg-detail .cfg-link')].find(b=>b.textContent==='show in the tree').click();await tick();await tick();await tick();await tick();
+ vis('.cfg-detail .cfg-link').find(b=>b.textContent==='show in the tree').click();await tick();await tick();await tick();await tick();
  assert.match($('.ct-detail').textContent,/Step 1 · Provider/,'the tree opens on the new provider');
  assert.match($('.ct-detail').textContent,/Next step: Add account — choose its technology \(MT5, MT4 offered\)/);
  assert.ok(row('Exness Global'),'listed in the provider tree');
- [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
+ vis('.ct-seg button').find(b=>b.textContent==='Technology').click();await tick();
  assert.deepEqual(rows().filter(r=>r.classList.contains('ct-tech')).map(r=>r.querySelector('.ct-label').textContent),['MetaTrader 5','MetaTrader 4','cTrader','FIX 4.4 / 4.2','Broker & exchange APIs','Fast feeds & data vendors']);
  assert.ok(row('MetaTrader 4').classList.contains('planned'));
  row('FIX 4.4 / 4.2').click();await tick();
  assert.match($('.ct-detail').textContent,/TechnologyFIX 4.4 \/ 4.2/);
- [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add FIX 4.4 / 4.2 account').click();await tick();await tick();await tick();
+ vis('.ct-actions button').find(b=>b.textContent==='Add FIX 4.4 / 4.2 account').click();await tick();await tick();await tick();
  assert.match($('.fw-title').textContent,/Add account/,'the one Add account form, technology preset');
  assert.equal(byLabel('Provider name'),null,'no second provider form');
  fill($('#cfg-add-account [aria-label="Provider"]'),db.providers[0].id);await tick();await tick();
@@ -513,19 +517,19 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const fixAcct=db.accounts.find(x=>x.external_account_id==='LMX-1');assert.ok(fixAcct,'FIX account on its new session');
  $('[aria-label="Close window"]')?.click();await tick();
  nav('Connectivity').click();await tick();await tick();
- [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
+ vis('[aria-label="Expand all"]')[0].click();await tick();
  rows().find(r=>r.classList.contains('ct-conn')&&r.querySelector('.ct-label').textContent==='fix-md.example.net:443').click();await tick();
- [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add account').click();await tick();await tick();await tick();
+ vis('.ct-actions button').find(b=>b.textContent==='Add account').click();await tick();await tick();await tick();
  assert.equal($('#cfg-add-account [aria-label="Server"]').value,fixAcct.connection_id,'Add account opens on that server');
  $('[aria-label="Close window"]')?.click();await tick();
  nav('Connectivity').click();await tick();await tick();
- [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Provider type').click();await tick();
- [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
+ vis('.ct-seg button').find(b=>b.textContent==='Provider type').click();await tick();
+ vis('[aria-label="Expand all"]')[0].click();await tick();
  assert.ok(row('Broker')&&row(db.providers[0].name),'grouped by provider type');
- [...w.document.querySelectorAll('.ct-seg button')].find(b=>b.textContent==='Technology').click();await tick();
+ vis('.ct-seg button').find(b=>b.textContent==='Technology').click();await tick();
  console.log('PASS: Connectivity: one provider form with technologies offered and a next step; tree lists every technology; a FIX account and its session through Add account; Add account opens on a chosen server.');
  // MT5: provider › server › account, like every technology; the account has its route (fastest by default), measure, refresh, change server.
- [...w.document.querySelectorAll('[aria-label="Expand all"]')][0].click();await tick();
+ vis('[aria-label="Expand all"]')[0].click();await tick();
  const mt5Acct=db.accounts.find(a=>db.connections.find(c=>c.id===a.connection_id)?.platform==='MT5');
  const acctRow=rows().find(r=>r.classList.contains('ct-acct')&&r.querySelector('.ct-label').textContent===mt5Acct.external_account_id);
  assert.ok(acctRow,'MT5 account listed in the tree');
@@ -535,23 +539,23 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  acctRow.click();await tick();await tick();
  assert.match($('.ct-steps').textContent,/4 · Login saved.*5 · Login tested.*6 · Collecting/);
  assert.match($('.ct-route').textContent,/Server & routeMeasure nowRefresh from brokerChange server…/);
- [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Measure now').click();await tick();await tick();
- [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Refresh from broker').click();await tick();await tick();
+ vis('.ct-route button').find(b=>b.textContent==='Measure now').click();await tick();await tick();
+ vis('.ct-route button').find(b=>b.textContent==='Refresh from broker').click();await tick();await tick();
  assert.match($('.ct-route [role=status]').textContent,/3 address\(es\) published by the broker for ICMarketsSC-Demo; 1 new added and measured; 1 on record no longer listed/);
- [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Change server…').click();await tick();
+ vis('.ct-route button').find(b=>b.textContent==='Change server…').click();await tick();
  fill(byLabel('New server name'),'ICMarketsSC-Demo02');fill(byLabel('New server addresses'),'203.0.113.77:443');await tick();
- [...w.document.querySelectorAll('.ct-route button')].find(b=>b.textContent==='Move to ICMarketsSC-Demo02').click();await tick();await tick();
+ vis('.ct-route button').find(b=>b.textContent==='Move to ICMarketsSC-Demo02').click();await tick();await tick();
  assert.deepEqual(mt5Calls,['latency','refresh','move:ICMarketsSC-Demo02']);
  // MT5 technology: Add account opens the one form with MT5 chosen; it continues in the MT5 form.
  row('MetaTrader 5').click();await tick();
- [...w.document.querySelectorAll('.ct-actions button')].find(b=>b.textContent==='Add MetaTrader 5 account').click();await tick();await tick();await tick();
+ vis('.ct-actions button').find(b=>b.textContent==='Add MetaTrader 5 account').click();await tick();await tick();await tick();
  assert.match($('.fw').textContent,/Add account/);assert.match($('.fw').textContent,/MT5 continues in its form/);
  $('[aria-label="Close window"]')?.click();await tick();
  console.log('PASS: provider › account › server: each MT5 account shows the server it uses; route, measure, refresh and change server work from the account; a broker goes straight on to its first account.');
 
  // Re-authentication: a sensitive action asks for the password again, then retries by itself.
  await open2('Accounts');
- [...w.document.querySelectorAll('.cfg-table tbody tr')].find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
+ vis('.cfg-table tbody tr').find(r=>r.textContent.includes('ICM_DEMO_51234567')).click();await tick();await tick();
  needReauth=true;fill(byLabel('New password'),'rotated-secret');await tick();
  $('.cfg-credential').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();
  assert.ok($('[aria-label="Confirm with your password"]'),'password re-entry dialog shown');
@@ -564,19 +568,19 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Links between records and sortable lists.
  $('[aria-label="Close window"]').click();await tick();
- const chip=[...w.document.querySelectorAll('.cfg-table [data-nav^="connections:"]')][0];chip.click();await tick();await tick();await tick();
+ const chip=vis('.cfg-table [data-nav^="connections:"]')[0];chip.click();await tick();await tick();await tick();
  assert.match($('.cfg-head h1').textContent,/Servers/);
  assert.match($('.fw-title').textContent,/Server · ICM_MT5_DEMO/);
  $('[aria-label="Close window"]').click();await tick();
  await open2('Accounts');
- [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
- [...w.document.querySelectorAll('.cfg-sort')].find(b=>b.textContent.startsWith('Account ID')).click();await tick();
+ vis('.cfg-sort').find(b=>b.textContent.startsWith('Account ID')).click();await tick();
+ vis('.cfg-sort').find(b=>b.textContent.startsWith('Account ID')).click();await tick();
  assert.equal($('th[aria-sort]').getAttribute('aria-sort'),'descending');
- assert.deepEqual([...w.document.querySelectorAll('.cfg-table tbody tr td:first-child')].map(td=>td.textContent),['ICM_DEMO_LMX_1','ICM_DEMO_A123456','ICM_DEMO_51234567','ICM_DEMO_777001','ICM_DEMO_700123']);  // descending; numeric-aware: 51234567 > 777001
+ assert.deepEqual(vis('.cfg-table tbody tr td:first-child').map(td=>td.textContent),['ICM_DEMO_LMX_1','ICM_DEMO_A123456','ICM_DEMO_51234567','ICM_DEMO_777001','ICM_DEMO_700123']);  // descending; numeric-aware: 51234567 > 777001
  console.log('PASS: chips open the linked record in its section; lists sort by column.');
  // Delete permanently: typed code + reason; the account and everything attached go (audited on the server).
  const victim=db.accounts.find(a=>a.code==='ICM_DEMO_700123');
- [...w.document.querySelectorAll('.cfg-table tbody tr')].find(tr=>tr.textContent.includes('ICM_DEMO_700123')).click();await tick();await tick();
+ vis('.cfg-table tbody tr').find(tr=>tr.textContent.includes('ICM_DEMO_700123')).click();await tick();await tick();
  const answers=['ICM_DEMO_700123','remove test account'];w.prompt=()=>answers.shift();
  button('Delete permanently…').click();await tick();await tick();await tick();
  assert.deepEqual(purges.at(-1),{entity:'accounts',version:victim.version,confirm:'ICM_DEMO_700123',reason:'remove test account'});
@@ -612,7 +616,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
 
  // Order sending: confirmation required
  nav('Order sending').click();await tick();await tick();
- const live=[...w.document.querySelectorAll('.cfg-card')].find(c=>c.textContent.includes('LIVE'));
+ const live=vis('.cfg-card').find(c=>c.textContent.includes('LIVE'));
  [...live.querySelectorAll('button')].find(b=>b.textContent.startsWith('Turn on')).click();await tick();
  fill(live.querySelector('[aria-label="Reason"]'),'Go-live approved by risk');await tick();
  const turnOn=[...live.querySelectorAll('button')].find(b=>b.textContent.includes('order sending on'));
@@ -655,22 +659,22 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual(users[1].roles.sort(),['OBSERVER','TRADING_OPS']);
  // Own roles cannot be changed.
  w.confirm=()=>true;$('[aria-label="Close window"]').click();await tick();
- [...w.document.querySelectorAll('.cfg-table tbody tr')][0].click();await tick();
+ vis('.cfg-table tbody tr')[0].click();await tick();
  assert.ok(byLabel('Administrator').matches(':disabled'));
  console.log('PASS: administrator manages users and roles; own roles locked.');
 
  // An observer sees configuration read-only and no Users section.
  session.roles=['OBSERVER'];$('[aria-label="Close window"]').click();await tick();
- [...w.document.querySelectorAll('.cfg-user .link')].find(b=>b.textContent==='Sign out').click();await tick();
+ vis('.cfg-user .link').find(b=>b.textContent==='Sign out').click();await tick();
  const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
- assert.ok(![...w.document.querySelectorAll('.cfg-nav button')].some(b=>b.textContent.includes('Users')));
+ assert.ok(!vis('.cfg-nav button').some(b=>b.textContent.includes('Users')));
  await open2('Providers');
  assert.equal(button('New provider'),undefined);
  $('.cfg-table tbody tr').click();await tick();
  assert.ok($('.fw fieldset.cfg-plain').disabled);assert.equal(button('Save changes'),undefined);
  $('[aria-label="Close window"]').click();await tick();
  nav('Order sending').click();await tick();await tick();
- assert.ok(![...w.document.querySelectorAll('.cfg-card button')].length);
+ assert.ok(!vis('.cfg-card button').length);
  console.log('PASS: observer is read-only: no create, save, credential or order-sending actions.');
 
  assert.deepEqual(errors,[]);

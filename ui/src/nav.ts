@@ -142,7 +142,7 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
 ];
 /** Market intelligence, in the order an analyst works: look, analyse, watch, configure. */
 export const INTEL_GROUPS: [string, [string, string][]][] = [
-  ['Overview', [['workspace', 'Workspace (all)'], ['dashboard', 'Dashboard'], ['screener', 'Screener'], ['instrument', 'Instrument']]],
+  ['Overview', [['workspace', 'All panels'], ['dashboard', 'Dashboard'], ['screener', 'Screener'], ['instrument', 'Instrument']]],
   ['Analyse', [['sources', 'Sources'], ['correlation', 'Correlation'], ['strength', 'Currency strength'], ['sessions', 'Sessions'], ['compare', 'Select & compare']]],
   ['Monitor', [['watchlists', 'Watchlists'], ['rules', 'Rules & alerts'], ['calendar', 'Calendar']]],
   ['Configure', [['indicators', 'Indicators'], ['settings', 'Engine settings'], ['formulas', 'Calculations & formulas'], ['stage', 'Stage map']]],

@@ -16,6 +16,7 @@ import Stage from './Pipeline';
 import type { View } from './layout';
 import { INTEL_GROUPS, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
+import { SubWorkspace } from './SubWorkspace';
 import { Formulas } from './SignalLibrary';
 import './configuration.css';
 import './infrastructure.css';
@@ -41,7 +42,7 @@ const HINTS: Record<Tab, string> = {
   formulas: 'Every feature and regime formula (EMA, RSI, ATR, Bollinger, ADX, efficiency ratio, volatility, MACD, stochastic, Donchian, z-score, VWAP, OBV, regime, attention) with its value on the instrument you choose.',
   stage: 'What this stage does, its components and how far each is built.',
 };
-const LABELS = { workspace: 'Workspace (all)', ...Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) } as Record<Tab, string>;
+const LABELS = { workspace: 'All panels', ...Object.fromEntries(INTEL_GROUPS.flatMap(([, items]) => items)) } as Record<Tab, string>;
 const TABS = Object.keys(HINTS) as Tab[];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
@@ -56,7 +57,7 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     check(); window.addEventListener('corei-session', check); return () => window.removeEventListener('corei-session', check);
   }, []);
   const nav = <Nav tab={tab} setTab={setTab} />;
-  if (tab === 'stage') return <div className="cfg md">{nav}<Stage view="Intelligence" open={open} /></div>;
+  if (tab === 'stage' && !user) return <div className="cfg md">{nav}<Stage view="Intelligence" open={open} /></div>;
   if (user === undefined) return <div className="content"><p>Checking sign-in…</p></div>;
   if (user === null) return <SignIn title="MARKET INTELLIGENCE" done={s => setUser(s)} />;
   const openInstrument = (r: Record<string, any>) => { setPick(r); setTab('instrument'); };
@@ -69,24 +70,11 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     {nav}
     <section className="cfg-main">
       <StageBar view="Intelligence" title={LABELS[tab]} hint={HINTS[tab]} />
-      <div className="cfg-pane">
-        {tab === 'workspace' && <Workspace view="Intelligence" groups={INTEL_GROUPS.map(([g]) => g)} alone={id => setTab(id as Tab)} sections={INTEL_GROUPS.flatMap(([g, items]) =>
-          items.filter(([id]) => id !== 'stage' && id !== 'workspace').map(([id, label]) => ({ id, label, group: g, hint: HINTS[id as Tab], render: () => panel(id as Tab) })))} />}
-        {tab === 'dashboard' && <IntelDashboard canEdit={canEdit} openInstrument={openInstrument} gotoScreener={() => setTab('screener')} gotoSettings={() => setTab('settings')} />}
-        {tab === 'screener' && <Screener canRefresh={canEdit} openInstrument={openInstrument} />}
-        {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}
-        {tab === 'sources' && <SourcesView />}
-        {tab === 'correlation' && <CorrelationView />}
-        {tab === 'strength' && <StrengthView />}
-        {tab === 'sessions' && <SessionsView />}
-        {tab === 'compare' && <MarketBoard />}
-        {tab === 'watchlists' && <WatchlistsView canEdit={canEdit} />}
-        {tab === 'rules' && <RulesView canEdit={canEdit} />}
-        {tab === 'calendar' && <CalendarView canEdit={canEdit} />}
-        {tab === 'indicators' && <IndicatorsView canEdit={canEdit} />}
-        {tab === 'settings' && <EngineSettings canEdit={canEdit} />}
-        {tab === 'formulas' && <Formulas stage="Intelligence" features />}
-      </div>
+      <SubWorkspace view="Intelligence" label="Market intelligence" tab={tab} setTab={id => setTab(id as Tab)}
+        initial={TABS.filter(t => t !== 'stage')} items={INTEL_GROUPS.flatMap(([g, its]) => its.map(([id]) => ({ id, label: LABELS[id as Tab], group: g, hint: HINTS[id as Tab] })))}
+        render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view="Intelligence" groups={INTEL_GROUPS.map(([g]) => g)} alone={x => setTab(x as Tab)} sections={INTEL_GROUPS.flatMap(([g, its]) =>
+          its.filter(([x]) => x !== 'stage' && x !== 'workspace').map(([x, label]) => ({ id: x, label, group: g, hint: HINTS[x as Tab], render: () => panel(x as Tab) })))} />
+          : id === 'stage' ? <Stage view="Intelligence" open={open} /> : panel(id as Tab)}</div>} />
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;

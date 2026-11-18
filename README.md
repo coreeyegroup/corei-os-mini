@@ -1106,3 +1106,18 @@ now lives in Stage 4, where it is made (DEC-89, migration 037).
 - **One header on every stage:** the trading flow 1 → 8 as steps (click to go, the current stage marked), then what is
   shown, what the stage answers and what it hands on. Workspace tabs carry the stage number and icon.
 
+## Main workspaces and sub-workspaces — release 0.49.0
+
+Two levels, as in VS Code (DEC-91):
+
+1. **Main workspace** — one tab per domain: Market data, Market intelligence, Signals, Strategies, Risk, Portfolio,
+   Execution, Post-trade, Setup, Infrastructure (Split, New tab, New window top right).
+2. **Sub-workspace** — inside each domain, its own items as sub-tabs: e.g. Market data › Dashboard, Table, Collection
+   plans, Quality, Events, Backfill, Controls, Archive, Calculations & formulas; Market intelligence › Dashboard,
+   Screener, Instrument, Sources, Correlation …; Setup › Overview, Connectivity, Bridge nodes, Instruments, Strategies,
+   Deployments, Order sending … The side bar, links and Ctrl+K open an item as a sub-tab (focused if open); **+ Open…**
+   adds any item; × (or middle-click) closes; **Split** puts the item in a pane on the right (up to four, resizable);
+   drag a sub-tab to another pane, ◀ ▶ move it; ↗ ⧉ open that one item in a new browser tab or window. A hidden sub-tab
+   keeps its state, stops polling and reloads when shown. *All panels* stays as the first sub-tab (every item on one
+   page). The 0.48 "panes by purpose" inside All panels are replaced by this.
+

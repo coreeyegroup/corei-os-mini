@@ -15,6 +15,8 @@ import { BridgeNodes } from './BridgeNodes';
 import ConnectTree from './ConnectTree';
 import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
 import { BlendEditor } from './SignalLibrary';
+import { SubWorkspace } from './SubWorkspace';
+import { useViewVisible } from './visibility';
 
 export type Row = Record<string, any>;
 type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
@@ -1455,7 +1457,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       return data.items as Row[];
     } catch (e) { setLoadError((e as Error).message); return []; }
   }
-  useEffect(() => { const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent, view.archived]);
+  const shown = useViewVisible(); // shown again (a sub-tab brought back), the list reloads
+  useEffect(() => { if (!shown) return; const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent, view.archived, shown]);
   useEffect(() => { if (!openId) return;
     // From the Connect screen: 'new' opens a blank record, 'new:MT5' / 'new:UPSTOX' the one-step account forms.
     if (openId === 'new') { open(null); return; }
@@ -2092,26 +2095,29 @@ export default function Configuration() {
       <header className="cfg-head"><div><h1>{current.label}</h1><p>{current.hint}</p></div>
         <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
           <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></header>
-      {BROKER_TABS.some(([id]) => id === current.id) && <nav className="cfg-views" aria-label="Brokers and accounts views">
-        {BROKER_TABS.map(([id, label]) => <button key={id} aria-current={current.id === id ? 'page' : undefined} onClick={() => navigate(id)}><span>{label}</span>
-          {summary && id !== 'brokers' && <small>{summary.counts?.[id]}</small>}</button>)}</nav>}
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
       {brokerLogin && !loginShown && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
         : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`} <button type="button" className="cfg-link" aria-label="Dismiss" onClick={() => setLoginShown(true)}>✕</button></p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      {current.id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
-        : current.id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={openId.id} /></div>
-        : current.id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
-        : current.id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
-        : current.id === 'bridges' ? <div className="cfg-pane"><BridgeNodes canEdit={canEdit} /></div>
-        : current.id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : current.id === 'audit' ? <AuditLog />
-        : current.id === 'users' ? <Users me={user} />
-        : current.id === 'database' ? (user.roles.includes('ADMIN') ? <DatabaseEditor /> : <p className="cfg-note">The database editor needs the Administrator role.</p>)
-        : current.id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
-        : current.id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />
-        : <Records key={current.id} entity={current.id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={canEdit} navigate={navigate}
-            openId={openId.id ? `${openId.id}` : undefined} />}
+      <SubWorkspace view="Configuration" label="Setup" tab={current.id} setTab={id => setSection(id as Section)} initial={['health', 'brokers', 'bridges', 'instruments', 'strategies', 'deployments', 'controls']}
+        items={sections.map(x => ({ id: x.id, label: x.label, hint: x.hint, group: (SETUP_GROUPS.find(([, its]) => its.some(([k]) => k === x.id))?.[0] ?? '').replace(/^\d · /, '') }))}
+        render={(id: string) => <Fragment key={id === section && openId.id ? `${id}:${openId.n}` : id}>
+          {BROKER_TABS.some(([b]) => b === id) && <nav className="cfg-views" aria-label="Brokers and accounts views">
+            {BROKER_TABS.map(([b, label]) => <button key={b} aria-current={id === b ? 'page' : undefined} onClick={() => navigate(b)}><span>{label}</span>
+              {summary && b !== 'brokers' && <small>{summary.counts?.[b]}</small>}</button>)}</nav>}
+          {id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
+        : id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={id === section ? openId.id : undefined} /></div>
+        : id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
+        : id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
+        : id === 'bridges' ? <div className="cfg-pane"><BridgeNodes canEdit={canEdit} /></div>
+        : id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : id === 'audit' ? <AuditLog />
+        : id === 'users' ? <Users me={user} />
+        : id === 'database' ? (user.roles.includes('ADMIN') ? <DatabaseEditor /> : <p className="cfg-note">The database editor needs the Administrator role.</p>)
+        : id === 'strategies' ? <Strategies roles={user.roles} reloadRefs={() => void loadRefs()} />
+        : id === 'deployments' ? <Deployments roles={user.roles} refs={refs} />
+        : <Records key={id} entity={id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={canEdit} navigate={navigate}
+            openId={openId.id && id === section ? `${openId.id}` : undefined} />}</Fragment>} />
     </section>
     {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
