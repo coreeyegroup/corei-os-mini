@@ -1092,3 +1092,17 @@ now lives in Stage 4, where it is made (DEC-89, migration 037).
 - API: `/api/trading/strategies/monitor`, `/execution/{flow,policies}`, `/execution/decisions/{id}/{execute,decline}`,
   `/signal-library/{overview,instrument,events,correlation,research-all}`.
 
+## Workspaces as in VS Code — release 0.48.0
+
+- **Each screen is its own workspace tab.** Market data, Market intelligence, Signals, Strategies, Risk, Portfolio,
+  Execution, Post-trade, Setup, Monitor and System open as tabs (rail, links, Ctrl+K); an open one is focused, not
+  opened twice; each keeps its state. A workspace in a background tab stops polling and refreshes when shown.
+- **Actions top right of every workspace:** *Split* (another group beside it, up to four), *New tab* (same browser),
+  *New window* (a separate browser window, e.g. a second monitor), and maximise when several groups are open.
+- **Sub-workspaces inside a stage:** 1–4 panes side by side (by purpose: dashboards, work, monitors, settings), each
+  scrolling on its own and resizable; drag a panel title to another pane or use ◀ ▶ (move) and ◫ (split right); add a
+  panel to a pane or close a pane (its panels return to pane 1). Remembered per screen and viewer. Every panel opens
+  alone (⤢), in a new tab (↗) or a new window (⧉) — `?view=…&section=…&detached=1`.
+- **One header on every stage:** the trading flow 1 → 8 as steps (click to go, the current stage marked), then what is
+  shown, what the stage answers and what it hands on. Workspace tabs carry the stage number and icon.
+

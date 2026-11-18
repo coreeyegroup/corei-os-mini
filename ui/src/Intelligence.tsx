@@ -15,7 +15,7 @@ import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
 import { INTEL_GROUPS, useSection } from './nav';
-import { Workspace } from './StageShell';
+import { StageBar, Workspace } from './StageShell';
 import { Formulas } from './SignalLibrary';
 import './configuration.css';
 import './infrastructure.css';
@@ -68,10 +68,10 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
   return <div className="cfg md">
     {nav}
     <section className="cfg-main">
-      <header className="cfg-head"><div><h1>{LABELS[tab]}</h1><p>{HINTS[tab]}</p></div></header>
+      <StageBar view="Intelligence" title={LABELS[tab]} hint={HINTS[tab]} />
       <div className="cfg-pane">
         {tab === 'workspace' && <Workspace view="Intelligence" groups={INTEL_GROUPS.map(([g]) => g)} alone={id => setTab(id as Tab)} sections={INTEL_GROUPS.flatMap(([g, items]) =>
-          items.filter(([id]) => id !== 'stage').map(([id, label]) => ({ id, label, group: g, hint: HINTS[id as Tab], render: () => panel(id as Tab) })))} />}
+          items.filter(([id]) => id !== 'stage' && id !== 'workspace').map(([id, label]) => ({ id, label, group: g, hint: HINTS[id as Tab], render: () => panel(id as Tab) })))} />}
         {tab === 'dashboard' && <IntelDashboard canEdit={canEdit} openInstrument={openInstrument} gotoScreener={() => setTab('screener')} gotoSettings={() => setTab('settings')} />}
         {tab === 'screener' && <Screener canRefresh={canEdit} openInstrument={openInstrument} />}
         {tab === 'instrument' && <InstrumentView pick={pick} items={items} setPick={setPick} />}

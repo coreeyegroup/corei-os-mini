@@ -1,0 +1,81 @@
+/* Workspaces (0.48): workspace tabs with their actions, the trading-flow stepper on every stage, and sub-workspace
+ * panes side by side inside a stage. Loaded last so it aligns the shell, stage and panel headers to one grid. */
+
+/* ---- Workspace tabs: every screen is its own tab; actions on the right ---- */
+.tabs { display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.tab { display: inline-flex; align-items: stretch; flex: 0 0 auto; }
+.tab button[role="tab"] { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tab-ico { order: -2; display: inline-flex; width: 14px; height: 14px; opacity: .75; }
+.tab-ico svg { width: 14px; height: 14px; }
+.tab.active .tab-ico { opacity: 1; }
+.tab button[data-n]::after { content: attr(data-n); order: -1; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 3px; font-size: 10px; font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--text); }
+.tab.active { box-shadow: inset 0 2px 0 var(--accent); }
+.tab-tools { position: sticky; right: 0; margin-left: auto; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: inherit; flex: 0 0 auto;
+  border-left: 1px solid var(--line); }
+.tab-tools button { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; background: transparent; color: var(--muted); padding: 3px 8px; border-radius: 4px;
+  font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.tab-tools button span[aria-hidden] { font-size: 13px; line-height: 1; }
+.tab-tools button:hover { color: var(--text); background: var(--hover); border-color: var(--line); }
+.tab-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 900px) { .tab-tools button { font-size: 0; padding: 3px 6px; } .tab-tools button span[aria-hidden] { font-size: 14px; } }
+
+/* ---- Stage header: the flow 1 → 8, then what is shown ---- */
+.st-bar { display: grid !important; grid-template-columns: 1fr; gap: 4px; margin: 0 0 8px; padding: 0 0 8px; border-bottom: 1px solid var(--line); }
+.st-steps { display: flex; flex-wrap: nowrap; gap: 0; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
+.st-steps li { display: flex; align-items: center; flex: 0 0 auto; }
+.st-steps li + li::before { content: ''; width: 14px; height: 1px; background: var(--line); margin: 0 2px; }
+.st-steps button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 12px;
+  padding: 2px 10px 2px 3px; font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.st-steps button:hover { color: var(--text); border-color: var(--accent); }
+.st-n { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 10.5px; font-weight: 700; background: var(--line); color: var(--text); }
+.st-steps li.before .st-n { background: color-mix(in srgb, var(--ready) 35%, var(--line)); }
+.st-steps li.on button { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 700; }
+.st-steps li.on .st-n { background: var(--accent); color: var(--canvas, #000); }
+.st-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.st-title h1 { margin: 0; font-size: 15px; white-space: nowrap; }
+.st-title p { margin: 0; color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-bar .st-question { margin: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-bar .st-question b { color: var(--text); font-weight: 600; }
+
+/* ---- Workspace index: chips on the left, panes and open/close on the right ---- */
+.ws-index { align-items: center; background: var(--canvas, var(--surface)); border: 1px solid var(--line); border-radius: 6px; }
+.ws-index-all { display: inline-flex; align-items: center; gap: 4px; }
+.ws-cols { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-right: 6px; }
+.ws-cols button { border: 0 !important; border-radius: 0; padding: 3px 6px !important; background: transparent; cursor: pointer; }
+.ws-cols button + button { border-left: 1px solid var(--line) !important; }
+.ws-cols button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.ws-colicon { display: inline-flex; gap: 1px; width: 18px; height: 12px; }
+.ws-colicon i { flex: 1; border: 1px solid currentColor; border-radius: 1px; opacity: .8; }
+.ws-pane-n { display: inline-grid; place-items: center; width: 13px; height: 13px; margin-right: 4px; border-radius: 2px; font-size: 9px; font-style: normal; font-weight: 700;
+  background: var(--line); color: var(--text); vertical-align: 1px; }
+
+/* ---- Panels ---- */
+.ws-panel { background: var(--surface); }
+.ws-panel.dragging { opacity: .45; }
+.ws-head { align-items: center !important; user-select: none; }
+.ws-head b { white-space: nowrap; }
+.ws-tools { display: inline-flex; gap: 2px; margin-left: auto; flex: 0 0 auto; }
+.ws-ico { border: 1px solid transparent; background: transparent; color: var(--muted); padding: 1px 6px; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1.3; }
+.ws-ico:hover { color: var(--text); background: var(--hover); border-color: var(--line); }
+.ws-ico:focus-visible { outline: 2px solid var(--accent); }
+
+/* ---- Sub-workspaces: panes side by side, each scrolling on its own ---- */
+.ws-panes { display: block; }
+.ws-panes.multi { display: flex; align-items: stretch; gap: 0; min-height: 320px; }
+.ws-panes.multi .ws-pane { flex: 1 1 0; min-width: 240px; overflow-y: auto; overflow-x: hidden; padding: 0 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: color-mix(in srgb, var(--line) 8%, transparent); scrollbar-width: thin; }
+.ws-pane.drop { outline: 2px dashed var(--accent); outline-offset: -3px; }
+.ws-pane-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 5px 4px; margin: 0 -4px 6px; background: var(--chrome, var(--surface));
+  border-bottom: 1px solid var(--line); }
+.ws-pane-head small { color: var(--muted); }
+.ws-pane-head select { margin-left: auto; max-width: 180px; font-size: 11.5px; }
+.ws-panes.multi .ws-panel { scroll-margin-top: 40px; }
+.ws-panes.multi .ws-head .cfg-note { display: none; }
+.ws-empty { border: 1px dashed var(--line); border-radius: 4px; padding: 18px; text-align: center; color: var(--muted); }
+.ws-handle { flex: 0 0 7px; cursor: col-resize; position: relative; }
+.ws-handle::after { content: ''; position: absolute; top: 30%; bottom: 30%; left: 3px; width: 1px; background: var(--line); }
+.ws-handle:hover::after, .ws-handle:focus-visible::after { background: var(--accent); width: 2px; left: 2px; }
+@media (max-width: 760px) { .ws-panes.multi { flex-direction: column; height: auto !important; } .ws-panes.multi .ws-pane { flex-basis: auto !important; max-height: 80vh; } .ws-handle { display: none; } }
+.sig-flip { white-space: nowrap; } .sig-d { padding: 0 4px; border-radius: 3px; border: 1px solid var(--line); margin: 0 2px; }
+.sig-d.LONG { color: var(--ready); border-color: var(--ready); } .sig-d.SHORT { color: var(--danger); border-color: var(--danger); }

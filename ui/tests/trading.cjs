@@ -111,7 +111,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    return fail(404,'Not mocked: '+url);
  };
  w.eval(js);await settle(12);
- const $=s=>w.document.querySelector(s),$$=s=>[...w.document.querySelectorAll(s)];
+ // Every screen is its own workspace tab now: look inside the screen on show (overlays fall back to the page).
+ const shown=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
+ const $=s=>shown().querySelector(s)||w.document.querySelector(s),$$=s=>{const a=[...shown().querySelectorAll(s)];return a.length?a:[...w.document.querySelectorAll(s)];};
  const fill=(el,value)=>{const proto=el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:el.tagName==='SELECT'?w.HTMLSelectElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const nav=label=>$$('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
@@ -166,10 +168,35 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(def.kind,'EMA_TREND');assert.equal(def.parameters.fast,5);assert.equal(def.parameters.slow,21);assert.equal(def.reason,'desk preset');
  console.log('PASS: signal library: live board with worked equations, the formulas with parameters, a new signal saved with its reason, every formula listed.');
  console.log('PASS: workspace: every panel of a stage — dashboards, work, monitors, settings — open on one page, each closable, remembered.');
+ // Sub-workspaces: panes side by side (by purpose), a panel moved and split, a pane added to and closed; remembered per screen.
+ $('[aria-label="3 panes"]').click();await settle(4);
+ let panes=JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals'));
+ assert.deepEqual(panes,[['overview','board'],['explain','timeframes','research','rank'],['correlation','flips','library','formulas']]);
+ assert.equal($$('.ws-pane').length,3);assert.match($$('.ws-pane-head')[1].textContent,/Pane 2.*4 panels/);
+ assert.match($('.ws-index').textContent,/1Dashboard/,'the index shows each panel\'s pane');
+ $('[aria-label="Move Dashboard to the right"]').click();await settle(3);
+ panes=JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals'));assert.ok(panes[1].includes('overview'));
+ $('[aria-label="Move Dashboard to the pane on the left"]').click();await settle(3);
+ fill($('[aria-label="Add a panel to pane 3"]'),'board');await settle(3);
+ panes=JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals'));assert.ok(panes[2].includes('board')&&!panes[0].includes('board'));
+ $('[aria-label="Close pane 3"]').click();await settle(3);
+ panes=JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals'));assert.equal(panes.length,2);assert.ok(panes[0].includes('board')&&panes[0].includes('formulas'),'a closed pane\'s panels go to pane 1');
+ $('[aria-label="Move Live signal board to the right"]').click();await settle(3);
+ $('[aria-label="Move Signal library to the right"]').click();await settle(3);
+ assert.equal($('[aria-label="Move Signal library to the right"]').title,'Split: open in a new pane on the right');
+ $('[aria-label="Move Signal library to the right"]').click();await settle(3);
+ assert.equal(JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals')).length,3,'split: a new pane on the right');
+ const opened=[];w.open=(...a)=>{opened.push(a);return null;};
+ $('[aria-label="Open Live signal board in new tab"]').click();$('[aria-label="Open Live signal board in new window"]').click();
+ const u=new URL(opened[0][0]);assert.deepEqual([u.searchParams.get('view'),u.searchParams.get('section'),u.searchParams.get('detached')],['Signals','board','1']);
+ assert.equal(opened[0][1],'_blank');assert.match(opened[1][2],/popup=yes/);
+ $('[aria-label="1 pane"]').click();await settle(3);
+ assert.deepEqual(JSON.parse(w.localStorage.getItem('corei.workspace.panes.Signals')).length,1);assert.equal($$('.ws-pane-head').length,0);
+ console.log('PASS: sub-workspaces: 1–4 panes side by side, panels moved, split, added and returned; a panel opens in a new tab or window.');
 
  // Signals: the frame, then the reason a signal was refused, in plain words.
  assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);
- assert.match($('.st-head').textContent,/2 · Market intelligence/);
+ assert.match($('.st-head').textContent,/2Intelligence3Stage 3 · Signal intelligence4Strategies/);
  assert.deepEqual($$('.cfg-nav .cfg-nav-group').map(g=>g.textContent),['Overview','Work','Monitor','Configure']);
  // Stage 4 owns what a strategy decides: its signals, their checks and the decisions; the desk shows every strategy at once.
  await go('Strategies');
@@ -312,4 +339,4 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual(errors.filter(e=>!/Not mocked/.test(e)),[]);
  console.log('PASS: home shows how COREI works: eight stages with live figures and the user\'s path.');
  w.close();
-})().catch(e=>{console.error(e);process.exit(1)});
+})().catch(e=>{console.error(String(e&&e.stack||e).slice(0,4000));process.exit(1)});

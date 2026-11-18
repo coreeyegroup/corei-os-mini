@@ -13,7 +13,9 @@ import Stage from "./Pipeline";
 import { PIPELINE, stageOf } from "./flow";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
-import { initialLayout, launchContext, workspaceUrl } from "./workspaceLinks";
+import { initialLayout, launchContext, openWorkspace } from "./workspaceLinks";
+import "./workspaces.css";
+import { ViewVisible } from "./visibility";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -68,9 +70,7 @@ function stored() {
 }
 export default function App() {
   const launch = launchContext(window.location.search);
-  function openWorkspace(view: View, newWindow: boolean) {
-    window.open(workspaceUrl(view), '_blank', newWindow ? 'popup=yes,width=1440,height=960,noopener,noreferrer' : 'noopener,noreferrer');
-  }
+  useEffect(() => { if (launch.detached && launch.view && launch.section) goto(launch.view, launch.section); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
@@ -231,20 +231,11 @@ export default function App() {
     setPalette(false);
 
   }
-  /* Show a view: focus it where it is already open; otherwise show it in place of the
-   * current (unpinned) view of the focused group, so tabs do not pile up. */
+  /* Show a view as its own workspace (as in VS Code): focus it where it is already open, otherwise open it as a new
+   * tab of the focused group — the screens already open stay open, each keeping its own state. */
   function go(view: View) {
     const at = layout.groups.findIndex(g => g.includes(view));
-    if (at >= 0) { open(view, at); return; }
-    const current = layout.active[layout.focus];
-    if (pinned.includes(current) || !allowLayoutChange()) { open(view); return; }
-    setLayout(x => {
-      const groups = x.groups.map(g => [...g]), active = [...x.active];
-      groups[x.focus] = groups[x.focus].map(v => v === current ? view : v);
-      active[x.focus] = view;
-      return { ...x, groups, active, activity: view };
-    });
-    setPalette(false);
+    open(view, at >= 0 ? at : layout.focus);
   }
   function close(view: View, group: number) {
     if(!allowLayoutChange())return;
@@ -489,7 +480,7 @@ export default function App() {
             {layout.groups.map((group, i) => (
               <section hidden={layout.maximized && layout.focus!==i} className={`group ${layout.focus === i ? "focused" : ""}`} key={i}
                 onFocus={() => { if (layout.focus !== i) patch({ focus: i }); }}>
-                {(multi || group.length > 1 || group.some(v=>pinned.includes(v))) && <div className="tabs" role="tablist" aria-label={`Workspace group ${i + 1}`}
+                {<div className="tabs" role="tablist" aria-label={`Workspace group ${i + 1}`}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => { e.preventDefault(); try { const d = JSON.parse(e.dataTransfer.getData("text/plain"));
                     if (views.includes(d.view) && Number.isInteger(d.from) && layout.groups[d.from]?.includes(d.view)) moveTab(d.view, d.from, i); } catch { /* unrelated drag */ } }}>
@@ -499,17 +490,19 @@ export default function App() {
                       draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ view: v, from: i }))}>
                       <button role="tab" aria-selected={layout.active[i] === v} tabIndex={layout.active[i]===v?0:-1}
                         onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const tabs=[...e.currentTarget.closest('.tabs')!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];const at=tabs.indexOf(e.currentTarget);const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(at+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;tabs[next].click();tabs[next].focus();}}}
-                        onClick={() => open(v, i)}>{pinned.includes(v)?"◆ ":""}{viewTitle[v]}</button>
+                        onClick={() => open(v, i)} title={descriptions[v]} data-n={stageOf(v)?.n}><span className="tab-ico" aria-hidden="true"><WorkbenchIcon index={iconIndex[v]}/></span>{pinned.includes(v)?"◆ ":""}{viewTitle[v]}</button>
                       <button disabled={pinned.includes(v)} title={pinned.includes(v)?"Unpin this tab to close it":"Close tab"} aria-label={`Close ${v} in group ${i + 1}`} onClick={() => close(v, i)}>×</button>
                     </div>
                   ))}
-                  <span className="tab-tools">
-                    <button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this view in a new browser tab" onClick={()=>openWorkspace(layout.active[i],false)}>↗</button>
-                    <button aria-label={`Open ${layout.active[i]} in new window`} title="Open this view in a separate window (e.g. a second monitor)" onClick={()=>openWorkspace(layout.active[i],true)}>▣</button>
+                  <span className="tab-tools" role="toolbar" aria-label={`${viewTitle[layout.active[i]]} workspace actions`}>
+                    <button aria-label={`Split ${layout.active[i]} to the right`} title={layout.groups.length>=4?'Four groups open: this changes the split direction':'Open another workspace group beside this one (Ctrl+\\)'} onClick={split}><span aria-hidden="true">◫</span> Split</button>
+                    <button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this workspace in a new tab of this browser" onClick={()=>openWorkspace(layout.active[i],false)}><span aria-hidden="true">↗</span> New tab</button>
+                    <button aria-label={`Open ${layout.active[i]} in new window`} title="Open this workspace in a new browser window (e.g. on a second monitor)" onClick={()=>openWorkspace(layout.active[i],true)}><span aria-hidden="true">⧉</span> New window</button>
+                    {multi && <button aria-label={layout.maximized?'Restore groups':`Maximise ${layout.active[i]}`} title={layout.maximized?'Show every group again':'Show only this group'} onClick={()=>patch({focus:i,maximized:!layout.maximized})}>{layout.maximized?'▭':'▢'}</button>}
                   </span>
                 </div>}
                 <div className="view" role="tabpanel" aria-label={layout.active[i]}>
-                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></div>)}
+                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ViewVisible.Provider value={layout.active[i]===v&&!(layout.maximized&&layout.focus!==i)}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></ViewVisible.Provider></div>)}
                 </div>
               </section>
             ))}
@@ -551,7 +544,7 @@ export default function App() {
       {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
       {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Working faster</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button>
         <p><b>Ctrl K</b> goes to any screen or section by typing a few letters. The rail on the left shows the main areas; a red number means something there needs attention. Click a status chip at the top to go straight to it.</p>
-        <p>Side by side: Layout › Two columns, then drag a tab to the other group. Ctrl-click a rail icon to open it as an extra tab. Right-click a tab to pin it or open it in a separate window (second monitor).</p>
+        <p>Every screen opens as its own workspace tab (as in VS Code) and keeps its state. Top right of each workspace: <b>Split</b> (another group beside it), <b>New tab</b> and <b>New window</b> (second monitor). Inside a stage, the 1–4 pane buttons lay its panels side by side; drag a panel title to another pane, or use ◀ ▶ ◫ on the panel; ↗ and ⧉ open one panel in a new tab or window. Right-click a tab to pin it.</p>
         {commands.filter(c=>c.shortcut).map(c=><div className="shortcut-row" key={c.label}><span>{c.label}</span><kbd>{c.shortcut}</kbd></div>)}
         <p>Ctrl+1–4 focuses a group. Alt+←/→ switches tabs.</p></div></div>}
     </div>

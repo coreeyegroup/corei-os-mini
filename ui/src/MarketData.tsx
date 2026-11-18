@@ -8,7 +8,7 @@ import FloatingWindow from './FloatingWindow';
 import SourceBoard from './SourceBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
-import { Workspace } from './StageShell';
+import { StageBar, Workspace } from './StageShell';
 import { Formulas } from './SignalLibrary';
 import './configuration.css';
 import './infrastructure.css';
@@ -57,7 +57,7 @@ export default function MarketData() {
         <button key={t.id} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}><span>{t.label}</span></button>)}</nav>
       <div className="cfg-user">{user.username}</div></div>
     <section className="cfg-main">
-      <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
+      <StageBar view="Market data" title={current.label} hint={current.hint} />
       <div className="cfg-pane">
         {tab === 'workspace' ? <Workspace view="Market data" groups={['Watch', 'Collect', 'Check', 'Control']} alone={id => setTab(id as Tab)}
           sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id),

@@ -292,7 +292,7 @@ export function SignalDashboard() {
           <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td><span className="sig-bar"><i style={{ width: `${r.agree_pct ?? 0}%` }} /></span> <small>{r.agree_pct ?? '–'}% agree of {r.n}</small></td></tr>)}</tbody></table></div>
       <div><h4>Latest flips</h4>
         <table className="cfg-table compact intel-table"><tbody>{(flips?.items ?? []).map((e: Row) => <tr key={e.id}><td><small>{new Date(e.bar_time).toISOString().slice(5, 16).replace('T', ' ')}</small></td>
-          <td><b>{e.code}</b> <small>{e.broker_symbol}</small></td><td>{dirPill(e.from_direction)} → {dirPill(e.to_direction)}</td></tr>)}
+          <td><b>{e.code}</b> <small>{e.broker_symbol}</small></td><td className="sig-flip"><small className={`sig-d ${e.from_direction}`}>{String(e.from_direction ?? '').toLowerCase()}</small>→<small className={`sig-d ${e.to_direction}`}>{String(e.to_direction).toLowerCase()}</small></td></tr>)}
           {flips && !(flips.items ?? []).length && <tr><td className="cfg-note">None yet.</td></tr>}</tbody></table></div>
     </div>
     <p className="cfg-note">Stage 3 scores every collected instrument with every library formula on each closed bar (−100 strong short … +100 strong long). Stage 4 strategies combine these scores into decisions; Stage 5 checks them; Stage 7 executes them.</p>

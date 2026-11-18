@@ -49,7 +49,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    return fail(404,'Not mocked: '+url);
  };
  w.eval(js);await tick();await tick();
- const $=s=>w.document.querySelector(s),$$=s=>[...w.document.querySelectorAll(s)];
+ // Every screen is its own workspace tab now: look inside the screen on show (overlays fall back to the page).
+ const shown=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
+ const $=s=>shown().querySelector(s)||w.document.querySelector(s),$$=s=>{const a=[...shown().querySelectorAll(s)];return a.length?a:[...w.document.querySelectorAll(s)];};
  const fill=(el,value)=>{const proto=el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:el.tagName==='SELECT'?w.HTMLSelectElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const nav=label=>$$('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
  const button=text=>$$('button').find(b=>b.textContent.trim()===text);
@@ -105,4 +107,4 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: read-only SQL console and the edit log.');
  assert.deepEqual(errors,[]);
  w.close();
-})().catch(e=>{console.error(e);process.exit(1)});
+})().catch(e=>{console.error(String(e&&e.stack||e).slice(0,4000));process.exit(1)});

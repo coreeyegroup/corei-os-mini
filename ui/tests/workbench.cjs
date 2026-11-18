@@ -74,9 +74,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const old=new JSDOM('<div id="root"></div>',{url:'https://corei-os-mini.coreeye.in/',runScripts:'outside-only',pretendToBeVisual:true});const ow=old.window;ow.HTMLElement.prototype.scrollIntoView=function(){};
  ow.localStorage.setItem('corei-os-mini.workstation.layout.v1',JSON.stringify({version:1,workspace:'Research',activity:'Providers',groups:[['Providers']],active:['Providers'],focus:0,left:true,right:false,bottom:false,axis:'row',leftWidth:220,rightWidth:270,bottomHeight:180,maximized:false}));
  ow.fetch=dw.fetch;ow.eval(js);await tick();await tick();assert.ok(ow.document.querySelector('nav.activity [aria-label="Overview"][aria-current="page"]'));
- console.log('PASS: window actions, detached Configuration workspace, isolated layout and safe fallback from removed views.');dw.close();ow.close();
+ // A panel link opens that panel alone in a detached window.
+ const dp=new JSDOM('<div id="root"></div>',{url:'https://corei-os-mini.coreeye.in/?view=Risk&section=limits&detached=1',runScripts:'outside-only',pretendToBeVisual:true});
+ const pw=dp.window;pw.HTMLElement.prototype.scrollIntoView=function(){};
+ pw.fetch=async(url)=>url.includes('operator/session')?{ok:true,status:200,json:async()=>({username:'u',roles:['ADMIN']})}:{ok:true,status:200,json:async()=>({items:[],project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:false,demo_enabled:false,capabilities:[],kinds:{}})};
+ pw.eval(js);for(let i=0;i<8;i++)await tick();
+ assert.equal(pw.document.querySelector('.cfg-nav [aria-current="page"]').textContent,'Limits','the linked panel opens alone');
+ assert.equal(pw.document.querySelectorAll('.group').length,1);dp.window.close();
+ console.log('PASS: window actions, detached Configuration workspace, isolated layout and safe fallback from removed views; a panel link opens that panel alone.');dw.close();ow.close();
 
- // Shell: live status chips, rail shows a screen in place (no tab pile-up), Ctrl+K reaches a section, attention list links.
+ // Shell: live status chips, each screen its own workspace tab (as in VS Code), Ctrl+K reaches a section, attention list links.
  const sh=new JSDOM('<div id="root"></div>',{url:'https://corei-os-mini.coreeye.in/',runScripts:'outside-only',pretendToBeVisual:true});const sw=sh.window;sw.HTMLElement.prototype.scrollIntoView=function(){};
  const shErrors=[];sw.addEventListener('error',e=>shErrors.push(e.message));
  const overview={user:{username:'yatheesh',roles:['ADMIN']},feeds:{active_plans:1,collectors:1,live:0,problems:1,paused:false},order_sending:[{environment:'LIVE',enabled:false}],approvals:2,
@@ -87,16 +94,20 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.includes('/api/workstation'))return j({project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:true,demo_enabled:false,capabilities:[]});
    return j({items:[],counts:{},execution_controls:[],connections:[],accounts:[],controls:[],checklist:[],summary:{accounts:0,data_ready:0,trading_ready:0,with_warnings:0},pending_approvals:0,failed_alerts:0,four_eyes_live_changes:true,network:{}});};
  sw.eval(js);for(let i=0;i<6;i++)await tick();
- const sq=s=>sw.document.querySelector(s),sqa=s=>[...sw.document.querySelectorAll(s)];
+ const shownS=()=>[...sw.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||sw.document;
+ const sq=s=>shownS().querySelector(s)||sw.document.querySelector(s),sqa=s=>{const a=[...shownS().querySelectorAll(s)];return a.length?a:[...sw.document.querySelectorAll(s)];};
  assert.ok(sq('.status-chips').textContent.includes('Feeds 0/1 · 1 problem'));assert.ok(sq('.status-chips').textContent.includes('Approvals 2'));
  assert.equal(sq('nav.activity [aria-label="Market data"] .rail-badge').textContent,'1');
  assert.ok(sqa('.dense-table tr').some(r=>r.textContent.includes('Broker refused')),'problems on Overview');
  assert.ok(sqa('.sb-row.sb-problem').some(r=>r.textContent.includes('Broker refused')),'problems in the side bar');
  assert.ok(sq('.tb-tabs').textContent.includes('PROBLEMS1'),'toolbox counts problems');
- assert.equal(sq('.tabs'),null,'one view: no tab bar');
+ assert.ok(sq('.tabs [aria-label="Open Overview in new window"]'),'the workspace tab bar with its actions is always shown');
  sq('nav.activity [aria-label="Configuration"]').click();for(let i=0;i<4;i++)await tick();
  sq('nav.activity [aria-label="Infrastructure"]').click();for(let i=0;i<4;i++)await tick();
- assert.equal(JSON.parse(sw.localStorage.getItem('corei-os-mini.workstation.layout.v1')).groups[0].length,1,'rail shows in place');
+ assert.deepEqual(JSON.parse(sw.localStorage.getItem('corei-os-mini.workstation.layout.v1')).groups[0],['Overview','Configuration','Infrastructure'],'every screen opens as its own workspace tab');
+ sq('nav.activity [aria-label="Configuration"]').click();for(let i=0;i<4;i++)await tick();
+ assert.equal(JSON.parse(sw.localStorage.getItem('corei-os-mini.workstation.layout.v1')).groups[0].length,3,'an open workspace is focused, not opened twice');
+ assert.equal(sq('[role="tab"][aria-selected="true"]').textContent,'Setup');
  sw.dispatchEvent(new sw.KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}));await tick();
  const si=sq('[aria-label="Search commands"]');Object.getOwnPropertyDescriptor(sw.HTMLInputElement.prototype,'value').set.call(si,'collection plans');si.dispatchEvent(new sw.Event('input',{bubbles:true}));await tick();
  const first=sqa('[role="option"]')[0];assert.ok(first.textContent.includes('Market data › Collection plans'));first.click();for(let i=0;i<6;i++)await tick();
@@ -125,5 +136,5 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  sqa('.pl-node').find(n=>n.textContent.includes('Post-trade')).click();for(let i=0;i<4;i++)await tick();
  assert.equal(sq('nav.activity [aria-current="page"]').getAttribute('aria-label'),'Post-trade');
  assert.deepEqual(shErrors,[]);
- console.log('PASS: shell shows live status chips and badges, rail opens screens in place, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
-})().catch(e=>{console.error(e);process.exit(1)});
+ console.log('PASS: shell shows live status chips and badges, each screen opens as its own workspace tab, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
+})().catch(e=>{console.error(String(e&&e.message||e).slice(0,3000));process.exit(1)});

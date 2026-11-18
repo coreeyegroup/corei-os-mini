@@ -154,7 +154,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  };
 
  w.eval(js);await tick();await tick();
- const $=s=>w.document.querySelector(s);
+ const shown=()=>[...w.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||w.document;
+ const $=s=>shown().querySelector(s)||w.document.querySelector(s);
  const fill=(el,value)=>{const proto=el.tagName==='SELECT'?w.HTMLSelectElement.prototype:el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new w.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const byLabel=l=>$(`.cfg-detail [aria-label="${l}"]`)||$(`[aria-label="${l}"]`);
  const nav=label=>[...w.document.querySelectorAll('.cfg-nav button')].find(b=>b.querySelector('span').textContent===label);
@@ -675,4 +676,4 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.deepEqual(errors,[]);
  console.log('PASS: configuration workspace has no runtime errors.');
  w.close();
-})().catch(e=>{console.error(e);process.exit(1)});
+})().catch(e=>{console.error(String(e&&e.stack||e).slice(0,4000));process.exit(1)});
