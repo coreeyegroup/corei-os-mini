@@ -5,7 +5,10 @@ algorithm used by the live runtime/backtest, with closed bars only.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Response, HTTPException
+from pydantic import ValidationError
+
+from .strategy_workflow import Workflow, compile_workflow, catalog
 
 from . import config_store as store
 from .operator_auth import require_operator
@@ -64,3 +67,19 @@ def scan(response: Response, strategy_code: str | None = Query(None, max_length=
             out.append({**base, **result})
     return {'items': out, 'scope': 'ACTIVE_DEPLOYMENTS_ONLY',
             'notice': 'Read-only closed-bar evaluation. Target is not an entry signal; no entry, stop, target, sizing or order is implied.'}
+
+
+@router.get('/builder/nodes')
+def builder_nodes(response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    return catalog()
+
+
+@router.post('/builder/validate')
+def validate_builder(payload: Workflow, response: Response,
+                     _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return compile_workflow(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
