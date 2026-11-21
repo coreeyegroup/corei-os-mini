@@ -57,6 +57,31 @@ export default function StrategyStudio() {
   }, null, 2));
   const [validation, setValidation] = useState('');
   const [previewBars, setPreviewBars] = useState('');
+  const [storedSources, setStoredSources] = useState<Row[]>([]);
+  const [storedSource, setStoredSource] = useState('');
+  const [storedTimeframe, setStoredTimeframe] = useState('H1');
+  const [storedCount, setStoredCount] = useState(300);
+  const loadStoredSources = async () => {
+    try {
+      const result = await api('trading/sources');
+      const items = rows(result);
+      setStoredSources(items);
+      if (items.length) setStoredSource(String(items[0].account_id)+'|'+String(items[0].broker_symbol));
+    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
+  };
+  const previewStored = async () => {
+    setPreviewing(true); setValidation('');
+    try {
+      const [account_id, ...symbolParts] = storedSource.split('|');
+      if (!account_id || !symbolParts.length) throw new Error('Select a stored market-data source');
+      const result = await api('trading/studio/builder/preview-stored', 'POST', {
+        workflow: JSON.parse(draft), account_id, symbol: symbolParts.join('|'),
+        timeframe: storedTimeframe, bars: storedCount
+      });
+      setValidation(JSON.stringify(result,null,2));
+    } catch(e) { setValidation(e instanceof Error ? e.message : String(e)); }
+    finally { setPreviewing(false); }
+  };
   const [nodeCatalog, setNodeCatalog] = useState<Row[]>([]);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const openCanvas = async () => {
@@ -175,6 +200,24 @@ export default function StrategyStudio() {
         onClick={()=>void validateDraft()}>{validating?'Validating…':'Validate draft'}</button>
         <button onClick={()=>void api('trading/studio/builder/nodes').then(r=>setValidation(JSON.stringify(r,null,2))).catch(e=>setValidation(String(e)))}>
           Show node catalog</button></div>
+      <details><summary>Stored market-data preview (read-only)</summary>
+        <p className="cfg-note">Evaluate this draft on collected historical bars for a selected account and instrument. This does not backtest fills or submit orders.</p>
+        <div className="intel-bar">
+          <button onClick={()=>void loadStoredSources()}>Load available sources</button>
+          <label>Source <select aria-label="Stored market-data source" value={storedSource}
+            onChange={e=>setStoredSource(e.target.value)}>
+            {storedSources.map((s,i)=><option key={i} value={String(s.account_id)+'|'+String(s.broker_symbol)}>
+              {String(s.broker_symbol)} · {String(s.account_id)}</option>)}
+          </select></label>
+          <label>Timeframe <select value={storedTimeframe} onChange={e=>setStoredTimeframe(e.target.value)}>
+            {['M1','M5','M15','M30','H1','H4','D1'].map(tf=><option key={tf}>{tf}</option>)}
+          </select></label>
+          <label>Bars <input aria-label="Preview bar count" type="number" min={10} max={5000}
+            value={storedCount} onChange={e=>setStoredCount(Number(e.target.value))}/></label>
+          <button disabled={previewing || !storedSource || storedCount<10 || storedCount>5000}
+            onClick={()=>void previewStored()}>{previewing?'Evaluating…':'Preview stored bars'}</button>
+        </div>
+      </details>
       <details><summary>Historical preview (closed OHLC bars)</summary>
         <p className="cfg-note">Paste a JSON array of 2–5000 historical closed bars, each with open, high, low and close. No orders are submitted. Indicator warm-up requires sufficient history.</p>
         <textarea aria-label="Historical OHLC bars JSON" rows={7} value={previewBars}
