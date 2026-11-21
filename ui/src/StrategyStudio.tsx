@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './Configuration';
 import { goto } from './nav';
+import UniversalCanvas from './UniversalCanvas';
 
 type Row = Record<string, any>;
 type Mode = 'observe' | 'scan' | 'build' | 'results';
@@ -56,6 +57,15 @@ export default function StrategyStudio() {
   }, null, 2));
   const [validation, setValidation] = useState('');
   const [previewBars, setPreviewBars] = useState('');
+  const [nodeCatalog, setNodeCatalog] = useState<Row[]>([]);
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const openCanvas = async () => {
+    try {
+      const result = await api('trading/studio/builder/nodes');
+      setNodeCatalog(Array.isArray(result.nodes) ? result.nodes : []);
+      setCanvasOpen(true);
+    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
+  };
   const [previewing, setPreviewing] = useState(false);
   const previewDraft = async () => {
     setPreviewing(true); setValidation('');
@@ -153,6 +163,10 @@ export default function StrategyStudio() {
     {mode === 'build' && <>
       <h3>Build · Universal workflow draft</h3>
       <p className="cfg-note">Portable JSON strategy graph. This editor validates node types, required ports, parameters and cycles. It does not save, backtest, deploy or execute the graph. Existing visual graph authoring remains available below.</p>
+      <div className="intel-bar"><button onClick={()=>void openCanvas()}>
+        {canvasOpen ? 'Refresh visual builder' : 'Open visual builder'}</button>
+        <small className="cfg-note">Draft canvas uses the same JSON as the editor below.</small></div>
+      {canvasOpen && <UniversalCanvas draft={draft} onChange={value=>{setDraft(value);setValidation('');}} catalog={nodeCatalog as any} />}
       <label htmlFor="studio-workflow-json">Strategy workflow JSON</label>
       <textarea id="studio-workflow-json" aria-label="Strategy workflow JSON" spellCheck={false}
         value={draft} onChange={e=>{setDraft(e.target.value);setValidation('');}}
