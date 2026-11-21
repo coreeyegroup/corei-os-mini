@@ -33,6 +33,40 @@ export default function StrategyStudio() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [updated, setUpdated] = useState('');
+  const [draft, setDraft] = useState(JSON.stringify({
+    schema_version: '1.0', name: 'EMA directional draft',
+    nodes: [
+      { id: 'bars', type: 'input.bars' },
+      { id: 'fast', type: 'indicator.ema', params: { period: 20 } },
+      { id: 'slow', type: 'indicator.ema', params: { period: 50 } },
+      { id: 'bull', type: 'condition.compare', params: { operator: '>' } },
+      { id: 'bear', type: 'condition.compare', params: { operator: '<' } },
+      { id: 'signal', type: 'signal.direction' }
+    ],
+    edges: [
+      { source: 'bars', source_port: 'close', target: 'fast', target_port: 'source' },
+      { source: 'bars', source_port: 'close', target: 'slow', target_port: 'source' },
+      { source: 'fast', source_port: 'value', target: 'bull', target_port: 'left' },
+      { source: 'slow', source_port: 'value', target: 'bull', target_port: 'right' },
+      { source: 'fast', source_port: 'value', target: 'bear', target_port: 'right' },
+      { source: 'slow', source_port: 'value', target: 'bear', target_port: 'left' },
+      { source: 'bull', source_port: 'result', target: 'signal', target_port: 'long' },
+      { source: 'bear', source_port: 'result', target: 'signal', target_port: 'short' }
+    ]
+  }, null, 2));
+  const [validation, setValidation] = useState('');
+  const [validating, setValidating] = useState(false);
+  const validateDraft = async () => {
+    setValidating(true); setValidation('');
+    try {
+      const payload = JSON.parse(draft);
+      const result = await api('trading/studio/builder/validate', {
+        method: 'POST', body: JSON.stringify(payload)
+      });
+      setValidation(JSON.stringify(result, null, 2));
+    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
+    finally { setValidating(false); }
+  };
   const refresh = async () => {
     setBusy(true); setError('');
     const endpoints = ['config/instruments', 'config/strategies', 'config/deployments', 'trading/signals?limit=500', 'trading/runtime'];
@@ -107,7 +141,18 @@ export default function StrategyStudio() {
       <div className="intel-bar"><button onClick={()=>jump('Strategies','signals')}>Signal details</button><button onClick={()=>jump('Risk','decisions')}>Risk decisions</button></div>
     </>}
     {mode === 'build' && <>
-      <h3>Build · Reuse the approved strategy lifecycle</h3>
+      <h3>Build · Universal workflow draft</h3>
+      <p className="cfg-note">Portable JSON strategy graph. This editor validates node types, required ports, parameters and cycles. It does not save, backtest, deploy or execute the graph. Existing visual graph authoring remains available below.</p>
+      <label htmlFor="studio-workflow-json">Strategy workflow JSON</label>
+      <textarea id="studio-workflow-json" aria-label="Strategy workflow JSON" spellCheck={false}
+        value={draft} onChange={e=>{setDraft(e.target.value);setValidation('');}}
+        rows={16} style={{width:'100%',fontFamily:'monospace',fontSize:'12px'}} />
+      <div className="intel-bar"><button className="primary" disabled={validating}
+        onClick={()=>void validateDraft()}>{validating?'Validating…':'Validate draft'}</button>
+        <button onClick={()=>void api('trading/studio/builder/nodes').then(r=>setValidation(JSON.stringify(r,null,2))).catch(e=>setValidation(String(e)))}>
+          Show node catalog</button></div>
+      {validation && <pre role="status" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:300,overflowY:'auto'}}>{validation}</pre>}
+      <h3>Existing strategy lifecycle</h3>
       <p>Choose an existing algorithm or visual calculation graph, create a version, validate it, approve it, then assign instruments and accounts through deployments. Drafts do not trade.</p>
       <div className="intel-bar"><button onClick={()=>jump('Strategies','graphs')}>Open visual node builder</button><button onClick={()=>jump('Configuration','strategies')}>Create strategy/version</button><button onClick={()=>jump('Configuration','deployments')}>Assign instruments</button></div>
       <ol><li>Input: collected bars and indicators.</li><li>Process: rules, filters, graph and signal checks.</li><li>Output: qualified signal, risk decision and controlled execution.</li></ol>
