@@ -6,6 +6,7 @@ import Intelligence from "./Intelligence";
 import { OrdersView, PortfolioView, RiskView, SignalsView, StrategiesView } from "./TradingViews";
 import { PostTradeView } from "./TradingExtras";
 import FlowView from "./FlowView";
+import StrategyStudio from "./StrategyStudio";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
@@ -49,6 +50,7 @@ const descriptions: Record<View, string> = {
   Intelligence: "2 · Market intelligence: select and compare collected data across sources, charts; features, sessions, regimes, screening",
   Signals: "3 · Signal intelligence: signal model, lifecycle, decision engine",
   Strategies: "4 · Strategy intelligence: versions, deployments, runtime, backtest",
+  "Strategy Studio": "Simplified instrument observation, strategy scanning, building and results",
   Risk: "5 · Risk intelligence: limits, sizing, loss limits, margin and exposure",
   Portfolio: "6 · Portfolio intelligence: positions, P&L, exposure, capital",
   Execution: "7 · Execution: OMS, MT5 order adapter, routing, fills",
@@ -58,11 +60,11 @@ const descriptions: Record<View, string> = {
   Settings: "Workspace layout and navigation preferences",
   Flow: "Calculation flow: every calculation, formula and equation as nodes and wires (n8n-style), with live values",
 };
-const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
+const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy','Strategy Studio':'Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
 /* The rail: home, then the trading flow in order (1 market data → 8 post-trade), watching, setting up. */
-const RAIL:(View|'-')[]=['Overview','-','Market data','Intelligence','Signals','Strategies','Risk','Portfolio','Execution','Post-trade','Flow','-','Operations','-','Configuration','Infrastructure'];
-const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
-const iconIndex:Record<View,number>={Overview:0,'Market data':1,Intelligence:11,Signals:12,Strategies:5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9,Flow:3};
+const RAIL:(View|'-')[]=['Overview','-','Market data','Intelligence','Signals','Strategies','Strategy Studio','Risk','Portfolio','Execution','Post-trade','Flow','-','Operations','-','Configuration','Infrastructure'];
+const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies','Strategy Studio':'Strategy Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
+const iconIndex:Record<View,number>={Overview:0,'Market data':1,Intelligence:11,Signals:12,Strategies:5,'Strategy Studio':5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9,Flow:3};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
@@ -385,6 +387,7 @@ export default function App() {
     if (view === "Intelligence") return <Intelligence open={v=>goto(v)}/>;
     if (view === "Signals") return <SignalsView/>;
     if (view === "Strategies") return <StrategiesView/>;
+    if (view === "Strategy Studio") return <StrategyStudio/>;
     if (view === "Risk") return <RiskView/>;
     if (view === "Portfolio") return <PortfolioView/>;
     if (view === "Execution") return <OrdersView/>;
