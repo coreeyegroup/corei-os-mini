@@ -55,6 +55,18 @@ export default function StrategyStudio() {
     ]
   }, null, 2));
   const [validation, setValidation] = useState('');
+  const [previewBars, setPreviewBars] = useState('');
+  const [previewing, setPreviewing] = useState(false);
+  const previewDraft = async () => {
+    setPreviewing(true); setValidation('');
+    try {
+      const workflow = JSON.parse(draft);
+      const bars = JSON.parse(previewBars);
+      const result = await api('trading/studio/builder/preview', 'POST', { workflow, bars });
+      setValidation(JSON.stringify(result, null, 2));
+    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
+    finally { setPreviewing(false); }
+  };
   const [validating, setValidating] = useState(false);
   const validateDraft = async () => {
     setValidating(true); setValidation('');
@@ -149,6 +161,15 @@ export default function StrategyStudio() {
         onClick={()=>void validateDraft()}>{validating?'Validating…':'Validate draft'}</button>
         <button onClick={()=>void api('trading/studio/builder/nodes').then(r=>setValidation(JSON.stringify(r,null,2))).catch(e=>setValidation(String(e)))}>
           Show node catalog</button></div>
+      <details><summary>Historical preview (closed OHLC bars)</summary>
+        <p className="cfg-note">Paste a JSON array of 2–5000 historical closed bars, each with open, high, low and close. No orders are submitted. Indicator warm-up requires sufficient history.</p>
+        <textarea aria-label="Historical OHLC bars JSON" rows={7} value={previewBars}
+          onChange={e=>setPreviewBars(e.target.value)}
+          placeholder={'[{"open":100,"high":102,"low":99,"close":101}, ...]'}
+          style={{width:'100%',fontFamily:'monospace',fontSize:'12px'}} />
+        <button disabled={previewing || !previewBars.trim()} onClick={()=>void previewDraft()}>
+          {previewing?'Previewing…':'Preview closed bars'}</button>
+      </details>
       {validation && <pre role="status" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:300,overflowY:'auto'}}>{validation}</pre>}
       <h3>Existing strategy lifecycle</h3>
       <p>Choose an existing algorithm or visual calculation graph, create a version, validate it, approve it, then assign instruments and accounts through deployments. Drafts do not trade.</p>
