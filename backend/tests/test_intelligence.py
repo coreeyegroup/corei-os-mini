@@ -182,6 +182,20 @@ class PublicShell(unittest.TestCase):
         self.assertEqual(missing, [], f'add these to @operational in deploy/workstation.Caddyfile: {missing}')
 
 
+    def test_studio_workflows_use_the_larger_proxy_body_limit(self):
+        import re
+        from pathlib import Path
+        caddy = (Path(__file__).resolve().parents[2] / 'deploy' / 'workstation.Caddyfile').read_text()
+        studio = re.search(r'@studio_payload path ([^\n]+)\n    handle @studio_payload \{(.*?)reverse_proxy',
+                           caddy, re.S)
+        self.assertIsNotNone(studio)
+        self.assertEqual(set(studio.group(1).split()), {
+            '/api/trading/studio/builder/*', '/api/trading/studio/drafts/*',
+        })
+        self.assertIn('max_size 2MB', studio.group(2))
+        self.assertLess(studio.start(), caddy.index('handle @operational'))
+
+
 class IndicatorsV2(unittest.TestCase):
     def test_macd_stochastic_donchian_zscore(self):
         c = [float(i) for i in range(1, 61)]

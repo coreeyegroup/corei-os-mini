@@ -40,7 +40,15 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
-    @operational path /api/operator/* /api/config/* /api/admin/* /api/oauth/* /api/infra/* /api/md/* /api/intel/* /api/trading/*
+    # Studio accepts complete workflow definitions and batches of historical OHLC bars.
+    @studio_payload path /api/trading/studio/builder/* /api/trading/studio/drafts/*
+    handle @studio_payload {
+        request_body {
+            max_size 2MB
+        }
+        reverse_proxy 127.0.0.1:18786
+    }
+    @operational path /api/operator/* /api/config/* /api/admin/* /api/oauth/* /api/infra/* /api/md/* /api/intel/* /api/trading/* /api/calc/*
     handle @operational {
         request_body {
             max_size 64KB
