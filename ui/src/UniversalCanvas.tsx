@@ -2,7 +2,7 @@
  * Existing approved Calculation Graph workbench remains the production authoring path.
  */
 import { useMemo, useState } from 'react';
-import { Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges,
+import { Handle, Position, applyEdgeChanges,
   type Connection, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import FlowCanvas from './calc/FlowCanvas';
 
@@ -15,10 +15,10 @@ type Props = { draft: string; onChange: (text: string) => void; catalog: Ports[]
 function Block({ data }: NodeProps<Node<{ label: string; inputs: string[]; outputs: string[] }>>) {
   return <div style={{background:'var(--surface, #202633)',color:'var(--text, #fff)',border:'1px solid #6b7280',borderRadius:8,minWidth:170,padding:10}}>
     <strong style={{fontSize:12}}>{data.label}</strong>
-    {data.inputs.map((p,i)=><div key={p} style={{position:'relative',fontSize:11,marginTop:8}}>
+    {data.inputs.map(p=><div key={p} style={{position:'relative',fontSize:11,marginTop:8}}>
       <Handle type="target" position={Position.Left} id={p} style={{top:'50%'}}/>{p}
     </div>)}
-    {data.outputs.map((p,i)=><div key={p} style={{position:'relative',fontSize:11,marginTop:8,textAlign:'right'}}>
+    {data.outputs.map(p=><div key={p} style={{position:'relative',fontSize:11,marginTop:8,textAlign:'right'}}>
       {p}<Handle type="source" position={Position.Right} id={p} style={{top:'50%'}}/>
     </div>)}
   </div>;
