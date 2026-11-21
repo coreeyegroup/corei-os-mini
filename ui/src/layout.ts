@@ -7,6 +7,7 @@ export const views = [
   "Post-trade",
   "Configuration",
   "Strategies",
+  "Strategy Studio",
   "Execution",
   "Portfolio",
   "Operations",
