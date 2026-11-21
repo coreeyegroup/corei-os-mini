@@ -2,6 +2,7 @@
 import unittest
 
 from corei_os_mini.strategy_workflow import Workflow, compile_workflow
+from corei_os_mini.strategy_preview import preview
 
 
 def example():
@@ -29,6 +30,19 @@ def example():
 
 
 class CompilerTests(unittest.TestCase):
+    def test_closed_bar_preview(self):
+        bars = [{'open': 100+i, 'high': 102+i, 'low': 99+i, 'close': 101+i}
+                for i in range(100)]
+        result = preview(Workflow.model_validate(example()), bars)
+        self.assertEqual(result['bars_evaluated'], 100)
+        self.assertEqual(result['latest'], 'LONG')
+        self.assertEqual(len(result['tail']), 100)
+
+    def test_preview_rejects_invalid_bar(self):
+        bars = [{'open': 100, 'high': 99, 'low': 98, 'close': 101}] * 100
+        with self.assertRaisesRegex(ValueError, 'invalid OHLC range'):
+            preview(Workflow.model_validate(example()), bars)
+
     def test_valid_graph(self):
         plan = compile_workflow(Workflow.model_validate(example()))
         self.assertTrue(plan['valid'])
