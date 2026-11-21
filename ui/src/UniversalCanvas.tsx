@@ -106,8 +106,11 @@ export default function UniversalCanvas({draft,onChange,catalog}:Props) {
       editable onConnect={connect}
       onNodeClick={setActiveNode}
       onNodesChange={changes=>{
-        const moved = changes.filter(c=>c.type==='position' && c.position);
-        if (moved.length) setPositions(old=>({...old,...Object.fromEntries(moved.map(c=>[c.id,c.position!]))}));
+        const moved: Record<string,{x:number;y:number}> = {};
+        for (const change of changes) {
+          if (change.type === 'position' && change.position) moved[change.id] = change.position;
+        }
+        if (Object.keys(moved).length) setPositions(old=>({...old,...moved}));
         // Position edits are visual only in schema v1. Deletion updates the draft.
         const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
         if (removed.length) save({...workflow!,nodes:workflow!.nodes.filter(n=>!removed.includes(n.id)),
