@@ -82,6 +82,27 @@ export default function StrategyStudio() {
     } catch(e) { setValidation(e instanceof Error ? e.message : String(e)); }
     finally { setPreviewing(false); }
   };
+  const [templates, setTemplates] = useState<Row[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const loadTemplates = async () => {
+    setTemplateBusy(true);
+    try {
+      const result = await api('trading/studio/builder/templates');
+      setTemplates(rows(result));
+    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
+    finally { setTemplateBusy(false); }
+  };
+  const useTemplate = async () => {
+    if (!selectedTemplate) return;
+    setTemplateBusy(true);
+    try {
+      const definition = await api('trading/studio/builder/templates/'+encodeURIComponent(selectedTemplate));
+      setDraft(JSON.stringify(definition,null,2));
+      setValidation('Loaded research draft template. Validate and preview before use. Not approved for trading.');
+    } catch(e) { setValidation(e instanceof Error ? e.message : String(e)); }
+    finally { setTemplateBusy(false); }
+  };
   const [nodeCatalog, setNodeCatalog] = useState<Row[]>([]);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const openCanvas = async () => {
@@ -187,6 +208,18 @@ export default function StrategyStudio() {
     </>}
     {mode === 'build' && <>
       <h3>Build · Universal workflow draft</h3>
+      <div className="intel-bar">
+        <button disabled={templateBusy} onClick={()=>void loadTemplates()}>Load research templates</button>
+        <label>Template <select aria-label="Research strategy template" value={selectedTemplate}
+          onChange={e=>setSelectedTemplate(e.target.value)}>
+          <option value="">Select template</option>
+          {templates.map(t=><option key={String(t.id)} value={String(t.id)}>
+            {String(t.category)} · {String(t.name)}</option>)}
+        </select></label>
+        <button disabled={!selectedTemplate || templateBusy} onClick={()=>void useTemplate()}>
+          Load into draft</button>
+      </div>
+      <p className="cfg-note">Templates replace only the current unsaved draft in this editor. Copy your JSON before loading another template. Templates are illustrative, not validated trading strategies.</p>
       <p className="cfg-note">Portable JSON strategy graph. This editor validates node types, required ports, parameters and cycles. It does not save, backtest, deploy or execute the graph. Existing visual graph authoring remains available below.</p>
       <div className="intel-bar"><button onClick={()=>void openCanvas()}>
         {canvasOpen ? 'Refresh visual builder' : 'Open visual builder'}</button>
