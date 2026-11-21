@@ -17,7 +17,6 @@ function rows(value: unknown): Row[] {
 function label(row: Row): string { return String(row.symbol ?? row.instrument_symbol ?? row.code ?? 'Unknown'); }
 function jump(view: 'Strategies' | 'Configuration' | 'Signals' | 'Risk', section: string) {
   goto(view, section);
-  window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view } }));
 }
 export default function StrategyStudio() {
   const [mode, setMode] = useState<Mode>('observe');
