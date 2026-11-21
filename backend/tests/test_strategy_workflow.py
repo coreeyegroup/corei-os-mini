@@ -3,6 +3,7 @@ import unittest
 
 from corei_os_mini.strategy_workflow import Workflow, compile_workflow
 from corei_os_mini.strategy_preview import preview
+from corei_os_mini.strategy_templates import template_list, template_get
 
 
 def example():
@@ -42,6 +43,23 @@ class CompilerTests(unittest.TestCase):
         bars = [{'open': 100, 'high': 99, 'low': 98, 'close': 101}] * 100
         with self.assertRaisesRegex(ValueError, 'invalid OHLC range'):
             preview(Workflow.model_validate(example()), bars)
+
+    def test_all_research_templates_compile(self):
+        templates = template_list()['items']
+        self.assertGreaterEqual(len(templates), 4)
+        for item in templates:
+            with self.subTest(template=item['id']):
+                draft = template_get(item['id'])
+                self.assertTrue(compile_workflow(Workflow.model_validate(draft))['valid'])
+
+    def test_template_is_independent_copy(self):
+        first = template_get('ema_trend_20_50')
+        first['nodes'][1]['params']['period'] = 999
+        self.assertEqual(template_get('ema_trend_20_50')['nodes'][1]['params']['period'], 20)
+
+    def test_unknown_template(self):
+        with self.assertRaises(KeyError):
+            template_get('does_not_exist')
 
     def test_valid_graph(self):
         plan = compile_workflow(Workflow.model_validate(example()))
