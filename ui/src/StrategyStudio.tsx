@@ -7,20 +7,25 @@ import './strategy-studio.css';
 
 type Row = Record<string, unknown>;
 type Mode = 'observe' | 'scan' | 'build' | 'results';
-type EditorView = 'canvas' | 'templates' | 'test' | 'json' | 'drafts';
-type TestOutput = { title: string; draft: string; error?: string; data?: Row };
-
 const modes = [
   ['build', 'Build strategy'], ['observe', 'Observe instrument'],
   ['scan', 'Scan strategy'], ['results', 'Results'],
 ] as const;
-const editorViews = [
-  ['canvas', 'Canvas'], ['templates', 'Templates'], ['test', 'Validate & preview'], ['drafts', 'Saved drafts'], ['json', 'JSON'],
+const buildSteps = [
+  { id: 'templates', title: 'Start', description: 'Choose a template, edit the starter workflow, or reopen a saved revision.' },
+  { id: 'canvas', title: 'Build rules', description: 'Add and connect nodes. Select a node to edit its parameters.' },
+  { id: 'test', title: 'Validate & preview', description: 'Check the graph and preview its signals on closed bars.' },
+  { id: 'drafts', title: 'Save revision', description: 'Save the workflow you want to keep or send for review.' },
+  { id: 'review', title: 'Review & use', description: 'Send a saved revision for approval, then use the approved rule in a strategy.' },
 ] as const;
+type BuildStep = typeof buildSteps[number]['id'];
+type EditorView = BuildStep | 'json';
 type StudioSection = 'observe' | 'scan' | 'results' | EditorView;
-const studioSections: StudioSection[] = ['observe', 'scan', 'results', ...editorViews.map(([id]) => id)];
+type TestOutput = { title: string; draft: string; error?: string; data?: Row };
+const studioSections: StudioSection[] = [...buildSteps.map(step => step.id), 'json', 'observe', 'scan', 'results'];
 const explorerSections = [
-  ...editorViews.map(([id, label]) => ({ id, label, group: 'Build strategy' })),
+  ...buildSteps.map(({ id, title }, index) => ({ id, label: `${index + 1}. ${title}`, group: 'Build strategy' })),
+  { id: 'json', label: 'Workflow JSON', group: 'Build tools' },
   ...modes.flatMap(([id, label]) => id === 'build' ? [] : [{ id, label, group: 'Research & results' }]),
 ];
 const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
@@ -82,8 +87,8 @@ function StudioTable({ title, columns, items, empty }: {
 }
 
 export default function StrategyStudio() {
-  const [section, setSection] = useSection('Strategy Studio', 'canvas', studioSections);
-  const lastEditor = useRef<EditorView>('canvas');
+  const [section, setSection] = useSection('Strategy Studio', 'templates', studioSections);
+  const lastEditor = useRef<EditorView>('templates');
   const mode: Mode = section === 'observe' || section === 'scan' || section === 'results' ? section : 'build';
   const editor = mode === 'build' ? section as EditorView : lastEditor.current;
   const [draft, setDraft] = useState(starterDraft);
@@ -108,6 +113,7 @@ export default function StrategyStudio() {
   const [storedTimeframe, setStoredTimeframe] = useState('H1');
   const [storedCount, setStoredCount] = useState('300');
   const [testBusy, setTestBusy] = useState(false);
+  const [checkedDraft, setCheckedDraft] = useState<string | null>(null);
   const [output, setOutput] = useState<TestOutput | null>(null);
   const [instruments, setInstruments] = useState<Row[]>([]);
   const [strategies, setStrategies] = useState<Row[]>([]);
@@ -206,13 +212,15 @@ export default function StrategyStudio() {
 
   async function useTemplate() {
     if (!selectedTemplate || templateBusy || applyingTemplate) return;
-    if (draft !== starterDraft && !window.confirm('Replace the current unsaved draft with this template?')) return;
+    if (draft !== starterDraft && draft !== opened?.text && !window.confirm('Replace the unsaved edits with this template?')) return;
     setApplyingTemplate(true);
     setTemplateError('');
     try {
       const definition = await api('trading/studio/builder/templates/' + encodeURIComponent(selectedTemplate));
       setDraft(JSON.stringify(definition, null, 2));
+      setOpened(null);
       setOutput(null);
+      setCheckedDraft(null);
       setCanvasRevision(current => current + 1);
       setTemplateNotice('Template loaded into the draft.');
       setSection('canvas');
@@ -245,6 +253,8 @@ export default function StrategyStudio() {
           timeframe: storedTimeframe, bars: Number(storedCount),
         });
       }
+      if (action === 'preview' || data.valid === true) setCheckedDraft(capturedDraft);
+      else setCheckedDraft(previous => previous === capturedDraft ? null : previous);
       setOutput({ title, draft: capturedDraft, data });
     } catch (error) {
       setOutput({ title, draft: capturedDraft, error: message(error) });
@@ -281,9 +291,20 @@ export default function StrategyStudio() {
   }
 
   const workflow = readWorkflow(draft);
-  const savedStatus = opened && draft === opened.text ? 'Saved research draft · v' + opened.revision.version : 'Unsaved research draft';
+  const saved = opened?.text === draft ? opened.revision : null;
+  const savedStatus = saved ? 'Saved research draft · v' + saved.version
+    : opened ? 'Unsaved edits to v' + opened.revision.version : 'Unsaved research draft';
+  const checked = checkedDraft === draft;
   const validCount = Number.isInteger(Number(storedCount)) && Number(storedCount) >= 10 && Number(storedCount) <= 5000;
-
+  const currentStep = editor === 'json' ? 'canvas' : editor;
+  const stepIndex = buildSteps.findIndex(step => step.id === currentStep);
+  const step = buildSteps[stepIndex];
+  const locked = applyingTemplate || draftBusy;
+  const stepStatus: Partial<Record<BuildStep, string>> = {
+    test: checked ? 'Checked' : undefined,
+    drafts: saved ? 'v' + saved.version + ' saved' : undefined,
+    review: saved?.promoted_graph_code ? 'Graph created' : undefined,
+  };
   return <section className="studio" aria-label="Strategy Intelligence Studio">
     <header className="studio-header">
       <h2>Strategy Intelligence Studio</h2>
@@ -298,15 +319,35 @@ export default function StrategyStudio() {
     </nav>
 
     <div hidden={mode !== 'build'}>
-      <div className="studio-editor-bar">
+      <nav className="studio-steps" aria-label="Strategy build steps">
+        {buildSteps.map(({ id, title }, index) => <button key={id} type="button"
+          aria-current={currentStep === id ? 'step' : undefined}
+          disabled={locked} onClick={() => setSection(id)}>
+          <span className="studio-step-number" aria-hidden="true">{index + 1}</span>
+          <span className="studio-step-label"><strong>{title}</strong>{stepStatus[id] && <small>{stepStatus[id]}</small>}</span>
+        </button>)}
+      </nav>
+      <div className="studio-stage">
+        <div>
+          <h3>{editor === 'json' ? 'Workflow JSON' : step.title}</h3>
+          <p className="cfg-note">{editor === 'json' ? 'Edit the same workflow shown on the canvas.' : step.description}</p>
+        </div>
         <div className="studio-draft-title">
           <strong>{workflow?.name || 'Workflow draft'}</strong>
           <small>{savedStatus}</small>
         </div>
-        <nav className="studio-subnav" aria-label="Draft workspace">
-          {editorViews.map(([id, label]) => <button key={id} aria-pressed={editor === id}
-            disabled={applyingTemplate || draftBusy} onClick={() => setSection(id)}>{label}</button>)}
-        </nav>
+        <div className="studio-actions studio-stage-actions">
+          {editor === 'templates' && <button disabled={locked} onClick={() => setSection('canvas')}>{draft === starterDraft && !opened ? 'Edit starter workflow' : 'Resume current workflow'}</button>}
+          {editor === 'canvas' && <>
+            <button disabled={locked} onClick={() => setSection('json')}>Workflow JSON</button>
+            <button className="primary" disabled={locked} onClick={() => setSection('test')}>Next: validate & preview</button>
+          </>}
+          {editor === 'json' && <button className="primary" disabled={locked} onClick={() => setSection('canvas')}>Back to canvas</button>}
+          {editor === 'test' && <button className={checked ? 'primary' : undefined} disabled={testBusy}
+            onClick={() => setSection('drafts')}>Next: save revision</button>}
+          {editor === 'drafts' && saved && <button className="primary" disabled={locked} onClick={() => setSection('review')}>Next: review & use</button>}
+          {editor === 'review' && !saved && <button className="primary" disabled={locked} onClick={() => setSection('drafts')}>Save a revision</button>}
+        </div>
       </div>
       {templateNotice && editor === 'canvas' && <div className="studio-inline-notice" role="status">{templateNotice}</div>}
       <div hidden={editor !== 'canvas'} inert={draftBusy || applyingTemplate}>
@@ -322,7 +363,7 @@ export default function StrategyStudio() {
 
       {editor === 'templates' && <section className="studio-panel">
         <h3>Research templates</h3>
-        <p className="cfg-note">Load a starter workflow into your current draft. Copy the draft from the JSON tab before replacing it.</p>
+        <p className="cfg-note">Start a new research draft from a template.</p>
         {templateError && <p role="alert" className="cfg-error-text">{templateError}</p>}
         <div className="studio-actions">
           <label>Template
@@ -341,7 +382,8 @@ export default function StrategyStudio() {
         {templates?.length === 0 && <p role="status" className="cfg-note">No templates are available.</p>}
       </section>}
 
-      <StudioDrafts draft={draft} opened={opened} active={mode === 'build' && editor === 'drafts'} onBusy={setDraftBusy}
+      <StudioDrafts draft={draft} opened={opened} section={mode === 'build' && (editor === 'templates' || editor === 'drafts' || editor === 'review') ? editor : null}
+        onBusy={setDraftBusy} onResume={() => setSection('canvas')}
         onOpen={value => {
           const edited = draft !== value.text;
           setOpened(value);
@@ -351,8 +393,7 @@ export default function StrategyStudio() {
         }} />
 
       {editor === 'json' && <section className="studio-panel">
-        <h3><label htmlFor="studio-workflow-json">Strategy workflow JSON</label></h3>
-        <textarea id="studio-workflow-json" className="studio-json" spellCheck={false} rows={18} value={draft}
+        <textarea id="studio-workflow-json" aria-label="Strategy workflow JSON" className="studio-json" spellCheck={false} rows={18} value={draft}
           disabled={draftBusy || applyingTemplate}
           onChange={event => { setDraft(event.target.value); setTemplateNotice(''); }} />
       </section>}
@@ -360,18 +401,21 @@ export default function StrategyStudio() {
       {editor === 'test' && <section className="studio-panel" aria-label="Draft tests">
         <div className="studio-section-title">
           <div><h3>Validate workflow</h3><p className="cfg-note">Check node parameters, required connections and cycles.</p></div>
-          <button disabled={testBusy} onClick={() => void runTest('validate')}>Validate draft</button>
+          <div className="studio-actions">
+            {checked && <small>Current workflow checked</small>}
+            <button className={!checked ? 'primary' : undefined} disabled={testBusy} onClick={() => void runTest('validate')}>Validate draft</button>
+          </div>
         </div>
         <div className="studio-test-section">
           <h3>Preview on closed bars</h3>
-          <p className="cfg-note">Historical signal evaluation only. For fills and performance, use Backtest in Results.</p>
+          <p className="cfg-note">Preview shows historical signals. Backtest in Results estimates fills and performance.</p>
           <nav className="studio-subnav" aria-label="Preview data">
             <button aria-pressed={testSource === 'stored'} disabled={testBusy} onClick={() => setTestSource('stored')}>Stored market data</button>
             <button aria-pressed={testSource === 'pasted'} disabled={testBusy} onClick={() => setTestSource('pasted')}>Paste OHLC JSON</button>
           </nav>
           {testSource === 'stored' ? <>
             {sourceError && <p role="alert" className="cfg-error-text">{sourceError}</p>}
-            <div className="studio-actions">
+            <div className="studio-form-row">
               <label>Source
                 <select aria-label="Stored market-data source" value={storedSource} disabled={sourceBusy || testBusy}
                   onChange={event => setStoredSource(event.target.value)}>
@@ -390,9 +434,11 @@ export default function StrategyStudio() {
                 <input aria-label="Preview bar count" type="number" min={10} max={5000} value={storedCount} disabled={testBusy}
                   onChange={event => setStoredCount(event.target.value)} />
               </label>
-              <button className="primary" disabled={testBusy || sourceBusy || !storedSource || !validCount}
-                onClick={() => void runTest('preview')}>Preview stored bars</button>
-              <button disabled={sourceBusy || testBusy} onClick={() => void loadSources()}>Refresh sources</button>
+              <div className="studio-actions">
+                <button disabled={sourceBusy || testBusy} onClick={() => void loadSources()}>Refresh sources</button>
+                <button className={checked ? 'primary' : undefined} disabled={testBusy || sourceBusy || !storedSource || !validCount}
+                  onClick={() => void runTest('preview')}>Preview stored bars</button>
+              </div>
             </div>
             {storedSources?.length === 0 && <p role="status" className="cfg-note">No collected market-data sources are available.</p>}
             {!validCount && <p className="cfg-note">Enter a whole number from 10 to 5000.</p>}
@@ -426,7 +472,8 @@ export default function StrategyStudio() {
     {(observing || mode === 'scan') && <div className="studio-stack">
       <section className="studio-panel">
         <div className="studio-section-title">
-          <div><h3>Deployment coverage</h3><p className="cfg-note">Evaluation uses stored, closed bars for active deployments.</p></div>
+          <div><h3>{observing ? 'Select an instrument' : 'Select a strategy'}</h3>
+            <p className="cfg-note">Choose what to assess, then evaluate its active deployments on closed bars.</p></div>
           <button onClick={() => goto('Configuration', 'deployments')}>Configure deployments</button>
         </div>
         <div className="studio-actions">
@@ -449,6 +496,7 @@ export default function StrategyStudio() {
             {scanBusy ? 'Evaluating…' : 'Evaluate active deployments'}
           </button>
         </div>
+        <h3>Deployment coverage</h3>
         <StudioTable title="Deployment coverage" items={matching.map(row => ({ ...row, instrument: row.instrument_symbol ?? row.symbol }))}
           columns={[[ 'Strategy', 'strategy_code' ], [ 'Instrument', 'instrument' ], [ 'Account', 'account_code' ],
             [ 'Status', 'status' ], [ 'Mode', 'mode' ]]} empty={refreshing ? 'Loading deployments…' : 'No matching deployments.'} />

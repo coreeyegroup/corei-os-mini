@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './Configuration';
 import { openGraph } from './calc/ports';
-import { goto } from './nav';
+import { goto, setupStrategyFromRule } from './nav';
+import { useData } from './StageShell';
 import { readWorkflow } from './UniversalCanvas';
 
 export type DraftVersion = {
@@ -14,11 +15,12 @@ type Props = {
   draft: string;
   opened: OpenDraft | null;
   onOpen: (value: OpenDraft) => void;
-  active: boolean;
+  section: 'templates' | 'drafts' | 'review' | null;
+  onResume: () => void;
   onBusy: (busy: boolean) => void;
 };
 
-export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: Props) {
+export default function StudioDrafts({ draft, opened, onOpen, section, onBusy, onResume }: Props) {
   const [drafts, setDrafts] = useState<DraftSummary[] | null>(null);
   const [selected, setSelected] = useState('');
   const [versions, setVersions] = useState<DraftVersion[]>([]);
@@ -28,6 +30,7 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [feedbackStep, setFeedbackStep] = useState<Props['section']>(null);
   const pendingNew = useRef<{ id: string; text: string } | null>(null);
   const workflow = readWorkflow(draft);
   const changed = draft !== opened?.text;
@@ -35,9 +38,23 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
   const latest = drafts?.find(item => item.id === activeVersion?.draft_id);
   const historical = Boolean(latest && activeVersion && latest.version > activeVersion.version);
   const draftReady = Boolean(workflow?.name?.trim());
+  const graphCode = !changed ? activeVersion?.promoted_graph_code : null;
+  const graphVersion = activeVersion?.promoted_graph_version;
+  const graphPath = section === 'review' && graphCode && graphVersion != null
+    ? `calc/graphs/${encodeURIComponent(graphCode)}/versions/${graphVersion}` : null;
+  const [graph, graphError, refreshGraph] = useData<{ code: string; version: number; status: string; name: string }>(graphPath);
+  const [session] = useData<{ roles?: string[] }>(graphPath ? 'operator/session' : null, 0);
+  const reviewedGraph = graph && graph.code === graphCode && graph.version === graphVersion && !graphError ? graph : null;
+
+  function reviewGraph() {
+    if (!graphCode) return;
+    openGraph(graphCode, graphVersion ?? undefined);
+    goto('Strategies', 'graphs');
+  }
 
   async function withRequest(label: string, work: () => Promise<void>, locksDraft = false) {
     setBusy(label);
+    setFeedbackStep(section);
     setError('');
     setNotice('');
     if (locksDraft) onBusy(true);
@@ -68,8 +85,8 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
   }
 
   useEffect(() => {
-    if (active && drafts === null && !busy && !error) void withRequest('Loading drafts…', listDrafts);
-  }, [active, drafts, busy, error]);
+    if ((section === 'templates' || section === 'drafts') && drafts === null && !busy && !(error && feedbackStep === section)) void withRequest('Loading drafts…', listDrafts);
+  }, [section, drafts, busy, error, feedbackStep]);
 
   async function save(asNew: boolean) {
     if (!workflow || !draftReady || busy) return;
@@ -102,6 +119,7 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
       setCode('');
       setReason('');
       setNotice('Opened version ' + revision.version + '.');
+      onResume();
     }, true);
   }
 
@@ -115,8 +133,10 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
     }, true);
   }
 
-  return <div hidden={!active} className="studio-stack">
-    <section className="studio-panel">
+  return <div hidden={!section} className="studio-stack studio-draft-panels">
+    {section === feedbackStep && error && <p role="alert" className="cfg-error-text studio-inline-notice">{error}</p>}
+    {section === feedbackStep && (busy || notice) && <p role="status" className="cfg-note studio-inline-notice">{busy || notice}</p>}
+    <section className="studio-panel" hidden={section !== 'drafts'}>
       <div className="studio-section-title">
         <div>
           <h3>Current draft</h3>
@@ -133,10 +153,8 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
       </div>
       {!draftReady && <p className="cfg-note">Enter a name and valid workflow JSON before saving.</p>}
       {historical && <p className="cfg-note">A newer version exists. Open the latest version or save this workflow as a new draft.</p>}
-      {error && <p role="alert" className="cfg-error-text">{error}</p>}
-      {(busy || notice) && <p role="status" className="cfg-note">{busy || notice}</p>}
     </section>
-    <section className="studio-panel">
+    <section className="studio-panel" hidden={section !== 'templates'}>
       <h3>Open saved version</h3>
       <div className="studio-actions">
         <label>Draft
@@ -165,16 +183,24 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
         })}>Refresh drafts</button>
       </div>
     </section>
-    <section className="studio-panel">
-      <h3>Hand off for approval</h3>
-      <p className="cfg-note">Create a strategy-rule draft in Calculation Graphs. A reviewer must approve the graph through the existing workflow.</p>
-      {activeVersion?.promoted_graph_code ? <>
-        <p>{activeVersion.promoted_graph_code} · v{activeVersion.promoted_graph_version}</p>
-        <div className="studio-actions"><button onClick={() => {
-          openGraph(activeVersion.promoted_graph_code!, activeVersion.promoted_graph_version ?? undefined);
-          goto('Strategies', 'graphs');
-        }}>Open graph for review</button></div>
-      </> : activeVersion && !changed ? <form className="studio-actions" onSubmit={event => {
+    <section className="studio-panel" hidden={section !== 'review'}>
+      <h3>{graphCode ? 'Calculation graph' : 'Hand off for approval'}</h3>
+      {graphCode ? <>
+        <div className="studio-section-title">
+          <div>
+            <strong>{graphCode} · v{graphVersion}</strong>
+            <p className="cfg-note" role="status">{reviewedGraph ? reviewedGraph.status.toLowerCase() : graphError ? 'Approval status unavailable' : 'Checking approval status…'}</p>
+          </div>
+          <div className="studio-actions">
+            {graphError && <button onClick={refreshGraph}>Refresh review status</button>}
+            <button className={reviewedGraph?.status === 'APPROVED' ? undefined : 'primary'} onClick={reviewGraph}>Open graph for review</button>
+            {reviewedGraph?.status === 'APPROVED' && session?.roles?.includes('TRADING_OPS') &&
+              <button className="primary" onClick={() => setupStrategyFromRule(reviewedGraph)}>Use this rule in a strategy</button>}
+          </div>
+        </div>
+        {reviewedGraph?.status === 'DRAFT' && <p className="cfg-note">Open the graph and select Propose to send it for approval.</p>}
+        {reviewedGraph?.status === 'PROPOSED' && <p className="cfg-note">A different user with the Risk approver role can approve this revision.</p>}
+      </> : activeVersion && !changed ? <form className="studio-form-row" onSubmit={event => {
         event.preventDefault();
         void promote();
       }}>
@@ -186,8 +212,8 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
           <input value={reason} disabled={!!busy} onChange={event => setReason(event.target.value)}
             minLength={5} maxLength={500} required />
         </label>
-        <button type="submit" disabled={!!busy || reason.trim().length < 5}>Create calculation graph draft</button>
-      </form> : <p className="cfg-note">Save or open a draft version before handing it off.</p>}
+        <button className="primary" type="submit" disabled={!!busy || reason.trim().length < 5}>Create calculation graph draft</button>
+      </form> : <p className="cfg-note">Save the current workflow as a revision before handing it off.</p>}
       <p className="cfg-note">In the strategy rule, warm-up and conflicting conditions map to HOLD. Two false conditions map to FLAT.</p>
     </section>
   </div>;
