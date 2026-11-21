@@ -991,11 +991,14 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
       : kind === 'BRIDGE_TOKEN' ? { kind, token: secret.token }
       : kind === 'FIX_LOGIN' ? { kind, username: secret.username, password: secret.password } : { kind, client_id: secret.client_id, client_secret: secret.client_secret };
     try { const result = await api(`config/${owner}/${row.id}/credential`, 'PUT', { credential }); setSecret(empty);
-      setMessage(pendingMessage(result) ?? 'Saved and encrypted. It cannot be viewed, only replaced.'); reload(); }
+      setMessage(pendingMessage(result) ?? 'Saved and encrypted.'); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
   async function remove(level: string, label: string) {
-    if (!window.confirm(`Remove the ${label.toLowerCase()}? The adapter cannot use it until a new one is saved.`)) return;
+    const connectionKey = owner === 'connections' && row.platform === 'REST_API';
+    const prompt = connectionKey ? `Delete the saved API key and secret from ${row.code}? This affects every account using this connection. The key remains registered with the broker.`
+      : `Remove the ${label.toLowerCase()}? The adapter cannot use it until a new one is saved.`;
+    if (!window.confirm(prompt)) return;
     setBusy(true); setError('');
     try { await api(`config/${owner}/${row.id}/credential${owner === 'accounts' ? '?level=' + level : ''}`, 'DELETE'); setMessage(`${label} removed.`); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
@@ -1008,7 +1011,7 @@ function CredentialPanel({ owner, row, reload }: { owner: 'accounts' | 'connecti
     {kind === 'BRIDGE_TOKEN' && row.adapter !== 'TERMINAL_BRIDGE' && <p className="cfg-note">Set the connection method to MT5 terminal bridge first.</p>}
     <ul className="cfg-cred-status">{levels.map(([level, label, saved, updated]) => <li key={level}>
       <span>{label}</span>{saved ? <span className="cfg-pill ok">Saved · {new Date(updated).toLocaleDateString()}</span> : <span className="cfg-pill off">Not saved</span>}
-      {saved && <button type="button" className="cfg-link" disabled={busy} onClick={() => void remove(level, label)}>Remove</button>}</li>)}</ul>
+      {saved && <button type="button" className="cfg-link" disabled={busy} onClick={() => void remove(level, label)}>{owner === 'connections' && row.platform === 'REST_API' ? 'Delete API key' : 'Remove'}</button>}</li>)}</ul>
     {owner === 'accounts' && <p className="cfg-note">The master password can trade. The investor password is read-only and is used for data and monitoring, so a leak there cannot place orders.</p>}
     {kind === 'MT5_LOGIN' && <><Field label="Password type"><Choice label="Password type" value={secret.access_level} options={[['FULL', 'Master password (can trade)'], ['READ_ONLY', 'Investor password (read only)']]}
         onChange={v => setSecret({ ...secret, access_level: v })} /></Field>
@@ -1457,6 +1460,8 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
       return data.items as Row[];
     } catch (e) { setLoadError((e as Error).message); return []; }
   }
+  const accountApiConnection = entity === 'accounts' && selected?.platform === 'REST_API'
+    ? refs.connections?.find(connection => connection.id === selected.connection_id) : undefined;
   const shown = useViewVisible(); // shown again (a sub-tab brought back), the list reloads
   useEffect(() => { if (!shown) return; const t = setTimeout(() => void load(selected?.id), q ? 250 : 0); return () => clearTimeout(t); }, [entity, q, parent, view.archived, shown]);
   useEffect(() => { if (!openId) return;
@@ -1647,6 +1652,7 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
         {selected?.status === 'ARCHIVED' && <p className="cfg-note">Archived. Set status to Inactive and save to restore it.</p>}
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
       </form>
+      {canEdit && accountApiConnection && <CredentialPanel key={accountApiConnection.id} owner="connections" row={accountApiConnection} reload={reloadRefs} />}
       {canEdit && selected && entity === 'accounts' && (selected.platform === 'MT5' || selected.platform === 'MT4') && <CredentialPanel owner="accounts" row={selected} reload={() => void load(selected.id)} />}
       {canEdit && selected && entity === 'connections' && (selected.platform === 'REST_API' || selected.platform === 'FIX' || selected.platform === 'CTRADER') && <CredentialPanel owner="connections" row={selected} reload={() => void load(selected.id)} />}
       {selected && entity === 'connections' && selected.platform === 'MT5' && selected.adapter === 'TERMINAL_PUSH' && <PushPanel conn={selected} canEdit={canEdit} reload={() => void load(selected.id)} />}

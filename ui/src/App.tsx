@@ -241,6 +241,10 @@ export default function App() {
     const at = layout.groups.findIndex(g => g.includes(view));
     open(view, at >= 0 ? at : layout.focus);
   }
+  function selectDomain(view: View) {
+    if (!layout.left || layout.maximized) patch({ left: true, maximized: false });
+    go(view);
+  }
   function close(view: View, group: number) {
     if(!allowLayoutChange())return;
     if(pinned.includes(view)) return;
@@ -461,14 +465,14 @@ export default function App() {
           {RAIL.map((v,i) => v==='-' ? <span key={'sep'+i} className="rail-sep" aria-hidden="true"/> : (
             <button key={v} title={`${viewTitle[v]} — ${descriptions[v]}`} aria-label={v}
               aria-current={active === v ? "page" : undefined}
-              onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else go(v); }}>
+              onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else selectDomain(v); }}>
               <WorkbenchIcon index={iconIndex[v]}/><span className="sr-only">{activityLabels[v]}</span>
               {stageOf(v)&&<span className="rail-n" aria-hidden="true">{stageOf(v)!.n}</span>}
               {(()=>{const b=badge(v);return b?<span className={`rail-badge ${b.tone}`}>{b.n}</span>:null;})()}
             </button>
           ))}
           <span className="rail-spacer"/>
-          <button title="Settings — appearance and layout" aria-label="Settings" aria-current={active==='Settings'?'page':undefined} onClick={()=>go('Settings')}>
+          <button title="Settings — appearance and layout" aria-label="Settings" aria-current={active==='Settings'?'page':undefined} onClick={()=>selectDomain('Settings')}>
             <WorkbenchIcon index={iconIndex.Settings}/><span className="sr-only">Settings</span></button>
         </nav>}
         {layout.left && !layout.maximized && (

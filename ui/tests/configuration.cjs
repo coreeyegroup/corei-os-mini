@@ -134,6 +134,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    const entity=parts[0];
    if(parts[2]==='latency')return ok({items:[]});
    if(parts[2]==='credential'&&needReauth)return fail(428,'Re-enter your password to confirm this action.');
+   if(parts[2]==='credential'&&method==='DELETE'){
+     const connection=db.connections.find(c=>c.id===parts[1]);connection.credential_kind=null;
+     return ok(null,204);
+   }
    if(parts[2]==='credential'){const body=JSON.parse(options.body);const row=db[entity].find(x=>x.id===parts[1]);
      row.credential_kind=body.credential.kind;row.credential_access_level=body.credential.access_level;row.credential_updated_at=new Date().toISOString();
      if(body.credential.access_level==='READ_ONLY'){row.investor_credential_kind=body.credential.kind;row.investor_credential_updated_at=row.credential_updated_at;}
@@ -450,6 +454,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const ang=db.accounts.find(a=>a.external_account_id==='A123456');assert.ok(ang,'account created on the new server');
  assert.deepEqual(JSON.parse(requests.filter(r=>r.url.endsWith('/credential')).at(-1).body).credential,{kind:'API_KEY',api_key:'ang-key',api_secret:'ang-secret'});
  assert.ok(!w.document.body.textContent.includes('ang-secret'));
+ const deleteKey=button('Delete API key');
+ const credentialDeletes=()=>requests.filter(r=>r.method==='DELETE'&&r.url.endsWith('/credential'));
+ const deleteCount=credentialDeletes().length;
+ w.confirm=()=>false;deleteKey.click();await tick();
+ assert.equal(credentialDeletes().length,deleteCount);
+ w.confirm=()=>true;deleteKey.click();await tick();await tick();
+ assert.equal(credentialDeletes().at(-1).url,'/api/config/connections/'+ang.connection_id+'/credential');
+ assert.ok(!vis('button').some(b=>b.textContent==='Delete API key'));
  $('[aria-label="Close window"]')?.click();await tick();
  await startAdd('MetaTrader 4',null,false);
  fill($('#cfg-add-account [aria-label="Environment"]'),'DEMO');fill(byLabel('Account number or ID'),'700123');fill(byLabel('Server'),'new');await tick();

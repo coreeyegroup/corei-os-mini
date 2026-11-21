@@ -21,7 +21,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(w.document.querySelectorAll('.group').length,4);
  assert.equal(JSON.parse(w.localStorage.getItem('corei-os-mini.workstation.layout.v1')).groups.length,4);
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'b',ctrlKey:true,bubbles:true}));await tick();assert.equal(w.document.querySelector('.explorer'),null);
- w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'b',ctrlKey:true,bubbles:true}));await tick();assert.ok(w.document.querySelector('.explorer'));
+ w.document.querySelector('nav.activity button[aria-current=page]').click();await tick();assert.ok(w.document.querySelector('.explorer'),'domain rail reopens the Explorer');
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true}));await tick();assert.equal(w.document.querySelector('.bottom.toolbox'),null);
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true}));await tick();assert.ok(w.document.querySelector('.bottom.toolbox'));
  const sep=w.document.querySelector('[aria-label="Resize explorer"]');const before=Number(sep.getAttribute('aria-valuenow'));sep.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));await tick();assert.equal(Number(sep.getAttribute('aria-valuenow')),before+10);

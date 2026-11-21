@@ -21,7 +21,7 @@
 .top-user { font-size: 11px; }
 
 /* ---- activity bar: icons only (48px), badges ---- */
-.activity { width: 44px; padding: 2px 0; gap: 0; }
+.activity { flex-shrink: 0; width: 44px; padding: 2px 0; gap: 0; }
 .activity button { height: 42px; min-height: 42px; padding: 0; gap: 0; }
 .activity button svg { width: 22px; height: 22px; }
 .activity .rail-sep { margin: 3px 8px; }
