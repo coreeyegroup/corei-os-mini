@@ -6,7 +6,8 @@ algorithm used by the live runtime/backtest, with closed bars only.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response, HTTPException
-from pydantic import ValidationError
+from pydantic import BaseModel, Field
+from .strategy_preview import preview
 
 from .strategy_workflow import Workflow, compile_workflow, catalog
 
@@ -81,5 +82,20 @@ def validate_builder(payload: Workflow, response: Response,
     response.headers['Cache-Control'] = 'no-store'
     try:
         return compile_workflow(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class DraftPreviewIn(BaseModel):
+    workflow: Workflow
+    bars: list[dict] = Field(min_length=2, max_length=5000)
+
+
+@router.post('/builder/preview')
+def preview_builder(payload: DraftPreviewIn, response: Response,
+                    _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return preview(payload.workflow, payload.bars)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
