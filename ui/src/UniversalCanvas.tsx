@@ -28,6 +28,8 @@ const types = { universal: Block };
 export default function UniversalCanvas({draft,onChange,catalog}:Props) {
   const [error,setError] = useState('');
   const [selected,setSelected] = useState('');
+  const [activeNode,setActiveNode] = useState('');
+  const [positions,setPositions] = useState<Record<string,{x:number;y:number}>>({});
   let workflow: Workflow | null = null;
   try {
     const parsed = JSON.parse(draft);
@@ -35,7 +37,7 @@ export default function UniversalCanvas({draft,onChange,catalog}:Props) {
   } catch { /* editable JSON may temporarily be incomplete */ }
   const lookup = useMemo(()=>Object.fromEntries(catalog.map(n=>[n.type,n])),[catalog]);
   const nodes: Node[] = (workflow?.nodes ?? []).map((n,i)=>({
-    id:n.id,type:'universal',position:{x:(i%3)*255,y:Math.floor(i/3)*180},
+    id:n.id,type:'universal',position:positions[n.id] ?? {x:(i%3)*255,y:Math.floor(i/3)*180},
     data:{label:n.id+' · '+n.type,inputs:Object.keys(lookup[n.type]?.inputs ?? {}),
       outputs:Object.keys(lookup[n.type]?.outputs ?? {})}
   }));
@@ -66,6 +68,11 @@ export default function UniversalCanvas({draft,onChange,catalog}:Props) {
     }
     save({...workflow,nodes:[...workflow.nodes,{id:'node'+i,type,params}]});
   };
+  const editNode = (id:string, params:Record<string,number|string>) => {
+    if (!workflow) return;
+    save({...workflow,nodes:workflow.nodes.map(n=>n.id===id?{...n,params}:n)});
+  };
+  const active = workflow?.nodes.find(n=>n.id===activeNode);
   if (!workflow) return <p role="alert">Enter valid workflow JSON before opening the canvas.</p>;
   return <section aria-label="Universal workflow canvas">
     <div className="intel-bar">
@@ -76,9 +83,31 @@ export default function UniversalCanvas({draft,onChange,catalog}:Props) {
       <small className="cfg-note">Connect matching ports; edit node parameters in JSON below. Draft only.</small>
     </div>
     {error && <p role="alert" className="cfg-error-text">{error}</p>}
+    {active && <fieldset style={{border:'1px solid var(--line, #64748b)',padding:12,margin:'10px 0'}}>
+      <legend>Parameters · {active.id} ({active.type})</legend>
+      {Object.entries(lookup[active.type]?.parameters ?? {}).map(([key,rule])=>{
+        const bounds = Array.isArray(rule) ? rule : [];
+        const numeric = typeof bounds[0] === 'number';
+        const current = active.params?.[key] ?? bounds[0] ?? '';
+        return <label key={key} style={{display:'inline-flex',gap:8,alignItems:'center',marginRight:16}}>
+          {key}
+          {numeric ? <input aria-label={active.id+' '+key} type="number" min={bounds[0]} max={bounds[1]}
+            step={key==='period'?'1':'any'} value={current}
+            onChange={e=>editNode(active.id,{...active.params,[key]:Number(e.target.value)})}/>
+            : <select aria-label={active.id+' '+key} value={String(current)}
+              onChange={e=>editNode(active.id,{...active.params,[key]:e.target.value})}>
+              {bounds.map(v=><option key={String(v)} value={String(v)}>{String(v)}</option>)}
+            </select>}
+        </label>;
+      })}
+      {!Object.keys(lookup[active.type]?.parameters ?? {}).length && <small>No configurable parameters for this node.</small>}
+    </fieldset>
     <FlowCanvas label="Universal strategy draft" nodes={nodes} edges={edges} nodeTypes={types} height={460}
       editable onConnect={connect}
+      onNodeClick={setActiveNode}
       onNodesChange={changes=>{
+        const moved = changes.filter(c=>c.type==='position' && c.position);
+        if (moved.length) setPositions(old=>({...old,...Object.fromEntries(moved.map(c=>[c.id,c.position!]))}));
         // Position edits are visual only in schema v1. Deletion updates the draft.
         const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
         if (removed.length) save({...workflow!,nodes:workflow!.nodes.filter(n=>!removed.includes(n.id)),
