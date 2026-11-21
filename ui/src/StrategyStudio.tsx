@@ -25,6 +25,9 @@ export default function StrategyStudio() {
   const [deployments, setDeployments] = useState<Row[]>([]);
   const [signals, setSignals] = useState<Row[]>([]);
   const [runtime, setRuntime] = useState<Row[]>([]);
+  const [scan, setScan] = useState<Row[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
   const [instrument, setInstrument] = useState('');
   const [strategy, setStrategy] = useState('');
   const [error, setError] = useState('');
@@ -50,6 +53,16 @@ export default function StrategyStudio() {
   const matching = useMemo(() => deployments.filter(d => mode === 'observe'
     ? String(d.instrument_symbol ?? d.symbol ?? '') === selectedInstrument
     : String(d.strategy_code ?? '') === selectedStrategy), [deployments, mode, selectedInstrument, selectedStrategy]);
+  const runScan = async () => {
+    setScanning(true); setScanError(''); setScan([]);
+    const parameter = mode === 'observe' ? 'instrument_symbol=' + encodeURIComponent(selectedInstrument) : 'strategy_code=' + encodeURIComponent(selectedStrategy);
+    try {
+      const result = await api('trading/studio/scan?' + parameter);
+      setScan(rows(result));
+    } catch (e) { setScanError(e instanceof Error ? e.message : String(e)); }
+    finally { setScanning(false); }
+  };
+  useEffect(() => { setScan([]); setScanError(''); }, [mode, selectedInstrument, selectedStrategy]);
   const visibleSignals = signals.filter(s => mode === 'observe'
     ? String(s.symbol ?? s.instrument_symbol ?? '') === selectedInstrument
     : String(s.strategy_code ?? '') === selectedStrategy);
@@ -72,8 +85,15 @@ export default function StrategyStudio() {
         </select></label>}
         <button onClick={()=>jump('Configuration','deployments')}>Configure deployments</button>
       </div>
+      <h3>Process · Read-only closed-bar scan</h3>
+      <div className="intel-bar"><button className="primary" disabled={scanning || !(mode === 'observe' ? selectedInstrument !== 'Unknown' : selectedStrategy)} onClick={()=>void runScan()}>{scanning?'Evaluating…':'Evaluate qualifying deployments'}</button><small className="cfg-note">Uses the same algorithm as runtime and backtest; does not send orders.</small></div>
+      {scanError && <p role="alert" className="cfg-error-text">{scanError}</p>}
+      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Instrument</th><th>Strategy</th><th>Target</th><th>Assessment</th><th>Closed bar</th><th>Reference close</th><th>Reason</th></tr></thead><tbody>
+        {scan.map((r,i)=><tr key={String(r.deployment_id??i)}><td>{String(r.instrument_symbol)}</td><td>{String(r.strategy_code)}</td><td>{String(r.target??'—')}</td><td>{String(r.status)}</td><td>{String(r.bar_time??'—')}</td><td>{String(r.reference_close??'—')}</td><td>{String(r.reason??'—')}</td></tr>)}
+        {!scan.length && <tr><td colSpan={7}>Run the scan to evaluate existing active deployments. No result is a broker-ready trade plan.</td></tr>}
+      </tbody></table></div>
       <h3>Input · Existing deployment coverage</h3>
-      <p className="cfg-note">{matching.length} matching deployments. An instrument or strategy without a deployment is not automatically evaluated. Strategy-first discovery across undeployed instruments requires a dedicated scanner backend.</p>
+      <p className="cfg-note">{matching.length} matching deployments. An instrument or strategy without a deployment is not automatically evaluated. This scan evaluates active deployments only; undeployed instruments remain available for future universe-wide discovery.</p>
       <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Account</th><th>Status</th><th>Mode</th></tr></thead><tbody>
         {matching.map((d,i)=><tr key={String(d.id ?? i)}><td>{String(d.strategy_code ?? '—')}</td><td>{String(d.instrument_symbol ?? d.symbol ?? '—')}</td><td>{String(d.account_code ?? '—')}</td><td>{String(d.status ?? '—')}</td><td>{String(d.mode ?? '—')}</td></tr>)}
         {!matching.length && <tr><td colSpan={5}>No matching deployments. Configure a strategy version and its instrument/account coverage.</td></tr>}
