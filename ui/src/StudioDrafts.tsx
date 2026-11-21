@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './Configuration';
+import { openGraph } from './calc/ports';
 import { goto } from './nav';
 import { readWorkflow } from './UniversalCanvas';
 
@@ -169,7 +170,10 @@ export default function StudioDrafts({ draft, opened, onOpen, active, onBusy }: 
       <p className="cfg-note">Create a strategy-rule draft in Calculation Graphs. A reviewer must approve the graph through the existing workflow.</p>
       {activeVersion?.promoted_graph_code ? <>
         <p>{activeVersion.promoted_graph_code} · v{activeVersion.promoted_graph_version}</p>
-        <div className="studio-actions"><button onClick={() => goto('Strategies', 'graphs')}>Open Calculation Graphs</button></div>
+        <div className="studio-actions"><button onClick={() => {
+          openGraph(activeVersion.promoted_graph_code!, activeVersion.promoted_graph_version ?? undefined);
+          goto('Strategies', 'graphs');
+        }}>Open graph for review</button></div>
       </> : activeVersion && !changed ? <form className="studio-actions" onSubmit={event => {
         event.preventDefault();
         void promote();

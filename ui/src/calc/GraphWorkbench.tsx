@@ -11,9 +11,11 @@ import { applyNodeChanges, Handle, Position, type Connection, type Edge, type No
 import './graph.css';
 import FlowCanvas from './FlowCanvas';
 import { api } from '../Configuration';
+import { setupStrategyFromRule } from '../nav';
+import { useViewVisible } from '../visibility';
 import { pill, useData, type Ctx, type Row } from '../StageShell';
 import { MiniSpark, SourcePick, TfPick } from '../SignalLibrary';
-import { compatible, FAMILY_ICON, FAMILY_LABEL, fmt, isSeries, newId, openGraph, OUTPUT_OF, PENDING, portsOf, PURPOSE_LABEL, type Definition, type GNode, type NodeType, type Param, type Port } from './ports';
+import { compatible, FAMILY_ICON, FAMILY_LABEL, fmt, isSeries, newId, openGraph, OUTPUT_OF, portsOf, takeGraphSelection, PURPOSE_LABEL, type Definition, type GNode, type NodeType, type Param, type Port } from './ports';
 
 
 type Trace = Record<string, { type: string; label: string; formula?: string; inputs?: Row; outputs?: Row; explain?: string; error?: string; ms: number }>;
@@ -103,31 +105,42 @@ function Workbench({ ctx, purposes, intro }: WbProps) {
   const [view, setView] = useState<'canvas' | 'plain'>(canvasAvailable() ? 'canvas' : 'plain'), [wide, setWide] = useState(false);
   const [rfNodes, setRfNodes] = useState<Node<NodeData>[]>([]);
   const [fresh, setFresh] = useState<Row | null>(null);
-  const runSeq = useRef(0);
+  const runSeq = useRef(0), openSeq = useRef(0);
   const setSrc = (v: string) => { setSrcRaw(v); try { localStorage.setItem('corei.calc.src', v); } catch { /* per-viewer convenience only */ } };
   useEffect(() => { // the first collected instrument until the viewer chooses one, so every graph opens with live numbers
     const items: Row[] = sources?.items ?? [];
     if (items.length && !items.some(s => `${s.account_id}|${s.broker_symbol}` === src)) setSrcRaw(`${items[0].account_id}|${items[0].broker_symbol}`);
   }, [sources]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const visible = useViewVisible();
+  const strategyWorkbench = purposes?.includes('STRATEGY_RULE') ?? false;
+
   /* open a graph: from the list, from another screen, or the first one */
   const open = useCallback(async (c: string, n: number | null = null) => {
+    const seq = ++openSeq.current;
     setErr(''); setMsg('');
     try {
       const g = await api(`calc/graphs/${c}`);
       const last = n ?? (g.versions?.length ? g.versions[g.versions.length - 1].version : 1);
       const v = await api(`calc/graphs/${c}/versions/${last}`);
+      if (seq !== openSeq.current) return;
       setCode(c); setVer(last); setVersion({ ...v, graph: g }); setDef(v.definition); setDirty(false); setEditing(false); setSelected(null); setOver({}); setPreview(null); setTraceBar(null);
-    } catch (x) { setErr((x as Error).message); }
+    } catch (x) { if (seq === openSeq.current) setErr((x as Error).message); }
   }, []);
   useEffect(() => {
-    const take = () => { let c: string | null = null; try { c = sessionStorage.getItem(PENDING); sessionStorage.removeItem(PENDING); } catch { /* none */ } if (c) void open(c); };
-    take();
-    const on = (e: Event) => { const c = (e as CustomEvent).detail; if (c) { try { sessionStorage.removeItem(PENDING); } catch { /* none */ } void open(c); } };
+    if (!visible) return;
+    const pending = takeGraphSelection(strategyWorkbench);
+    if (pending) void open(pending.code, pending.version);
+    const on = (e: Event) => {
+      const selection = (e as CustomEvent<ReturnType<typeof takeGraphSelection>>).detail;
+      if (!selection || (!strategyWorkbench && selection.version != null)) return;
+      takeGraphSelection(strategyWorkbench);
+      void open(selection.code, selection.version);
+    };
     window.addEventListener('corei-open-graph', on);
     return () => window.removeEventListener('corei-open-graph', on);
-  }, [open]);
-  useEffect(() => { if (!code && graphs.length) void open(graphs[0].code); }, [code, graphs, open]);
+  }, [open, visible, strategyWorkbench]);
+  useEffect(() => { if (visible && !code && graphs.length && !openSeq.current) void open(graphs[0].code); }, [code, graphs, open, visible]);
 
   /* run on the chosen instrument whenever the graph, its parameters or the bar change (debounced) */
   const run = useCallback(async () => {
@@ -294,8 +307,8 @@ function Workbench({ ctx, purposes, intro }: WbProps) {
         {version && <div className="cg-title">
           <b>{version.name}</b> <code>{code}</code> {pill(`v${ver} ${String(status).toLowerCase()}`, STATUS_TONE[status ?? ''] ?? '')}
           {isBuiltin && <small className="cg-tag">built-in · equal to {version.parity_ref ?? 'its code'}</small>}
-          <select aria-label="Version" value={ver ?? ''} onChange={e => void open(code, Number(e.target.value))}>
-            {(version.graph?.versions ?? []).map((v: Row) => <option key={v.version} value={v.version}>v{v.version} {v.status.toLowerCase()}{v.approved_by ? ` · ${v.approved_by}` : ''}</option>)}</select>
+          <label className="cg-inline">View graph revision <select aria-label="View graph revision" value={ver ?? ''} onChange={e => void open(code, Number(e.target.value))}>
+            {(version.graph?.versions ?? []).map((v: Row) => <option key={v.version} value={v.version}>v{v.version} {v.status.toLowerCase()}{v.approved_by ? ` · ${v.approved_by}` : ''}</option>)}</select></label>
           <span className="cg-sp" />{dirty && <small className="cg-dirty">unsaved changes</small>}
           <small className="cfg-note">{def?.nodes.length ?? 0} nodes · {def?.edges.length ?? 0} wires{preview?.warmup != null ? ` · warm-up ${preview.warmup} bars` : ''}{preview?.ms != null ? ` · ${preview.ms} ms` : ''}</small>
         </div>}
@@ -326,6 +339,10 @@ function Workbench({ ctx, purposes, intro }: WbProps) {
           {!isBuiltin && status === 'PROPOSED' && ctx.canRisk && <><button className="primary" disabled={needReason} onClick={() => void lifecycle('approve')} title="Four-eyes: not the person who proposed it">Approve</button>
             <button disabled={needReason} onClick={() => void lifecycle('reject')}>Reject</button></>}
           {!isBuiltin && status === 'APPROVED' && ctx.canRisk && <button disabled={needReason} onClick={() => void lifecycle('retire')}>Retire</button>}
+          {status === 'APPROVED' && def?.purpose === 'STRATEGY_RULE' && ctx.canOps && version && ver != null &&
+            <button className="primary" disabled={dirty} onClick={() => setupStrategyFromRule({ code, version: ver, name: version.name })}>
+              Use this rule in a strategy
+            </button>}
           {status === 'APPROVED' && def?.purpose === 'SIGNAL' && ctx.canRisk && <div className="cg-bind"><select aria-label="Use for signal" value={bindTarget} onChange={e => setBindTarget(e.target.value)}>
             <option value="">Use for signal…</option>{bindTargets.map(t => <option key={t}>{t}</option>)}</select>
             <button disabled={!bindTarget || needReason} onClick={() => void bind()}>Put to use</button></div>}

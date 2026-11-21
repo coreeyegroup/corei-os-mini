@@ -8,7 +8,7 @@
  */
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
-import { SETUP_GROUPS, setupRowOf, useSection } from './nav';
+import { SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -1730,7 +1730,7 @@ function GraphRulePicker({ value, change, disabled }: { value: Row; change: (v: 
       <select aria-label="Strategy graph" required disabled={disabled} value={value.graph_code ?? ''} onChange={e => { const n = lib.find(x => x.code === e.target.value);
         const last = (n?.versions ?? []).filter((v: Row) => v.status === 'APPROVED').pop(); change({ ...value, graph_code: e.target.value, graph_version: last?.version ?? '', graph_parameters: {} }); }}>
         <option value="">Choose…</option>{lib.map(x => <option key={x.code} value={x.code}>{x.name} · {x.code}</option>)}</select></Field>
-    {g && <Field label="Graph version"><select aria-label="Strategy graph version" required disabled={disabled} value={value.graph_version ?? ''} onChange={e => change({ ...value, graph_version: Number(e.target.value) })}>
+    {g && <Field label="Approved rule revision" hint={approved.length ? 'The strategy saves this exact rule revision.' : 'Approve a revision in Calculation graphs before continuing.'}><select aria-label="Strategy graph version" required disabled={disabled} value={value.graph_version ?? ''} onChange={e => change({ ...value, graph_version: Number(e.target.value) })}>
       <option value="">Choose…</option>{approved.map((v: Row) => <option key={v.version} value={v.version}>v{v.version} · approved by {v.approved_by}</option>)}</select></Field>}
     {(ver?.definition?.parameters ?? []).map((p: Row) => <Field key={p.name} label={p.name} hint={`${p.doc ?? ''} (default ${p.default})`}>
       <input aria-label={`Graph parameter ${p.name}`} type="number" step="any" disabled={disabled} placeholder={String(p.default)} value={gp[p.name] ?? ''}
@@ -1759,6 +1759,18 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
   const canEdit = roles.includes('TRADING_OPS'), canApprove = roles.includes('RISK_APPROVER');
   const [rows, setRows] = useState<Row[] | null>(null), [algos, setAlgos] = useState<Row[]>([]), [q, setQ] = useState('');
   const [draft, setDraft] = useState<Row | null>(null), [versions, setVersions] = useState<Row[]>([]), [form, setForm] = useState<Row | null>(null);
+  const [rule, setRule] = useState<StrategyRule | null>(null);
+  const visible = useViewVisible();
+  useEffect(() => {
+    if (!visible || !canEdit) return;
+    const receive = () => {
+      const incoming = takeStrategyRule();
+      if (incoming) setRule(incoming);
+    };
+    receive();
+    window.addEventListener('corei-strategy-rule', receive);
+    return () => window.removeEventListener('corei-strategy-rule', receive);
+  }, [visible, canEdit]);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const load = async (keep?: string) => {
     try {
@@ -1775,21 +1787,40 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
   }
   function open(row: Row | null) {
     setError(''); setNotice(''); setForm(null);
-    setDraft(row ? { ...row } : { code: '', name: '', description: '', status: 'ACTIVE' });
+    setDraft(row ? { ...row } : { code: '', name: rule?.name ?? '', description: '', status: 'ACTIVE' });
     setVersions([]); if (row) void (async () => setVersions((await api(`config/strategies/${row.id}/versions`)).items))();
+  }
+  function newVersion() {
+    setForm(rule ? { algorithm: 'GRAPH', parameters: { graph_code: rule.code, graph_version: rule.version } }
+      : { algorithm: algos[0]?.id ?? '', parameters: {} });
+  }
+  async function saveStrategy(e: FormEvent) {
+    e.preventDefault();
+    if (!draft) return;
+    const { id, code, name, description, status, version } = draft;
+    const saved = await run(() => id
+      ? api(`config/strategies/${id}`, 'PUT', { code, name, description, status, version })
+      : api('config/strategies', 'POST', { code, name, description }),
+    id ? 'Strategy saved.' : rule ? 'Strategy created. Review its first version below.' : 'Strategy created. Add a version with its rules next.');
+    if (saved?.id && !id && rule) {
+      setDraft(saved);
+      newVersion();
+    }
   }
   const algo = algos.find(a => a.id === form?.algorithm);
   async function saveVersion(e: FormEvent) {
     e.preventDefault(); if (!form || !draft) return;
     const body = { algorithm: form.algorithm, parameters: form.parameters, notes: form.notes ?? '' };
-    await run(() => form.id ? api(`config/strategy-versions/${form.id}`, 'PUT', { ...body, version: form.version })
+    const saved = await run(() => form.id ? api(`config/strategy-versions/${form.id}`, 'PUT', { ...body, version: form.version })
       : api(`config/strategies/${draft.id}/versions`, 'POST', body), form.id ? 'Draft version saved.' : 'Draft version created. A risk approver must approve it before it can trade.', draft.id);
-    setForm(null);
+    if (saved) { setForm(null); setRule(null); }
   }
   return <div className="cfg-records">
     <div className="cfg-list">
       <div className="cfg-toolbar"><input aria-label="Search" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />
         {canEdit ? <button className="primary" onClick={() => open(null)}>New strategy</button> : <span className="cfg-note">Read only</span>}</div>
+      {rule && <p className="cfg-note"><strong>{rule.name} · v{rule.version}</strong> is ready to use. Choose New strategy or open an existing strategy and select New version.
+        {' '}<button className="link" onClick={() => setRule(null)}>Clear selection</button></p>}
       {error && !draft && <p role="alert" className="cfg-error">{error}</p>}
       {!rows ? <p className="cfg-note">Loading…</p> : rows.length === 0 ? <p className="cfg-empty">No strategies yet.</p> :
         <div className="cfg-scroll"><table className="cfg-table"><thead><tr><th>Code</th><th>Name</th><th>Versions</th><th>Approved version</th><th>Active deployments</th><th>Status</th></tr></thead><tbody>
@@ -1800,8 +1831,7 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
     {draft && <FloatingWindow storageKey="corei-os-mini.config-window.v1" title={draft.id ? `Strategy · ${draft.code}` : 'New strategy'}
       subtitle={draft.id ? `Version ${draft.version} · updated ${new Date(draft.updated_at).toLocaleString()}` : undefined} onClose={() => setDraft(null)}>
       <div className="cfg-detail">
-      <form className="cfg-form" onSubmit={e => { e.preventDefault(); void run(() => draft.id ? api(`config/strategies/${draft.id}`, 'PUT', { code: draft.code, name: draft.name, description: draft.description, status: draft.status, version: draft.version })
-        : api('config/strategies', 'POST', { code: draft.code, name: draft.name, description: draft.description }), draft.id ? 'Strategy saved.' : 'Strategy created. Add a version with its rules next.'); }}>
+      <form className="cfg-form" onSubmit={saveStrategy}>
         <fieldset className="cfg-plain" disabled={!canEdit}>
           <Field label="Strategy code" hint={draft.id ? 'Fixed after creation' : 'Letters, digits, underscore'}><input aria-label="Strategy code" required readOnly={!!draft.id} maxLength={32} value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value })} /></Field>
           <Field label="Name"><input aria-label="Name" required maxLength={120} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field>
@@ -1812,13 +1842,13 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
         {canEdit && <div className="cfg-actions"><button className="primary" disabled={busy}>{draft.id ? 'Save strategy' : 'Create strategy'}</button></div>}
       </form>
       {draft.id && <section className="cfg-versions" aria-label="Versions">
-        <div className="cfg-points-head"><strong>Versions</strong>{canEdit && draft.status === 'ACTIVE' && !form && <button type="button" onClick={() => setForm({ algorithm: algos[0]?.id ?? '', parameters: {}, notes: '' })}>New version</button>}</div>
+        <div className="cfg-points-head"><strong>Versions</strong>{canEdit && draft.status === 'ACTIVE' && !form && <button type="button" onClick={newVersion}>New version</button>}</div>
         {form && <form className="cfg-subform" onSubmit={saveVersion} aria-label="Version form">
-          <strong>{form.id ? `Edit draft v${form.number}` : 'New draft version'}</strong>
+          <strong>{form.id ? `Edit draft v${form.number}` : 'New strategy version'}</strong>
           <Field label="Algorithm" hint={algo?.description}><Choice label="Algorithm" value={form.algorithm} options={algos.map(a => [a.id, a.label] as [string, string])} onChange={v => setForm({ ...form, algorithm: v, parameters: {} })} /></Field>
           {algo && <ParameterFields schema={algo.schema} value={form.parameters} change={v => setForm({ ...form, parameters: v })} />}
           <Field label="Notes"><input aria-label="Notes" maxLength={2000} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></Field>
-          <div className="cfg-actions"><button className="primary" disabled={busy}>{form.id ? 'Save draft' : 'Create draft'}</button><button type="button" onClick={() => setForm(null)}>Cancel</button></div>
+          <div className="cfg-actions"><button className="primary" disabled={busy}>{form.id ? 'Save strategy draft' : 'Create strategy draft'}</button><button type="button" onClick={() => setForm(null)}>Cancel</button></div>
         </form>}
         {versions.length === 0 ? <p className="cfg-note">No versions yet.</p> : <table className="cfg-table compact"><thead><tr><th>Version</th><th>Rules</th><th>State</th><th>By</th><th /></tr></thead><tbody>
           {versions.map(v => <tr key={v.id}><td>v{v.number}</td><td><strong>{algos.find(a => a.id === v.algorithm)?.label ?? v.algorithm}</strong><br /><small>{paramSummary(v.parameters)}</small>{v.notes && <><br /><small className="cfg-note">{v.notes}</small></>}</td>

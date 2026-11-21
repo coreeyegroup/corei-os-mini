@@ -23,6 +23,21 @@ export function goto(view: View, section?: string) {
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));
 }
 
+export type StrategyRule = { code: string; version: number; name: string };
+let pendingStrategyRule: StrategyRule | null = null;
+
+export function setupStrategyFromRule(rule: StrategyRule) {
+  pendingStrategyRule = rule;
+  goto('Configuration', 'strategies');
+  window.dispatchEvent(new Event('corei-strategy-rule'));
+}
+
+export function takeStrategyRule(): StrategyRule | null {
+  const rule = pendingStrategyRule;
+  pendingStrategyRule = null;
+  return rule;
+}
+
 export function useSection<T extends string>(view: View, initial: T, valid: readonly T[]): [T, (s: T) => void] {
   // A requested section stays available for a few seconds, so a screen that mounts twice while it opens (sign-in check,
   // layout change) still opens at it; the event below consumes it for a screen that is already open.

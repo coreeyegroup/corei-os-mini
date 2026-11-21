@@ -33,6 +33,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    {id:'bars',type:'input.bars'},{id:'fast',type:'indicator.ema',params:{period:20}},
  ],edges:[{source:'bars',source_port:'close',target:'fast',target_port:'source'}]};
  const CALC=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/calc.json'),'utf8'));
+ const strategyRule={...CALC.version,code:'EMA_STUDIO',name:'EMA studio rule',purpose:'STRATEGY_RULE',
+   builtin:false,version:1,status:'APPROVED',definition:{...CALC.version.definition,purpose:'STRATEGY_RULE',parameters:[]}};
+ const registeredStrategies=[{id:'existing-strategy',code:'EMA_EXISTING',name:'Existing EMA strategy',status:'ACTIVE'}];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;calls.push({url,method,body});
    if(url.endsWith('/calc/nodes'))return ok(CALC.nodes);
@@ -40,7 +43,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/calc/flow/live'))return ok({bars:600,bar_time:now,close:'1.0853',values:{in_atr:{value:0.0912,label:'atr_pct'}}});
    if(url.endsWith('/calc/formulas'))return ok(CALC.formulas);
    if(url.includes('/calc/formulas/')&&url.endsWith('/evaluate'))return ok(CALC.evaluate);
-   if(url.endsWith('/calc/graphs')&&method==='GET')return ok({items:[{code:'SIG_EMA_TREND',name:'EMA trend',purpose:'SIGNAL',builtin:true,bound:0,versions:[{version:1,status:'APPROVED'}]}]});
+   if(url.endsWith('/calc/graphs')&&method==='GET')return ok({items:[{code:'SIG_EMA_TREND',name:'EMA trend',purpose:'SIGNAL',builtin:true,bound:0,versions:[{version:1,status:'APPROVED'}]},
+    {...strategyRule,versions:[{version:1,status:'APPROVED',approved_by:'reviewer'},{version:2,status:'DRAFT'}]}]});
+   if(url.endsWith('/calc/graphs/EMA_STUDIO'))return ok({...strategyRule,versions:[{version:1,status:'APPROVED'},{version:2,status:'DRAFT'}]});
+   if(url.endsWith('/calc/graphs/EMA_STUDIO/versions/1'))return ok(strategyRule);
+   if(url.endsWith('/calc/graphs/EMA_STUDIO/versions/2'))return ok({...strategyRule,version:2,status:'DRAFT'});
    if(url.includes('/calc/graphs/SIG_EMA_TREND/copy'))return ok({...CALC.version,code:body.code,builtin:false,status:'DRAFT'},201);
    if(url.includes('/calc/graphs/SIG_EMA_TREND/versions/'))return ok(CALC.version);
    if(url.endsWith('/calc/graphs/SIG_EMA_TREND'))return ok({...CALC.version,versions:[{version:1,status:'APPROVED',approved_by:'platform'}]});
@@ -138,7 +145,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/'))return ok({items:[]});
    if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'},{id:'a2',code:'ICM_L',environment:'LIVE',platform:'MT5',status:'ACTIVE'}]});
    if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'}]});
-   if(url.includes('/config/strategies'))return ok({items:[]});
+   if(url.endsWith('/config/algorithms'))return ok({items:[{id:'GRAPH',label:'Calculation graph',
+     schema:{properties:{timeframe:{enum:['H1']},direction:{enum:['BOTH']},graph_code:{type:'string'}}}}]});
+   if(url.endsWith('/config/strategies')&&method==='POST'){
+     const strategy={...body,id:'new-strategy',status:'ACTIVE'};
+     registeredStrategies.push(strategy);
+     return ok(strategy,201);
+   }
+   if(url.endsWith('/config/strategies/new-strategy/versions')&&method==='POST')return ok({id:'new-version'},201);
+   if(url.includes('/config/strategies/')&&url.endsWith('/versions'))return ok({items:[]});
+   if(url.includes('/config/strategies'))return ok({items:registeredStrategies});
    if(url.includes('/config/deployments'))return ok({items:[]});
    if(url.includes('/intel/overview'))return ok({covered:3});
    if(url.endsWith('/config/overview'))return ok({user:{username:'risk-ops',roles:['ADMIN']},feeds:{active_plans:2,collectors:1,live:1,problems:0,paused:false},order_sending:[{environment:'DEMO',enabled:false}],
@@ -434,6 +450,32 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  fill(studioField('Reason'),'Reviewed original draft');await tick();
  await submit(studio.querySelector('form'));
  assert.match(studio.textContent,/Created calculation graph draft EMA_STUDIO/);
+ await clickStudio('Open graph for review');
+ await settle(12);
+ assert.equal($('[aria-label="View graph revision"]').value,'1');
+ assert.match($('.cg-title').textContent,/EMA_STUDIO.*v1 approved/);
+ assert.equal(calls.some(call=>call.url.endsWith('/calc/graphs/EMA_STUDIO/versions/2')),false);
+ button('Use this rule in a strategy').click();await settle(12);
+ assert.match($('.cfg-main').textContent,/EMA studio rule · v1/);
+ const existing=$$('.cfg-table tbody tr').find(row=>row.textContent.includes('EMA_EXISTING'));
+ existing.click();await settle(3);
+ button('New version').click();await settle(4);
+ assert.equal($('[aria-label="Strategy graph"]').value,'EMA_STUDIO');
+ assert.equal($('[aria-label="Strategy graph version"]').value,'1');
+ $('[aria-label="Close window"]').click();await settle(3);
+ button('New strategy').click();await settle(3);
+ assert.equal($('[aria-label="Name"]').value,'EMA studio rule');
+ fill($('[aria-label="Strategy code"]'),'EMA_NEW');
+ await submit($('.cfg-detail > .cfg-form'));await settle(5);
+ assert.equal($('[aria-label="Strategy graph version"]').value,'1');
+ fill($('[aria-label="Timeframe"]'),'H1');
+ fill($('[aria-label="Direction"]'),'BOTH');await tick();
+ await submit($('[aria-label="Version form"]'));
+ const strategyVersion=calls.find(call=>call.url.endsWith('/config/strategies/new-strategy/versions')&&call.method==='POST');
+ assert.equal(strategyVersion.body.algorithm,'GRAPH');
+ assert.deepEqual(strategyVersion.body.parameters,{graph_code:'EMA_STUDIO',graph_version:1,timeframe:'H1',direction:'BOTH'});
+ console.log('PASS: the Studio opens the exact graph revision, and setup carries the approved rule into existing and new strategies.');
+ await go('Strategy Studio');
  await clickStudio('Observe instrument');
  await clickStudio('Evaluate active deployments');
  assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/QUALIFIED/);

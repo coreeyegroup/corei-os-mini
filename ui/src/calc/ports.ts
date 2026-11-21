@@ -61,9 +61,23 @@ export function newId(def: Definition, base: string): string {
   return `${stem}${i}`.slice(0, 40);
 }
 
-export const PENDING = 'corei.calc.open';
-/** Open a graph in the workbench from anywhere (e.g. a signal's row): the workbench picks it up when shown. */
-export function openGraph(code: string) {
-  try { sessionStorage.setItem(PENDING, code); } catch { /* private mode: the event still carries it */ }
-  window.dispatchEvent(new CustomEvent('corei-open-graph', { detail: code }));
+const PENDING = 'corei.calc.open';
+type GraphSelection = { code: string; version?: number };
+
+export function takeGraphSelection(strategyWorkbench: boolean): GraphSelection | null {
+  try {
+    const saved = sessionStorage.getItem(PENDING);
+    if (!saved) return null;
+    const selection: GraphSelection = saved.startsWith('{') ? JSON.parse(saved) : { code: saved };
+    if (selection.version != null && !strategyWorkbench) return null;
+    sessionStorage.removeItem(PENDING);
+    return selection;
+  } catch { return null; }
+}
+
+/** Open a graph in the workbench from another screen. */
+export function openGraph(code: string, version?: number) {
+  const detail = { code, version };
+  try { sessionStorage.setItem(PENDING, JSON.stringify(detail)); } catch { /* private mode: the event still carries it */ }
+  window.dispatchEvent(new CustomEvent('corei-open-graph', { detail }));
 }
