@@ -28,7 +28,7 @@ function useOwnNodes(nodes: Node[], controlled: boolean): [Node[], (c: NodeChang
 export default function FlowCanvasImpl(p: FlowCanvasProps) {
   const [nodes, onOwn] = useOwnNodes(p.nodes, Boolean(p.onNodesChange));
   return <ReactFlowProvider><ReactFlow nodes={nodes} edges={p.edges} nodeTypes={p.nodeTypes} onNodesChange={p.onNodesChange ?? onOwn} onEdgesChange={p.onEdgesChange}
-    onConnect={p.onConnect} onEdgesDelete={p.onEdgesDelete} onNodeClick={(_, n) => p.onNodeClick?.(n.id)} onNodeDoubleClick={(_, n) => p.onNodeDoubleClick?.(n.id)}
+    onConnect={p.onConnect} onEdgesDelete={p.onEdgesDelete} onBeforeDelete={p.onBeforeDelete} onDelete={p.onDelete} onNodeClick={(_, n) => p.onNodeClick?.(n.id)} onNodeDoubleClick={(_, n) => p.onNodeDoubleClick?.(n.id)}
     onPaneClick={p.onPaneClick} nodesDraggable={Boolean(p.editable)} nodesConnectable={Boolean(p.editable)} edgesFocusable={Boolean(p.editable)}
     deleteKeyCode={p.editable ? ['Backspace', 'Delete'] : null} minZoom={0.1} maxZoom={2} proOptions={{ hideAttribution: true }}>
     <Fit fitKey={p.fitKey} count={p.nodes.length} only={p.fitNodes} />

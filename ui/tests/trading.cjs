@@ -28,6 +28,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const order={id:'o1',client_order_id:'CABC',created_at:now,source:'MANUAL',strategy_code:null,mode:'PAPER',account_code:'VTM_A',symbol:'EURUSD',side:'BUY',quantity:'0.1',order_type:'MARKET',
    state:'FILLED',filled_qty:'0.1',avg_fill_price:'1.08011',reasons:[],time_in_force:'GTC'};
  const kills=[];
+ const studioVersions=[];
+ const studioTemplate={schema_version:'1.0',name:'EMA research template',nodes:[
+   {id:'bars',type:'input.bars'},{id:'fast',type:'indicator.ema',params:{period:20}},
+ ],edges:[{source:'bars',source_port:'close',target:'fast',target_port:'source'}]};
  const CALC=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/calc.json'),'utf8'));
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;calls.push({url,method,body});
@@ -44,6 +48,25 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/calc/bindings'))return ok({items:[],targets:{SIGNAL_DEFINITION:['EMA_TREND']}});
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
    if(url.endsWith('/operator/session'))return ok({username:'risk-ops',display_name:'Risk',roles:['ADMIN','TRADING_OPS','RISK_APPROVER'],must_change_password:false});
+   if(url.endsWith('/studio/builder/nodes'))return ok({nodes:[
+     {type:'input.bars',inputs:{},outputs:{close:'series'},parameters:{}},
+     {type:'indicator.ema',inputs:{source:'series'},outputs:{value:'series'},parameters:{period:[2,1000]}},
+   ]});
+   if(url.endsWith('/studio/builder/templates'))return ok({items:[{id:'ema_trend_20_50',category:'Trend',name:studioTemplate.name}]});
+   if(url.endsWith('/studio/builder/templates/ema_trend_20_50'))return ok(studioTemplate);
+   if(url.endsWith('/studio/builder/validate'))return ok({valid:true,execution_order:['bars','fast']});
+   if(url.endsWith('/studio/builder/preview-stored'))return ok({bars_evaluated:300,latest:'LONG'});
+   if(url.endsWith('/studio/builder/preview'))return ok({bars_evaluated:2,latest:'WAIT'});
+   if(url.endsWith('/studio/drafts'))return ok({items:studioVersions.length
+     ? [{id:studioVersions[0].draft_id,name:studioVersions.at(-1).workflow.name,version:studioVersions.length}] : []});
+   if(url.includes('/studio/drafts/')&&method==='PUT'){
+     const version={draft_id:url.split('/').at(-1),version:studioVersions.length+1,created_at:now,created_by:'risk-ops',workflow:body.workflow};
+     studioVersions.push(version);return ok(version);
+   }
+   if(url.includes('/studio/drafts/')&&url.endsWith('/versions'))return ok({items:[...studioVersions].reverse()});
+   if(url.includes('/studio/drafts/')&&url.endsWith('/promote'))return ok({...studioVersions[0],promoted_graph_code:body.code,promoted_graph_version:1});
+   if(url.includes('/studio/drafts/')&&url.includes('/versions/'))return ok(studioVersions[Number(url.split('/').at(-1))-1]);
+   if(url.includes('/studio/scan?'))return ok({items:[{instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',target:'LONG',status:'QUALIFIED'}]});
    if(url.endsWith('/trading/overview'))return ok({deployments:{ACTIVE:1},active_modes:{PAPER:1},signals_today:{REJECTED:1,ACTED:2},orders_today:{FILLED:2},open_orders:0,unknown_orders:0,
      kill_switches:kills.length,limits:1,refused_today:1,positions:1,accounts:[],backtests:1,runtime:{last_run_at:now,deployments:1,signals:1,orders:1,duration_ms:30,enabled:true,deployments_with_problems:0}});
    if(url.includes('/trading/signals/s1'))return ok({...signal,events:[{id:1,at:now,state:'NEW',actor:'runtime',detail:'EMA 3/5'},{id:2,at:now,state:'REJECTED',actor:'validation',detail:'STALE_PRICE'}],intent:null});
@@ -367,6 +390,56 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok(calls.some(c=>c.url.includes('/calc/formulas/rk_size_pct/evaluate')),'the formula is worked out by the server');
  assert.match($('.fg-plain').textContent,/risk_money = equity \* r_pct \/ 100 \* weight/);
  console.log('PASS: calculation flow: every calculation of the 8 stages in one workflow; each formula opens as inputs → steps → result with numbers.');
+
+ // Strategy Studio keeps research, testing and version history in the same workspace.
+ await go('Strategy Studio');
+ const studio=$('.studio');
+ const studioButton=text=>[...studio.querySelectorAll('button')].find(b=>!b.closest('[hidden]')&&b.textContent.trim()===text);
+ const clickStudio=async text=>{await tick();const control=studioButton(text);assert.ok(control&&!control.disabled,text);control.click();await settle(3);};
+ const studioField=(label)=>[...studio.querySelectorAll('label')].find(item=>!item.closest('[hidden]')&&item.firstChild?.textContent?.trim()===label).querySelector('input,select');
+ assert.equal(studioButton('Build strategy').getAttribute('aria-pressed'),'true');
+ await clickStudio('Templates');
+ fill(studioField('Template'),'ema_trend_20_50');
+ await clickStudio('Load into draft');
+ assert.match(studio.querySelector('.studio-draft-title').textContent,/EMA research template/);
+ await clickStudio('Add node');
+ assert.equal(w.document.activeElement.type,'search');
+ fill(studio.querySelector('input[type=search]'),'indicator');await tick();
+ const nodeButton=studio.querySelector('.studio-node-list button');assert.match(nodeButton.textContent,/indicator.ema/);
+ nodeButton.click();await settle(3);
+ fill(studioField('period'),'35');
+ await clickStudio('Validate & preview');
+ await clickStudio('Validate draft');
+ assert.equal(calls.find(c=>c.url.endsWith('/studio/builder/validate')).body.nodes.at(-1).params.period,35);
+ await clickStudio('Preview stored bars');
+ assert.match(studio.textContent,/LONG on the last closed bar.*300 bars evaluated/);
+ await clickStudio('Paste OHLC JSON');
+ const bars=[{open:1,high:3,low:1,close:2},{open:2,high:4,low:1,close:3}];
+ fill(studio.querySelector('textarea'),JSON.stringify(bars));
+ await clickStudio('Preview closed bars');
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/studio/builder/preview')).body.bars,bars);
+ await clickStudio('Saved drafts');
+ await clickStudio('Save draft');
+ assert.match(studio.querySelector('.studio-draft-title').textContent,/Saved research draft · v1/);
+ await clickStudio('JSON');
+ const json=studio.querySelector('#studio-workflow-json');
+ fill(json,JSON.stringify({...JSON.parse(json.value),name:'Updated research draft'}));
+ await clickStudio('Saved drafts');
+ await clickStudio('Save new version');
+ assert.equal(studioVersions.length,2);
+ fill(studioField('Version'),'1');
+ await clickStudio('Open version');
+ assert.match(studio.querySelector('.studio-draft-title').textContent,/EMA research templateSaved research draft · v1/);
+ fill(studioField('Graph code'),'EMA_STUDIO');
+ fill(studioField('Reason'),'Reviewed original draft');await tick();
+ await submit(studio.querySelector('form'));
+ assert.match(studio.textContent,/Created calculation graph draft EMA_STUDIO/);
+ await clickStudio('Observe instrument');
+ await clickStudio('Evaluate active deployments');
+ assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/QUALIFIED/);
+ await clickStudio('Results');
+ assert.ok(studioButton('Backtest'));
+ console.log('PASS: Strategy Studio: templates, node search and settings, validation, both previews, version history, review handoff and scan.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);

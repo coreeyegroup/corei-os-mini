@@ -242,7 +242,10 @@ export default function App() {
     open(view, at >= 0 ? at : layout.focus);
   }
   function selectDomain(view: View) {
-    if (!layout.left || layout.maximized) patch({ left: true, maximized: false });
+    const openStudioOnMobile = view === 'Strategy Studio' && layout.active[layout.focus] !== view
+      && window.matchMedia?.('(max-width: 640px)').matches;
+    if (openStudioOnMobile) patch({ left: false, maximized: false });
+    else if (!layout.left || layout.maximized) patch({ left: true, maximized: false });
     go(view);
   }
   function close(view: View, group: number) {
@@ -442,7 +445,7 @@ export default function App() {
   const live=overview?.order_sending.filter(o=>o.enabled).map(o=>o.environment)??[];
   const multi=layout.groups.length>1;
   return (
-    <div className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""} ${layout.left&&!layout.maximized?"with-sidebar":""}`}>
+    <div data-studio-active={active === 'Strategy Studio' ? true : undefined} className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""} ${layout.left&&!layout.maximized?"with-sidebar":""}`}>
       <header className="top">
         <div className="brand"><b>◈</b> COREI<span>OS MINI</span></div>
         <MenuBar commands={commands}/>

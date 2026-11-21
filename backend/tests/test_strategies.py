@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from corei_os_mini import operator_auth
 from corei_os_mini.api import app
 from corei_os_mini.operator_auth import hash_password
+from corei_os_mini.strategy_templates import template_get
 
 HEADERS = {'x-corei-request': 'workstation'}
 MT5 = {'server_name': 'Broker-Server', 'access_points': [{'name': 'AP', 'host': '192.0.2.1', 'port': 443}]}
@@ -56,6 +57,47 @@ class StrategyDeploymentTests(unittest.TestCase):
     def ok(self, result, status=200):
         self.assertEqual(result.status_code, status, result.text)
         return None if status == 204 else result.json()
+
+    def test_studio_history_and_governed_handoff(self):
+        owner = TestClient(app, base_url='https://testserver', headers=HEADERS)
+        self.ok(owner.post('/api/operator/login', json={'username': 'owner', 'password': 'owner-login-pass-1'}))
+        trader = self.user(owner, 'tom', ['TRADING_OPS'])
+        risk = self.user(owner, 'rita', ['RISK_APPROVER'])
+        observer = self.user(owner, 'olga', ['OBSERVER'])
+        drafts_path = '/api/trading/studio/drafts'
+        draft_path = f'{drafts_path}/{uuid4()}'
+        workflow = template_get('ema_trend_20_50')
+        workflow['nodes'][1]['position'] = [240, 180]
+        first = {'expected_version': 0, 'workflow': workflow}
+        self.ok(observer.put(draft_path, json=first), 403)
+        self.assertEqual(self.ok(trader.put(draft_path, json=first))['version'], 1)
+        self.assertEqual(self.ok(trader.put(draft_path, json=first))['version'], 1)
+
+        incomplete = {'expected_version': 1, 'workflow': {**workflow, 'name': 'Work in progress', 'edges': []}}
+        self.assertEqual(self.ok(trader.put(draft_path, json=incomplete))['version'], 2)
+        self.assertEqual(self.ok(trader.put(draft_path, json=incomplete))['version'], 2)
+        stale = {'expected_version': 1, 'workflow': {**workflow, 'name': 'Conflicting edit'}}
+        self.ok(trader.put(draft_path, json=stale), 409)
+        self.assertEqual(self.ok(observer.get(drafts_path))['items'][0]['version'], 2)
+        self.assertEqual([item['version'] for item in self.ok(observer.get(draft_path + '/versions'))['items']], [2, 1])
+        original = self.ok(observer.get(draft_path + '/versions/1'))
+        self.assertEqual(original['workflow']['edges'], workflow['edges'])
+        self.assertEqual(original['workflow']['nodes'][1]['position'], [240, 180])
+
+        handoff = {'code': 'STUDIO_EMA', 'reason': 'Review the original directional workflow'}
+        self.ok(observer.post(draft_path + '/versions/1/promote', json=handoff), 403)
+        self.ok(trader.post(draft_path + '/versions/2/promote', json=handoff), 422)
+        promoted = self.ok(trader.post(draft_path + '/versions/1/promote', json=handoff))
+        self.assertEqual(promoted['promoted_graph_code'], 'STUDIO_EMA')
+        self.assertEqual(self.ok(trader.post(draft_path + '/versions/1/promote', json=handoff))['promoted_graph_version'], 1)
+        self.ok(trader.post(draft_path + '/versions/1/promote', json={**handoff, 'code': 'STUDIO_OTHER'}), 409)
+        graph = '/api/calc/graphs/STUDIO_EMA/versions/1'
+        self.assertEqual(self.ok(observer.get(graph))['status'], 'DRAFT')
+        self.ok(trader.post(graph + '/propose', json={'reason': 'Ready for review'}))
+        self.ok(trader.post(graph + '/approve', json={'reason': 'Review requested'}), 403)
+        self.assertEqual(self.ok(risk.post(graph + '/approve', json={'reason': 'Reviewed independently'}))['status'], 'APPROVED')
+        with self.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM oms_orders').fetchone()['n'], 0)
 
     def test_strategy_versions_and_deployment_matrix(self):
         owner = TestClient(app, base_url='https://testserver', headers=HEADERS)

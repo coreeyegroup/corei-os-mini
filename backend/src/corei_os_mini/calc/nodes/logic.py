@@ -13,6 +13,7 @@ Architectural position: decisions inside graphs (Stages 3–5).
 """
 from __future__ import annotations
 
+from ...strategy_workflow import signal_direction
 from .. import types as T
 from . import Ctx, NodeType, Param, Port, register
 
@@ -154,3 +155,15 @@ register(NodeType('logic.latch', 'logic', 'Latch (target)', 'Go LONG when "long"
                   [Port('long', B), Port('short', B)], [Port('target', SD, 'LONG, SHORT or FLAT, held'), Port('changed', B, 'true on the bar the target changes')],
                   [Param('direction', 'choice', 'BOTH', choices=('BOTH', 'LONG_ONLY', 'SHORT_ONLY'))], _latch,
                   lambda p: f"target ← LONG on long, SHORT on short, else held ({p.get('direction', 'BOTH').lower().replace('_', ' ')})"))
+
+
+def _direction(ctx: Ctx, ins: dict, p: dict) -> dict:
+    decisions = (signal_direction(long, short) for long, short in zip(ins['long'], ins['short']))
+    return {'target': ['HOLD' if result in ('WAIT', 'CONFLICT') else result for result in decisions]}
+
+
+register(NodeType('logic.direction', 'logic', 'Direction from conditions',
+                  'LONG or SHORT when exactly one condition is true, FLAT when both are false, '
+                  'HOLD when the conditions conflict or a value is missing.',
+                  [Port('long', B), Port('short', B)], [Port('target', SD)], [], _direction,
+                  lambda p: 'target ← LONG, SHORT, FLAT or HOLD from the two conditions'))

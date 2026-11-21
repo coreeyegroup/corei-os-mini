@@ -1,128 +1,270 @@
-/* Draft-only visual editor for the universal workflow schema.
- * Existing approved Calculation Graph workbench remains the production authoring path.
- */
-import { useMemo, useState } from 'react';
-import { Handle, Position, applyEdgeChanges,
-  type Connection, type Edge, type Node, type NodeProps } from '@xyflow/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Handle, Position,
+  type Connection, type Edge, type Node, type NodeProps,
+} from '@xyflow/react';
 import FlowCanvas from './calc/FlowCanvas';
 
-type WNode = { id: string; type: string; params?: Record<string, number | string> };
-type WEdge = { source: string; source_port: string; target: string; target_port: string };
-type Workflow = { schema_version: string; name: string; nodes: WNode[]; edges: WEdge[] };
-type Ports = { type: string; inputs: Record<string, string>; outputs: Record<string, string>; parameters: Record<string, unknown> };
-type Props = { draft: string; onChange: (text: string) => void; catalog: Ports[] };
+type WorkflowNode = { id: string; type: string; params?: Record<string, number | string>; position?: [number, number] | null };
+type WorkflowEdge = { source: string; source_port: string; target: string; target_port: string };
+type Workflow = { schema_version: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[] };
+export type NodeSpec = {
+  type: string; inputs: Record<string, string>; outputs: Record<string, string>;
+  parameters: Record<string, [number, number] | string[]>;
+};
+type Point = { x: number; y: number };
+type BlockData = { id: string; type: string; inputs: string[]; outputs: string[] };
+type Props = { draft: string; onChange: (text: string) => void; catalog: NodeSpec[]; onOpenJson: () => void; onRefreshCatalog: () => void };
 
-function Block({ data }: NodeProps<Node<{ label: string; inputs: string[]; outputs: string[] }>>) {
-  return <div style={{background:'var(--surface, #202633)',color:'var(--text, #fff)',border:'1px solid #6b7280',borderRadius:8,minWidth:170,padding:10}}>
-    <strong style={{fontSize:12}}>{data.label}</strong>
-    {data.inputs.map(p=><div key={p} style={{position:'relative',fontSize:11,marginTop:8}}>
-      <Handle type="target" position={Position.Left} id={p} style={{top:'50%'}}/>{p}
-    </div>)}
-    {data.outputs.map(p=><div key={p} style={{position:'relative',fontSize:11,marginTop:8,textAlign:'right'}}>
-      {p}<Handle type="source" position={Position.Right} id={p} style={{top:'50%'}}/>
-    </div>)}
+export function readWorkflow(draft: string): Workflow | null {
+  try {
+    const value = JSON.parse(draft);
+    if (!Array.isArray(value?.nodes) || !Array.isArray(value?.edges)) return null;
+    if (typeof value.name !== 'string') return null;
+    if (!value.nodes.every((node: WorkflowNode) => typeof node?.id === 'string' && typeof node?.type === 'string'
+      && (node.position == null || (Array.isArray(node.position) && node.position.length === 2 && node.position.every(Number.isFinite)))
+      && (node.params === undefined || (node.params && typeof node.params === 'object' && !Array.isArray(node.params)
+        && Object.values(node.params).every(param => typeof param === 'string' || typeof param === 'number'))))) return null;
+    if (!value.edges.every((edge: WorkflowEdge) => edge && typeof edge.source === 'string'
+      && typeof edge.target === 'string' && typeof edge.source_port === 'string' && typeof edge.target_port === 'string')) return null;
+    if (new Set(value.nodes.map((node: WorkflowNode) => node.id)).size !== value.nodes.length) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function Block({ data, selected }: NodeProps<Node<BlockData>>) {
+  return <div className="studio-node" data-selected={selected}>
+    <header><strong>{data.id}</strong><small>{data.type}</small></header>
+    <div className="studio-ports">
+      <div>{data.inputs.map(port => <div key={port}>
+        <Handle type="target" position={Position.Left} id={port} />{port}
+      </div>)}</div>
+      <div>{data.outputs.map(port => <div key={port}>
+        {port}<Handle type="source" position={Position.Right} id={port} />
+      </div>)}</div>
+    </div>
   </div>;
 }
-const types = { universal: Block };
+const nodeTypes = { universal: Block };
 
-export default function UniversalCanvas({draft,onChange,catalog}:Props) {
-  const [error,setError] = useState('');
-  const [selected,setSelected] = useState('');
-  const [activeNode,setActiveNode] = useState('');
-  const [positions,setPositions] = useState<Record<string,{x:number;y:number}>>({});
-  let workflow: Workflow | null = null;
-  try {
-    const parsed = JSON.parse(draft);
-    if (Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) workflow = parsed;
-  } catch { /* editable JSON may temporarily be incomplete */ }
-  const lookup = useMemo(()=>Object.fromEntries(catalog.map(n=>[n.type,n])),[catalog]);
-  const nodes: Node[] = (workflow?.nodes ?? []).map((n,i)=>({
-    id:n.id,type:'universal',position:positions[n.id] ?? {x:(i%3)*255,y:Math.floor(i/3)*180},
-    data:{label:n.id+' · '+n.type,inputs:Object.keys(lookup[n.type]?.inputs ?? {}),
-      outputs:Object.keys(lookup[n.type]?.outputs ?? {})}
+function arrange(workflow: Workflow): Map<string, Point> {
+  const dependencies = new Map(workflow.nodes.map(node => [node.id, new Set<string>()]));
+  for (const edge of workflow.edges) {
+    if (dependencies.has(edge.source)) dependencies.get(edge.target)?.add(edge.source);
+  }
+  const positions = new Map<string, Point>();
+  let column = 0;
+  let remaining = workflow.nodes;
+  while (remaining.length) {
+    const ready = remaining.filter(node => [...(dependencies.get(node.id) ?? [])].every(id => positions.has(id)));
+    const layer = ready.length ? ready : remaining;
+    const ids = new Set(layer.map(node => node.id));
+    layer.forEach((node, index) => positions.set(node.id, { x: column * 245, y: index * 155 }));
+    remaining = remaining.filter(node => !ids.has(node.id));
+    column++;
+  }
+  return positions;
+}
+
+export default function UniversalCanvas({ draft, onChange, catalog, onOpenJson, onRefreshCatalog }: Props) {
+  const [error, setError] = useState('');
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [query, setQuery] = useState('');
+  const catalogButton = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (showCatalog) searchInput.current?.focus();
+  }, [showCatalog]);
+  const [activeId, setActiveId] = useState('');
+  const [dragPositions, setDragPositions] = useState<Record<string, Point>>({});
+  const [measurements, setMeasurements] = useState<Record<string, { width: number; height: number }>>({});
+  const [layoutRevision, setLayoutRevision] = useState(0);
+  const workflow = useMemo(() => readWorkflow(draft), [draft]);
+  const layout = useMemo(() => workflow ? arrange(workflow) : new Map<string, Point>(), [workflow]);
+  const lookup = useMemo(() => new Map(catalog.map(spec => [spec.type, spec])), [catalog]);
+
+  if (!workflow) return <div className="studio-empty">
+    <p role="alert" className="cfg-error-text">The canvas needs workflow JSON with unique node IDs and well-formed nodes and edges.</p>
+    <button onClick={onOpenJson}>Open JSON editor</button>
+  </div>;
+
+  const active = workflow.nodes.find(node => node.id === activeId);
+  const activeSpec = active && lookup.get(active.type);
+  const matches = catalog.filter(spec => spec.type.toLowerCase().includes(query.trim().toLowerCase()));
+  const nodes: Node<BlockData>[] = workflow.nodes.map(node => ({
+    id: node.id, type: 'universal', position: dragPositions[node.id]
+      ?? (node.position ? { x: node.position[0], y: node.position[1] } : layout.get(node.id) ?? { x: 0, y: 0 }),
+    measured: measurements[node.id], selected: node.id === activeId, ariaLabel: node.id + ' · ' + node.type,
+    data: {
+      id: node.id, type: node.type, inputs: Object.keys(lookup.get(node.type)?.inputs ?? {}),
+      outputs: Object.keys(lookup.get(node.type)?.outputs ?? {}),
+    },
   }));
-  const edges: Edge[] = (workflow?.edges ?? []).map((e,i)=>({
-    id:'edge-'+i,source:e.source,target:e.target,
-    sourceHandle:e.source_port,targetHandle:e.target_port
+  const edges: Edge[] = workflow.edges.map(edge => ({
+    id: JSON.stringify([edge.source, edge.source_port, edge.target, edge.target_port]), source: edge.source, target: edge.target,
+    sourceHandle: edge.source_port, targetHandle: edge.target_port,
   }));
-  const save = (next: Workflow) => { onChange(JSON.stringify(next,null,2)); setError(''); };
-  const connect = (c:Connection) => {
-    if (!workflow || !c.source || !c.target || !c.sourceHandle || !c.targetHandle) return;
-    const src = workflow.nodes.find(n=>n.id===c.source);
-    const dst = workflow.nodes.find(n=>n.id===c.target);
-    const out = lookup[src?.type ?? '']?.outputs[c.sourceHandle];
-    const input = lookup[dst?.type ?? '']?.inputs[c.targetHandle];
-    if (!out || !input || out!==input) { setError('Incompatible port types'); return; }
-    if (workflow.edges.some(e=>e.target===c.target && e.target_port===c.targetHandle)) {
-      setError('Input already connected'); return;
+
+  function save(next: Workflow) {
+    onChange(JSON.stringify(next, null, 2));
+    setError('');
+  }
+
+  function positioned(items: WorkflowNode[], points: Map<string, Point>): WorkflowNode[] {
+    return items.map(node => {
+      const point = points.get(node.id);
+      return point ? { ...node, position: [point.x, point.y] } : node;
+    });
+  }
+
+  function currentPositions() {
+    return new Map(nodes.map(node => [node.id, node.position]));
+  }
+
+  function select(id: string) {
+    setActiveId(id);
+    setShowCatalog(false);
+  }
+
+  function connect(connection: Connection) {
+    if (!workflow || !connection.sourceHandle || !connection.targetHandle) return;
+    const source = workflow.nodes.find(node => node.id === connection.source);
+    const target = workflow.nodes.find(node => node.id === connection.target);
+    const output = lookup.get(source?.type ?? '')?.outputs[connection.sourceHandle];
+    const input = lookup.get(target?.type ?? '')?.inputs[connection.targetHandle];
+    if (!output || !input || output !== input) {
+      setError('Connect ports with the same data type.');
+      return;
     }
-    save({...workflow,edges:[...workflow.edges,{source:c.source,source_port:c.sourceHandle,target:c.target,target_port:c.targetHandle}]});
-  };
-  const add = (type:string) => {
-    if (!workflow) return;
-    const used = new Set(workflow.nodes.map(n=>n.id));
-    let i=1; while(used.has('node'+i)) i++;
-    const params:Record<string,number|string> = {};
-    for (const [key,rule] of Object.entries(lookup[type]?.parameters ?? {})) {
-      if (Array.isArray(rule)) params[key] = typeof rule[0]==='number' ? rule[0] : rule[0];
+    if (workflow.edges.some(edge => edge.target === connection.target && edge.target_port === connection.targetHandle)) {
+      setError('This input already has a connection.');
+      return;
     }
-    save({...workflow,nodes:[...workflow.nodes,{id:'node'+i,type,params}]});
-  };
-  const editNode = (id:string, params:Record<string,number|string>) => {
+    // Keep the current positions while wiring. Arrange explicitly to use the new topology.
+    save({ ...workflow, nodes: positioned(workflow.nodes, currentPositions()), edges: [...workflow.edges, {
+      source: connection.source, source_port: connection.sourceHandle,
+      target: connection.target, target_port: connection.targetHandle,
+    }] });
+  }
+
+  function add(spec: NodeSpec) {
     if (!workflow) return;
-    save({...workflow,nodes:workflow.nodes.map(n=>n.id===id?{...n,params}:n)});
-  };
-  const active = workflow?.nodes.find(n=>n.id===activeNode);
-  if (!workflow) return <p role="alert">Enter valid workflow JSON before opening the canvas.</p>;
+    const used = new Set(workflow.nodes.map(node => node.id));
+    let index = 1;
+    while (used.has('node' + index)) index++;
+    const id = 'node' + index;
+    const bottom = nodes.length ? Math.max(...nodes.map(node => node.position.y)) + 155 : 0;
+    save({ ...workflow, nodes: [...positioned(workflow.nodes, currentPositions()), {
+      id, type: spec.type, position: [0, bottom], params: Object.fromEntries(Object.entries(spec.parameters).map(([name, rule]) => [name, rule[0]])),
+    }] });
+    setQuery('');
+    select(id);
+    catalogButton.current?.focus();
+  }
+
+  function setParam(node: WorkflowNode, key: string, value: number | string) {
+    if (!workflow) return;
+    save({ ...workflow, nodes: workflow.nodes.map(item => item.id === node.id
+      ? { ...item, params: { ...item.params, [key]: value } } : item) });
+  }
+
   return <section aria-label="Universal workflow canvas">
-    <div className="intel-bar">
-      <label>Add node <select aria-label="Node type to add" value={selected} onChange={e=>setSelected(e.target.value)}>
-        <option value="">Select node type</option>{catalog.map(n=><option key={n.type} value={n.type}>{n.type}</option>)}
-      </select></label>
-      <button disabled={!selected} onClick={()=>add(selected)}>Add node</button>
-      <small className="cfg-note">Connect matching ports; edit node parameters in JSON below. Draft only.</small>
+    <div className="studio-canvas-toolbar">
+      <small>{nodes.length} nodes · {edges.length} connections</small>
+      <div className="studio-actions">
+        <button disabled={!nodes.length} onClick={() => {
+          setDragPositions({});
+          save({ ...workflow, nodes: positioned(workflow.nodes, layout) });
+          setLayoutRevision(value => value + 1);
+        }}>Arrange nodes</button>
+        <button className="primary" ref={catalogButton} aria-expanded={showCatalog} onClick={() => setShowCatalog(value => !value)}>
+          {showCatalog ? 'Close node catalog' : 'Add node'}
+        </button>
+      </div>
     </div>
     {error && <p role="alert" className="cfg-error-text">{error}</p>}
-    {active && <fieldset style={{border:'1px solid var(--line, #64748b)',padding:12,margin:'10px 0'}}>
-      <legend>Parameters · {active.id} ({active.type})</legend>
-      {Object.entries(lookup[active.type]?.parameters ?? {}).map(([key,rule])=>{
-        const bounds = Array.isArray(rule) ? rule : [];
-        const numeric = typeof bounds[0] === 'number';
-        const current = active.params?.[key] ?? bounds[0] ?? '';
-        return <label key={key} style={{display:'inline-flex',gap:8,alignItems:'center',marginRight:16}}>
-          {key}
-          {numeric ? <input aria-label={active.id+' '+key} type="number" min={bounds[0]} max={bounds[1]}
-            step={key==='period'?'1':'any'} value={current}
-            onChange={e=>editNode(active.id,{...active.params,[key]:Number(e.target.value)})}/>
-            : <select aria-label={active.id+' '+key} value={String(current)}
-              onChange={e=>editNode(active.id,{...active.params,[key]:e.target.value})}>
-              {bounds.map(v=><option key={String(v)} value={String(v)}>{String(v)}</option>)}
-            </select>}
-        </label>;
-      })}
-      {!Object.keys(lookup[active.type]?.parameters ?? {}).length && <small>No configurable parameters for this node.</small>}
-    </fieldset>}
-    <FlowCanvas label="Universal strategy draft" nodes={nodes} edges={edges} nodeTypes={types} height={460}
-      editable onConnect={connect}
-      onNodeClick={setActiveNode}
-      onNodesChange={changes=>{
-        const moved: Record<string,{x:number;y:number}> = {};
-        for (const change of changes) {
-          if (change.type === 'position' && change.position) moved[change.id] = change.position;
-        }
-        if (Object.keys(moved).length) setPositions(old=>({...old,...moved}));
-        // Position edits are visual only in schema v1. Deletion updates the draft.
-        const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
-        if (removed.length) save({...workflow!,nodes:workflow!.nodes.filter(n=>!removed.includes(n.id)),
-          edges:workflow!.edges.filter(e=>!removed.includes(e.source)&&!removed.includes(e.target))});
-      }}
-      onEdgesChange={changes=>{
-        const next=applyEdgeChanges(changes,edges);
-        if (next.length!==edges.length) {
-          const keep=new Set(next.map(e=>e.id));
-          save({...workflow!,edges:workflow!.edges.filter((_,i)=>keep.has('edge-'+i))});
-        }
-      }}
-    />
+    <div className="studio-editor" data-catalog={showCatalog}>
+      <div className="studio-canvas">
+        <FlowCanvas label="Universal strategy draft" nodes={nodes} edges={edges} nodeTypes={nodeTypes}
+          height="100%" fitKey={nodes.length + '|' + layoutRevision} editable
+          onConnect={connect} onNodeClick={select} onPaneClick={() => setActiveId('')}
+          onNodesChange={changes => {
+            const dimensions: typeof measurements = {};
+            const moving: Record<string, Point> = {};
+            const finished = new Map<string, Point>();
+            const selected = changes.find(change => change.type === 'select' && change.selected);
+            for (const change of changes) {
+              if (change.type === 'dimensions' && change.dimensions) dimensions[change.id] = change.dimensions;
+              if (change.type !== 'position' || !change.position) continue;
+              if (change.dragging) moving[change.id] = change.position;
+              else finished.set(change.id, change.position);
+            }
+            if (Object.keys(dimensions).length) setMeasurements(previous => ({ ...previous, ...dimensions }));
+            if (Object.keys(moving).length || finished.size) {
+              setDragPositions(previous => {
+                const next = { ...previous, ...moving };
+                for (const id of finished.keys()) delete next[id];
+                return next;
+              });
+            }
+            if (finished.size) save({ ...workflow, nodes: positioned(workflow.nodes, finished) });
+            if (selected?.type === 'select') select(selected.id);
+            else if (changes.some(change => change.type === 'select' && change.id === activeId)) setActiveId('');
+          }}
+          onBeforeDelete={async ({ nodes: removed }) => window.confirm(removed.length
+            ? 'Remove the selected nodes and their connections from this draft?'
+            : 'Remove the selected connections from this draft?')}
+          onDelete={({ nodes: removedNodes, edges: removedEdges }) => {
+            const removed = new Set(removedNodes.map(node => node.id));
+            const disconnected = new Set(removedEdges.map(edge => edge.id));
+            if (removed.has(activeId)) setActiveId('');
+            if (removed.size) setMeasurements(previous => Object.fromEntries(
+              Object.entries(previous).filter(([id]) => !removed.has(id))
+            ));
+            save({ ...workflow, nodes: positioned(workflow.nodes.filter(node => !removed.has(node.id)), currentPositions()),
+              edges: workflow.edges.filter((_, index) => !disconnected.has(edges[index].id)) });
+          }}
+        />
+      </div>
+      <aside className="studio-inspector" aria-label={showCatalog ? 'Node catalog' : 'Node settings'}>
+        {showCatalog ? <>
+          <h3>Node catalog</h3>
+          <label className="studio-field">Search node types
+            <input ref={searchInput} type="search" value={query} onChange={event => setQuery(event.target.value)} />
+          </label>
+          <div className="studio-node-list">
+            {matches.map(spec => <button key={spec.type} onClick={() => add(spec)}>{spec.type}<span aria-hidden="true">+</span></button>)}
+            {!matches.length && <p className="cfg-note">No matching node types.</p>}
+          </div>
+          <button onClick={onRefreshCatalog}>Refresh node catalog</button>
+          <details><summary>Catalog JSON</summary><pre>{JSON.stringify(catalog, null, 2)}</pre></details>
+        </> : <>
+          <h3>Node settings</h3>
+          <label className="studio-field">Node
+            <select value={active?.id ?? ''} onChange={event => select(event.target.value)}>
+              <option value="">Select a node</option>
+              {workflow.nodes.map(node => <option key={node.id} value={node.id}>{node.id} · {node.type}</option>)}
+            </select>
+          </label>
+          {!active && <p className="cfg-note">Select a node to edit its parameters. Drag between matching ports to connect nodes.</p>}
+          {active && !activeSpec && <p className="cfg-note">This node type is missing from the catalog.</p>}
+          {active && activeSpec && <>
+            {Object.entries(activeSpec.parameters).map(([name, rule]) => <label key={name} className="studio-field">
+              {name}
+              {typeof rule[0] === 'number' ? <input type="number" min={rule[0]} max={rule[1]}
+                step={name === 'period' ? '1' : 'any'} value={active.params?.[name] ?? rule[0]}
+                onChange={event => setParam(active, name, event.target.value === '' ? '' : Number(event.target.value))} />
+                : <select value={String(active.params?.[name] ?? rule[0])}
+                  onChange={event => setParam(active, name, event.target.value)}>
+                  {rule.map(value => <option key={value}>{value}</option>)}
+                </select>}
+            </label>)}
+            {!Object.keys(activeSpec.parameters).length && <p className="cfg-note">No configurable parameters.</p>}
+          </>}
+        </>}
+      </aside>
+    </div>
   </section>;
 }

@@ -8,7 +8,7 @@ from __future__ import annotations
 from math import isfinite
 
 from .intel import indicators as ind
-from .strategy_workflow import Workflow, compile_workflow
+from .strategy_workflow import Workflow, compile_workflow, signal_direction
 
 
 def preview(workflow: Workflow, bars: list[dict]) -> dict:
@@ -78,10 +78,7 @@ def preview(workflow: Workflow, bars: list[dict]) -> dict:
         elif typ == 'signal.direction':
             long, short = source(node_id, 'long'), source(node_id, 'short')
             values[node_id, 'target'] = [
-                'CONFLICT' if a is True and b is True else
-                'WAIT' if a is None or b is None else
-                'LONG' if a is True else 'SHORT' if b is True else 'FLAT'
-                for a, b in zip(long, short)
+                signal_direction(a, b) for a, b in zip(long, short)
             ]
         elif typ in ('plan.atr_stop', 'plan.r_multiple'):
             # Price planning requires instrument specifications and is intentionally

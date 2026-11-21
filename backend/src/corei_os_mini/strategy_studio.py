@@ -1,12 +1,12 @@
-"""Read-only strategy suitability scan over existing ACTIVE deployments.
+"""Closed-bar suitability scans, workflow research and versioned strategy drafts.
 
-This does not create signals, risk decisions or orders. It reuses the exact
-algorithm used by the live runtime/backtest, with closed bars only.
+Saving and handing off a draft use the existing operator roles. A handoff creates
+a calculation graph draft for review through the governed lifecycle.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Path, Query, Response, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 from typing import Literal
 from .calc_api import _bars as load_stored_bars
@@ -15,8 +15,8 @@ from .strategy_templates import template_list, template_get
 
 from .strategy_workflow import Workflow, compile_workflow, catalog
 
-from . import config_store as store
-from .operator_auth import require_operator
+from . import config_store as store, strategy_drafts
+from .operator_auth import Principal, require_operator, require_role
 from .trading import algorithms, runtime
 from .trading.common import data_source, deployments
 
@@ -143,3 +143,56 @@ def builder_template(template_id: str, response: Response,
         return template_get(template_id)
     except KeyError:
         raise HTTPException(status_code=404, detail='Unknown strategy template') from None
+
+
+_draft_writer = require_role('TRADING_OPS', 'RISK_APPROVER')
+
+
+class SaveDraftIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_version: int = Field(ge=0, le=2147483646)
+    workflow: Workflow
+
+
+class PromoteDraftIn(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    code: str = Field(pattern=r'^[A-Z][A-Z0-9_]{1,59}$')
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.get('/drafts')
+def list_drafts(response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        return {'items': strategy_drafts.drafts(db)}
+
+
+@router.get('/drafts/{draft_id}/versions')
+def list_draft_versions(draft_id: UUID, response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        return {'items': strategy_drafts.versions(db, draft_id)}
+
+
+@router.get('/drafts/{draft_id}/versions/{number}')
+def get_draft_version(draft_id: UUID, response: Response, number: int = Path(ge=1, le=2147483647),
+                      _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        return strategy_drafts.version(db, draft_id, number)
+
+
+@router.put('/drafts/{draft_id}')
+def save_draft(draft_id: UUID, payload: SaveDraftIn, response: Response,
+               user: Principal = Depends(_draft_writer)):
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('write') as db:
+        return strategy_drafts.save(db, draft_id, payload.expected_version, payload.workflow, user.username)
+
+
+@router.post('/drafts/{draft_id}/versions/{number}/promote')
+def promote_draft(draft_id: UUID, payload: PromoteDraftIn, response: Response,
+                  number: int = Path(ge=1, le=2147483647), user: Principal = Depends(_draft_writer)):
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('write') as db:
+        return strategy_drafts.promote(db, draft_id, number, payload.code, payload.reason, user.username)

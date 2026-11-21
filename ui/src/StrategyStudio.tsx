@@ -1,276 +1,502 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './Configuration';
-import { goto } from './nav';
-import UniversalCanvas from './UniversalCanvas';
+import { goto, publishSections, useSection } from './nav';
+import UniversalCanvas, { readWorkflow, type NodeSpec } from './UniversalCanvas';
+import StudioDrafts, { type DraftVersion } from './StudioDrafts';
+import './strategy-studio.css';
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 type Mode = 'observe' | 'scan' | 'build' | 'results';
-const modes: { id: Mode; title: string }[] = [
-  { id: 'observe', title: 'Observe instrument' },
-  { id: 'scan', title: 'Scan strategy' },
-  { id: 'build', title: 'Build strategy' },
-  { id: 'results', title: 'Results' },
+type EditorView = 'canvas' | 'templates' | 'test' | 'json' | 'drafts';
+type TestOutput = { title: string; draft: string; error?: string; data?: Row };
+
+const modes = [
+  ['build', 'Build strategy'], ['observe', 'Observe instrument'],
+  ['scan', 'Scan strategy'], ['results', 'Results'],
+] as const;
+const editorViews = [
+  ['canvas', 'Canvas'], ['templates', 'Templates'], ['test', 'Validate & preview'], ['drafts', 'Saved drafts'], ['json', 'JSON'],
+] as const;
+type StudioSection = 'observe' | 'scan' | 'results' | EditorView;
+const studioSections: StudioSection[] = ['observe', 'scan', 'results', ...editorViews.map(([id]) => id)];
+const explorerSections = [
+  ...editorViews.map(([id, label]) => ({ id, label, group: 'Build strategy' })),
+  ...modes.flatMap(([id, label]) => id === 'build' ? [] : [{ id, label, group: 'Research & results' }]),
 ];
-function rows(value: unknown): Row[] {
-  return value && typeof value === 'object' && Array.isArray((value as Row).items)
-    ? (value as Row).items : [];
+const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
+
+const starterDraft = JSON.stringify({
+  schema_version: '1.0', name: 'EMA directional draft',
+  nodes: [
+    { id: 'bars', type: 'input.bars' },
+    { id: 'fast', type: 'indicator.ema', params: { period: 20 } },
+    { id: 'slow', type: 'indicator.ema', params: { period: 50 } },
+    { id: 'bull', type: 'condition.compare', params: { operator: '>' } },
+    { id: 'bear', type: 'condition.compare', params: { operator: '<' } },
+    { id: 'signal', type: 'signal.direction' }
+  ],
+  edges: [
+    { source: 'bars', source_port: 'close', target: 'fast', target_port: 'source' },
+    { source: 'bars', source_port: 'close', target: 'slow', target_port: 'source' },
+    { source: 'fast', source_port: 'value', target: 'bull', target_port: 'left' },
+    { source: 'slow', source_port: 'value', target: 'bull', target_port: 'right' },
+    { source: 'fast', source_port: 'value', target: 'bear', target_port: 'left' },
+    { source: 'slow', source_port: 'value', target: 'bear', target_port: 'right' },
+    { source: 'bull', source_port: 'result', target: 'signal', target_port: 'long' },
+    { source: 'bear', source_port: 'result', target: 'signal', target_port: 'short' }
+  ]
+}, null, 2);
+
+function rows(value: { items?: Row[] }): Row[] {
+  return Array.isArray(value?.items) ? value.items : [];
 }
-function label(row: Row): string { return String(row.symbol ?? row.instrument_symbol ?? row.code ?? 'Unknown'); }
-function jump(view: 'Strategies' | 'Configuration' | 'Signals' | 'Risk', section: string) {
-  goto(view, section);
+
+function instrumentLabel(row: Row): string {
+  return String(row.symbol ?? row.instrument_symbol ?? row.code ?? '');
 }
+
+function sourceId(row: Row): string {
+  return String(row.account_id) + '|' + String(row.broker_symbol);
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function StudioTable({ title, columns, items, empty }: {
+  title: string; columns: [string, string][]; items: Row[]; empty: string;
+}) {
+  return <div className="cfg-scroll studio-table" tabIndex={0} role="region" aria-label={title}>
+    <table className="cfg-table compact">
+      <thead><tr>{columns.map(([label]) => <th key={label} scope="col">{label}</th>)}</tr></thead>
+      <tbody>
+        {items.map((row, index) => <tr key={String(row.id ?? row.deployment_id ?? index)}>
+          {columns.map(([label, key]) => <td key={label}>
+            {Array.isArray(row[key]) ? row[key].join(' · ') : String(row[key] ?? '—')}
+          </td>)}
+        </tr>)}
+        {!items.length && <tr><td colSpan={columns.length}>{empty}</td></tr>}
+      </tbody>
+    </table>
+  </div>;
+}
+
 export default function StrategyStudio() {
-  const [mode, setMode] = useState<Mode>('observe');
+  const [section, setSection] = useSection('Strategy Studio', 'canvas', studioSections);
+  const lastEditor = useRef<EditorView>('canvas');
+  const mode: Mode = section === 'observe' || section === 'scan' || section === 'results' ? section : 'build';
+  const editor = mode === 'build' ? section as EditorView : lastEditor.current;
+  const [draft, setDraft] = useState(starterDraft);
+  const [opened, setOpened] = useState<{ revision: DraftVersion; text: string } | null>(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [catalog, setCatalog] = useState<NodeSpec[]>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogBusy, setCatalogBusy] = useState(true);
+  const [templates, setTemplates] = useState<Row[] | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const [templateNotice, setTemplateNotice] = useState('');
+  const [testSource, setTestSource] = useState<'stored' | 'pasted'>('stored');
+  const [previewBars, setPreviewBars] = useState('');
+  const [storedSources, setStoredSources] = useState<Row[] | null>(null);
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+  const [storedSource, setStoredSource] = useState('');
+  const [storedTimeframe, setStoredTimeframe] = useState('H1');
+  const [storedCount, setStoredCount] = useState('300');
+  const [testBusy, setTestBusy] = useState(false);
+  const [output, setOutput] = useState<TestOutput | null>(null);
   const [instruments, setInstruments] = useState<Row[]>([]);
   const [strategies, setStrategies] = useState<Row[]>([]);
   const [deployments, setDeployments] = useState<Row[]>([]);
   const [signals, setSignals] = useState<Row[]>([]);
-  const [runtime, setRuntime] = useState<Row[]>([]);
-  const [scan, setScan] = useState<Row[]>([]);
-  const [scanning, setScanning] = useState(false);
-  const [scanError, setScanError] = useState('');
+  const [runtimeCount, setRuntimeCount] = useState<number | null>(null);
   const [instrument, setInstrument] = useState('');
   const [strategy, setStrategy] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
   const [updated, setUpdated] = useState('');
-  const [draft, setDraft] = useState(JSON.stringify({
-    schema_version: '1.0', name: 'EMA directional draft',
-    nodes: [
-      { id: 'bars', type: 'input.bars' },
-      { id: 'fast', type: 'indicator.ema', params: { period: 20 } },
-      { id: 'slow', type: 'indicator.ema', params: { period: 50 } },
-      { id: 'bull', type: 'condition.compare', params: { operator: '>' } },
-      { id: 'bear', type: 'condition.compare', params: { operator: '<' } },
-      { id: 'signal', type: 'signal.direction' }
-    ],
-    edges: [
-      { source: 'bars', source_port: 'close', target: 'fast', target_port: 'source' },
-      { source: 'bars', source_port: 'close', target: 'slow', target_port: 'source' },
-      { source: 'fast', source_port: 'value', target: 'bull', target_port: 'left' },
-      { source: 'slow', source_port: 'value', target: 'bull', target_port: 'right' },
-      { source: 'fast', source_port: 'value', target: 'bear', target_port: 'right' },
-      { source: 'slow', source_port: 'value', target: 'bear', target_port: 'left' },
-      { source: 'bull', source_port: 'result', target: 'signal', target_port: 'long' },
-      { source: 'bear', source_port: 'result', target: 'signal', target_port: 'short' }
-    ]
-  }, null, 2));
-  const [validation, setValidation] = useState('');
-  const [previewBars, setPreviewBars] = useState('');
-  const [storedSources, setStoredSources] = useState<Row[]>([]);
-  const [storedSource, setStoredSource] = useState('');
-  const [storedTimeframe, setStoredTimeframe] = useState('H1');
-  const [storedCount, setStoredCount] = useState(300);
-  const loadStoredSources = async () => {
-    try {
-      const result = await api('trading/sources');
-      const items = rows(result);
-      setStoredSources(items);
-      if (items.length) setStoredSource(String(items[0].account_id)+'|'+String(items[0].broker_symbol));
-    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
-  };
-  const previewStored = async () => {
-    setPreviewing(true); setValidation('');
-    try {
-      const [account_id, ...symbolParts] = storedSource.split('|');
-      if (!account_id || !symbolParts.length) throw new Error('Select a stored market-data source');
-      const result = await api('trading/studio/builder/preview-stored', 'POST', {
-        workflow: JSON.parse(draft), account_id, symbol: symbolParts.join('|'),
-        timeframe: storedTimeframe, bars: storedCount
-      });
-      setValidation(JSON.stringify(result,null,2));
-    } catch(e) { setValidation(e instanceof Error ? e.message : String(e)); }
-    finally { setPreviewing(false); }
-  };
-  const [templates, setTemplates] = useState<Row[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [templateBusy, setTemplateBusy] = useState(false);
-  const loadTemplates = async () => {
-    setTemplateBusy(true);
-    try {
-      const result = await api('trading/studio/builder/templates');
-      setTemplates(rows(result));
-    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
-    finally { setTemplateBusy(false); }
-  };
-  const useTemplate = async () => {
-    if (!selectedTemplate) return;
-    setTemplateBusy(true);
-    try {
-      const definition = await api('trading/studio/builder/templates/'+encodeURIComponent(selectedTemplate));
-      setDraft(JSON.stringify(definition,null,2));
-      setValidation('Loaded research draft template. Validate and preview before use. Not approved for trading.');
-    } catch(e) { setValidation(e instanceof Error ? e.message : String(e)); }
-    finally { setTemplateBusy(false); }
-  };
-  const [nodeCatalog, setNodeCatalog] = useState<Row[]>([]);
-  const [canvasOpen, setCanvasOpen] = useState(false);
-  const openCanvas = async () => {
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scan, setScan] = useState<{ key: string; items: Row[]; error?: string } | null>(null);
+
+  async function loadCatalog() {
+    setCatalogBusy(true);
+    setCatalogError('');
     try {
       const result = await api('trading/studio/builder/nodes');
-      setNodeCatalog(Array.isArray(result.nodes) ? result.nodes : []);
-      setCanvasOpen(true);
-    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
-  };
-  const [previewing, setPreviewing] = useState(false);
-  const previewDraft = async () => {
-    setPreviewing(true); setValidation('');
+      if (!Array.isArray(result.nodes) || !result.nodes.length) throw new Error('The server returned an empty node catalog.');
+      setCatalog(result.nodes);
+    } catch (error) {
+      setCatalogError(message(error));
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
+
+  async function loadTemplates() {
+    setTemplateBusy(true);
+    setTemplateError('');
     try {
-      const workflow = JSON.parse(draft);
-      const bars = JSON.parse(previewBars);
-      const result = await api('trading/studio/builder/preview', 'POST', { workflow, bars });
-      setValidation(JSON.stringify(result, null, 2));
-    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
-    finally { setPreviewing(false); }
-  };
-  const [validating, setValidating] = useState(false);
-  const validateDraft = async () => {
-    setValidating(true); setValidation('');
+      const items = rows(await api('trading/studio/builder/templates'));
+      setTemplates(items);
+      setSelectedTemplate(current => items.some(item => item.id === current) ? current : '');
+    } catch (error) {
+      setTemplateError(message(error));
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  async function loadSources() {
+    setSourceBusy(true);
+    setSourceError('');
     try {
-      const payload = JSON.parse(draft);
-      const result = await api('trading/studio/builder/validate', 'POST', payload);
-      setValidation(JSON.stringify(result, null, 2));
-    } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
-    finally { setValidating(false); }
-  };
-  const refresh = async () => {
-    setBusy(true); setError('');
-    const endpoints = ['config/instruments', 'config/strategies', 'config/deployments', 'trading/signals?limit=500', 'trading/runtime'];
-    const results = await Promise.allSettled(endpoints.map(path => api(path)));
-    const setters = [setInstruments, setStrategies, setDeployments, setSignals, setRuntime];
+      const items = rows(await api('trading/sources'));
+      setStoredSources(items);
+      setStoredSource(current => items.some(item => sourceId(item) === current)
+        ? current : items[0] ? sourceId(items[0]) : '');
+    } catch (error) {
+      setSourceError(message(error));
+    } finally {
+      setSourceBusy(false);
+    }
+  }
+
+  async function refresh() {
+    setRefreshing(true);
+    setRefreshError('');
+    const endpoints = [
+      ['Instruments', 'config/instruments', setInstruments],
+      ['Strategies', 'config/strategies', setStrategies],
+      ['Deployments', 'config/deployments', setDeployments],
+      ['Signals', 'trading/signals?limit=500', setSignals],
+      ['Runtime', 'trading/runtime', (items: Row[]) => setRuntimeCount(items.length)],
+    ] as const;
+    const results = await Promise.allSettled(endpoints.map(([, path]) => api(path)));
     const failures: string[] = [];
     results.forEach((result, index) => {
-      if (result.status === 'fulfilled') setters[index](rows(result.value));
-      else { setters[index]([]); failures.push(endpoints[index] + ': ' + String(result.reason instanceof Error ? result.reason.message : result.reason)); }
+      const [label, , setItems] = endpoints[index];
+      if (result.status === 'fulfilled') setItems(rows(result.value));
+      else failures.push(label + ' — ' + message(result.reason));
     });
-    setError(failures.join(' | '));
+    setRefreshError(failures.join(' · '));
     setUpdated(new Date().toLocaleTimeString());
-    setBusy(false);
-  };
-  useEffect(() => { void refresh(); }, []);
-  const selectedInstrument = instrument || label(instruments[0] ?? {});
-  const selectedStrategy = strategy || String(strategies[0]?.code ?? '');
-  const matching = useMemo(() => deployments.filter(d => mode === 'observe'
-    ? String(d.instrument_symbol ?? d.symbol ?? '') === selectedInstrument
-    : String(d.strategy_code ?? '') === selectedStrategy), [deployments, mode, selectedInstrument, selectedStrategy]);
-  const runScan = async () => {
-    setScanning(true); setScanError(''); setScan([]);
-    const parameter = mode === 'observe' ? 'instrument_symbol=' + encodeURIComponent(selectedInstrument) : 'strategy_code=' + encodeURIComponent(selectedStrategy);
+    setRefreshing(false);
+  }
+
+  useEffect(() => {
+    publishSections('Strategy Studio', explorerSections);
+    void loadCatalog();
+  }, []);
+  useEffect(() => {
+    if (mode === 'build') lastEditor.current = editor;
+  }, [mode, editor]);
+  useEffect(() => {
+    if (section === 'templates' && templates === null && !templateBusy && !templateError) void loadTemplates();
+  }, [section, templates, templateBusy, templateError]);
+  useEffect(() => {
+    if (section === 'test' && storedSources === null && !sourceBusy && !sourceError) void loadSources();
+  }, [section, storedSources, sourceBusy, sourceError]);
+  useEffect(() => {
+    if (mode !== 'build' && !updated && !refreshing) void refresh();
+  }, [mode, updated, refreshing]);
+
+  async function useTemplate() {
+    if (!selectedTemplate || templateBusy || applyingTemplate) return;
+    if (draft !== starterDraft && !window.confirm('Replace the current unsaved draft with this template?')) return;
+    setApplyingTemplate(true);
+    setTemplateError('');
     try {
-      const result = await api('trading/studio/scan?' + parameter);
-      setScan(rows(result));
-    } catch (e) { setScanError(e instanceof Error ? e.message : String(e)); }
-    finally { setScanning(false); }
-  };
-  useEffect(() => { setScan([]); setScanError(''); }, [mode, selectedInstrument, selectedStrategy]);
-  const visibleSignals = signals.filter(s => mode === 'observe'
-    ? String(s.symbol ?? s.instrument_symbol ?? '') === selectedInstrument
-    : String(s.strategy_code ?? '') === selectedStrategy);
-  return <section className="intel" aria-label="Strategy Intelligence Studio">
-    <div className="intel-bar" style={{justifyContent:'space-between'}}>
-      <div><h2 style={{margin:0}}>Strategy Intelligence Studio</h2><small className="cfg-note">Input → Evaluate → Signal → Risk → Execution. Existing strategy intelligence remains unchanged.</small></div>
-      <button disabled={busy} onClick={() => void refresh()}>{busy ? 'Loading…' : 'Refresh'}</button>
-    </div>
-    <div className="intel-bar" role="tablist" aria-label="Studio mode">
-      {modes.map(m => <button key={m.id} role="tab" aria-selected={mode===m.id} className={mode===m.id?'primary':''} onClick={()=>setMode(m.id)}>{m.title}</button>)}
-    </div>
-    {error && <p role="alert" className="cfg-error-text">Some data could not be loaded: {error}</p>}
-    {updated && <p className="cfg-note">Last refreshed {updated}. Results reflect stored platform data, not a fresh market scan. No orders are submitted from this workspace.</p>}
-    {(mode === 'observe' || mode === 'scan') && <>
-      <div className="intel-bar">
-        {mode === 'observe' ? <label>Instrument <select aria-label="Instrument" value={selectedInstrument} onChange={e=>setInstrument(e.target.value)}>
-          {instruments.map(i=><option key={String(i.id ?? label(i))} value={label(i)}>{label(i)}</option>)}
-        </select></label> : <label>Strategy <select aria-label="Strategy" value={selectedStrategy} onChange={e=>setStrategy(e.target.value)}>
-          {strategies.map(s=><option key={String(s.id ?? s.code)} value={String(s.code)}>{String(s.name ?? s.code)}</option>)}
-        </select></label>}
-        <button onClick={()=>jump('Configuration','deployments')}>Configure deployments</button>
-      </div>
-      <h3>Process · Read-only closed-bar scan</h3>
-      <div className="intel-bar"><button className="primary" disabled={scanning || !(mode === 'observe' ? selectedInstrument !== 'Unknown' : selectedStrategy)} onClick={()=>void runScan()}>{scanning?'Evaluating…':'Evaluate qualifying deployments'}</button><small className="cfg-note">Uses the same algorithm as runtime and backtest; does not send orders.</small></div>
-      {scanError && <p role="alert" className="cfg-error-text">{scanError}</p>}
-      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Instrument</th><th>Strategy</th><th>Target</th><th>Assessment</th><th>Closed bar</th><th>Reference close</th><th>Reason</th></tr></thead><tbody>
-        {scan.map((r,i)=><tr key={String(r.deployment_id??i)}><td>{String(r.instrument_symbol)}</td><td>{String(r.strategy_code)}</td><td>{String(r.target??'—')}</td><td>{String(r.status)}</td><td>{String(r.bar_time??'—')}</td><td>{String(r.reference_close??'—')}</td><td>{String(r.reason??'—')}</td></tr>)}
-        {!scan.length && <tr><td colSpan={7}>Run the scan to evaluate existing active deployments. No result is a broker-ready trade plan.</td></tr>}
-      </tbody></table></div>
-      <h3>Input · Existing deployment coverage</h3>
-      <p className="cfg-note">{matching.length} matching deployments. An instrument or strategy without a deployment is not automatically evaluated. This scan evaluates active deployments only; undeployed instruments remain available for future universe-wide discovery.</p>
-      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Account</th><th>Status</th><th>Mode</th></tr></thead><tbody>
-        {matching.map((d,i)=><tr key={String(d.id ?? i)}><td>{String(d.strategy_code ?? '—')}</td><td>{String(d.instrument_symbol ?? d.symbol ?? '—')}</td><td>{String(d.account_code ?? '—')}</td><td>{String(d.status ?? '—')}</td><td>{String(d.mode ?? '—')}</td></tr>)}
-        {!matching.length && <tr><td colSpan={5}>No matching deployments. Configure a strategy version and its instrument/account coverage.</td></tr>}
-      </tbody></table></div>
-      <h3>Output · Recorded strategy signals</h3>
-      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Side</th><th>State</th><th>Reason</th></tr></thead><tbody>
-        {visibleSignals.slice(0,100).map((s,i)=><tr key={String(s.id ?? i)}><td>{String(s.bar_time ?? '—')}</td><td>{String(s.strategy_code ?? '—')}</td><td>{String(s.symbol ?? '—')}</td><td>{String(s.side ?? '—')}</td><td>{String(s.state ?? '—')}</td><td>{Array.isArray(s.reasons)?s.reasons.join('; '):'—'}</td></tr>)}
-        {!visibleSignals.length && <tr><td colSpan={6}>No recorded signals for this selection. WAIT is not a trade signal.</td></tr>}
-      </tbody></table></div>
-      <p className="cfg-note">Entry, stop and targets require an actual validated trade plan; they are never invented from a directional signal. Inspect the risk and execution stages for broker-valid prices.</p>
-      <div className="intel-bar"><button onClick={()=>jump('Strategies','signals')}>Signal details</button><button onClick={()=>jump('Risk','decisions')}>Risk decisions</button></div>
-    </>}
-    {mode === 'build' && <>
-      <h3>Build · Universal workflow draft</h3>
-      <div className="intel-bar">
-        <button disabled={templateBusy} onClick={()=>void loadTemplates()}>Load research templates</button>
-        <label>Template <select aria-label="Research strategy template" value={selectedTemplate}
-          onChange={e=>setSelectedTemplate(e.target.value)}>
-          <option value="">Select template</option>
-          {templates.map(t=><option key={String(t.id)} value={String(t.id)}>
-            {String(t.category)} · {String(t.name)}</option>)}
-        </select></label>
-        <button disabled={!selectedTemplate || templateBusy} onClick={()=>void useTemplate()}>
-          Load into draft</button>
-      </div>
-      <p className="cfg-note">Templates replace only the current unsaved draft in this editor. Copy your JSON before loading another template. Templates are illustrative, not validated trading strategies.</p>
-      <p className="cfg-note">Portable JSON strategy graph. This editor validates node types, required ports, parameters and cycles. It does not save, backtest, deploy or execute the graph. Existing visual graph authoring remains available below.</p>
-      <div className="intel-bar"><button onClick={()=>void openCanvas()}>
-        {canvasOpen ? 'Refresh visual builder' : 'Open visual builder'}</button>
-        <small className="cfg-note">Draft canvas uses the same JSON as the editor below.</small></div>
-      {canvasOpen && <UniversalCanvas draft={draft} onChange={value=>{setDraft(value);setValidation('');}} catalog={nodeCatalog as any} />}
-      <label htmlFor="studio-workflow-json">Strategy workflow JSON</label>
-      <textarea id="studio-workflow-json" aria-label="Strategy workflow JSON" spellCheck={false}
-        value={draft} onChange={e=>{setDraft(e.target.value);setValidation('');}}
-        rows={16} style={{width:'100%',fontFamily:'monospace',fontSize:'12px'}} />
-      <div className="intel-bar"><button className="primary" disabled={validating}
-        onClick={()=>void validateDraft()}>{validating?'Validating…':'Validate draft'}</button>
-        <button onClick={()=>void api('trading/studio/builder/nodes').then(r=>setValidation(JSON.stringify(r,null,2))).catch(e=>setValidation(String(e)))}>
-          Show node catalog</button></div>
-      <details><summary>Stored market-data preview (read-only)</summary>
-        <p className="cfg-note">Evaluate this draft on collected historical bars for a selected account and instrument. This does not backtest fills or submit orders.</p>
-        <div className="intel-bar">
-          <button onClick={()=>void loadStoredSources()}>Load available sources</button>
-          <label>Source <select aria-label="Stored market-data source" value={storedSource}
-            onChange={e=>setStoredSource(e.target.value)}>
-            {storedSources.map((s,i)=><option key={i} value={String(s.account_id)+'|'+String(s.broker_symbol)}>
-              {String(s.broker_symbol)} · {String(s.account_id)}</option>)}
-          </select></label>
-          <label>Timeframe <select value={storedTimeframe} onChange={e=>setStoredTimeframe(e.target.value)}>
-            {['M1','M5','M15','M30','H1','H4','D1'].map(tf=><option key={tf}>{tf}</option>)}
-          </select></label>
-          <label>Bars <input aria-label="Preview bar count" type="number" min={10} max={5000}
-            value={storedCount} onChange={e=>setStoredCount(Number(e.target.value))}/></label>
-          <button disabled={previewing || !storedSource || storedCount<10 || storedCount>5000}
-            onClick={()=>void previewStored()}>{previewing?'Evaluating…':'Preview stored bars'}</button>
+      const definition = await api('trading/studio/builder/templates/' + encodeURIComponent(selectedTemplate));
+      setDraft(JSON.stringify(definition, null, 2));
+      setOutput(null);
+      setCanvasRevision(current => current + 1);
+      setTemplateNotice('Template loaded into the draft.');
+      setSection('canvas');
+    } catch (error) {
+      setTemplateError(message(error));
+    } finally {
+      setApplyingTemplate(false);
+    }
+  }
+
+  async function runTest(action: 'validate' | 'preview') {
+    const capturedDraft = draft;
+    const pasted = testSource === 'pasted';
+    const source = storedSources?.find(item => sourceId(item) === storedSource);
+    const title = action === 'validate' ? 'Draft validation' : pasted ? 'Pasted OHLC preview'
+      : [source?.broker_symbol, source?.account_code ?? source?.account_id, storedTimeframe + ' preview'].filter(Boolean).join(' · ');
+    setTestBusy(true);
+    setOutput(null);
+    try {
+      const workflow = JSON.parse(capturedDraft);
+      let data: Row;
+      if (action === 'validate') {
+        data = await api('trading/studio/builder/validate', 'POST', workflow);
+      } else if (pasted) {
+        data = await api('trading/studio/builder/preview', 'POST', { workflow, bars: JSON.parse(previewBars) });
+      } else {
+        if (!source) throw new Error('Select a market-data source.');
+        data = await api('trading/studio/builder/preview-stored', 'POST', {
+          workflow, account_id: source.account_id, symbol: source.broker_symbol,
+          timeframe: storedTimeframe, bars: Number(storedCount),
+        });
+      }
+      setOutput({ title, draft: capturedDraft, data });
+    } catch (error) {
+      setOutput({ title, draft: capturedDraft, error: message(error) });
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
+  const observing = mode === 'observe';
+  const selectedInstrument = instruments.some(item => instrumentLabel(item) === instrument)
+    ? instrument : instrumentLabel(instruments[0] ?? {});
+  const selectedStrategy = strategies.some(item => item.code === strategy)
+    ? strategy : String(strategies[0]?.code ?? '');
+  const selection = observing ? selectedInstrument : selectedStrategy;
+  const scanKey = mode + '|' + selection;
+  const currentScan = scan?.key === scanKey ? scan : null;
+  const matching = selection ? deployments.filter(row => observing
+    ? (row.instrument_symbol ?? row.symbol) === selection : row.strategy_code === selection) : [];
+  const visibleSignals = selection ? signals.filter(row => observing
+    ? (row.symbol ?? row.instrument_symbol) === selection : row.strategy_code === selection) : [];
+
+  async function runScan() {
+    setScanBusy(true);
+    setScan(null);
+    const parameter = observing ? 'instrument_symbol' : 'strategy_code';
+    try {
+      const result = await api('trading/studio/scan?' + new URLSearchParams({ [parameter]: selection }));
+      setScan({ key: scanKey, items: rows(result) });
+    } catch (error) {
+      setScan({ key: scanKey, items: [], error: message(error) });
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  const workflow = readWorkflow(draft);
+  const savedStatus = opened && draft === opened.text ? 'Saved research draft · v' + opened.revision.version : 'Unsaved research draft';
+  const validCount = Number.isInteger(Number(storedCount)) && Number(storedCount) >= 10 && Number(storedCount) <= 5000;
+
+  return <section className="studio" aria-label="Strategy Intelligence Studio">
+    <header className="studio-header">
+      <h2>Strategy Intelligence Studio</h2>
+      {mode !== 'build' && <div className="studio-actions">
+        {updated && <small>Refreshed {updated}</small>}
+        <button disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh data'}</button>
+      </div>}
+    </header>
+    <nav className="studio-nav" aria-label="Studio workspace">
+      {modes.map(([id, label]) => <button key={id} aria-pressed={mode === id} disabled={applyingTemplate || draftBusy}
+        onClick={() => setSection(id === 'build' ? lastEditor.current : id)}>{label}</button>)}
+    </nav>
+
+    <div hidden={mode !== 'build'}>
+      <div className="studio-editor-bar">
+        <div className="studio-draft-title">
+          <strong>{workflow?.name || 'Workflow draft'}</strong>
+          <small>{savedStatus}</small>
         </div>
-      </details>
-      <details><summary>Historical preview (closed OHLC bars)</summary>
-        <p className="cfg-note">Paste a JSON array of 2–5000 historical closed bars, each with open, high, low and close. No orders are submitted. Indicator warm-up requires sufficient history.</p>
-        <textarea aria-label="Historical OHLC bars JSON" rows={7} value={previewBars}
-          onChange={e=>setPreviewBars(e.target.value)}
-          placeholder={'[{"open":100,"high":102,"low":99,"close":101}, ...]'}
-          style={{width:'100%',fontFamily:'monospace',fontSize:'12px'}} />
-        <button disabled={previewing || !previewBars.trim()} onClick={()=>void previewDraft()}>
-          {previewing?'Previewing…':'Preview closed bars'}</button>
-      </details>
-      {validation && <pre role="status" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:300,overflowY:'auto'}}>{validation}</pre>}
-      <h3>Existing strategy lifecycle</h3>
-      <p>Choose an existing algorithm or visual calculation graph, create a version, validate it, approve it, then assign instruments and accounts through deployments. Drafts do not trade.</p>
-      <div className="intel-bar"><button onClick={()=>jump('Strategies','graphs')}>Open visual node builder</button><button onClick={()=>jump('Configuration','strategies')}>Create strategy/version</button><button onClick={()=>jump('Configuration','deployments')}>Assign instruments</button></div>
-      <ol><li>Input: collected bars and indicators.</li><li>Process: rules, filters, graph and signal checks.</li><li>Output: qualified signal, risk decision and controlled execution.</li></ol>
-      <p className="cfg-note">The existing calculation graph editor supports node-based authoring. Approval, runtime and broker permissions remain enforced by their original services.</p>
-    </>}
-    {mode === 'results' && <>
-      <h3>Results · Runtime and research</h3>
-      <p>{runtime.length} runtime records loaded. View performance, backtests and drift in the existing strategy workspace.</p>
-      <div className="intel-bar"><button onClick={()=>jump('Strategies','runtime')}>Runtime</button><button onClick={()=>jump('Strategies','backtest')}>Backtest</button><button onClick={()=>jump('Strategies','performance')}>Performance</button><button onClick={()=>jump('Strategies','drift')}>Drift</button></div>
-    </>}
+        <nav className="studio-subnav" aria-label="Draft workspace">
+          {editorViews.map(([id, label]) => <button key={id} aria-pressed={editor === id}
+            disabled={applyingTemplate || draftBusy} onClick={() => setSection(id)}>{label}</button>)}
+        </nav>
+      </div>
+      {templateNotice && editor === 'canvas' && <div className="studio-inline-notice" role="status">{templateNotice}</div>}
+      <div hidden={editor !== 'canvas'} inert={draftBusy || applyingTemplate}>
+        {catalogBusy && <div className="studio-empty" role="status">Loading node catalog…</div>}
+        {catalogError && <div className="studio-empty">
+          <p role="alert" className="cfg-error-text">{catalogError}</p>
+          <button onClick={() => void loadCatalog()}>Retry node catalog</button>
+        </div>}
+        {catalog.length > 0 && <UniversalCanvas key={canvasRevision} draft={draft}
+          onChange={value => { setDraft(value); setTemplateNotice(''); }} catalog={catalog}
+          onOpenJson={() => setSection('json')} onRefreshCatalog={() => void loadCatalog()} />}
+      </div>
+
+      {editor === 'templates' && <section className="studio-panel">
+        <h3>Research templates</h3>
+        <p className="cfg-note">Load a starter workflow into your current draft. Copy the draft from the JSON tab before replacing it.</p>
+        {templateError && <p role="alert" className="cfg-error-text">{templateError}</p>}
+        <div className="studio-actions">
+          <label>Template
+            <select value={selectedTemplate} disabled={templateBusy || applyingTemplate} onChange={event => setSelectedTemplate(event.target.value)}>
+              <option value="">{templateBusy && !templates ? 'Loading templates…' : 'Select a template'}</option>
+              {templates?.map(item => <option key={String(item.id)} value={String(item.id)}>
+                {String(item.category)} · {String(item.name)}
+              </option>)}
+            </select>
+          </label>
+          <button className="primary" disabled={!selectedTemplate || templateBusy || applyingTemplate} onClick={() => void useTemplate()}>
+            {applyingTemplate ? 'Loading draft…' : 'Load into draft'}
+          </button>
+          <button disabled={templateBusy || applyingTemplate} onClick={() => void loadTemplates()}>Refresh templates</button>
+        </div>
+        {templates?.length === 0 && <p role="status" className="cfg-note">No templates are available.</p>}
+      </section>}
+
+      <StudioDrafts draft={draft} opened={opened} active={mode === 'build' && editor === 'drafts'} onBusy={setDraftBusy}
+        onOpen={value => {
+          const edited = draft !== value.text;
+          setOpened(value);
+          setDraft(value.text);
+          setTemplateNotice('');
+          if (edited) setCanvasRevision(current => current + 1);
+        }} />
+
+      {editor === 'json' && <section className="studio-panel">
+        <h3><label htmlFor="studio-workflow-json">Strategy workflow JSON</label></h3>
+        <textarea id="studio-workflow-json" className="studio-json" spellCheck={false} rows={18} value={draft}
+          disabled={draftBusy || applyingTemplate}
+          onChange={event => { setDraft(event.target.value); setTemplateNotice(''); }} />
+      </section>}
+
+      {editor === 'test' && <section className="studio-panel" aria-label="Draft tests">
+        <div className="studio-section-title">
+          <div><h3>Validate workflow</h3><p className="cfg-note">Check node parameters, required connections and cycles.</p></div>
+          <button disabled={testBusy} onClick={() => void runTest('validate')}>Validate draft</button>
+        </div>
+        <div className="studio-test-section">
+          <h3>Preview on closed bars</h3>
+          <p className="cfg-note">Historical signal evaluation only. For fills and performance, use Backtest in Results.</p>
+          <nav className="studio-subnav" aria-label="Preview data">
+            <button aria-pressed={testSource === 'stored'} disabled={testBusy} onClick={() => setTestSource('stored')}>Stored market data</button>
+            <button aria-pressed={testSource === 'pasted'} disabled={testBusy} onClick={() => setTestSource('pasted')}>Paste OHLC JSON</button>
+          </nav>
+          {testSource === 'stored' ? <>
+            {sourceError && <p role="alert" className="cfg-error-text">{sourceError}</p>}
+            <div className="studio-actions">
+              <label>Source
+                <select aria-label="Stored market-data source" value={storedSource} disabled={sourceBusy || testBusy}
+                  onChange={event => setStoredSource(event.target.value)}>
+                  <option value="" disabled>{sourceBusy ? 'Loading sources…' : 'Select a source'}</option>
+                  {storedSources?.map(item => <option key={sourceId(item)} value={sourceId(item)}>
+                    {String(item.broker_symbol)} · {String(item.account_code ?? item.account_id)}
+                  </option>)}
+                </select>
+              </label>
+              <label>Timeframe
+                <select value={storedTimeframe} disabled={testBusy} onChange={event => setStoredTimeframe(event.target.value)}>
+                  {timeframes.map(timeframe => <option key={timeframe}>{timeframe}</option>)}
+                </select>
+              </label>
+              <label>Bars
+                <input aria-label="Preview bar count" type="number" min={10} max={5000} value={storedCount} disabled={testBusy}
+                  onChange={event => setStoredCount(event.target.value)} />
+              </label>
+              <button className="primary" disabled={testBusy || sourceBusy || !storedSource || !validCount}
+                onClick={() => void runTest('preview')}>Preview stored bars</button>
+              <button disabled={sourceBusy || testBusy} onClick={() => void loadSources()}>Refresh sources</button>
+            </div>
+            {storedSources?.length === 0 && <p role="status" className="cfg-note">No collected market-data sources are available.</p>}
+            {!validCount && <p className="cfg-note">Enter a whole number from 10 to 5000.</p>}
+          </> : <>
+            <label className="studio-field">Historical OHLC bars JSON
+              <textarea className="studio-json" rows={7} spellCheck={false} value={previewBars} disabled={testBusy}
+                onChange={event => setPreviewBars(event.target.value)}
+                placeholder='[{"open":100,"high":102,"low":99,"close":101}]' />
+            </label>
+            <p className="cfg-note">Paste 2–5000 historical bars in chronological order. Indicators may require additional warm-up bars.</p>
+            <button className="primary" disabled={testBusy || !previewBars.trim()} onClick={() => void runTest('preview')}>Preview closed bars</button>
+          </>}
+        </div>
+        {testBusy && <p role="status" className="cfg-note">Evaluating draft…</p>}
+        {output && output.draft !== draft && <p role="status" className="cfg-note">The draft changed. Run validation or preview again.</p>}
+        {output && output.draft === draft && <div className="studio-test-section">
+          <h3>{output.title}</h3>
+          {output.error && <p role="alert" className="cfg-error-text">{output.error}</p>}
+          {output.data && <>
+            <p role="status">{output.data.bars_evaluated !== undefined
+              ? <><strong>{String(output.data.latest)}</strong> on the last closed bar · {String(output.data.bars_evaluated)} bars evaluated</>
+              : <strong>{output.data.valid ? 'Workflow is valid' : 'Validation completed'}</strong>}</p>
+            {output.data.notice != null && <p className="cfg-note">{String(output.data.notice)}</p>}
+            <details><summary>Response details</summary><pre>{JSON.stringify(output.data, null, 2)}</pre></details>
+          </>}
+        </div>}
+      </section>}
+    </div>
+
+    {mode !== 'build' && refreshError && <p role="alert" className="cfg-error-text">Data refresh failed for {refreshError}</p>}
+    {(observing || mode === 'scan') && <div className="studio-stack">
+      <section className="studio-panel">
+        <div className="studio-section-title">
+          <div><h3>Deployment coverage</h3><p className="cfg-note">Evaluation uses stored, closed bars for active deployments.</p></div>
+          <button onClick={() => goto('Configuration', 'deployments')}>Configure deployments</button>
+        </div>
+        <div className="studio-actions">
+          {observing ? <label>Instrument
+            <select value={selectedInstrument} onChange={event => setInstrument(event.target.value)}>
+              {!instruments.length && <option value="">No instruments</option>}
+              {instruments.map(item => <option key={String(item.id ?? instrumentLabel(item))} value={instrumentLabel(item)}>
+                {instrumentLabel(item)}
+              </option>)}
+            </select>
+          </label> : <label>Strategy
+            <select value={selectedStrategy} onChange={event => setStrategy(event.target.value)}>
+              {!strategies.length && <option value="">No strategies</option>}
+              {strategies.map(item => <option key={String(item.id ?? item.code)} value={String(item.code)}>
+                {String(item.name ?? item.code)}
+              </option>)}
+            </select>
+          </label>}
+          <button className="primary" disabled={scanBusy || !selection} onClick={() => void runScan()}>
+            {scanBusy ? 'Evaluating…' : 'Evaluate active deployments'}
+          </button>
+        </div>
+        <StudioTable title="Deployment coverage" items={matching.map(row => ({ ...row, instrument: row.instrument_symbol ?? row.symbol }))}
+          columns={[[ 'Strategy', 'strategy_code' ], [ 'Instrument', 'instrument' ], [ 'Account', 'account_code' ],
+            [ 'Status', 'status' ], [ 'Mode', 'mode' ]]} empty={refreshing ? 'Loading deployments…' : 'No matching deployments.'} />
+      </section>
+      <section className="studio-panel">
+        <h3>Closed-bar assessment</h3>
+        {currentScan?.error && <p role="alert" className="cfg-error-text">{currentScan.error}</p>}
+        <StudioTable title="Closed-bar assessment" items={currentScan?.items ?? []}
+          columns={[[ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_code' ], [ 'Target', 'target' ],
+            [ 'Assessment', 'status' ], [ 'Closed bar', 'bar_time' ], [ 'Reference close', 'reference_close' ], [ 'Reason', 'reason' ]]}
+          empty={scanBusy ? 'Evaluating active deployments…' : currentScan?.error ? 'Evaluation failed. Try again.'
+            : currentScan ? 'No active deployments qualified for evaluation.' : 'Run an evaluation to see the assessment.'} />
+      </section>
+      <section className="studio-panel">
+        <div className="studio-section-title">
+          <h3>Recorded signals</h3>
+          <div className="studio-actions">
+            <button onClick={() => goto('Strategies', 'signals')}>Signal details</button>
+            <button onClick={() => goto('Risk', 'decisions')}>Risk decisions</button>
+          </div>
+        </div>
+        <p className="cfg-note">Entry, stop and target prices come from validated trade plans.</p>
+        <StudioTable title="Recorded signals" items={visibleSignals.slice(0, 100)}
+          columns={[[ 'Time', 'bar_time' ], [ 'Strategy', 'strategy_code' ], [ 'Instrument', 'symbol' ],
+            [ 'Side', 'side' ], [ 'State', 'state' ], [ 'Reason', 'reasons' ]]} empty="No recorded signals for this selection." />
+      </section>
+    </div>}
+
+    {mode === 'results' && <div className="studio-stack">
+      <section className="studio-panel">
+        <h3>Runtime and research</h3>
+        <p className="cfg-note">{runtimeCount === null ? 'Runtime data has yet to load.' : runtimeCount + ' runtime records loaded.'}</p>
+        <div className="studio-actions">
+          <button onClick={() => goto('Strategies', 'runtime')}>Runtime</button>
+          <button onClick={() => goto('Strategies', 'backtest')}>Backtest</button>
+          <button onClick={() => goto('Strategies', 'performance')}>Performance</button>
+          <button onClick={() => goto('Strategies', 'drift')}>Drift</button>
+        </div>
+      </section>
+      <section className="studio-panel">
+        <h3>Strategy lifecycle</h3>
+        <p className="cfg-note">Build an approved calculation graph or select an algorithm, then version, validate, approve and assign it.</p>
+        <div className="studio-actions">
+          <button onClick={() => goto('Strategies', 'graphs')}>Calculation graph builder</button>
+          <button onClick={() => goto('Configuration', 'strategies')}>Create strategy or version</button>
+          <button onClick={() => goto('Configuration', 'deployments')}>Assign instruments and accounts</button>
+        </div>
+      </section>
+    </div>}
   </section>;
 }

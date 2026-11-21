@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, FiniteFloat, Field, model_validator
 
 NodeType = Literal['input.bars', 'indicator.ema', 'indicator.rsi', 'indicator.atr',
                    'condition.compare', 'logic.and', 'logic.or', 'signal.direction',
@@ -40,6 +40,7 @@ class Node(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z][a-zA-Z0-9_-]{0,63}$')
     type: NodeType
     params: dict[str, int | float | str] = Field(default_factory=dict)
+    position: tuple[FiniteFloat, FiniteFloat] | None = None
 
 
 class Edge(BaseModel):
@@ -63,6 +64,16 @@ class Workflow(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError('Duplicate node IDs')
         return self
+
+
+def signal_direction(long: bool | None, short: bool | None) -> str:
+    if long is True and short is True:
+        return 'CONFLICT'
+    if long is None or short is None:
+        return 'WAIT'
+    if long is True:
+        return 'LONG'
+    return 'SHORT' if short is True else 'FLAT'
 
 
 def compile_workflow(workflow: Workflow) -> dict:

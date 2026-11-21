@@ -6,7 +6,7 @@
  * constant so nothing around it moves.
  * Must never: change the page layout while it loads or updates (the box has a fixed height). */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Edge, Node, NodeChange, NodeTypes, Connection, EdgeChange } from '@xyflow/react';
+import type { Edge, Node, NodeChange, NodeTypes, Connection, EdgeChange, OnBeforeDelete, OnDelete } from '@xyflow/react';
 
 import Canvas from './FlowCanvasImpl';
 
@@ -14,6 +14,7 @@ export type FlowCanvasProps = {
   nodes: Node[]; edges: Edge[]; nodeTypes: NodeTypes; height?: number | string; label: string;
   onNodesChange?: (c: NodeChange[]) => void; onEdgesChange?: (c: EdgeChange[]) => void; onConnect?: (c: Connection) => void;
   onEdgesDelete?: (e: Edge[]) => void; onNodeClick?: (id: string) => void; onNodeDoubleClick?: (id: string) => void; onPaneClick?: () => void;
+  onBeforeDelete?: OnBeforeDelete; onDelete?: OnDelete;
   editable?: boolean; fitKey?: string; minimap?: boolean; children?: ReactNode; fitNodes?: string[];
 };
 
