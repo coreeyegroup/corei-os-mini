@@ -101,7 +101,7 @@ export default function UniversalCanvas({draft,onChange,catalog}:Props) {
         </label>;
       })}
       {!Object.keys(lookup[active.type]?.parameters ?? {}).length && <small>No configurable parameters for this node.</small>}
-    </fieldset>
+    </fieldset>}
     <FlowCanvas label="Universal strategy draft" nodes={nodes} edges={edges} nodeTypes={types} height={460}
       editable onConnect={connect}
       onNodeClick={setActiveNode}
