@@ -11,6 +11,7 @@ from uuid import UUID
 from typing import Literal
 from .calc_api import _bars as load_stored_bars
 from .strategy_preview import preview
+from .strategy_templates import template_list, template_get
 
 from .strategy_workflow import Workflow, compile_workflow, catalog
 
@@ -126,3 +127,19 @@ def preview_stored_builder(payload: StoredDraftPreviewIn, response: Response,
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {**result, 'source': source, 'symbol': payload.symbol,
             'timeframe': payload.timeframe, 'account_id': str(payload.account_id)}
+
+
+@router.get('/builder/templates')
+def builder_templates(response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    return template_list()
+
+
+@router.get('/builder/templates/{template_id}')
+def builder_template(template_id: str, response: Response,
+                     _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return template_get(template_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail='Unknown strategy template') from None
