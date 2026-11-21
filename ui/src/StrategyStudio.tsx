@@ -60,9 +60,7 @@ export default function StrategyStudio() {
     setValidating(true); setValidation('');
     try {
       const payload = JSON.parse(draft);
-      const result = await api('trading/studio/builder/validate', {
-        method: 'POST', body: JSON.stringify(payload)
-      });
+      const result = await api('trading/studio/builder/validate', 'POST', payload);
       setValidation(JSON.stringify(result, null, 2));
     } catch (e) { setValidation(e instanceof Error ? e.message : String(e)); }
     finally { setValidating(false); }
