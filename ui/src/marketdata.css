@@ -283,3 +283,7 @@
 .ws-head .cfg-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-caret { width: 1em; color: var(--muted); }
 .ws-body { padding: 8px 10px; }
+
+.intel-research-brief { margin-block: 10px; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.intel-research-brief > summary { cursor: pointer; font-weight: 600; }
+.intel-research-brief > textarea { width: 100%; resize: vertical; margin-top: 6px; font: inherit; }

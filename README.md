@@ -53,6 +53,12 @@ ui/                       React + TypeScript workstation (Configuration workspac
 
 MT5 logins are saved on each account (master or investor password); REST API keys or OAuth clients are saved on the connection. Naming conventions and worked examples (MT5 multi-broker/holder/account, Upstox OAuth): [`docs/CONFIGURATION_GUIDE.md`](docs/CONFIGURATION_GUIDE.md).
 
+## Read-only research brief
+
+Open **Intelligence → Screener**, select a collected instrument and broker source, then open **Research brief** on the **Instrument** screen and choose **Generate research brief**. The brief includes closed-bar features by timeframe, the available bid/ask quote and its receipt time, recent feed quality, and the instrument's stored event context. Missing and warming-up data are shown explicitly. Check the capture and data timestamps before using a saved brief.
+
+Review the preview in the workstation. **Download Markdown** saves a journal copy. **Copy for CORE-AI** copies the same brief plus a research prompt, which you can paste manually into a private CORE-AI Chat. The export excludes account identifiers and server settings. It uses existing authenticated market-intelligence reads and submits no requests to CORE-AI or the broker.
+
 ## Tests
 
 ```bash

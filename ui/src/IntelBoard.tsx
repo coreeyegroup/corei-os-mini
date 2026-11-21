@@ -6,6 +6,7 @@
  * Must never: show a figure without saying where it comes from (timeframe, bar time, bars source). */
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './Configuration';
+import ResearchBrief from './ResearchBrief';
 
 type Row = Record<string, any>;
 const TFS = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
@@ -175,6 +176,9 @@ export function InstrumentView({ pick, items, setPick }: { pick: Row | null; ite
     </div>
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {!pick && <p className="cfg-note">Pick an instrument here or click a row in the Screener.</p>}
+    {pick && <ResearchBrief key={JSON.stringify([pick.account_id, pick.broker_symbol, tf])}
+      accountId={pick.account_id} symbol={pick.instrument ?? pick.broker_symbol}
+      brokerSymbol={pick.broker_symbol} provider={pick.provider_name} timeframe={tf} />}
     {data && <>
       <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>TF</th><th>Regime</th><th>Vol.</th><th>ADX</th><th>RSI</th><th>ATR %</th><th>Trend (EMA)</th><th>BB width %</th><th>20-bar %</th><th>Session</th><th>Bars</th><th>Bar (UTC)</th><th>Why</th></tr></thead><tbody>
         {data.snapshots.map((s: Row) => { const f = s.features; return <tr key={s.timeframe} className={s.timeframe === tf ? 'selected' : ''}>
