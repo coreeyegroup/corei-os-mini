@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response, HTTPException
 from pydantic import BaseModel, Field
+from uuid import UUID
+from typing import Literal
+from .calc_api import _bars as load_stored_bars
 from .strategy_preview import preview
 
 from .strategy_workflow import Workflow, compile_workflow, catalog
@@ -99,3 +102,27 @@ def preview_builder(payload: DraftPreviewIn, response: Response,
         return preview(payload.workflow, payload.bars)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class StoredDraftPreviewIn(BaseModel):
+    workflow: Workflow
+    account_id: UUID
+    symbol: str = Field(min_length=1, max_length=64)
+    timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] = 'H1'
+    bars: int = Field(default=300, ge=10, le=5000)
+
+
+@router.post('/builder/preview-stored')
+def preview_stored_builder(payload: StoredDraftPreviewIn, response: Response,
+                           _: str = Depends(require_operator)):
+    """Evaluate a draft against stored historical bars, without creating orders."""
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        bars, source = load_stored_bars(db, payload.account_id, payload.symbol,
+                                        payload.timeframe, payload.bars)
+    try:
+        result = preview(payload.workflow, bars)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**result, 'source': source, 'symbol': payload.symbol,
+            'timeframe': payload.timeframe, 'account_id': str(payload.account_id)}
