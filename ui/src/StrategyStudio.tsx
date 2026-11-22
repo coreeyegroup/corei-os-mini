@@ -17,7 +17,7 @@ type ScanScope = 'instrument' | 'strategy';
 type ScanRequest = { instrument_symbols?: string[]; strategy_codes?: string[];
   entry_lookback: number; stop_atr: string; reward_risk: string };
 type ScanRun = { scope: ScanScope; selection: string; groups: string[]; request: ScanRequest; items: Row[]; completedAt: Date };
-type ScanPreset = { name: string; mode: ScanScope; request: ScanRequest };
+type ScanPreset = { name: string; mode: ScanScope; request: ScanRequest; allInstruments?: boolean; allStrategies?: boolean };
 const presetKey = 'corei.studio.scan-presets';
 const scanRunsPath = 'trading/studio/scan-runs';
 type ScanJob = { id: string; mode: ScanScope; status: string; total: number; created_at: string; updated_at: string;
@@ -83,8 +83,8 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function StudioTable({ title, columns, items, empty }: {
-  title: string; columns: [string, string][]; items: Row[]; empty: string;
+function StudioTable({ title, columns, items, empty, onGroup }: {
+  title: string; columns: [string, string][]; items: Row[]; empty: string; onGroup?: (group: string) => void;
 }) {
   return <div className="cfg-scroll studio-table" tabIndex={0} role="region" aria-label={title}>
     <table className="cfg-table compact">
@@ -92,7 +92,9 @@ function StudioTable({ title, columns, items, empty }: {
       <tbody>
         {items.map((row, index) => <tr key={String(row.id ?? row.deployment_id ?? index)}>
           {columns.map(([label, key]) => <td key={label}>
-            {Array.isArray(row[key]) ? row[key].join(' · ') : String(row[key] ?? '—')}
+            {onGroup && (key === 'scope' || key === 'group') && typeof row[key] === 'string'
+              ? <button type="button" className="studio-result-link" onClick={() => onGroup(String(row[key]))}>{String(row[key])}</button>
+              : Array.isArray(row[key]) ? row[key].join(' · ') : String(row[key] ?? '—')}
           </td>)}
         </tr>)}
         {!items.length && <tr><td colSpan={columns.length}>{empty}</td></tr>}
@@ -205,7 +207,7 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
   const errors = (current?.summary ?? []).reduce((sum, row) => sum + Number(row.errors), 0);
   const signalCount = (current?.summary ?? []).reduce((sum, row) => sum + Number(row.signals), 0);
   return <section className="studio-panel">
-    <h3>Background scan runs</h3>
+    <h3>Saved runs</h3>
     <div className="studio-actions">
       <label>Run history<select value={history.some(row => row.id === runId) ? runId : ''} onChange={event => open(event.target.value)}>
         <option value="">{history.length ? 'Choose a saved run' : 'No runs on this page'}</option>
@@ -226,10 +228,11 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
           <button disabled={busy} onClick={() => void action('retry')}>{current.status === 'COMPLETED' ? 'Retry errors' : 'Resume run'}</button>}
         <button onClick={() => setRevision(value => value + 1)}>Refresh results</button>
       </div>
+      <progress className="studio-run-progress" aria-label="Scan progress" value={checked} max={current.total || 1} />
       {current.failure && <p role="alert" className="cfg-error-text">{current.failure}</p>}
       {actionError && <p role="alert" className="cfg-error-text">{actionError}</p>}
       {current.mode === 'instrument' && <p className="cfg-note">Strength is strategy-specific. Compare scores within the same strategy.</p>}
-      <StudioTable title="Run summary" items={current.summary}
+      <StudioTable title="Run summary" items={current.summary} onGroup={value => { setGroup(value); setOffset(0); }}
         columns={[[current.mode === 'instrument' ? 'Instrument' : 'Strategy', 'scope'], ['Checked', 'checked'], ['Signals', 'signals'],
           ['Errors', 'errors'], ['Highest reported scores', 'strongest'], ['Strength', 'strength']]} empty="Waiting for the first checks." />
       <div className="studio-actions">
@@ -304,6 +307,8 @@ export default function StrategyStudio() {
   const [watchlists, setWatchlists] = useState<Row[]>([]);
   const [watchSources, setWatchSources] = useState<Row[]>([]);
   const [watchlistError, setWatchlistError] = useState('');
+  const [allInstrumentGroups, setAllInstrumentGroups] = useState(false);
+  const [allStrategyGroups, setAllStrategyGroups] = useState(false);
   const [instrumentFilter, setInstrumentFilter] = useState<'all' | 'selected'>('all');
   const [presetName, setPresetName] = useState('');
   const [presets, setPresets] = useState<ScanPreset[]>(() => {
@@ -493,7 +498,13 @@ export default function StrategyStudio() {
   const selectedCodes = filteredStrategies.filter(code => activeStrategies.some(item => item.code === code));
   const chosenStrategies = (scanStrategies ?? [String(activeStrategies[0]?.code ?? '')]).filter(code =>
     activeStrategies.some(item => item.code === code));
-  const groups = byInstrument ? (observing ? [selectedInstrument] : selectedSymbols) : chosenStrategies;
+  const allInstruments = activeInstruments.map(instrumentLabel);
+  const allStrategies = activeStrategies.map(item => String(item.code));
+  const selectInstruments = byInstrument ? !allInstrumentGroups : instrumentFilter === 'selected';
+  const selectStrategies = byInstrument ? strategyFilter === 'selected' : !allStrategyGroups;
+  const instrumentScope = selectInstruments ? selectedSymbols : allInstruments;
+  const strategyScope = selectStrategies ? (byInstrument ? selectedCodes : chosenStrategies) : allStrategies;
+  const groups = byInstrument ? (observing ? [selectedInstrument] : instrumentScope) : strategyScope;
   const selection = groups.join(', ');
   const matching = deployments.filter(row => groups.some(group => group && group === (byInstrument
     ? (row.instrument_symbol ?? row.symbol) : row.strategy_code)));
@@ -502,9 +513,6 @@ export default function StrategyStudio() {
   const visibleSignals = signalScope ? signals.filter(row => signalScope.groups.some(group => group === (signalScope.scope === 'instrument'
     ? (row.symbol ?? row.instrument_symbol) : row.strategy_code))) : [];
   const currentScanError = scanError?.scope === scanScope && scanError.selection === selection ? scanError.message : '';
-  const useStrategyFilter = byInstrument && strategyFilter === 'selected';
-  const instrumentScope = byInstrument || instrumentFilter === 'selected' ? selectedSymbols : activeInstruments.map(instrumentLabel);
-  const strategyScope = byInstrument ? (useStrategyFilter ? selectedCodes : activeStrategies.map(item => String(item.code))) : chosenStrategies;
   const pairCount = instrumentScope.length * strategyScope.length;
   const useBackground = background || pairCount > 100;
   const validProtection = [stopAtr, rewardRisk].every(value => /^\d+(\.\d{1,2})?$/.test(value) && Number(value) >= 0.1 && Number(value) <= 20);
@@ -527,6 +535,7 @@ export default function StrategyStudio() {
   }
 
   function openScan() {
+    setAllInstrumentGroups(false);
     setScanInstruments(selectedInstrument ? [selectedInstrument] : null);
     setScanScope(selectedInstrument ? 'instrument' : 'strategy');
     advanceResearch('scan');
@@ -534,15 +543,15 @@ export default function StrategyStudio() {
 
   const scanRequest: ScanRequest = {
     ...(byInstrument
-      ? { instrument_symbols: selectedSymbols, ...(useStrategyFilter ? { strategy_codes: selectedCodes } : {}) }
-      : { strategy_codes: chosenStrategies, ...(instrumentFilter === 'selected' ? { instrument_symbols: selectedSymbols } : {}) }),
+      ? { instrument_symbols: instrumentScope, ...(selectStrategies ? { strategy_codes: strategyScope } : {}) }
+      : { strategy_codes: strategyScope, ...(selectInstruments ? { instrument_symbols: instrumentScope } : {}) }),
     entry_lookback: entryLookback, stop_atr: stopAtr, reward_risk: rewardRisk,
   };
 
   function savePreset() {
     const name = presetName.trim();
     if (!name || !pairCount || !validProtection) return;
-    const saved = [...presets.filter(preset => preset.name !== name), { name, mode: scanScope, request: scanRequest }];
+    const saved = [...presets.filter(preset => preset.name !== name), { name, mode: scanScope, request: scanRequest, allInstruments: allInstrumentGroups, allStrategies: allStrategyGroups }];
     try {
       localStorage.setItem(presetKey, JSON.stringify(saved));
       setPresets(saved); setPresetError(''); setPresetName('');
@@ -552,6 +561,8 @@ export default function StrategyStudio() {
   function openPreset(preset: ScanPreset) {
     const request = preset.request;
     setScanScope(preset.mode);
+    setAllInstrumentGroups(Boolean(preset.allInstruments));
+    setAllStrategyGroups(Boolean(preset.allStrategies));
     setScanInstruments(request.instrument_symbols ?? null);
     setInstrumentFilter(request.instrument_symbols ? 'selected' : 'all');
     setStrategyFilter(request.strategy_codes ? 'selected' : 'all');
@@ -794,9 +805,9 @@ export default function StrategyStudio() {
     {(observing || mode === 'scan') && <div className="studio-stack">
       <section className="studio-panel" aria-labelledby="studio-research-scope">
         <div className="studio-section-title">
-          <div><h3 id="studio-research-scope" ref={researchHeading} tabIndex={-1}>{observing ? 'Select an instrument' : 'Choose a scan mode'}</h3>
+          <div><h3 id="studio-research-scope" ref={researchHeading} tabIndex={-1}>{observing ? 'Select an instrument' : 'Configure scan'}</h3>
             <p className="cfg-note">{observing ? 'Review the market context, then carry this instrument into the signal scanner.'
-              : 'COREI evaluates approved strategy rules against stored closed bars.'}</p></div>
+              : 'Choose a scope. The scan mode controls how results are grouped.'}</p></div>
         </div>
         {!observing && <div className="studio-subnav" role="group" aria-label="Scan mode">
           <button type="button" aria-pressed={byInstrument} disabled={scanBusy}
@@ -804,7 +815,7 @@ export default function StrategyStudio() {
           <button type="button" aria-pressed={!byInstrument} disabled={scanBusy}
             onClick={() => setScanScope('strategy')}>Scan by strategy</button>
         </div>}
-        <div className="studio-form-row">
+        {observing && <div className="studio-form-row">
           {observing && <label>Instrument
             <select value={selectedInstrument} disabled={scanBusy} onChange={event => setInstrument(event.target.value)}>
               {!activeInstruments.length && <option value="">{refreshing ? 'Loading instruments…' : 'No instruments'}</option>}
@@ -813,52 +824,63 @@ export default function StrategyStudio() {
               </option>)}
             </select>
           </label>}
-          {!observing && byInstrument && <label>Strategies to scan
-            <select value={strategyFilter} disabled={scanBusy}
-              onChange={event => setStrategyFilter(event.target.value === 'selected' ? 'selected' : 'all')}>
-              <option value="all">All strategies</option>
-              <option value="selected">Selected strategies</option>
-            </select>
-          </label>}
-          {!observing && !byInstrument && <label>Instruments to scan
-            <select value={instrumentFilter} disabled={scanBusy} onChange={event =>
-              setInstrumentFilter(event.target.value === 'selected' ? 'selected' : 'all')}>
-              <option value="all">All active instruments</option><option value="selected">Selected instruments</option>
-            </select>
-          </label>}
           {observing && <div className="studio-actions">
             <button className="primary" disabled={scanBusy || !selectedInstrument} onClick={openScan}>Open scanner for this instrument</button>
           </div>}
-        </div>
-        {!observing && byInstrument && !activeStrategies.length && !refreshing && <p className="cfg-note">No active strategies available to scan.</p>}
-        {!observing && watchlists.length > 0 && <div className="studio-actions"><label>Use instrument watchlist
-          <select value="" disabled={scanBusy} onChange={event => {
-            const list = watchlists.find(item => item.id === event.target.value);
-            if (!list) return;
-            const entries = Array.isArray(list.items) ? list.items as Row[] : [];
-            const keys = new Set(entries.map(sourceId));
-            const mapped = [...new Set(watchSources.filter(source => keys.has(sourceId(source)))
-              .map(source => String(source.instrument ?? ''))
-              .filter(symbol => activeInstruments.some(item => instrumentLabel(item) === symbol)))];
-            setScanInstruments(mapped);
-            setInstrumentFilter('selected');
-            setWatchlistError(mapped.length ? '' : 'This watchlist has no collected sources mapped to active instruments.');
-          }}>
-            <option value="">Choose a watchlist</option>
-            {watchlists.map(item => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}
-          </select>
-        </label></div>}
-        {!observing && watchlistError && <p className="cfg-note">Watchlists · {watchlistError}</p>}
-        {!observing && (byInstrument || instrumentFilter === 'selected') && <ScanSelection label="Instruments" items={activeInstruments.map(item => ({
-          value: instrumentLabel(item), label: item.name ? `${instrumentLabel(item)} · ${item.name}` : instrumentLabel(item)
-        }))} selected={selectedSymbols} change={setScanInstruments} disabled={scanBusy} loading={refreshing} />}
-        {!observing && (!byInstrument || useStrategyFilter) && <ScanSelection label="Strategies"
-          items={activeStrategies.map(item => ({ value: String(item.code), label: String(item.name ?? item.code) }))}
-          selected={byInstrument ? selectedCodes : chosenStrategies}
-          change={byInstrument ? setFilteredStrategies : setScanStrategies} disabled={scanBusy} loading={refreshing} />}
-        {!observing && <p className="cfg-note">{byInstrument
-          ? 'Check each selected instrument against all or selected strategies.'
-          : 'Rank instruments separately for each selected strategy.'}</p>}
+        </div>}
+        {!observing && <div className="studio-scope-grid">
+          <section className="studio-scope-card" aria-label="Instrument scope">
+            <h4>Instruments <small>{instrumentScope.length} in scope</small></h4>
+            <div className="studio-actions"><label>Instruments to scan
+              <select value={selectInstruments ? 'selected' : 'all'} disabled={scanBusy} onChange={event => {
+                const selected = event.target.value === 'selected';
+                if (byInstrument) setAllInstrumentGroups(!selected);
+                else setInstrumentFilter(selected ? 'selected' : 'all');
+              }}>
+                <option value="all">All active instruments</option><option value="selected">Selected instruments</option>
+              </select>
+            </label></div>
+            {!observing && watchlists.length > 0 && <div className="studio-actions"><label>Use instrument watchlist
+              <select value="" disabled={scanBusy} onChange={event => {
+                const list = watchlists.find(item => item.id === event.target.value);
+                if (!list) return;
+                const entries = Array.isArray(list.items) ? list.items as Row[] : [];
+                const keys = new Set(entries.map(sourceId));
+                const mapped = [...new Set(watchSources.filter(source => keys.has(sourceId(source)))
+                  .map(source => String(source.instrument ?? ''))
+                  .filter(symbol => activeInstruments.some(item => instrumentLabel(item) === symbol)))];
+                setAllInstrumentGroups(false);
+                setScanInstruments(mapped);
+                setInstrumentFilter('selected');
+                setWatchlistError(mapped.length ? '' : 'This watchlist has no collected sources mapped to active instruments.');
+              }}>
+                <option value="">Choose a watchlist</option>
+                {watchlists.map(item => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}
+              </select>
+            </label></div>}
+            {!observing && watchlistError && <p className="cfg-note">Watchlists · {watchlistError}</p>}
+            {selectInstruments && <ScanSelection label="Instruments" items={activeInstruments.map(item => ({
+              value: instrumentLabel(item), label: item.name ? `${instrumentLabel(item)} · ${item.name}` : instrumentLabel(item)
+            }))} selected={selectedSymbols} change={setScanInstruments} disabled={scanBusy} loading={refreshing} />}
+          </section>
+          <section className="studio-scope-card" aria-label="Strategy scope">
+            <h4>Strategies <small>{strategyScope.length} in scope</small></h4>
+            <div className="studio-actions"><label>Strategies to scan
+              <select value={selectStrategies ? 'selected' : 'all'} disabled={scanBusy} onChange={event => {
+                const selected = event.target.value === 'selected';
+                if (byInstrument) setStrategyFilter(selected ? 'selected' : 'all');
+                else setAllStrategyGroups(!selected);
+              }}>
+                <option value="all">All strategies</option><option value="selected">Selected strategies</option>
+              </select>
+            </label></div>
+            {selectStrategies && <ScanSelection label="Strategies" items={activeStrategies.map(item => ({
+              value: String(item.code), label: String(item.name ?? item.code)
+            }))} selected={byInstrument ? selectedCodes : chosenStrategies}
+              change={byInstrument ? setFilteredStrategies : setScanStrategies} disabled={scanBusy} loading={refreshing} />}
+          </section>
+        </div>}
+        {!observing && <div className="studio-scan-options">
         {!observing && <details className="studio-scan-settings">
           <summary>Signal settings · Stop {stopAtr || '—'}× ATR14 · Target {rewardRisk || '—'}R</summary>
           <div className="studio-actions">
@@ -896,13 +918,20 @@ export default function StrategyStudio() {
           </div>
           {presetError && <p role="alert" className="cfg-error-text">{presetError}</p>}
         </details>}
-        {!observing && <p className="cfg-note">{instrumentScope.length.toLocaleString()} instruments × {strategyScope.length.toLocaleString()} strategies
-          {' · '}{pairCount.toLocaleString()} checks{pairCount > 100 ? ' · Runs in background' : ''}</p>}
-        {!observing && pairCount <= 100 && <label className="studio-background-option"><input type="checkbox" checked={background} disabled={scanBusy} onChange={event => setBackground(event.target.checked)} /> Run in background and save results</label>}
-        {!observing && <div className="studio-actions">
-          <button className="primary" disabled={!canScan} onClick={() => void runScan()}>
-            {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
-          </button>
+        </div>}
+        {!observing && <div className="studio-run-bar">
+          <div>
+            <strong>{pairCount.toLocaleString()} checks</strong>
+            <p className="cfg-note">{instrumentScope.length.toLocaleString()} instruments × {strategyScope.length.toLocaleString()} strategies
+              {' · '}{useBackground ? 'Background run' : 'Quick scan'}</p>
+          </div>
+          <div className="studio-actions">
+            {pairCount <= 100 && <label className="studio-background-option"><input type="checkbox" checked={background} disabled={scanBusy}
+              onChange={event => setBackground(event.target.checked)} /> Run in background and save results</label>}
+            <button className="primary" disabled={!canScan} onClick={() => void runScan()}>
+              {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
+            </button>
+          </div>
         </div>}
         {!observing && !validProtection && <p role="alert" className="cfg-error-text">Use values from 0.10 to 20 with up to two decimal places.</p>}
         {!observing && scanBusy && <p role="status" className="cfg-note">Scanning closed bars for {selection}…</p>}
@@ -919,7 +948,7 @@ export default function StrategyStudio() {
           empty={refreshing ? 'Loading market context…' : !selection ? 'Select an instrument to see its market context.'
             : 'No H1 snapshot is available for this instrument.'} />
       </section>}
-      <details className="studio-panel studio-details">
+      {observing && <details className="studio-panel studio-details">
         <summary>Deployment coverage</summary>
         <div className="studio-section-title">
           <button onClick={() => goto('Configuration', 'deployments')}>Configure deployments</button>
@@ -928,17 +957,16 @@ export default function StrategyStudio() {
           columns={[[ 'Strategy', 'strategy_code' ], [ 'Instrument', 'instrument' ], [ 'Account', 'account_code' ],
             [ 'Status', 'status' ], [ 'Mode', 'mode' ]]}
           empty={refreshing ? 'Loading deployments…' : !selection ? 'Select a scope to see deployments.' : 'No matching deployments.'} />
-      </details>
+      </details>}
       {observing && recordedSignals}
     </div>}
 
     {mode === 'results' && <div className="studio-stack">
-      <BackgroundScans runId={backgroundId} selectRun={setBackgroundId} />
       <section className="studio-panel" aria-labelledby="studio-assessment">
         <div className="studio-section-title">
           <div>
             <h3 id="studio-assessment" ref={researchHeading} tabIndex={-1}>Signal scan results</h3>
-            {scan && <p className="cfg-note">{scan.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {scan.selection}
+            {scan && !backgroundId && <p className="cfg-note">{scan.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {scan.selection}
               {' · '}{scan.completedAt.toLocaleString()}{scan.scope === 'instrument'
                 ? ' · ' + (scan.request.strategy_codes?.join(', ') ?? 'All strategies') : ''}</p>}
           </div>
@@ -946,7 +974,7 @@ export default function StrategyStudio() {
             {scan ? 'Back to scan' : 'Go to scan'}
           </button>
         </div>
-        {scanRuns.length > 1 && <div className="studio-actions"><label>Scan history
+        {!backgroundId && scanRuns.length > 1 && <div className="studio-actions"><label>Scan history
           <select value={viewedRun} onChange={event => { setViewedRun(Number(event.target.value)); setResultGroup(''); }}>
             {scanRuns.map((run, index) => <option key={index} value={index}>
               {run.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {run.selection} · {run.completedAt.toLocaleTimeString()}
@@ -954,21 +982,22 @@ export default function StrategyStudio() {
           </select>
         </label></div>}
         {scanBusy && <p role="status" className="cfg-note">{scan ? 'New scan running. Showing a completed scan.' : 'Scan in progress…'}</p>}
-        {scan && <>
+        {backgroundId && scan && <button onClick={() => setBackgroundId('')}>Show quick scan results</button>}
+        {scan && !backgroundId && <>
           {scan.groups.length > 1 && <div className="studio-actions"><label>{scan.scope === 'strategy' ? 'Results by strategy' : 'Results by instrument'}
             <select value={resultGroup} onChange={event => setResultGroup(event.target.value)}>
               <option value="">All results</option>
               {scan.groups.map(group => <option key={group} value={group}>{group}</option>)}
             </select>
           </label></div>}
-          {scan.groups.length > 1 && !resultGroup && <StudioTable title="Best matches by selection" items={scan.groups.map(group => {
+          {scan.groups.length > 1 && !resultGroup && <StudioTable title="Best matches by selection" onGroup={setResultGroup} items={scan.groups.map(group => {
             const hits = rankedSignals.filter(row => row[groupKey] === group);
             const best = hits[0];
             const ties = best ? hits.filter(row => row.strength === best.strength) : [];
             return { group, signals: hits.length, best: ties.length ? ties.map(row => row[scan.scope === 'strategy' ? 'instrument_symbol' : 'strategy_code']) : 'No qualifying entry',
               strength: best?.strength };
           })} columns={[[scan.scope === 'strategy' ? 'Strategy' : 'Instrument', 'group'], ['Signals', 'signals'],
-            ['Strongest match', 'best'], ['Strength / 100', 'strength']]} empty="No scan results." />}
+            [scan.scope === 'instrument' ? 'Highest reported scores' : 'Strongest match', 'best'], ['Strength / 100', 'strength']]} empty="No scan results." />}
           <dl className="studio-scan-summary">
             {scanCounts?.map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
           </dl>
@@ -976,6 +1005,7 @@ export default function StrategyStudio() {
             ? <p><strong>Strongest score</strong> · {String(strongest.strength)}/100 · {tiedForStrongest} tied matches</p>
             : <p><strong>Strongest match</strong> · {String(strongest.instrument_symbol)}
               {' · '}{String(strongest.strategy_code)}{' · '}{String(strongest.strength)}/100</p>)}
+          {scan.scope === 'instrument' && <p className="cfg-note">Strength is strategy-specific. Compare scores within the same strategy.</p>}
           <p className="cfg-note">Trigger window · {scan.request.entry_lookback} closed bar(s). Entry and strength come from the trigger bar. The plan uses a {scan.request.stop_atr}× ATR14 stop and a {scan.request.reward_risk}R target. </p>
           <StudioTable title="Ranked signals" items={rankedSignals.map((row, index) => ({ ...row, rank: index + 1,
             strategy_version: `${row.strategy_code} v${row.version}`,
@@ -998,7 +1028,8 @@ export default function StrategyStudio() {
         </>}
         {!scan && !scanBusy && !backgroundId && <p className="cfg-note">Run a scan to see ranked signals here.</p>}
       </section>
-      {scan && recordedSignals}
+      <BackgroundScans runId={backgroundId} selectRun={setBackgroundId} />
+      {scan && !backgroundId && recordedSignals}
       <details className="studio-panel studio-details">
         <summary>Runtime and research</summary>
         <p className="cfg-note">{runtimeCount === null ? 'Runtime data has yet to load.' : runtimeCount + ' runtime records loaded.'}</p>
