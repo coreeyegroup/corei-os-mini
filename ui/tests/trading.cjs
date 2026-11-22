@@ -23,6 +23,12 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
  const now=new Date().toISOString();
  const calls=[];
+ let largeScanCatalog=false;
+ let backgroundScanRequest;
+ const backgroundSummary=[{scope:'EURUSD',checked:2,signals:1,errors:0,strongest:['EMA_EXISTING'],strength:85}];
+ const backgroundRun=()=>({id:'batch-1',mode:'instrument',status:'COMPLETED',total:202,
+   created_at:now,updated_at:now,summary:backgroundSummary,instruments:backgroundScanRequest.request.instrument_symbols,
+   strategies:backgroundScanRequest.request.strategy_codes});
  const signal={id:'s1',bar_time:now,strategy_code:'EMA_FAST',version_number:1,source:'RUNTIME',timeframe:'M5',symbol:'EURUSD',account_code:'VTM_A',mode:'PAPER',side:'BUY',strength:70,
    state:'REJECTED',reasons:['STALE_PRICE: the last price is 95 s old (limit 60 s)'],explanation:['EMA 3/5: fast 1.08 crossed above slow 1.07'],features:{atr14:0.0012}};
  const order={id:'o1',client_order_id:'CABC',created_at:now,source:'MANUAL',strategy_code:null,mode:'PAPER',account_code:'VTM_A',symbol:'EURUSD',side:'BUY',quantity:'0.1',order_type:'MARKET',
@@ -77,6 +83,17 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/intel/screener?timeframe=H1'))return ok({items:[
      {instrument:'EURUSD',broker_symbol:'EURUSD',account_id:'a1',account_code:'VTM_A',provider_name:'Demo',regime:'TREND_UP',bar_time:now,features:{close:1.0853}},
    ]});
+   if(url.endsWith('/studio/scan-runs')&&method==='POST'){
+     backgroundScanRequest=body;
+     return ok(backgroundRun());
+   }
+   if(url.includes('/studio/scan-runs?'))return ok({items:backgroundScanRequest?
+     [{...backgroundRun(),instruments:101,strategies:2}]:[],has_more:false});
+   if(url.includes('/studio/scan-runs/batch-1/results?'))return ok({items:[{
+     instrument_symbol:'EURUSD',strategy_code:'EMA_EXISTING',strength:85,status:'SIGNAL',side:'BUY'
+   }],has_more:false});
+   if(url.endsWith('/studio/scan-runs/batch-1'))return ok(backgroundRun());
+   if(url.endsWith('/intel/watchlists'))return ok({items:[]});
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
      const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
        timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
@@ -162,7 +179,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      combined:38.3,worked:'2 × +62.4 + 1 × -10.0 ÷ 3 = +38.3',side:'FLAT or hold (inside ±entry)',entry:40,exit:10,symbol:'EURUSD',timeframe:'H1',last_bar:now});
    if(url.includes('/trading/'))return ok({items:[]});
    if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'},{id:'a2',code:'ICM_L',environment:'LIVE',platform:'MT5',status:'ACTIVE'}]});
-   if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'},{id:'i2',symbol:'XAUUSD',name:'Gold'}]});
+   if(url.includes('/config/instruments'))return ok({items:[
+     {id:'i1',symbol:'EURUSD',name:'Euro'},{id:'i2',symbol:'XAUUSD',name:'Gold'},
+     ...(largeScanCatalog?Array.from({length:99},(_,i)=>({id:'batch-'+i,symbol:'BATCH'+i})):[])
+   ]});
    if(url.endsWith('/config/algorithms'))return ok({items:[{id:'GRAPH',label:'Calculation graph',
      schema:{properties:{timeframe:{enum:['H1']},direction:{enum:['BOTH']},graph_code:{type:'string'}}}}]});
    if(url.endsWith('/config/strategies')&&method==='POST'){
@@ -533,7 +553,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(w.document.activeElement.id,'studio-research-scope');
  assert.equal(studioButton('Scan by instrument').getAttribute('aria-pressed'),'true');
  const actSelection=async control=>{control.click();await tick();};
- const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input');
+ const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input[type=checkbox]');
  assert.ok(checks('Instruments')[0].checked);
  await clickStudio('Run scan');
  assert.equal(w.document.activeElement.id,'studio-assessment');
@@ -581,6 +601,21 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  researchLinks.click();
  assert.ok(researchLinks.parentElement.open);
  assert.ok(studioButton('Backtest'));
+ largeScanCatalog=true;
+ await clickStudio('Back to scan');
+ await clickStudio('Refresh data');
+ await clickStudio('Scan by instrument');
+ fill(studioField('Strategies to scan'),'all');await tick();
+ const searchInstruments=studio.querySelector('[aria-label="Search instruments"]');
+ fill(searchInstruments,'BATCH');await tick();
+ assert.equal(checks('Instruments').length,99);
+ await clickStudio('Select all matching');
+ assert.match(studio.textContent,/101 instruments × 2 strategies.*202 checks/);
+ await clickStudio('Run scan');
+ assert.equal(backgroundScanRequest.request.instrument_symbols.length,101);
+ assert.equal(backgroundScanRequest.request.strategy_codes.length,2);
+ assert.match(studio.querySelector('[aria-label="Run summary"]').textContent,/EURUSD.*EMA_EXISTING/);
+ assert.match(studio.querySelector('[aria-label="Run results"]').textContent,/EURUSD.*EMA_EXISTING.*85/);
  console.log('PASS: Strategy Studio build and research workflows, all and selected strategies, instrument ranking, full signal levels, and retry.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.

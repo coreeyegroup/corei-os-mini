@@ -160,7 +160,7 @@ def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: l
         'entry': format(entry.quantize(precision), 'f'), 'stop_loss': format(stop.quantize(precision), 'f'),
         'take_profit': format(take.quantize(precision), 'f'),
         'reward_risk': str(round(abs(take - entry) / risk_distance, 2)),
-        'risk_per_contract': format((risk_distance * instrument['contract_size']).normalize(), 'f'),
+        'risk_per_contract': format((risk_distance * D(instrument['contract_size'])).normalize(), 'f'),
         'quote_currency': instrument['quote_currency'], 'reason': decision['reason'],
     }
 
@@ -170,91 +170,105 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
     """Evaluate registered strategies on stored market data, with no deployment or order writes."""
     response.headers['Cache-Control'] = 'no-store'
     now = datetime.now(timezone.utc)
-    out = []
-    symbols = [payload.instrument_symbol] if payload.instrument_symbol else payload.instrument_symbols
-    codes = [payload.strategy_code] if payload.strategy_code else payload.strategy_codes
     with store.transaction('read') as db:
-        instruments = db.execute("""
-            SELECT id, symbol, tick_size, contract_size, quote_currency FROM cfg_instruments
-            WHERE status='ACTIVE' AND (%s::text[] IS NULL OR symbol=ANY(%s::text[])) ORDER BY symbol
-        """, (symbols, symbols)).fetchall()
-        strategies = db.execute("""
-            SELECT s.code, v.number, v.algorithm, v.parameters
-            FROM cfg_strategies s LEFT JOIN LATERAL (
-                SELECT number, algorithm, parameters FROM cfg_strategy_versions
-                WHERE strategy_id=s.id AND state='APPROVED' ORDER BY number DESC LIMIT 1
-            ) v ON true WHERE s.status='ACTIVE' AND (%s::text[] IS NULL OR s.code=ANY(%s::text[]))
-            ORDER BY s.code
-        """, (codes, codes)).fetchall()
-
-        if symbols and set(symbols) - {i['symbol'] for i in instruments}:
-            raise HTTPException(404, 'One or more selected instruments are no longer active or could not be found.')
-        if codes and set(codes) - {s['code'] for s in strategies}:
-            raise HTTPException(404, 'One or more selected strategies are no longer active or could not be found.')
-
-        sources = defaultdict(list)
-        for row in db.execute("""
-            SELECT p.instrument_id, p.account_id, a.code AS account_code, p.broker_symbol
-            FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id
-            WHERE p.instrument_id=ANY(%s::uuid[]) AND p.status<>'ARCHIVED'
-            ORDER BY CASE p.status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
-                     CASE p.feed_role WHEN 'PRIMARY' THEN 0 WHEN 'BACKUP' THEN 1 ELSE 2 END, p.created_at, p.id
-        """, ([i['id'] for i in instruments],)).fetchall():
-            sources[row['instrument_id']].append(row)
-
-        custom = engine.custom_definitions()
-
-        @cache
-        def closed_bars(account_id, symbol, timeframe, window):
-            native = engine._load(db, account_id, symbol, timeframe, window)
-            if timeframe == 'M1':
-                return (native,)
-            expected = engine._bucket(now, timeframe) - timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
-            if len(native) == window and native[-1]['bar_time'] >= expected:
-                return (native,)
-            # A long but delayed native feed must not hide a fresher M1-derived series.
-            built = engine.resample(engine._load(db, account_id, symbol, 'M1'), timeframe)
-            return native, built[-window:]
-
-        @cache
-        def features_for(account_id, symbol, timeframe, window, series_index):
-            definitions = [d for d in custom if timeframe in (d.get('timeframes') or engine.TIMEFRAMES)]
-            return engine.features(closed_bars(account_id, symbol, timeframe, window)[series_index], timeframe, definitions)
-
-        for instrument in instruments:
-            for strategy in strategies:
-                tf = (strategy['parameters'] or {}).get('timeframe')
-                base = {'instrument_symbol': instrument['symbol'], 'strategy_code': strategy['code'],
-                        'version': strategy['number'], 'timeframe': tf}
-                try:
-                    if strategy['number'] is None:
-                        result = {'status': 'WAIT', 'reason': 'Strategy has no approved version'}
-                    else:
-                        needed = max(15, algorithms.warmup(strategy['algorithm'], strategy['parameters']) + 2)
-                        window = max(engine.WINDOW, needed + payload.entry_lookback - 1)
-                        candidates = [
-                            (bars, source, index)
-                            for source in sources[instrument['id']]
-                            for index, bars in enumerate(closed_bars(source['account_id'], source['broker_symbol'], tf, window))
-                        ]
-                        available = [candidate for candidate in candidates if len(candidate[0]) >= needed]
-                        if not available:
-                            count = max((len(bars) for bars, _, _ in candidates), default=0)
-                            reason = f'Insufficient closed bars: {count} of {needed} required' if candidates else 'No mapped market-data source'
-                            result = {'status': 'WAIT', 'reason': reason}
-                        else:
-                            bars, source, index = max(available, key=lambda candidate: candidate[0][-1]['bar_time'])
-                            rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
-                            result = {**_plan_signal(strategy, instrument, bars, rows, payload, now),
-                                      'account_code': source['account_code'], 'broker_symbol': source['broker_symbol']}
-                except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
-                    result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
-                out.append({**base, **result})
-            features_for.cache_clear()
-            closed_bars.cache_clear()
-
+        instruments, strategies = resolve_scan_scope(db, payload)
+        out = evaluate_scan_pairs(db, instruments, strategies, payload, now)
     out.sort(key=lambda row: (row['status'] != 'SIGNAL', -row.get('strength', 0), row['instrument_symbol'], row['strategy_code']))
     return {'items': out, 'scanned_at': now, 'stop_atr': payload.stop_atr, 'reward_risk': payload.reward_risk}
+
+
+def resolve_scan_scope(db, payload):
+    symbols = [payload.instrument_symbol] if payload.instrument_symbol else payload.instrument_symbols
+    codes = [payload.strategy_code] if payload.strategy_code else payload.strategy_codes
+    instruments = db.execute("""
+        SELECT id, symbol, tick_size, contract_size, quote_currency FROM cfg_instruments
+        WHERE status='ACTIVE' AND (%s::text[] IS NULL OR symbol=ANY(%s::text[])) ORDER BY symbol
+    """, (symbols, symbols)).fetchall()
+    strategies = db.execute("""
+        SELECT s.code, v.number, v.algorithm, v.parameters
+        FROM cfg_strategies s LEFT JOIN LATERAL (
+            SELECT number, algorithm, parameters FROM cfg_strategy_versions
+            WHERE strategy_id=s.id AND state='APPROVED' ORDER BY number DESC LIMIT 1
+        ) v ON true WHERE s.status='ACTIVE' AND (%s::text[] IS NULL OR s.code=ANY(%s::text[]))
+        ORDER BY s.code
+    """, (codes, codes)).fetchall()
+
+    if symbols and set(symbols) - {i['symbol'] for i in instruments}:
+        raise HTTPException(404, 'One or more selected instruments are no longer active or could not be found.')
+    if codes and set(codes) - {s['code'] for s in strategies}:
+        raise HTTPException(404, 'One or more selected strategies are no longer active or could not be found.')
+    return instruments, strategies
+
+
+def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bars=False):
+    out = []
+    sources = defaultdict(list)
+    for row in db.execute("""
+        SELECT p.instrument_id, p.account_id, a.code AS account_code, p.broker_symbol
+        FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id
+        WHERE p.instrument_id=ANY(%s::uuid[]) AND p.status<>'ARCHIVED'
+        ORDER BY CASE p.status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+                 CASE p.feed_role WHEN 'PRIMARY' THEN 0 WHEN 'BACKUP' THEN 1 ELSE 2 END, p.created_at, p.id
+    """, ([i['id'] for i in instruments],)).fetchall():
+        sources[str(row['instrument_id'])].append(row)
+
+    custom = engine.custom_definitions()
+
+    @cache
+    def closed_bars(account_id, symbol, timeframe, window):
+        def load(tf, size=None):
+            if freeze_bars:
+                cutoff = now - timedelta(seconds=TIMEFRAME_SECONDS[tf])
+                return engine._load(db, account_id, symbol, tf, size, cutoff=cutoff)
+            return engine._load(db, account_id, symbol, tf, size) if size is not None else engine._load(db, account_id, symbol, tf)
+
+        native = load(timeframe, window)
+        if timeframe == 'M1':
+            return (native,)
+        expected = engine._bucket(now, timeframe) - timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
+        if len(native) == window and native[-1]['bar_time'] >= expected:
+            return (native,)
+        # A long but delayed native feed must not hide a fresher M1-derived series.
+        built = engine.resample(load('M1'), timeframe)
+        return native, built[-window:]
+
+    @cache
+    def features_for(account_id, symbol, timeframe, window, series_index):
+        definitions = [d for d in custom if timeframe in (d.get('timeframes') or engine.TIMEFRAMES)]
+        return engine.features(closed_bars(account_id, symbol, timeframe, window)[series_index], timeframe, definitions)
+
+    for instrument in instruments:
+        for strategy in strategies:
+            tf = (strategy['parameters'] or {}).get('timeframe')
+            base = {'instrument_symbol': instrument['symbol'], 'strategy_code': strategy['code'],
+                    'version': strategy['number'], 'timeframe': tf}
+            try:
+                if strategy['number'] is None:
+                    result = {'status': 'WAIT', 'reason': 'Strategy has no approved version'}
+                else:
+                    needed = max(15, algorithms.warmup(strategy['algorithm'], strategy['parameters']) + 2)
+                    window = max(engine.WINDOW, needed + payload.entry_lookback - 1)
+                    candidates = [
+                        (bars, source, index)
+                        for source in sources[str(instrument['id'])]
+                        for index, bars in enumerate(closed_bars(source['account_id'], source['broker_symbol'], tf, window))
+                    ]
+                    available = [candidate for candidate in candidates if len(candidate[0]) >= needed]
+                    if not available:
+                        count = max((len(bars) for bars, _, _ in candidates), default=0)
+                        reason = f'Insufficient closed bars: {count} of {needed} required' if candidates else 'No mapped market-data source'
+                        result = {'status': 'WAIT', 'reason': reason}
+                    else:
+                        bars, source, index = max(available, key=lambda candidate: candidate[0][-1]['bar_time'])
+                        rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
+                        result = {**_plan_signal(strategy, instrument, bars, rows, payload, now),
+                                  'account_code': source['account_code'], 'broker_symbol': source['broker_symbol']}
+            except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
+                result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
+            out.append({**base, **result})
+        features_for.cache_clear()
+        closed_bars.cache_clear()
+    return out
 
 
 @router.get('/builder/nodes')

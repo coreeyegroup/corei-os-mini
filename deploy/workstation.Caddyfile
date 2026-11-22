@@ -40,8 +40,8 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
-    # Studio accepts complete workflow definitions and batches of historical OHLC bars.
-    @studio_payload path /api/trading/studio/builder/* /api/trading/studio/drafts/*
+    # Studio accepts workflow definitions, historical OHLC bars and large scan scopes.
+    @studio_payload path /api/trading/studio/builder/* /api/trading/studio/drafts/* /api/trading/studio/scan-runs
     handle @studio_payload {
         request_body {
             max_size 2MB

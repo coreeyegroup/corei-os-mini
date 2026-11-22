@@ -1,13 +1,19 @@
 """Tests for the additive, non-executing strategy workflow compiler."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
+import os
+from uuid import uuid4
 import unittest
 from unittest.mock import Mock, patch
 
-from fastapi import Response
+import psycopg
+from psycopg.rows import dict_row
+from fastapi import HTTPException, Response
 from pydantic import ValidationError
 
+from corei_os_mini import strategy_scan_runs as runs
 from corei_os_mini.calc.nodes import Ctx
 from corei_os_mini.calc.run import compile_graph, execute
 from corei_os_mini.strategy_drafts import calculation_definition
@@ -268,6 +274,82 @@ class SignalScanTests(unittest.TestCase):
             self.assertEqual(len(result), 6)
             self.assertEqual({r['instrument_symbol'] for r in result}, {'EURUSD', 'XAUUSD', 'XAGUSD'})
             self.assertTrue(all(call.args == ('read',) for call in transaction.call_args_list))
+
+
+@unittest.skipUnless(os.getenv('COREI_TEST_DATABASE_URL'), 'Requires a disposable PostgreSQL database')
+class BackgroundScanTests(unittest.TestCase):
+    def setUp(self):
+        url = os.environ['COREI_TEST_DATABASE_URL']
+        schema = 'test_scan_' + uuid4().hex
+        migration = Path(__file__).resolve().parents[1] / 'sql/041_studio_scan_runs.sql'
+
+        @contextmanager
+        def transaction(_operation='write'):
+            with psycopg.connect(url, row_factory=dict_row, options=f'-c search_path={schema}') as db:
+                yield db
+
+        def cleanup():
+            with psycopg.connect(url) as db:
+                db.execute(f'DROP SCHEMA IF EXISTS {schema} CASCADE')
+
+        self.addCleanup(cleanup)
+        with psycopg.connect(url) as db:
+            db.execute(f'CREATE SCHEMA {schema}')
+        with transaction() as db:
+            db.execute(migration.read_text())
+        patcher = patch.object(runs.store, 'transaction', transaction)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_persist_resume_rank_and_retry_at_ten_thousand_pairs(self):
+        instruments = [{'symbol': f'I{i:03}'} for i in range(100)]
+        strategies = [{'code': f'S{i:03}'} for i in range(100)]
+        failed = True
+
+        def evaluate(_db, batch, versions, _request, _as_of, *, freeze_bars):
+            self.assertTrue(freeze_bars)
+            self.assertEqual(len(batch), 1)
+            return [
+                {'instrument_symbol': batch[0]['symbol'], 'strategy_code': version['code'],
+                 'status': 'ERROR' if failed and (batch[0]['symbol'], version['code']) == ('I000', 'S000') else 'SIGNAL',
+                 'strength': int(batch[0]['symbol'][1:])}
+                for version in versions
+            ]
+
+        payload = runs.ScanRunIn(mode='strategy', request=SignalScanIn(strategy_codes=['S000']))
+        with patch.object(runs, 'resolve_scan_scope', return_value=(instruments, strategies)), \
+             patch.object(runs, 'evaluate_scan_pairs', side_effect=evaluate) as evaluator:
+            job = runs.enqueue(payload, 'operator-1')
+            run_id = job['id']
+            self.assertEqual(job['total'], 10_000)
+            self.assertTrue(runs.step())
+            self.assertEqual(runs.read_run(run_id, 'operator-1')['processed_instruments'], 1)
+            self.assertEqual(runs.cancel(run_id, 'operator-1')['status'], 'CANCELLED')
+            self.assertFalse(runs.step())
+            with self.assertRaises(HTTPException) as unauthorized:
+                runs.read_run(run_id, 'operator-2')
+            self.assertEqual(unauthorized.exception.status_code, 404)
+            runs.retry(run_id, 'operator-1')
+            while runs.step():
+                pass
+            completed = runs.read_run(run_id, 'operator-1')
+            self.assertEqual(completed['status'], 'COMPLETED')
+            self.assertEqual(sum(row['checked'] for row in completed['summary']), 10_000)
+            self.assertEqual(completed['summary'][0]['strongest'], ['I099'])
+            page = runs.results(run_id, 'S000', 'SIGNAL', 50, 'operator-1')
+            self.assertEqual(len(page['items']), 49)
+            self.assertFalse(page['has_more'])
+            self.assertEqual(page['items'][0]['instrument_symbol'], 'I049')
+
+            failed = False
+            evaluator.reset_mock()
+            runs.retry(run_id, 'operator-1')
+            while runs.step():
+                pass
+            self.assertEqual(evaluator.call_count, 1)
+            summary = runs.read_run(run_id, 'operator-1')['summary']
+            self.assertEqual(summary[0]['errors'], 0)
+            self.assertEqual(summary[0]['signals'], 100)
 
 
 if __name__ == '__main__':

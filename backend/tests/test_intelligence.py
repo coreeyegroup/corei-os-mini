@@ -190,7 +190,7 @@ class PublicShell(unittest.TestCase):
                            caddy, re.S)
         self.assertIsNotNone(studio)
         self.assertEqual(set(studio.group(1).split()), {
-            '/api/trading/studio/builder/*', '/api/trading/studio/drafts/*',
+            '/api/trading/studio/builder/*', '/api/trading/studio/drafts/*', '/api/trading/studio/scan-runs',
         })
         self.assertIn('max_size 2MB', studio.group(2))
         self.assertLess(studio.start(), caddy.index('handle @operational'))

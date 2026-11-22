@@ -12,6 +12,7 @@ from .routes_api import router as routes_router
 from .bridge_api import enrol_router as bridge_enrol_router, router as bridge_router
 from .trading_api import router as trading_router
 from .strategy_studio import router as strategy_studio_router
+from . import strategy_scan_runs
 from .intel_api import router as intel_router
 from .calc_api import router as calc_router
 from .strategy_registry import router as strategy_router
@@ -59,6 +60,8 @@ async def lifespan(_: FastAPI):
     if os.getenv('COREI_EXECUTION', 'on') != 'off' and settings.database_url:
         from .trading import execution
         execution.start()  # Stage 7 dispatcher and broker look-ups, Stage 8 periodic reconciliation
+    if settings.database_url:
+        tasks.append(asyncio.create_task(strategy_scan_runs.run_forever()))
     try:
         yield
     finally:
@@ -91,6 +94,7 @@ app.include_router(bridge_enrol_router)
 app.include_router(intel_router)
 app.include_router(trading_router)
 app.include_router(strategy_studio_router)
+app.include_router(strategy_scan_runs.router)
 app.include_router(config_router)
 
 @app.get("/health")
