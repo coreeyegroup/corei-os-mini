@@ -24,6 +24,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const now=new Date().toISOString();
  const calls=[];
  let largeScanCatalog=false;
+ let beyondRegistryLimit=false;
+ let brokerSymbolCollected=false;
  let backgroundScanRequest;
  const savedRuns=[];
  let savedProfile;
@@ -89,6 +91,29 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      savedProfile=body;return ok({name:body.name});
    }
    if(url.endsWith('/studio/scan-runs/profiles'))return ok({items:savedProfile?[savedProfile]:[]});
+   if(url.endsWith('/studio/scan-universe'))return ok({
+     instruments:[{symbol:'EURUSD',name:'Euro',has_source:true},{symbol:'XAUUSD',name:'Gold',has_source:true},
+       ...(largeScanCatalog?Array.from({length:99},(_,i)=>({symbol:'BATCH'+i})):[]),
+       ...(beyondRegistryLimit?Array.from({length:1100},(_,i)=>({symbol:'REG'+i})):[]),
+       ...(brokerSymbolCollected?[{symbol:'BROKER1255',has_source:true}]:[])],
+     strategies:[...registeredStrategies,...(largeScanCatalog?Array.from({length:100},(_,i)=>({code:'BATCH_STRAT_'+i})):[])]
+   });
+   if(url.endsWith('/md/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',provider_name:'Demo'}]});
+   if(url.endsWith('/md/catalog/a1/collect')&&method==='POST'){
+     brokerSymbolCollected=true;
+     return ok({created:[{broker_symbol:'BROKER1255.r',active_instrument:'BROKER1255'}],errors:[],skipped:[]});
+   }
+   if(url.includes('/md/catalog/a1?')){
+     const query=new URL(url,w.location.href).searchParams;
+     const matching=query.get('q')==='BROKER1255';
+     const offset=Number(query.get('offset'));
+     const row=matching?{broker_symbol:'BROKER1255.r',display_symbol:'BROKER1255',asset_class:'FX',
+       suggested_instrument:'BROKER1255',...(brokerSymbolCollected?{plan_id:'broker-plan',plan_status:'ACTIVE',
+       linked_instrument:'BROKER1255',linked_instrument_status:'ACTIVE'}:{})}:
+       {broker_symbol:'BROKER'+offset,display_symbol:'BROKER'+offset,asset_class:'FX'};
+     return ok({items:[row],total:matching?1:1256,catalogue_size:1256,facets:{asset_class:[{k:'FX'}]}});
+   }
+   if(url.endsWith('/md/jobs')&&method==='POST')return ok({id:'broker-backfill'},201);
    if(url.endsWith('/studio/scan-readiness'))return ok({requested:10302,ready:10201,checked_at:now,
      items:[{instrument:'EURUSD',ready:1,blocked:101,reasons:{'Strategy has no approved version':101}}]});
    if(url.endsWith('/studio/scan-runs')&&method==='POST'){
@@ -107,16 +132,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
      const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
        timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
-     if(body.instrument_symbols)return ok({scanned_at:now,items:body.instrument_symbols.flatMap(symbol=>[
+     if(body.instrument_symbols.length===1 || body.strategy_codes.length===1)return ok({scanned_at:now,items:body.instrument_symbols.flatMap(symbol=>[
        {...candidate,instrument_symbol:symbol},
-       ...(body.strategy_codes?[]:[{instrument_symbol:symbol,strategy_code:'EMA_NEW',status:'WAIT',reason:'Strategy has no approved version'}]),
+       ...(body.strategy_codes.length===1?[]:[{instrument_symbol:symbol,strategy_code:'EMA_NEW',status:'WAIT',reason:'Strategy has no approved version'}]),
      ])});
      if(++strategyScanAttempts===1)return fail(503,'Market data temporarily unavailable');
      return ok({scanned_at:now,items:[
        {...candidate,instrument_symbol:'XAUUSD',broker_symbol:'XAUUSD',strength:94,side:'SELL',entry:'2670',stop_loss:'2675',take_profit:'2660'},
        {...candidate,instrument_symbol:'EURUSD'},
        ...(body.strategy_codes.includes('EMA_NEW')?[{...candidate,strategy_code:'EMA_NEW',instrument_symbol:'EURUSD',strength:80}]:[]),
-       {instrument_symbol:'GBPUSD',strategy_code:'EMA_EXISTING',status:'WAIT',reason:'No new entry trigger'},
+       {instrument_symbol:'XAUUSD',strategy_code:'EMA_NEW',status:'WAIT',reason:'No new entry trigger'},
      ]});
    }
    if(url.endsWith('/trading/overview'))return ok({deployments:{ACTIVE:1},active_modes:{PAPER:1},signals_today:{REJECTED:1,ACTED:2},orders_today:{FILLED:2},open_orders:0,unknown_orders:0,
@@ -468,7 +493,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    const control=[...studio.querySelectorAll('.studio-steps button')].find(b=>b.querySelector('strong').textContent===label);
    assert.ok(control&&!control.disabled,label);
    control.click();await settle(3);
-   assert.equal(control.getAttribute('aria-current'),'step');
+   assert.equal(control.getAttribute('aria-current'),control.closest('.studio-research-steps')?'page':'step');
  };
  const studioField=(label)=>[...studio.querySelectorAll('label')].find(item=>!item.closest('[hidden]')&&item.firstChild?.textContent?.trim()===label).querySelector('input,select');
  assert.equal(studioButton('Build strategy').getAttribute('aria-pressed'),'true');
@@ -551,28 +576,31 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: the Studio opens the exact graph revision, and setup carries the approved rule into existing and new strategies.');
  await go('Strategy Studio');
  await clickStudio('Signal scanner');
- assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan signals');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="page"] strong').textContent,'Scan by instrument');
  assert.ok(studioButton('Scan by instrument'));
  assert.ok(studioButton('Scan by strategy'));
- await openStage('Observe instrument');
- assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Observe instrument');
+ await openStage('Inspect instrument');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="page"] strong').textContent,'Inspect instrument');
  assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
  assert.equal(studioField('Instrument').value,'EURUSD');
  assert.equal(calls.filter(c=>c.url.endsWith('/studio/signal-scan')).length,0);
- await openStage('Results');
- assert.match(studio.textContent,/Run a scan to see ranked signals/);
- await openStage('Observe instrument');
+ await openStage('Runs & results');
+ assert.match(studio.textContent,/Run a new scan or choose a saved run/);
+ await openStage('Inspect instrument');
  await clickStudio('Open scanner for this instrument');
  assert.equal(w.document.activeElement.id,'studio-research-scope');
- assert.equal(studioButton('Scan by instrument').getAttribute('aria-pressed'),'true');
+ assert.equal(studioButton('Scan by instrument').getAttribute('aria-current'),'page');
  const actSelection=async control=>{control.click();await tick();};
  const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input[type=checkbox]');
  assert.ok(checks('Instruments')[0].checked);
+ await clickStudio('Check readiness');
+ const quickReadinessScope=calls.findLast(call=>call.url.endsWith('/studio/scan-readiness')).body;
  await clickStudio('Run scan');
  assert.equal(w.document.activeElement.id,'studio-assessment');
- assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="page"] strong').textContent,'Runs & results');
  const lastScan=()=>calls.filter(c=>c.url.endsWith('/studio/signal-scan')).at(-1).body;
- assert.deepEqual(lastScan(),{instrument_symbols:['EURUSD'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.deepEqual(lastScan(),{instrument_symbols:['EURUSD'],strategy_codes:['EMA_EXISTING','EMA_NEW'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.deepEqual(lastScan(),quickReadinessScope);
  const ranked=()=>studio.querySelector('[aria-label="Ranked signals"]');
  assert.match(ranked().textContent,/EMA_EXISTING v2.*BUY.*85.*1.0860.*1.0840.*1.0900/);
  assert.deepEqual([...studio.querySelectorAll('.studio-scan-summary dd')].map(el=>el.textContent),['2','1','1','0']);
@@ -591,22 +619,23 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok(checks('Strategies')[0].checked);
  await actSelection(checks('Strategies')[1]);
  await clickStudio('Run scan');
- assert.deepEqual(lastScan(),{strategy_codes:['EMA_EXISTING','EMA_NEW'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.deepEqual(lastScan(),{instrument_symbols:['EURUSD','XAUUSD'],strategy_codes:['EMA_EXISTING','EMA_NEW'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
  assert.match(studio.querySelector('[role="alert"]').textContent,/Market data temporarily unavailable/);
- assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan signals');
- await openStage('Results');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="page"] strong').textContent,'Scan by strategy');
+ await openStage('Runs & results');
  assert.match(ranked().textContent,/XAUUSD/);
  assert.match(studio.textContent,/Instrument · EURUSD, XAUUSD/);
  await clickStudio('Back to scan');
  await clickStudio('Retry scan');
- assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="page"] strong').textContent,'Runs & results');
  assert.match(studio.textContent,/Strategy · EMA_EXISTING/);
  assert.match(studio.querySelector('[aria-label="Best matches by selection"]').textContent,/EMA_EXISTING.*XAUUSD.*94.*EMA_NEW.*EURUSD.*80/);
  await actSelection(studio.querySelector('[aria-label="Best matches by selection"] button'));
  assert.equal(studioField('Results by strategy').value,'EMA_EXISTING');
  assert.match(studio.textContent,/Strongest match · XAUUSD · EMA_EXISTING · 94\/100/);
  assert.deepEqual([...ranked().querySelectorAll('tbody tr')].map(row=>row.cells[1].textContent),['XAUUSD','EURUSD']);
- assert.match(studio.querySelector('[aria-label="Scan checks"]').textContent,/GBPUSD.*No new entry trigger/);
+ fill(studioField('Results by strategy'),'EMA_NEW');await tick();
+ assert.match(studio.querySelector('[aria-label="Scan checks"]').textContent,/XAUUSD.*No new entry trigger/);
  fill(studioField('Scan history'),'1');await tick();
  assert.match(studio.textContent,/Instrument · EURUSD, XAUUSD/);
  assert.match(ranked().textContent,/1.0860.*1.0840.*1.0900/);
@@ -629,6 +658,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(studio.querySelector('[aria-label="Instrument scope"] fieldset'),null);
  assert.match(studio.querySelector('.studio-run-bar').textContent,/10,302 checks/);
  await clickStudio('Check readiness');
+ const readinessScope=calls.findLast(call=>call.url.endsWith('/studio/scan-readiness')).body;
  assert.match(studio.textContent,/10,302 requested · 10,201 ready · 101 blocked/);
  assert.match(studio.querySelector('[aria-label="Instrument readiness"]').textContent,/Strategy has no approved version \(101\)/);
  fill(studioField('Preset name'),'Full universe');await tick();
@@ -639,6 +669,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(backgroundScanRequest.request.instrument_symbols.length,101);
  assert.equal(backgroundScanRequest.request.strategy_codes.length,102);
  assert.equal(backgroundScanRequest.name,'Market open');
+ assert.deepEqual(backgroundScanRequest.request,readinessScope);
  assert.match(studio.querySelector('[aria-label="Run summary"]').textContent,/EURUSD.*EMA_EXISTING/);
  assert.match(studio.querySelector('[aria-label="Run results"]').textContent,/EURUSD.*EMA_EXISTING.*85/);
  assert.equal(studio.querySelector('[aria-label="Ranked signals"]'),null);
@@ -662,6 +693,34 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match(studio.querySelector('[aria-label="Run comparison"]').textContent,/Market open.*Market open/);
  await clickStudio('Show quick scan results');
  assert.ok(studio.querySelector('[aria-label="Ranked signals"]'));
+ beyondRegistryLimit=true;
+ await clickStudio('Back to scan');
+ await clickStudio('Refresh data');
+ assert.match(studio.querySelector('[aria-label="Instrument scope"]').textContent,/1,201 registered active/);
+ fill(studioField('Instruments to scan'),'selected');await tick();
+ fill(studio.querySelector('[aria-label="Search instruments"]'),'REG1099');await tick();
+ assert.equal(checks('Instruments').length,1);
+ await actSelection(checks('Instruments')[0]);
+ await clickStudio('Browse broker catalogue');
+ fill(studioField('Broker account'),'a1');await settle(6);
+ assert.match(studio.textContent,/1,256 broker symbols/);
+ await clickStudio('Next symbols');
+ assert.ok(calls.some(call=>call.url.includes('/md/catalog/a1?')&&call.url.includes('offset=25')));
+ fill(studio.querySelector('[aria-label="Search broker symbols"]'),'BROKER1255');await settle(7);
+ assert.match(studio.querySelector('[aria-label="Broker symbol results"]').textContent,/BROKER1255.*Needs a collection plan/);
+ await clickStudio('Set up and select');await settle(6);
+ assert.ok(brokerSymbolCollected);
+ assert.match(studio.querySelector('[aria-label="Broker symbol results"]').textContent,/BROKER1255.*ACTIVE/);
+ await clickStudio('Backfill bars');
+ await clickStudio('Queue backfill');
+ assert.equal(calls.findLast(call=>call.url.endsWith('/md/jobs')&&call.method==='POST').body.plan_id,'broker-plan');
+ await clickStudio('Check readiness');
+ const expandedScope=calls.findLast(call=>call.url.endsWith('/studio/scan-readiness')).body;
+ assert.ok(expandedScope.instrument_symbols.includes('BROKER1255'));
+ assert.ok(expandedScope.instrument_symbols.includes('REG1099'));
+ await clickStudio('Run scan');
+ assert.deepEqual(backgroundScanRequest.request,expandedScope);
+ console.log('PASS: broker discovery beyond 1,000 symbols, setup, backfill, and identical readiness and execution scope.');
  console.log('PASS: Strategy Studio build and research workflows, all and selected strategies, instrument ranking, full signal levels, and retry.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.

@@ -348,9 +348,11 @@ def listing(account_id: UUID, q: str = '', asset_class: str = '', exchange: str 
     sql_where = ' AND '.join(where)
     with store.transaction('read') as db:
         total = db.execute(f'SELECT count(*) AS n FROM md_symbol_catalog c {join} WHERE {sql_where}', args).fetchone()['n']
-        rows = db.execute(f'''SELECT c.*, p.id AS plan_id, p.status AS plan_status, p.code AS plan_code, i.id AS instrument_id
-            FROM md_symbol_catalog c {join} WHERE {sql_where}
-            ORDER BY (c.asset_class='INDEX') DESC, (c.expiry IS NULL) DESC, c.display_symbol LIMIT %s OFFSET %s''', [*args, limit, offset]).fetchall()
+        rows = db.execute(f'''SELECT c.*, p.id AS plan_id, p.status AS plan_status, p.code AS plan_code, i.id AS instrument_id,
+                   linked.symbol AS linked_instrument, linked.status AS linked_instrument_status
+            FROM md_symbol_catalog c {join}
+            LEFT JOIN cfg_instruments linked ON linked.id=p.instrument_id WHERE {sql_where}
+            ORDER BY (c.asset_class='INDEX') DESC, (c.expiry IS NULL) DESC, c.display_symbol, c.broker_symbol LIMIT %s OFFSET %s''', [*args, limit, offset]).fetchall()
         fw, fa = ' AND '.join(filters[0]), filters[1]
         classes = db.execute(f'SELECT c.asset_class AS k, count(*) AS n FROM md_symbol_catalog c WHERE {fw} GROUP BY 1 ORDER BY 2 DESC', fa).fetchall()
         exchanges = db.execute(f"SELECT c.exchange AS k, count(*) AS n FROM md_symbol_catalog c WHERE {fw} AND c.exchange <> '' GROUP BY 1 ORDER BY 2 DESC", fa).fetchall()
@@ -468,13 +470,16 @@ def collect(actor: str, account_id: UUID, data: CollectIn) -> dict:
             purpose = data.purpose if (data.purpose != 'TRADING_FEED' or instrument_id) else 'RESEARCH'
             with store.transaction('read') as db:
                 code = _code(db, account['code'], sym)
+                linked = db.execute('SELECT symbol, status FROM cfg_instruments WHERE id=%s',
+                                    (instrument_id,)).fetchone() if instrument_id else None
             plan = plans.create(actor, plans.PlanIn(code=code, account_id=account_id, broker_symbol=sym, instrument_id=instrument_id, purpose=purpose,
                                                     feed_role=data.feed_role, data_types=data.data_types,
                                                     bar_timeframes=data.bar_timeframes if 'BARS' in data.data_types else [],
                                                     depth_levels=data.depth_levels if 'DEPTH' in data.data_types else 0, hot_days=data.hot_days,
                                                     bars_hot_days=data.bars_hot_days, archive=data.archive))
             item = {'broker_symbol': sym, 'plan_id': plan['id'], 'code': plan['code'], 'instrument': name if instrument_id else None,
-                    'purpose': purpose, 'note': note}
+                    'purpose': purpose, 'note': note,
+                    'active_instrument': linked['symbol'] if linked and linked['status'] == 'ACTIVE' else None}
             if data.start:
                 res = plans.set_status(actor, plan['id'], plans.StatusIn(status='ACTIVE', version=plan['version'], reason=data.reason))
                 if isinstance(res, dict) and res.get('change_request'):

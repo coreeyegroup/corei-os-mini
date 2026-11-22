@@ -3,7 +3,7 @@ picking creates plans, links instruments across sources and starts collection.""
 import importlib
 import importlib.util
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 test_market_data = importlib.import_module('test_market_data') if importlib.util.find_spec('test_market_data') \
     else importlib.import_module('tests.test_market_data')
@@ -33,6 +33,10 @@ UPSTOX = [
 
 class SymbolCatalogue(test_market_data.MarketData):
     test_plans_estimate_controls_and_jobs = test_collector_end_to_end = None
+
+    def setup_accounts(self, environment='DEMO'):
+        self.ok(self.alice.post('/api/operator/reauth', json={'password': test_market_data.PASSWORD}))
+        return super().setup_accounts(environment)
 
     def test_mt5_list_from_login_then_pick(self):
         _, accounts, instrument = self.setup_accounts()
@@ -77,6 +81,55 @@ class SymbolCatalogue(test_market_data.MarketData):
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) AS n FROM cfg_instruments WHERE symbol='XAUUSD'").fetchone()['n'], 1)
         self.assertEqual(second['created'][0]['instrument'], 'XAUUSD')
+
+    def test_studio_discovers_collects_and_scans_beyond_the_setup_list_limit(self):
+        _, accounts, _ = self.setup_accounts()
+        account_id = UUID(accounts[0]['id'])
+        with self.connect() as db:
+            db.execute("""
+                INSERT INTO cfg_instruments (id,symbol,name,asset_class,base_currency,quote_currency,
+                    price_precision,quantity_precision,tick_size,min_quantity,quantity_step,contract_size,contract_unit)
+                SELECT gen_random_uuid(), 'REG' || n, 'Registered ' || n, 'EQUITY', 'USD', 'USD',
+                    2,0,0.01,1,1,1,'share' FROM generate_series(1, 1100) n
+            """)
+            db.execute("UPDATE cfg_instruments SET status='INACTIVE' WHERE symbol='REG1'")
+            db.execute("""
+                INSERT INTO md_symbol_catalog (account_id,broker_symbol,display_symbol,asset_class,suggested_instrument,source)
+                SELECT %s, 'BROKER' || n || '.r', 'BROKER' || n, 'EQUITY', 'BROKER' || n, 'MT5_LOGIN'
+                FROM generate_series(1, 1256) n
+            """, (account_id,))
+            db.execute("INSERT INTO cfg_strategies(id,code,name) VALUES (%s,'SCAN_DEMO','Scan demo')", (uuid4(),))
+
+        before = self.ok(self.alice.get('/api/trading/studio/scan-universe'))
+        registered = {item['symbol'] for item in before['instruments']}
+        self.assertEqual(len(registered), 1100)
+        self.assertIn('REG999', registered)
+        self.assertNotIn('REG1', registered)
+
+        root = f'/api/md/catalog/{account_id}'
+        page = self.ok(self.alice.get(f'{root}?offset=1000&limit=25'))
+        self.assertEqual((page['total'], len(page['items'])), (1256, 25))
+        found = self.ok(self.alice.get(f'{root}?q=BROKER1256'))['items'][0]
+        self.assertIsNone(found['linked_instrument'])
+        result = self.ok(self.alice.post(f'{root}/collect', json={
+            'items': [{'broker_symbol': found['broker_symbol']}],
+            'purpose': 'RESEARCH', 'data_types': ['BARS'], 'bar_timeframes': ['M1'],
+        }), 201)
+        self.assertEqual(result['created'][0]['active_instrument'], 'BROKER1256')
+        mapped = self.ok(self.alice.get(f'{root}?q=BROKER1256'))['items'][0]
+        self.assertEqual((mapped['linked_instrument'], mapped['linked_instrument_status']), ('BROKER1256', 'ACTIVE'))
+        universe = self.ok(self.alice.get('/api/trading/studio/scan-universe'))
+        instrument = next(item for item in universe['instruments'] if item['symbol'] == 'BROKER1256')
+        self.assertTrue(instrument['has_source'])
+
+        request = {'instrument_symbols': ['BROKER1256', 'REG999'], 'strategy_codes': ['SCAN_DEMO']}
+        readiness = self.ok(self.alice.post('/api/trading/studio/scan-readiness', json=request))
+        self.assertEqual(readiness['requested'], 2)
+        quick = self.ok(self.alice.post('/api/trading/studio/signal-scan', json=request))
+        self.assertEqual({item['instrument_symbol'] for item in quick['items']}, set(request['instrument_symbols']))
+        queued = self.ok(self.alice.post('/api/trading/studio/scan-runs', json={'mode': 'instrument', 'request': request}), 202)
+        self.assertEqual(queued['request']['instrument_symbols'], request['instrument_symbols'])
+        self.assertEqual(queued['request']['strategy_codes'], request['strategy_codes'])
 
     def test_upstox_daily_file(self):
         made = self.ok(self.alice.post('/api/config/upstox/account-setup', json={

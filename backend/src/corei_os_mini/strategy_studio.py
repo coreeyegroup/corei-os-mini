@@ -165,6 +165,23 @@ def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: l
     }
 
 
+@router.get('/scan-universe')
+def scan_universe(response: Response, _: str = Depends(require_operator)):
+    """The complete active registry, using the same eligibility as the scanner."""
+    response.headers['Cache-Control'] = 'no-store'
+    with store.transaction('read') as db:
+        instruments = db.execute("""
+            SELECT i.id, i.symbol, i.name, i.asset_class, i.aliases,
+                   EXISTS (SELECT 1 FROM md_collection_plans p WHERE p.instrument_id=i.id
+                       AND p.status<>'ARCHIVED') AS has_source
+            FROM cfg_instruments i WHERE i.status='ACTIVE' ORDER BY i.symbol
+        """).fetchall()
+        strategies = db.execute("""
+            SELECT code, name FROM cfg_strategies WHERE status='ACTIVE' ORDER BY code
+        """).fetchall()
+    return {'instruments': instruments, 'strategies': strategies}
+
+
 @router.post('/signal-scan')
 def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(require_operator)):
     """Evaluate registered strategies on stored market data, with no deployment or order writes."""
