@@ -15,7 +15,7 @@ const researchSteps = [
 type ResearchStep = typeof researchSteps[number]['id'];
 type ScanScope = 'instrument' | 'strategy';
 type ScanRequest = { instrument_symbol?: string; strategy_code?: string; strategy_codes?: string[];
-  stop_atr: string; reward_risk: string };
+  entry_lookback: number; stop_atr: string; reward_risk: string };
 type ScanRun = { scope: ScanScope; selection: string; request: ScanRequest; items: Row[]; completedAt: Date };
 type ScanFailure = { scope: ScanScope; selection: string; message: string };
 const buildSteps = [
@@ -141,9 +141,12 @@ export default function StrategyStudio() {
   const [scanScope, setScanScope] = useState<ScanScope>('instrument');
   const [strategyFilter, setStrategyFilter] = useState<'all' | 'selected'>('all');
   const [filteredStrategies, setFilteredStrategies] = useState<string[]>([]);
+  const [entryLookback, setEntryLookback] = useState(3);
   const [stopAtr, setStopAtr] = useState('1.5');
   const [rewardRisk, setRewardRisk] = useState('2');
-  const [scan, setScan] = useState<ScanRun | null>(null);
+  const [scanRuns, setScanRuns] = useState<ScanRun[]>([]);
+  const [viewedRun, setViewedRun] = useState(0);
+  const scan = scanRuns[viewedRun] ?? null;
   const [scanError, setScanError] = useState<ScanFailure | null>(null);
 
   async function loadCatalog() {
@@ -338,12 +341,14 @@ export default function StrategyStudio() {
     const request: ScanRequest = {
       ...(byInstrument ? { instrument_symbol: selection } : { strategy_code: selection }),
       ...(useStrategyFilter ? { strategy_codes: selectedCodes } : {}),
-      stop_atr: stopAtr, reward_risk: rewardRisk,
+      entry_lookback: entryLookback, stop_atr: stopAtr, reward_risk: rewardRisk,
     };
     try {
       const result = await api('trading/studio/signal-scan', 'POST', request);
-      setScan({ scope: scanScope, selection, request, items: rows(result),
-        completedAt: result.scanned_at ? new Date(result.scanned_at) : new Date() });
+      const completed = { scope: scanScope, selection, request, items: rows(result),
+        completedAt: result.scanned_at ? new Date(result.scanned_at) : new Date() };
+      setScanRuns(current => [completed, ...current].slice(0, 12));
+      setViewedRun(0);
       if (currentSection.current === 'scan') advanceResearch('results');
     } catch (error) {
       setScanError({ scope: scanScope, selection, message: message(error) });
@@ -613,10 +618,19 @@ export default function StrategyStudio() {
         </fieldset>}
         {!observing && <p className="cfg-note">{byInstrument
           ? 'Choose one instrument and check it against all or selected strategies.'
-          : 'Choose one strategy and rank its fresh signals across active instruments.'}</p>}
+          : 'Choose one strategy and rank its matching instruments by signal strength.'}</p>}
         {!observing && <details className="studio-scan-settings">
           <summary>Signal settings · Stop {stopAtr || '—'}× ATR14 · Target {rewardRisk || '—'}R</summary>
           <div className="studio-actions">
+            <label>Entry trigger window
+              <select value={entryLookback} disabled={scanBusy} onChange={event => setEntryLookback(Number(event.target.value))}>
+                <option value={1}>Latest closed bar only</option>
+                <option value={3}>Last 3 closed bars</option>
+                <option value={5}>Last 5 closed bars</option>
+                <option value={10}>Last 10 closed bars</option>
+                <option value={20}>Last 20 closed bars</option>
+              </select>
+            </label>
             <label>Stop distance (ATR14)
               <input type="number" min="0.1" max="20" step="0.01" value={stopAtr} disabled={scanBusy}
                 onChange={event => setStopAtr(event.target.value)} />
@@ -668,7 +682,14 @@ export default function StrategyStudio() {
             {scan ? 'Back to scan' : 'Go to scan'}
           </button>
         </div>
-        {scanBusy && <p role="status" className="cfg-note">{scan ? 'New scan running. Showing the last completed scan.' : 'Scan in progress…'}</p>}
+        {scanRuns.length > 1 && <div className="studio-actions"><label>Scan history
+          <select value={viewedRun} onChange={event => setViewedRun(Number(event.target.value))}>
+            {scanRuns.map((run, index) => <option key={index} value={index}>
+              {run.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {run.selection} · {run.completedAt.toLocaleTimeString()}
+            </option>)}
+          </select>
+        </label></div>}
+        {scanBusy && <p role="status" className="cfg-note">{scan ? 'New scan running. Showing a completed scan.' : 'Scan in progress…'}</p>}
         {scan && <>
           <dl className="studio-scan-summary">
             {scanCounts?.map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
@@ -677,18 +698,20 @@ export default function StrategyStudio() {
             ? <p><strong>Strongest score</strong> · {String(strongest.strength)}/100 · {tiedForStrongest} tied matches</p>
             : <p><strong>Strongest match</strong> · {String(strongest.instrument_symbol)}
               {' · '}{String(strongest.strategy_code)}{' · '}{String(strongest.strength)}/100</p>)}
-          <p className="cfg-note">Research levels use the signal bar’s close, a {scan.request.stop_atr}× ATR14 stop and a {scan.request.reward_risk}R target. Strength is the strategy’s score.</p>
+          <p className="cfg-note">Trigger window · {scan.request.entry_lookback} closed bar(s). Entry and strength come from the trigger bar. The plan uses a {scan.request.stop_atr}× ATR14 stop and a {scan.request.reward_risk}R target. </p>
           <StudioTable title="Ranked signals" items={rankedSignals.map((row, index) => ({ ...row, rank: index + 1,
             strategy_version: `${row.strategy_code} v${row.version}`,
+            signal_age: row.bars_since_trigger === 0 ? 'New entry' : row.bars_since_trigger != null
+              ? `${row.bars_since_trigger} bar(s) ago` : '—',
             source: [row.account_code, row.broker_symbol].filter(Boolean).join(' · '),
             risk: [row.risk_per_contract, row.quote_currency].filter(Boolean).join(' ') }))}
             columns={[[ '#', 'rank' ], [ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_version' ],
               [ 'Side', 'side' ], [ 'Strength / 100', 'strength' ], [ 'Reference entry', 'entry' ],
               [ 'Stop loss', 'stop_loss' ], [ 'Take profit', 'take_profit' ], [ 'Reward / risk', 'reward_risk' ],
-              [ 'Risk / contract', 'risk' ], [ 'Timeframe', 'timeframe' ], [ 'Closed bar', 'bar_time' ],
+              [ 'Risk / contract', 'risk' ], [ 'Timeframe', 'timeframe' ], [ 'Signal age', 'signal_age' ], [ 'Trigger bar', 'trigger_bar_time' ],
               [ 'Data source', 'source' ], [ 'Reason', 'reason' ]]}
-            empty={scan.items.length ? 'No fresh entry signal passed this scan. Open the scan checks below for reasons.' : 'No instruments or strategies were available for this scan.'} />
-          {scan.items.length > rankedSignals.length && <details className="studio-scan-settings">
+            empty={scan.items.length ? 'No qualifying entry for this scan. See Scan checks for the reason.' : 'No instruments or strategies were available for this scan.'} />
+          {scan.items.length > rankedSignals.length && <details key={viewedRun + String(scan.completedAt.getTime())} open={rankedSignals.length === 0} className="studio-scan-settings">
             <summary>Scan checks · {scan.items.length - rankedSignals.length} without a signal</summary>
             <StudioTable title="Scan checks" items={scan.items.filter(row => row.status !== 'SIGNAL')}
               columns={[[ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_code' ], [ 'Timeframe', 'timeframe' ],

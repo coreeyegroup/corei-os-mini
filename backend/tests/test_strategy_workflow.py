@@ -166,7 +166,7 @@ class SignalScanTests(unittest.TestCase):
         payload = SignalScanIn(instrument_symbol='EURUSD')
         for bars, atr, message in [
             (self.bars(102, end=self.now - timedelta(hours=3)), 2, 'freshness'),
-            (self.bars(103, prior=102), 2, 'no new entry trigger'),
+            (self.bars(103, prior=102), 2, 'No new entry trigger'),
             (self.bars(102), None, 'ATR14'),
             (self.bars(102), 0.0001, 'tick size'),
         ]:
@@ -176,11 +176,41 @@ class SignalScanTests(unittest.TestCase):
                 self.assertIn(message, result['reason'])
                 self.assertNotIn('entry', result)
 
+    def test_recent_setup_keeps_original_levels_and_expires_on_touch_or_exit(self):
+        payload = SignalScanIn(instrument_symbol='EURUSD', entry_lookback=3)
+        features = [{'atr14': 2}] * 39 + [{'atr14': 4}]
+        for prior, final, side, expected in [
+            (102, 103, 'BUY', ('102.00', '99.00', '108.00')),
+            (98, 97, 'SELL', ('98.00', '101.00', '92.00')),
+        ]:
+            with self.subTest(side=side):
+                bars = self.bars(final, prior)
+                bars[-1].update(open=prior, low=min(prior, final), high=max(prior, final))
+                result = _plan_signal(self.strategy, self.instrument, bars, features, payload, self.now)
+                self.assertEqual(result['status'], 'SIGNAL')
+                self.assertEqual(result['side'], side)
+                self.assertEqual(result['bars_since_trigger'], 1)
+                self.assertEqual(result['strength'], 50)
+                self.assertEqual(result['trigger_bar_time'], bars[-2]['bar_time'])
+                self.assertEqual(tuple(result[k] for k in ('entry', 'stop_loss', 'take_profit')), expected)
+
+        for final, low, high, reason in [
+            (103, 98, 104, 'touched its stop or target'),
+            (103, 102, 108, 'touched its stop or target'),
+            (98, 98, 102, 'No active long or short setup'),
+        ]:
+            bars = self.bars(final, prior=102)
+            bars[-1].update(low=low, high=high)
+            result = _plan_signal(self.strategy, self.instrument, bars, features, payload, self.now)
+            self.assertEqual(result['status'], 'WAIT')
+            self.assertIn(reason, result['reason'])
+
     def test_invalid_scan_options(self):
         for data in ({}, {'instrument_symbol': 'EURUSD', 'strategy_code': 'BREAKOUT'},
                      {'instrument_symbol': 'EURUSD', 'strategy_codes': []},
                      {'strategy_code': 'BREAKOUT', 'strategy_codes': ['BREAKOUT']},
-                     {'strategy_code': 'BREAKOUT', 'stop_atr': '0'}):
+                     {'strategy_code': 'BREAKOUT', 'stop_atr': '0'},
+                     {'strategy_code': 'BREAKOUT', 'entry_lookback': 21}):
             with self.subTest(data=data), self.assertRaises(ValidationError):
                 SignalScanIn.model_validate(data)
 

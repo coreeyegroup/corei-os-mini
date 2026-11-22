@@ -89,6 +89,7 @@ class SignalScanIn(BaseModel):
     instrument_symbol: str | None = Field(None, pattern=r'^[A-Z0-9][A-Z0-9._/-]{0,31}$')
     strategy_code: StrategyCode | None = None
     strategy_codes: list[StrategyCode] | None = Field(None, min_length=1)
+    entry_lookback: int = Field(1, ge=1, le=20)
     stop_atr: Decimal = Field(Decimal('1.5'), ge=Decimal('0.1'), le=Decimal('20'), decimal_places=2)
     reward_risk: Decimal = Field(Decimal('2'), ge=Decimal('0.1'), le=Decimal('20'), decimal_places=2)
 
@@ -101,7 +102,7 @@ class SignalScanIn(BaseModel):
 
 def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: list[dict],
                  payload: SignalScanIn, now: datetime) -> dict:
-    """Price a fresh entry at the signal bar's close, using the runtime's protective-level calculation."""
+    """Price a qualifying entry at its trigger close using the runtime's protective levels."""
     timeframe = strategy['parameters']['timeframe']
     base = {'bar_time': bars[-1]['bar_time'], 'reference_close': str(bars[-1]['close'])}
     bar_length = timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
@@ -109,12 +110,22 @@ def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: l
     if closed_at > now or now - closed_at > 2 * bar_length:
         return {**base, 'status': 'WAIT', 'reason': 'Latest closed bar is outside the scan freshness window'}
 
-    decision = classify(strategy, bars, features)
-    side = decision['side']
-    if not side or not decision['changed_on_last_bar']:
-        return {**base, 'status': 'WAIT', 'reason': decision['reason']}
+    walk = algorithms.run(strategy['algorithm'], strategy['parameters'], bars, features)
+    latest = walk[-1]
+    side = {'LONG': 'BUY', 'SHORT': 'SELL'}.get(latest['target'])
+    if side is None:
+        return {**base, 'status': 'WAIT', 'reason': 'No active long or short setup'}
 
-    close, atr, tick = D(bars[-1]['close']), D(features[-1].get('atr14')), D(instrument['tick_size'])
+    # A recent entry remains a candidate only while the strategy keeps its direction.
+    trigger = next((index for index in range(len(walk) - 1, max(-1, len(walk) - 1 - payload.entry_lookback), -1)
+                    if walk[index]['change']), None)
+    if trigger is None:
+        return {**base, 'status': 'WAIT', 'reason': f'No new entry trigger in the last {payload.entry_lookback} closed bar(s)'}
+
+    decision = walk[trigger]
+    close = D(bars[trigger]['close'])
+    atr = D(features[trigger].get('atr14'))
+    tick = D(instrument['tick_size'])
     if close is None or not close.is_finite() or close <= 0 or atr is None or not atr.is_finite() or atr <= 0:
         return {**base, 'status': 'WAIT', 'reason': 'A positive closed-bar price and ATR14 are required for protective levels'}
     entry = quantize(close, tick)
@@ -129,9 +140,17 @@ def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: l
     take = quantize(entry + direction * risk_distance * payload.reward_risk, tick)
     if take <= 0 or (take - entry) * direction <= 0:
         return {**base, 'status': 'WAIT', 'reason': 'Take profit does not fit the instrument tick size or price range'}
+    # Discard a carried setup after its original stop or target has been touched.
+    for bar in bars[trigger + 1:]:
+        low, high = D(bar['low']), D(bar['high'])
+        touched = (low <= stop or high >= take) if side == 'BUY' else (high >= stop or low <= take)
+        if touched:
+            return {**base, 'status': 'WAIT', 'reason': 'The entry plan already touched its stop or target'}
+
     precision = tick.normalize()
     return {
-        **base, 'status': 'SIGNAL', 'side': side, 'strength': max(0, min(100, decision['strength'])),
+        **base, 'status': 'SIGNAL', 'side': side, 'trigger_bar_time': bars[trigger]['bar_time'],
+        'bars_since_trigger': len(bars) - 1 - trigger, 'strength': max(0, min(100, decision['strength'])),
         'entry': format(entry.quantize(precision), 'f'), 'stop_loss': format(stop.quantize(precision), 'f'),
         'take_profit': format(take.quantize(precision), 'f'),
         'reward_risk': str(round(abs(take - entry) / risk_distance, 2)),
@@ -205,7 +224,7 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
                         result = {'status': 'WAIT', 'reason': 'Strategy has no approved version'}
                     else:
                         needed = max(15, algorithms.warmup(strategy['algorithm'], strategy['parameters']) + 2)
-                        window = max(engine.WINDOW, needed)
+                        window = max(engine.WINDOW, needed + payload.entry_lookback - 1)
                         candidates = [
                             (bars, source, index)
                             for source in sources[instrument['id']]
