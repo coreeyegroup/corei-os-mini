@@ -1,11 +1,19 @@
 """Tests for the additive, non-executing strategy workflow compiler."""
+from contextlib import nullcontext
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import unittest
+from unittest.mock import Mock, patch
+
+from fastapi import Response
+from pydantic import ValidationError
 
 from corei_os_mini.calc.nodes import Ctx
 from corei_os_mini.calc.run import compile_graph, execute
 from corei_os_mini.strategy_drafts import calculation_definition
 from corei_os_mini.strategy_workflow import Workflow, compile_workflow
 from corei_os_mini.strategy_preview import preview
+from corei_os_mini.strategy_studio import SignalScanIn, _plan_signal, signal_scan
 from corei_os_mini.strategy_templates import template_list, template_get
 
 
@@ -127,6 +135,98 @@ class CompilerTests(unittest.TestCase):
         data['nodes'][1]['id'] = 'bars'
         with self.assertRaisesRegex(ValueError, 'Duplicate node IDs'):
             Workflow.model_validate(data)
+
+
+class SignalScanTests(unittest.TestCase):
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    strategy = {'code': 'BREAKOUT', 'number': 2, 'algorithm': 'DONCHIAN_BREAKOUT',
+                'parameters': {'timeframe': 'H1', 'direction': 'BOTH', 'entry': 20, 'exit': 10}}
+    instrument = {'id': 'fx', 'symbol': 'EURUSD', 'tick_size': Decimal('0.01'),
+                  'contract_size': Decimal('10'), 'quote_currency': 'USD'}
+
+    def bars(self, final, prior=100, end=None):
+        end = end or self.now
+        return [{'bar_time': end - timedelta(hours=40 - i), 'open': 100, 'high': max(101, close),
+                 'low': min(99, close), 'close': close}
+                for i, close in enumerate([100] * 38 + [prior, final])]
+
+    def test_reference_plan_for_long_and_short(self):
+        payload = SignalScanIn(strategy_code='BREAKOUT')
+        features = [{'atr14': 2}] * 40
+        for close, expected in [(102, ('BUY', 50, '102.00', '99.00', '108.00')),
+                                (98, ('SELL', 50, '98.00', '101.00', '92.00'))]:
+            with self.subTest(close=close):
+                result = _plan_signal(self.strategy, self.instrument, self.bars(close), features, payload, self.now)
+                self.assertEqual(result['status'], 'SIGNAL')
+                self.assertEqual(tuple(result[k] for k in ('side', 'strength', 'entry', 'stop_loss', 'take_profit')), expected)
+                self.assertEqual(result['risk_per_contract'], '30')
+                self.assertEqual(result['reward_risk'], '2.00')
+
+    def test_wait_when_stale_holding_or_protection_unavailable(self):
+        payload = SignalScanIn(instrument_symbol='EURUSD')
+        for bars, atr, message in [
+            (self.bars(102, end=self.now - timedelta(hours=3)), 2, 'freshness'),
+            (self.bars(103, prior=102), 2, 'no new entry trigger'),
+            (self.bars(102), None, 'ATR14'),
+            (self.bars(102), 0.0001, 'tick size'),
+        ]:
+            with self.subTest(message=message):
+                result = _plan_signal(self.strategy, self.instrument, bars, [{'atr14': atr}] * 40, payload, self.now)
+                self.assertEqual(result['status'], 'WAIT')
+                self.assertIn(message, result['reason'])
+                self.assertNotIn('entry', result)
+
+    def test_invalid_scan_options(self):
+        for data in ({}, {'instrument_symbol': 'EURUSD', 'strategy_code': 'BREAKOUT'},
+                     {'instrument_symbol': 'EURUSD', 'strategy_codes': []},
+                     {'strategy_code': 'BREAKOUT', 'strategy_codes': ['BREAKOUT']},
+                     {'strategy_code': 'BREAKOUT', 'stop_atr': '0'}):
+            with self.subTest(data=data), self.assertRaises(ValidationError):
+                SignalScanIn.model_validate(data)
+
+    def test_both_scan_directions_rank_signals_without_deployments(self):
+        instruments = [self.instrument, {**self.instrument, 'id': 'gold', 'symbol': 'XAUUSD'},
+                       {**self.instrument, 'id': 'silver', 'symbol': 'XAGUSD'}]
+        strategies = [self.strategy, {**self.strategy, 'code': 'UNAPPROVED', 'number': None, 'parameters': None}]
+        sources = [
+            {'instrument_id': 'fx', 'account_id': '1', 'broker_symbol': 'EURUSD', 'account_code': 'FX'},
+            {'instrument_id': 'gold', 'account_id': '2', 'broker_symbol': 'GOLD', 'account_code': 'METALS'},
+            {'instrument_id': 'gold', 'account_id': '3', 'broker_symbol': 'STALE', 'account_code': 'OLD'},
+        ]
+
+        def execute(sql, args):
+            if 'FROM cfg_instruments' in sql:
+                return Mock(fetchall=lambda: [i for i in instruments if not args[0] or i['symbol'] == args[0]])
+            if 'FROM cfg_strategies' in sql:
+                return Mock(fetchall=lambda: [s for s in strategies if not args[0] or s['code'] in args[0]])
+            if 'FROM md_collection_plans' in sql:
+                return Mock(fetchall=lambda: [s for s in sources if s['instrument_id'] in args[0]])
+            self.fail(f'Unexpected SQL in a read-only scan: {sql}')
+
+        def load(db, account, symbol, timeframe, limit=None):
+            if timeframe == 'M1':
+                return []
+            close = {'EURUSD': 102, 'GOLD': 95, 'STALE': 105}[symbol]
+            return self.bars(close, end=self.now - timedelta(hours=3) if symbol == 'STALE' else self.now)
+
+        db = Mock(execute=execute)
+        with (patch('corei_os_mini.strategy_studio.store.transaction', return_value=nullcontext(db)) as transaction,
+              patch('corei_os_mini.strategy_studio.engine._load', side_effect=load),
+              patch('corei_os_mini.strategy_studio.engine.custom_definitions', return_value=[])):
+            response = Response()
+            result = signal_scan(SignalScanIn(strategy_code='BREAKOUT'), response, 'operator')['items']
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertEqual([(r['instrument_symbol'], r['status']) for r in result],
+                             [('XAUUSD', 'SIGNAL'), ('EURUSD', 'SIGNAL'), ('XAGUSD', 'WAIT')])
+            self.assertGreater(result[0]['strength'], result[1]['strength'])
+            self.assertEqual(result[0]['account_code'], 'METALS')
+            self.assertEqual(result[2]['reason'], 'No mapped market-data source')
+            result = signal_scan(SignalScanIn(instrument_symbol='EURUSD'), Response(), 'operator')['items']
+            self.assertEqual([r['strategy_code'] for r in result], ['BREAKOUT', 'UNAPPROVED'])
+            result = signal_scan(SignalScanIn(instrument_symbol='EURUSD', strategy_codes=['BREAKOUT']),
+                                 Response(), 'operator')['items']
+            self.assertEqual([r['strategy_code'] for r in result], ['BREAKOUT'])
+            self.assertTrue(all(call.args == ('read',) for call in transaction.call_args_list))
 
 
 if __name__ == '__main__':

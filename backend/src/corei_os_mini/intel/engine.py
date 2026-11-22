@@ -188,9 +188,9 @@ def _instruments(db) -> list[dict]:
                          WHERE p.status <> 'ARCHIVED' ORDER BY 1, 2""").fetchall()
 
 
-def _load(db, account_id, symbol: str, tf: str) -> list[dict]:
+def _load(db, account_id, symbol: str, tf: str, limit: int | None = None) -> list[dict]:
     rows = db.execute('SELECT bar_time, open, high, low, close, ticks, volume, spread_avg FROM md_bars WHERE account_id=%s AND broker_symbol=%s AND timeframe=%s '
-                      'AND complete ORDER BY bar_time DESC LIMIT %s', (account_id, symbol, tf, M1_LIMIT if tf == 'M1' else WINDOW)).fetchall()
+                      'AND complete ORDER BY bar_time DESC LIMIT %s', (account_id, symbol, tf, limit if limit is not None else (M1_LIMIT if tf == 'M1' else WINDOW))).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 

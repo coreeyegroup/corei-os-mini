@@ -5,10 +5,15 @@ a calculation graph draft for review through the governed lifecycle.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Query, Response, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from functools import cache
+from typing import Annotated, Literal
 from uuid import UUID
-from typing import Literal
+
+from fastapi import APIRouter, Depends, Path, Query, Response, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .calc_api import _bars as load_stored_bars
 from .strategy_preview import preview
 from .strategy_templates import template_list, template_get
@@ -17,8 +22,9 @@ from .strategy_workflow import Workflow, compile_workflow, catalog
 
 from . import config_store as store, strategy_drafts
 from .operator_auth import Principal, require_operator, require_role
-from .trading import algorithms, runtime
-from .trading.common import data_source, deployments
+from .intel import engine
+from .trading import algorithms, runtime, signals
+from .trading.common import D, TIMEFRAME_SECONDS, data_source, deployments, quantize
 
 router = APIRouter(prefix='/api/trading/studio', tags=['strategy-studio'])
 
@@ -72,6 +78,155 @@ def scan(response: Response, strategy_code: str | None = Query(None, max_length=
             out.append({**base, **result})
     return {'items': out, 'scope': 'ACTIVE_DEPLOYMENTS_ONLY',
             'notice': 'Read-only closed-bar evaluation. Target is not an entry signal; no entry, stop, target, sizing or order is implied.'}
+
+
+StrategyCode = Annotated[str, Field(pattern=r'^[A-Z][A-Z0-9_]{1,31}$')]
+
+
+class SignalScanIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    instrument_symbol: str | None = Field(None, pattern=r'^[A-Z0-9][A-Z0-9._/-]{0,31}$')
+    strategy_code: StrategyCode | None = None
+    strategy_codes: list[StrategyCode] | None = Field(None, min_length=1)
+    stop_atr: Decimal = Field(Decimal('1.5'), ge=Decimal('0.1'), le=Decimal('20'), decimal_places=2)
+    reward_risk: Decimal = Field(Decimal('2'), ge=Decimal('0.1'), le=Decimal('20'), decimal_places=2)
+
+    @model_validator(mode='after')
+    def validate_scope(self):
+        if bool(self.instrument_symbol) == bool(self.strategy_code) or self.strategy_code and self.strategy_codes:
+            raise ValueError('Choose one instrument and optional strategy filters, or one strategy across instruments.')
+        return self
+
+
+def _plan_signal(strategy: dict, instrument: dict, bars: list[dict], features: list[dict],
+                 payload: SignalScanIn, now: datetime) -> dict:
+    """Price a fresh entry at the signal bar's close, using the runtime's protective-level calculation."""
+    timeframe = strategy['parameters']['timeframe']
+    base = {'bar_time': bars[-1]['bar_time'], 'reference_close': str(bars[-1]['close'])}
+    bar_length = timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
+    closed_at = bars[-1]['bar_time'] + bar_length
+    if closed_at > now or now - closed_at > 2 * bar_length:
+        return {**base, 'status': 'WAIT', 'reason': 'Latest closed bar is outside the scan freshness window'}
+
+    decision = classify(strategy, bars, features)
+    side = decision['side']
+    if not side or not decision['changed_on_last_bar']:
+        return {**base, 'status': 'WAIT', 'reason': decision['reason']}
+
+    close, atr, tick = D(bars[-1]['close']), D(features[-1].get('atr14')), D(instrument['tick_size'])
+    if close is None or not close.is_finite() or close <= 0 or atr is None or not atr.is_finite() or atr <= 0:
+        return {**base, 'status': 'WAIT', 'reason': 'A positive closed-bar price and ATR14 are required for protective levels'}
+    entry = quantize(close, tick)
+    direction = Decimal(1) if side == 'BUY' else Decimal(-1)
+    stop, _ = signals.protective_levels({'protect': {'stop_atr': payload.stop_atr}}, decision['target'],
+                                       direction, Decimal(0), {'ask': entry, 'bid': entry}, atr)
+    if stop is not None:
+        stop = quantize(stop, tick)
+    if not stop or min(entry, stop) <= 0 or (entry - stop) * direction <= 0:
+        return {**base, 'status': 'WAIT', 'reason': 'Stop loss does not fit the instrument tick size or price range'}
+    risk_distance = abs(entry - stop)
+    take = quantize(entry + direction * risk_distance * payload.reward_risk, tick)
+    if take <= 0 or (take - entry) * direction <= 0:
+        return {**base, 'status': 'WAIT', 'reason': 'Take profit does not fit the instrument tick size or price range'}
+    precision = tick.normalize()
+    return {
+        **base, 'status': 'SIGNAL', 'side': side, 'strength': max(0, min(100, decision['strength'])),
+        'entry': format(entry.quantize(precision), 'f'), 'stop_loss': format(stop.quantize(precision), 'f'),
+        'take_profit': format(take.quantize(precision), 'f'),
+        'reward_risk': str(round(abs(take - entry) / risk_distance, 2)),
+        'risk_per_contract': format((risk_distance * instrument['contract_size']).normalize(), 'f'),
+        'quote_currency': instrument['quote_currency'], 'reason': decision['reason'],
+    }
+
+
+@router.post('/signal-scan')
+def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(require_operator)):
+    """Evaluate registered strategies on stored market data, with no deployment or order writes."""
+    response.headers['Cache-Control'] = 'no-store'
+    now = datetime.now(timezone.utc)
+    out = []
+    codes = [payload.strategy_code] if payload.strategy_code else payload.strategy_codes
+    with store.transaction('read') as db:
+        instruments = db.execute("""
+            SELECT id, symbol, tick_size, contract_size, quote_currency FROM cfg_instruments
+            WHERE status='ACTIVE' AND (%s::text IS NULL OR symbol=%s) ORDER BY symbol
+        """, (payload.instrument_symbol, payload.instrument_symbol)).fetchall()
+        strategies = db.execute("""
+            SELECT s.code, v.number, v.algorithm, v.parameters
+            FROM cfg_strategies s LEFT JOIN LATERAL (
+                SELECT number, algorithm, parameters FROM cfg_strategy_versions
+                WHERE strategy_id=s.id AND state='APPROVED' ORDER BY number DESC LIMIT 1
+            ) v ON true WHERE s.status='ACTIVE' AND (%s::text[] IS NULL OR s.code=ANY(%s::text[]))
+            ORDER BY s.code
+        """, (codes, codes)).fetchall()
+
+        if payload.instrument_symbol and not instruments:
+            raise HTTPException(404, 'Instrument is no longer active or could not be found.')
+        if codes and set(codes) - {s['code'] for s in strategies}:
+            raise HTTPException(404, 'One or more selected strategies are no longer active or could not be found.')
+
+        sources = defaultdict(list)
+        for row in db.execute("""
+            SELECT p.instrument_id, p.account_id, a.code AS account_code, p.broker_symbol
+            FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id
+            WHERE p.instrument_id=ANY(%s::uuid[]) AND p.status<>'ARCHIVED'
+            ORDER BY CASE p.status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+                     CASE p.feed_role WHEN 'PRIMARY' THEN 0 WHEN 'BACKUP' THEN 1 ELSE 2 END, p.created_at, p.id
+        """, ([i['id'] for i in instruments],)).fetchall():
+            sources[row['instrument_id']].append(row)
+
+        custom = engine.custom_definitions()
+
+        @cache
+        def closed_bars(account_id, symbol, timeframe, window):
+            native = engine._load(db, account_id, symbol, timeframe, window)
+            if timeframe == 'M1':
+                return (native,)
+            expected = engine._bucket(now, timeframe) - timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
+            if len(native) == window and native[-1]['bar_time'] >= expected:
+                return (native,)
+            # A long but delayed native feed must not hide a fresher M1-derived series.
+            built = engine.resample(engine._load(db, account_id, symbol, 'M1'), timeframe)
+            return native, built[-window:]
+
+        @cache
+        def features_for(account_id, symbol, timeframe, window, series_index):
+            definitions = [d for d in custom if timeframe in (d.get('timeframes') or engine.TIMEFRAMES)]
+            return engine.features(closed_bars(account_id, symbol, timeframe, window)[series_index], timeframe, definitions)
+
+        for strategy in strategies:
+            for instrument in instruments:
+                tf = (strategy['parameters'] or {}).get('timeframe')
+                base = {'instrument_symbol': instrument['symbol'], 'strategy_code': strategy['code'],
+                        'version': strategy['number'], 'timeframe': tf}
+                try:
+                    if strategy['number'] is None:
+                        result = {'status': 'WAIT', 'reason': 'Strategy has no approved version'}
+                    else:
+                        needed = max(15, algorithms.warmup(strategy['algorithm'], strategy['parameters']) + 2)
+                        window = max(engine.WINDOW, needed)
+                        candidates = [
+                            (bars, source, index)
+                            for source in sources[instrument['id']]
+                            for index, bars in enumerate(closed_bars(source['account_id'], source['broker_symbol'], tf, window))
+                        ]
+                        available = [candidate for candidate in candidates if len(candidate[0]) >= needed]
+                        if not available:
+                            count = max((len(bars) for bars, _, _ in candidates), default=0)
+                            reason = f'Insufficient closed bars: {count} of {needed} required' if candidates else 'No mapped market-data source'
+                            result = {'status': 'WAIT', 'reason': reason}
+                        else:
+                            bars, source, index = max(available, key=lambda candidate: candidate[0][-1]['bar_time'])
+                            rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
+                            result = {**_plan_signal(strategy, instrument, bars, rows, payload, now),
+                                      'account_code': source['account_code'], 'broker_symbol': source['broker_symbol']}
+                except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
+                    result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
+                out.append({**base, **result})
+
+    out.sort(key=lambda row: (row['status'] != 'SIGNAL', -row.get('strength', 0), row['instrument_symbol'], row['strategy_code']))
+    return {'items': out, 'scanned_at': now, 'stop_atr': payload.stop_atr, 'reward_risk': payload.reward_risk}
 
 
 @router.get('/builder/nodes')

@@ -77,12 +77,20 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/intel/screener?timeframe=H1'))return ok({items:[
      {instrument:'EURUSD',broker_symbol:'EURUSD',account_id:'a1',account_code:'VTM_A',provider_name:'Demo',regime:'TREND_UP',bar_time:now,features:{close:1.0853}},
    ]});
-   if(url.endsWith('/studio/scan?instrument_symbol=EURUSD'))return ok({items:[
-     {deployment_id:'scan-1',instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',account_code:'VTM_A',timeframe:'H1',target:'LONG',status:'QUALIFIED'},
-     {deployment_id:'scan-2',instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',account_code:'VTM_B',timeframe:'H4',status:'WAIT'},
-   ]});
-   if(url.endsWith('/studio/scan?strategy_code=EMA_EXISTING'))return ++strategyScanAttempts === 1
-     ? fail(503,'Market data temporarily unavailable') : ok({items:[]});
+   if(url.endsWith('/studio/signal-scan')&&method==='POST'){
+     const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
+       timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
+     if(body.instrument_symbol)return ok({scanned_at:now,items:[
+       {...candidate,instrument_symbol:body.instrument_symbol},
+       ...(body.strategy_codes?[]:[{instrument_symbol:body.instrument_symbol,strategy_code:'EMA_NEW',status:'WAIT',reason:'Strategy has no approved version'}]),
+     ]});
+     if(++strategyScanAttempts===1)return fail(503,'Market data temporarily unavailable');
+     return ok({scanned_at:now,items:[
+       {...candidate,instrument_symbol:'XAUUSD',broker_symbol:'XAUUSD',strength:94,side:'SELL',entry:'2670',stop_loss:'2675',take_profit:'2660'},
+       {...candidate,instrument_symbol:'EURUSD'},
+       {instrument_symbol:'GBPUSD',strategy_code:'EMA_EXISTING',status:'WAIT',reason:'No new entry trigger'},
+     ]});
+   }
    if(url.endsWith('/trading/overview'))return ok({deployments:{ACTIVE:1},active_modes:{PAPER:1},signals_today:{REJECTED:1,ACTED:2},orders_today:{FILLED:2},open_orders:0,unknown_orders:0,
      kill_switches:kills.length,limits:1,refused_today:1,positions:1,accounts:[],backtests:1,runtime:{last_run_at:now,deployments:1,signals:1,orders:1,duration_ms:30,enabled:true,deployments_with_problems:0}});
    if(url.includes('/trading/signals/s1'))return ok({...signal,events:[{id:1,at:now,state:'NEW',actor:'runtime',detail:'EMA 3/5'},{id:2,at:now,state:'REJECTED',actor:'validation',detail:'STALE_PRICE'}],intent:null});
@@ -153,7 +161,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      combined:38.3,worked:'2 × +62.4 + 1 × -10.0 ÷ 3 = +38.3',side:'FLAT or hold (inside ±entry)',entry:40,exit:10,symbol:'EURUSD',timeframe:'H1',last_bar:now});
    if(url.includes('/trading/'))return ok({items:[]});
    if(url.includes('/config/accounts'))return ok({items:[{id:'a1',code:'VTM_A',environment:'DEMO',platform:'MT5',status:'ACTIVE'},{id:'a2',code:'ICM_L',environment:'LIVE',platform:'MT5',status:'ACTIVE'}]});
-   if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'}]});
+   if(url.includes('/config/instruments'))return ok({items:[{id:'i1',symbol:'EURUSD',name:'Euro'},{id:'i2',symbol:'XAUUSD',name:'Gold'}]});
    if(url.endsWith('/config/algorithms'))return ok({items:[{id:'GRAPH',label:'Calculation graph',
      schema:{properties:{timeframe:{enum:['H1']},direction:{enum:['BOTH']},graph_code:{type:'string'}}}}]});
    if(url.endsWith('/config/strategies')&&method==='POST'){
@@ -512,41 +520,53 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Observe instrument');
  assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
  assert.equal(studioField('Instrument').value,'EURUSD');
- assert.equal(calls.filter(c=>c.url.includes('/studio/scan?')).length,0);
+ assert.equal(calls.filter(c=>c.url.endsWith('/studio/signal-scan')).length,0);
  await openStage('Results');
- assert.match(studio.textContent,/Run a scan to see deployment assessments/);
+ assert.match(studio.textContent,/Run a scan to see ranked signals/);
  await openStage('Observe instrument');
  await clickStudio('Next: scan strategy');
  assert.equal(w.document.activeElement.id,'studio-research-scope');
- assert.equal(studioField('Scan by').value,'instrument');
+ assert.equal(studioButton('Instrument → Strategies').getAttribute('aria-pressed'),'true');
  assert.equal(studioField('Instrument').value,'EURUSD');
  await clickStudio('Run scan');
  assert.equal(w.document.activeElement.id,'studio-assessment');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
- assert.match(calls.filter(c=>c.url.includes('/studio/scan?')).at(-1).url,/instrument_symbol=EURUSD$/);
- assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/VTM_A.*QUALIFIED/);
+ const lastScan=()=>calls.filter(c=>c.url.endsWith('/studio/signal-scan')).at(-1).body;
+ assert.deepEqual(lastScan(),{instrument_symbol:'EURUSD',stop_atr:'1.5',reward_risk:'2'});
+ const ranked=()=>studio.querySelector('[aria-label="Ranked signals"]');
+ assert.match(ranked().textContent,/EMA_EXISTING v2.*BUY.*85.*1.0860.*1.0840.*1.0900/);
  assert.deepEqual([...studio.querySelectorAll('.studio-scan-summary dd')].map(el=>el.textContent),['2','1','1','0']);
  assert.match(studio.querySelector('[aria-label="Recorded signals"]').textContent,/STALE_PRICE/);
  await clickStudio('Back to scan');
- fill(studioField('Scan by'),'strategy');await tick();
+ fill(studioField('Instrument'),'XAUUSD');await tick();
+ fill(studioField('Strategies to scan'),'selected');await tick();
+ assert.ok(studioButton('Run scan').disabled);
+ studio.querySelector('.studio-strategy-filter input').click();await tick();
+ await clickStudio('Run scan');
+ assert.deepEqual(lastScan(),{instrument_symbol:'XAUUSD',strategy_codes:['EMA_EXISTING'],stop_atr:'1.5',reward_risk:'2'});
+ assert.match(studio.textContent,/Instrument · XAUUSD.*EMA_EXISTING/);
+ await clickStudio('Back to scan');
+ await clickStudio('Strategy → Instruments');
  assert.equal(studioField('Strategy').value,'EMA_EXISTING');
  await clickStudio('Run scan');
- assert.match(calls.filter(c=>c.url.includes('/studio/scan?')).at(-1).url,/strategy_code=EMA_EXISTING$/);
+ assert.deepEqual(lastScan(),{strategy_code:'EMA_EXISTING',stop_atr:'1.5',reward_risk:'2'});
  assert.match(studio.querySelector('[role="alert"]').textContent,/Market data temporarily unavailable/);
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan strategy');
  await openStage('Results');
- assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/QUALIFIED/);
- assert.match(studio.textContent,/Instrument · EURUSD/);
+ assert.match(ranked().textContent,/XAUUSD/);
+ assert.match(studio.textContent,/Instrument · XAUUSD/);
  await clickStudio('Back to scan');
  await clickStudio('Retry scan');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
  assert.match(studio.textContent,/Strategy · EMA_EXISTING/);
- assert.match(studio.textContent,/No active deployments matched this scan/);
+ assert.match(studio.textContent,/Strongest match · XAUUSD · EMA_EXISTING · 94\/100/);
+ assert.deepEqual([...ranked().querySelectorAll('tbody tr')].map(row=>row.cells[1].textContent),['XAUUSD','EURUSD']);
+ assert.match(studio.querySelector('[aria-label="Scan checks"]').textContent,/GBPUSD.*No new entry trigger/);
  const researchLinks=[...studio.querySelectorAll('summary')].find(node=>node.textContent==='Runtime and research');
  researchLinks.click();
  assert.ok(researchLinks.parentElement.open);
  assert.ok(studioButton('Backtest'));
- console.log('PASS: Strategy Studio build and research workflows, scope handoff, pinned results, retry and empty assessment.');
+ console.log('PASS: Strategy Studio build and research workflows, all and selected strategies, instrument ranking, full signal levels, and retry.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);
