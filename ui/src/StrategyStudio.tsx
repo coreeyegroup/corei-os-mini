@@ -9,7 +9,7 @@ type Row = Record<string, unknown>;
 type Mode = 'observe' | 'scan' | 'build' | 'results';
 const researchSteps = [
   { id: 'observe', title: 'Observe instrument' },
-  { id: 'scan', title: 'Scan strategy' },
+  { id: 'scan', title: 'Scan signals' },
   { id: 'results', title: 'Results' },
 ] as const;
 type ResearchStep = typeof researchSteps[number]['id'];
@@ -33,7 +33,7 @@ const studioSections: StudioSection[] = [...buildSteps.map(step => step.id), 'js
 const explorerSections = [
   ...buildSteps.map(({ id, title }, index) => ({ id, label: `${index + 1}. ${title}`, group: 'Build strategy' })),
   { id: 'json', label: 'Workflow JSON', group: 'Build tools' },
-  ...researchSteps.map(({ id, title }, index) => ({ id, label: `${index + 1}. ${title}`, group: 'Research & results' })),
+  ...researchSteps.map(({ id, title }) => ({ id, label: title, group: 'Signal scanner' })),
 ];
 const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 
@@ -96,7 +96,7 @@ function StudioTable({ title, columns, items, empty }: {
 export default function StrategyStudio() {
   const [section, setSection] = useSection('Strategy Studio', 'templates', studioSections);
   const lastEditor = useRef<EditorView>('templates');
-  const lastResearch = useRef<ResearchStep>('observe');
+  const lastResearch = useRef<ResearchStep>('scan');
   const currentSection = useRef(section);
   const researchHeading = useRef<HTMLHeadingElement>(null);
   const focusResearchHeading = useRef(false);
@@ -392,7 +392,7 @@ export default function StrategyStudio() {
       <button aria-pressed={mode === 'build'} disabled={locked}
         onClick={() => setSection(lastEditor.current)}>Build strategy</button>
       <button aria-pressed={mode !== 'build'} disabled={locked}
-        onClick={() => setSection(lastResearch.current)}>Research &amp; results</button>
+        onClick={() => setSection(lastResearch.current)}>Signal scanner</button>
     </nav>
 
     <div hidden={mode !== 'build'}>
@@ -545,10 +545,9 @@ export default function StrategyStudio() {
       </section>}
     </div>
 
-    {mode !== 'build' && <nav className="studio-steps studio-research-steps" aria-label="Strategy research steps">
-      {researchSteps.map(({ id, title }, index) => <button key={id} type="button"
+    {mode !== 'build' && <nav className="studio-steps studio-research-steps" aria-label="Signal scanner views">
+      {researchSteps.map(({ id, title }) => <button key={id} type="button"
         aria-current={mode === id ? 'step' : undefined} onClick={() => setSection(id)}>
-        <span className="studio-step-number" aria-hidden="true">{index + 1}</span>
         <span className="studio-step-label"><strong>{title}</strong></span>
       </button>)}
     </nav>}
@@ -557,15 +556,15 @@ export default function StrategyStudio() {
     {(observing || mode === 'scan') && <div className="studio-stack">
       <section className="studio-panel" aria-labelledby="studio-research-scope">
         <div className="studio-section-title">
-          <div><h3 id="studio-research-scope" ref={researchHeading} tabIndex={-1}>{observing ? 'Select an instrument' : 'Choose what to scan'}</h3>
+          <div><h3 id="studio-research-scope" ref={researchHeading} tabIndex={-1}>{observing ? 'Select an instrument' : 'Choose a scan mode'}</h3>
             <p className="cfg-note">{observing ? 'Review the market context, then carry this instrument into the signal scanner.'
-              : 'Scan the latest closed bars with each strategy’s approved version and timeframe.'}</p></div>
+              : 'COREI evaluates approved strategy rules against stored closed bars.'}</p></div>
         </div>
         {!observing && <div className="studio-subnav" role="group" aria-label="Scan mode">
           <button type="button" aria-pressed={byInstrument} disabled={scanBusy}
-            onClick={() => setScanScope('instrument')}>Instrument → Strategies</button>
+            onClick={() => setScanScope('instrument')}>Find strategies for an instrument</button>
           <button type="button" aria-pressed={!byInstrument} disabled={scanBusy}
-            onClick={() => setScanScope('strategy')}>Strategy → Instruments</button>
+            onClick={() => setScanScope('strategy')}>Find instruments for a strategy</button>
         </div>}
         <div className="studio-form-row">
           {byInstrument ? <label>Instrument
@@ -592,7 +591,7 @@ export default function StrategyStudio() {
           </label>}
           <div className="studio-actions">
             {observing
-              ? <button className="primary" disabled={scanBusy || (refreshing && !updated)} onClick={openScan}>Next: scan strategy</button>
+              ? <button className="primary" disabled={scanBusy || (refreshing && !updated)} onClick={openScan}>Open scanner for this instrument</button>
               : <button className="primary" disabled={!canScan} onClick={() => void runScan()}>
                 {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
               </button>}
@@ -612,7 +611,9 @@ export default function StrategyStudio() {
           })}
           {!activeStrategies.length && <p className="cfg-note">No active strategies are available.</p>}
         </fieldset>}
-        {!observing && !byInstrument && <p className="cfg-note">Checks all active instruments and ranks fresh signals by strategy strength.</p>}
+        {!observing && <p className="cfg-note">{byInstrument
+          ? 'Choose one instrument and check it against all or selected strategies.'
+          : 'Choose one strategy and rank its fresh signals across active instruments.'}</p>}
         {!observing && <details className="studio-scan-settings">
           <summary>Signal settings · Stop {stopAtr || '—'}× ATR14 · Target {rewardRisk || '—'}R</summary>
           <div className="studio-actions">

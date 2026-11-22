@@ -260,6 +260,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 0;
 }
+.studio .studio-research-steps button { grid-template-columns: minmax(0, 1fr); }
 .studio-scan-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -278,11 +279,6 @@
 .studio-details[open] > summary { margin-bottom: 2px; }
 
 @container strategy-studio (max-width: 440px) {
-  .studio .studio-research-steps button {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    gap: 4px;
-  }
   .studio-scan-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
