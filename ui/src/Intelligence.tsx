@@ -14,7 +14,7 @@ import { CalendarView, CorrelationView, IndicatorsView, RulesView, SourcesView, 
 import MarketBoard from './MarketBoard';
 import Stage from './Pipeline';
 import type { View } from './layout';
-import { INTEL_GROUPS, useSection } from './nav';
+import { INTEL_GROUPS, useScanEvidence, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
 import { SubWorkspace } from './SubWorkspace';
 import { Formulas } from './SignalLibrary';
@@ -52,6 +52,10 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const canEdit = (user?.roles ?? []).includes('TRADING_OPS') || (user?.roles ?? []).includes('ADMIN');
   const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
+  const scanEvidence = useScanEvidence('chart');
+  useEffect(() => {
+    if (scanEvidence) setPick({ ...scanEvidence, scanTimeframe: scanEvidence.timeframe });
+  }, [scanEvidence]);
   useEffect(() => { if (tab === 'instrument' || tab === 'workspace') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {

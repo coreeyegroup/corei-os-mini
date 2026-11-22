@@ -19,7 +19,7 @@ from corei_os_mini.calc.run import compile_graph, execute
 from corei_os_mini.strategy_drafts import calculation_definition
 from corei_os_mini.strategy_workflow import Workflow, compile_workflow
 from corei_os_mini.strategy_preview import preview
-from corei_os_mini.strategy_studio import SignalScanIn, _plan_signal, signal_scan
+from corei_os_mini.strategy_studio import SignalScanIn, _plan_signal, scan_readiness, signal_scan
 from corei_os_mini.strategy_templates import template_list, template_get
 
 
@@ -242,7 +242,7 @@ class SignalScanTests(unittest.TestCase):
                 return Mock(fetchall=lambda: [s for s in sources if s['instrument_id'] in args[0]])
             self.fail(f'Unexpected SQL in a read-only scan: {sql}')
 
-        def load(db, account, symbol, timeframe, limit=None):
+        def load(db, account, symbol, timeframe, limit=None, *, cutoff=None):
             if timeframe == 'M1':
                 return []
             close = {'EURUSD': 102, 'GOLD': 95, 'STALE': 105}[symbol]
@@ -273,7 +273,37 @@ class SignalScanTests(unittest.TestCase):
                                  Response(), 'operator')['items']
             self.assertEqual(len(result), 6)
             self.assertEqual({r['instrument_symbol'] for r in result}, {'EURUSD', 'XAUUSD', 'XAGUSD'})
+            readiness = scan_readiness(SignalScanIn(strategy_codes=['BREAKOUT', 'UNAPPROVED']), Response(), 'operator')
+            self.assertEqual((readiness['requested'], readiness['ready']), (6, 2))
+            self.assertEqual(readiness['strategies'][0]['version'], 2)
+            self.assertEqual(readiness['strategies'][0]['timeframe'], 'H1')
             self.assertTrue(all(call.args == ('read',) for call in transaction.call_args_list))
+
+
+    def test_readiness_covers_full_matrix_and_reuses_bars(self):
+        instruments = [{**self.instrument, 'id': f'I{i:03}', 'symbol': f'I{i:03}'} for i in range(101)]
+        strategies = [{**self.strategy, 'code': f'S{i:03}'} for i in range(102)]
+        strategies[-1].update(number=None, parameters=None)
+        sources = [{'instrument_id': item['id'], 'account_id': 'account', 'account_code': 'DEMO',
+                    'broker_symbol': item['symbol']} for item in instruments[:-1]]
+        db = Mock()
+        db.execute.return_value.fetchall.return_value = sources
+
+        def load(_db, _account, _symbol, timeframe, _size=None, *, cutoff=None):
+            self.assertIsNotNone(cutoff)
+            return self.bars(102) if timeframe == 'H1' else []
+
+        payload = SignalScanIn(strategy_codes=[item['code'] for item in strategies])
+        with (patch('corei_os_mini.strategy_studio.store.transaction', return_value=nullcontext(db)),
+              patch('corei_os_mini.strategy_studio.resolve_scan_scope', return_value=(instruments, strategies)),
+              patch('corei_os_mini.strategy_studio.engine._load', side_effect=load) as load_bars,
+              patch('corei_os_mini.strategy_studio.engine.features') as calculate):
+            data = scan_readiness(payload, Response(), 'operator')
+        self.assertEqual((data['requested'], data['ready']), (10_302, 10_100))
+        self.assertEqual(data['items'][-1]['blocked'], 102)
+        self.assertEqual(data['items'][0]['sources'], ['DEMO · I000'])
+        self.assertEqual(load_bars.call_count, 200)
+        calculate.assert_not_called()
 
 
 @unittest.skipUnless(os.getenv('COREI_TEST_DATABASE_URL'), 'Requires a disposable PostgreSQL database')
@@ -281,7 +311,7 @@ class BackgroundScanTests(unittest.TestCase):
     def setUp(self):
         url = os.environ['COREI_TEST_DATABASE_URL']
         schema = 'test_scan_' + uuid4().hex
-        migration = Path(__file__).resolve().parents[1] / 'sql/041_studio_scan_runs.sql'
+        migrations = Path(__file__).resolve().parents[1] / 'sql'
 
         @contextmanager
         def transaction(_operation='write'):
@@ -296,14 +326,24 @@ class BackgroundScanTests(unittest.TestCase):
         with psycopg.connect(url) as db:
             db.execute(f'CREATE SCHEMA {schema}')
         with transaction() as db:
-            db.execute(migration.read_text())
+            for filename in ('041_studio_scan_runs.sql', '042_studio_scan_profiles.sql'):
+                db.execute((migrations / filename).read_text())
         patcher = patch.object(runs.store, 'transaction', transaction)
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_scan_profile_is_private_and_reloadable(self):
+        profile = runs.ScanProfileIn(name='Market open', mode='strategy', all_instruments=True,
+                                     request=SignalScanIn(strategy_codes=['S000'], entry_lookback=3))
+        self.assertEqual(runs.save_profile(profile, 'operator-1'), {'name': 'Market open'})
+        self.assertEqual(runs.profiles('operator-2'), {'items': []})
+        saved = runs.profiles('operator-1')['items'][0]
+        self.assertEqual(saved['request']['strategy_codes'], ['S000'])
+        self.assertTrue(saved['all_instruments'])
+
     def test_persist_resume_rank_and_retry_at_ten_thousand_pairs(self):
-        instruments = [{'symbol': f'I{i:03}'} for i in range(100)]
-        strategies = [{'code': f'S{i:03}'} for i in range(100)]
+        instruments = [{'symbol': f'I{i:03}'} for i in range(101)]
+        strategies = [{'code': f'S{i:03}'} for i in range(102)]
         failed = True
 
         def evaluate(_db, batch, versions, _request, _as_of, *, freeze_bars):
@@ -321,7 +361,7 @@ class BackgroundScanTests(unittest.TestCase):
              patch.object(runs, 'evaluate_scan_pairs', side_effect=evaluate) as evaluator:
             job = runs.enqueue(payload, 'operator-1')
             run_id = job['id']
-            self.assertEqual(job['total'], 10_000)
+            self.assertEqual(job['total'], 10_302)
             self.assertTrue(runs.step())
             self.assertEqual(runs.read_run(run_id, 'operator-1')['processed_instruments'], 1)
             self.assertEqual(runs.cancel(run_id, 'operator-1')['status'], 'CANCELLED')
@@ -334,12 +374,12 @@ class BackgroundScanTests(unittest.TestCase):
                 pass
             completed = runs.read_run(run_id, 'operator-1')
             self.assertEqual(completed['status'], 'COMPLETED')
-            self.assertEqual(sum(row['checked'] for row in completed['summary']), 10_000)
-            self.assertEqual(completed['summary'][0]['strongest'], ['I099'])
+            self.assertEqual(sum(row['checked'] for row in completed['summary']), 10_302)
+            self.assertEqual(completed['summary'][0]['strongest'], ['I100'])
             page = runs.results(run_id, 'S000', 'SIGNAL', 50, 'operator-1')
-            self.assertEqual(len(page['items']), 49)
+            self.assertEqual(len(page['items']), 50)
             self.assertFalse(page['has_more'])
-            self.assertEqual(page['items'][0]['instrument_symbol'], 'I049')
+            self.assertEqual(page['items'][0]['instrument_symbol'], 'I050')
 
             failed = False
             evaluator.reset_mock()
@@ -349,7 +389,7 @@ class BackgroundScanTests(unittest.TestCase):
             self.assertEqual(evaluator.call_count, 1)
             summary = runs.read_run(run_id, 'operator-1')['summary']
             self.assertEqual(summary[0]['errors'], 0)
-            self.assertEqual(summary[0]['signals'], 100)
+            self.assertEqual(summary[0]['signals'], 101)
 
 
 if __name__ == '__main__':

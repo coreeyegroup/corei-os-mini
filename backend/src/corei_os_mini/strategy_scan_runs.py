@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import config_store as store
 from .operator_auth import require_operator
@@ -22,6 +22,36 @@ log = logging.getLogger(__name__)
 class ScanRunIn(BaseModel):
     mode: Literal['instrument', 'strategy']
     request: SignalScanIn
+    name: str | None = Field(None, max_length=80)
+
+
+class ScanProfileIn(ScanRunIn):
+    name: str = Field(min_length=1, max_length=80)
+    all_instruments: bool = False
+    all_strategies: bool = False
+
+
+@router.get('/profiles')
+def profiles(operator: str = Depends(require_operator)):
+    with store.transaction('read') as db:
+        return {'items': db.execute('SELECT name, mode, request, all_instruments, all_strategies '
+                                    'FROM studio_scan_profiles WHERE operator=%s ORDER BY name', (operator,)).fetchall()}
+
+
+@router.put('/profiles')
+def save_profile(payload: ScanProfileIn, operator: str = Depends(require_operator)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(422, 'Enter a profile name.')
+    with store.transaction() as db:
+        db.execute("""
+            INSERT INTO studio_scan_profiles (operator, name, mode, request, all_instruments, all_strategies)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (operator, name) DO UPDATE SET mode=EXCLUDED.mode, request=EXCLUDED.request,
+                all_instruments=EXCLUDED.all_instruments, all_strategies=EXCLUDED.all_strategies
+        """, (operator, name, payload.mode, _json(payload.request.model_dump(mode='json')),
+              payload.all_instruments, payload.all_strategies))
+    return {'name': name}
 
 
 def _json(value):
@@ -37,7 +67,7 @@ def _run(db, run_id, operator):
 
 def _public(row):
     return {
-        **{key: row[key] for key in ('id', 'mode', 'status', 'created_at', 'updated_at', 'failure')},
+        **{key: row[key] for key in ('id', 'mode', 'status', 'created_at', 'updated_at', 'failure', 'name')},
         'total': len(row['instruments']) * len(row['strategies']),
         'instruments': [i['symbol'] for i in row['instruments']],
         'strategies': [s['code'] for s in row['strategies']],
@@ -54,10 +84,10 @@ def enqueue(payload: ScanRunIn, operator: str = Depends(require_operator)):
         if not instruments or not strategies:
             raise HTTPException(422, 'The scan requires active instruments and strategies.')
         row = db.execute("""
-            INSERT INTO studio_scan_runs (id, operator, mode, request, instruments, strategies)
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING *
+            INSERT INTO studio_scan_runs (id, operator, mode, request, instruments, strategies, name)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *
         """, (uuid4(), operator, payload.mode, _json(payload.request.model_dump(mode='json')),
-              _json(instruments), _json(strategies))).fetchone()
+              _json(instruments), _json(strategies), (payload.name or '').strip() or None)).fetchone()
     return _public(row)
 
 
@@ -65,7 +95,7 @@ def enqueue(payload: ScanRunIn, operator: str = Depends(require_operator)):
 def history(offset: int = Query(0, ge=0), operator: str = Depends(require_operator)):
     with store.transaction('read') as db:
         rows = db.execute("""
-            SELECT id, mode, status, created_at, jsonb_array_length(instruments) AS instruments,
+            SELECT id, name, mode, status, created_at, jsonb_array_length(instruments) AS instruments,
                    jsonb_array_length(strategies) AS strategies
             FROM studio_scan_runs WHERE operator=%s ORDER BY created_at DESC, id LIMIT 21 OFFSET %s
         """, (operator, offset)).fetchall()
@@ -77,18 +107,19 @@ def read_run(run_id: UUID, operator: str = Depends(require_operator)):
     with store.transaction('read') as db:
         row = _run(db, run_id, operator)
         column = 'instrument' if row['mode'] == 'instrument' else 'strategy'
+        best = "max(strength) FILTER (WHERE status='SIGNAL') OVER (PARTITION BY strategy)" if column == 'strategy' else 'NULL::numeric'
         summary = db.execute(f"""
             WITH ranked AS (
                 SELECT {column} AS scope, instrument, strategy, status, strength,
-                       max(strength) FILTER (WHERE status='SIGNAL') OVER (PARTITION BY {column}) AS best
+                       {best} AS best
                 FROM studio_scan_results WHERE run_id=%s
             )
             SELECT scope, count(*) AS checked, count(*) FILTER (WHERE status='SIGNAL') AS signals,
                    count(*) FILTER (WHERE status='ERROR') AS errors, max(best) AS strength,
-                   array_agg({'strategy' if column == 'instrument' else 'instrument'} ORDER BY instrument, strategy)
-                       FILTER (WHERE status='SIGNAL' AND strength=best) AS strongest
+                   array_agg(instrument ORDER BY instrument) FILTER (WHERE status='SIGNAL' AND strength=best) AS strongest,
+                   array_agg(strategy ORDER BY strategy) FILTER (WHERE status='SIGNAL' AND %s) AS signal_strategies
             FROM ranked GROUP BY scope ORDER BY scope
-        """, (run_id,)).fetchall()
+        """, (run_id, column == 'instrument')).fetchall()
     return {**_public(row), 'summary': summary}
 
 
@@ -102,7 +133,7 @@ def results(run_id: UUID, group: str = '', status: Literal['SIGNAL', 'WAIT', 'ER
             SELECT detail FROM studio_scan_results WHERE run_id=%s
                 AND (%s='' OR {column}=%s) AND (%s::text IS NULL OR status=%s)
             ORDER BY CASE status WHEN 'SIGNAL' THEN 0 WHEN 'WAIT' THEN 1 ELSE 2 END,
-                     strength DESC NULLS LAST, instrument, strategy LIMIT 51 OFFSET %s
+                     strategy, strength DESC NULLS LAST, instrument LIMIT 51 OFFSET %s
         """, (run_id, group, group, status, status, offset)).fetchall()
     return {'items': [item['detail'] for item in items[:50]], 'has_more': len(items) > 50}
 

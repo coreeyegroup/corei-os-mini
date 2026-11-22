@@ -149,7 +149,11 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
 }
 
 export function InstrumentView({ pick, items, setPick }: { pick: Row | null; items: Row[]; setPick: (r: Row) => void }) {
-  const [tf, setTf] = useState('H1'), [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
+  const [tf, setTf] = useState<string>(pick?.scanTimeframe ?? 'H1'), [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
+  const scanTimeframe = pick?.scanTimeframe;
+  useEffect(() => { if (scanTimeframe) setTf(scanTimeframe); }, [pick, scanTimeframe]);
+  const choices = pick && !items.some(row => row.account_id === pick.account_id && row.broker_symbol === pick.broker_symbol)
+    ? [pick, ...items] : items;
   useEffect(() => {
     if (!pick) return;
     let stop = false;
@@ -166,11 +170,11 @@ export function InstrumentView({ pick, items, setPick }: { pick: Row | null; ite
   };
   return <section className="intel">
     <div className="intel-bar">
-      <select aria-label="Instrument" value={pick ? pick.account_id + '|' + pick.broker_symbol : ''} onChange={e => { const r = items.find(x => x.account_id + '|' + x.broker_symbol === e.target.value); if (r) setPick(r); }}>
+      <select aria-label="Instrument" value={pick ? pick.account_id + '|' + pick.broker_symbol : ''} onChange={e => { const r = choices.find(x => x.account_id + '|' + x.broker_symbol === e.target.value); if (r) setPick(r); }}>
         <option value="">Choose an instrument…</option>
-        {items.map(r => <option key={r.account_id + r.broker_symbol} value={r.account_id + '|' + r.broker_symbol}>{r.broker_symbol} · {r.provider_name} · {r.account_code}</option>)}
+        {choices.map(r => <option key={r.account_id + r.broker_symbol} value={r.account_id + '|' + r.broker_symbol}>{r.broker_symbol} · {[r.provider_name, r.account_code].filter(Boolean).join(' · ') || 'Scan source'}</option>)}
       </select>
-      <span className="intel-tfs" role="group" aria-label="Chart timeframe">{TFS.filter(t => t !== 'M1').map(t => <button key={t} aria-pressed={t === tf} onClick={() => setTf(t)}>{t}</button>)}</span>
+      <span className="intel-tfs" role="group" aria-label="Chart timeframe">{TFS.filter(t => t !== 'M1' || scanTimeframe === 'M1').map(t => <button key={t} aria-pressed={t === tf} onClick={() => setTf(t)}>{t}</button>)}</span>
       {data?.history?.length ? <button onClick={csv}>Export CSV</button> : null}
     </div>
     {error && <p role="alert" className="cfg-error">{error}</p>}

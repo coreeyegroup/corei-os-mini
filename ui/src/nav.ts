@@ -38,6 +38,35 @@ export function takeStrategyRule(): StrategyRule | null {
   return rule;
 }
 
+export type ScanEvidence = {
+  instrument_symbol: string; strategy_code: string; strategy_version_id?: string;
+  account_id: string; broker_symbol: string; timeframe: string;
+};
+type EvidenceTarget = 'chart' | 'backtest';
+const pendingEvidence: Partial<Record<EvidenceTarget, ScanEvidence>> = {};
+
+export function openScanEvidence(target: EvidenceTarget, evidence: ScanEvidence) {
+  pendingEvidence[target] = evidence;
+  if (target === 'chart') goto('Intelligence', 'instrument');
+  else goto('Strategies', 'backtest');
+  window.dispatchEvent(new CustomEvent('corei-scan-evidence', { detail: target }));
+}
+
+export function useScanEvidence(target: EvidenceTarget): ScanEvidence | null {
+  const [selection, setSelection] = useState<ScanEvidence | null>(null);
+  useEffect(() => {
+    const take = () => {
+      const value = pendingEvidence[target];
+      if (value) { delete pendingEvidence[target]; setSelection(value); }
+    };
+    take();
+    const onEvidence = (event: Event) => { if ((event as CustomEvent).detail === target) take(); };
+    window.addEventListener('corei-scan-evidence', onEvidence);
+    return () => window.removeEventListener('corei-scan-evidence', onEvidence);
+  }, [target]);
+  return selection;
+}
+
 export function useSection<T extends string>(view: View, initial: T, valid: readonly T[]): [T, (s: T) => void] {
   // A requested section stays available for a few seconds, so a screen that mounts twice while it opens (sign-in check,
   // layout change) still opens at it; the event below consumes it for a screen that is already open.

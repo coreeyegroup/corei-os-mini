@@ -25,8 +25,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const calls=[];
  let largeScanCatalog=false;
  let backgroundScanRequest;
- const backgroundSummary=[{scope:'EURUSD',checked:2,signals:1,errors:0,strongest:['EMA_EXISTING'],strength:85}];
- const backgroundRun=()=>({id:'batch-1',mode:'instrument',status:'COMPLETED',total:202,
+ const savedRuns=[];
+ let savedProfile;
+ const backgroundSummary=[{scope:'EURUSD',checked:2,signals:1,errors:0,signal_strategies:['EMA_EXISTING'],strength:85}];
+ const backgroundRun=()=>({id:'batch-'+(savedRuns.length+1),mode:'instrument',status:'COMPLETED',total:10302,request:backgroundScanRequest.request,name:backgroundScanRequest.name,
    created_at:now,updated_at:now,summary:backgroundSummary,instruments:backgroundScanRequest.request.instrument_symbols,
    strategies:backgroundScanRequest.request.strategy_codes});
  const signal={id:'s1',bar_time:now,strategy_code:'EMA_FAST',version_number:1,source:'RUNTIME',timeframe:'M5',symbol:'EURUSD',account_code:'VTM_A',mode:'PAPER',side:'BUY',strength:70,
@@ -83,16 +85,24 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/intel/screener?timeframe=H1'))return ok({items:[
      {instrument:'EURUSD',broker_symbol:'EURUSD',account_id:'a1',account_code:'VTM_A',provider_name:'Demo',regime:'TREND_UP',bar_time:now,features:{close:1.0853}},
    ]});
+   if(url.endsWith('/studio/scan-runs/profiles')&&method==='PUT'){
+     savedProfile=body;return ok({name:body.name});
+   }
+   if(url.endsWith('/studio/scan-runs/profiles'))return ok({items:savedProfile?[savedProfile]:[]});
+   if(url.endsWith('/studio/scan-readiness'))return ok({requested:10302,ready:10201,checked_at:now,
+     items:[{instrument:'EURUSD',ready:1,blocked:101,reasons:{'Strategy has no approved version':101}}]});
    if(url.endsWith('/studio/scan-runs')&&method==='POST'){
      backgroundScanRequest=body;
-     return ok(backgroundRun());
+     const run=backgroundRun();savedRuns.push(run);return ok(run);
    }
-   if(url.includes('/studio/scan-runs?'))return ok({items:backgroundScanRequest?
-     [{...backgroundRun(),instruments:101,strategies:2}]:[],has_more:false});
-   if(url.includes('/studio/scan-runs/batch-1/results?'))return ok({items:[{
-     instrument_symbol:'EURUSD',strategy_code:'EMA_EXISTING',strength:85,status:'SIGNAL',side:'BUY'
+   if(url.includes('/studio/scan-runs?'))return ok({items:savedRuns.map(run=>({...run,instruments:101,strategies:102})).reverse(),has_more:false});
+   if(/\/studio\/scan-runs\/batch-\d+\/results\?/.test(url))return ok({items:[{
+     instrument_symbol:'EURUSD',strategy_code:'EMA_EXISTING',strength:85,status:'SIGNAL',side:'BUY',
+     version:2,strategy_version_id:'scan-version',timeframe:'H1',account_id:'a1',broker_symbol:'EURUSD',account_code:'VTM_A',
+     entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900',reason:'EMA rules matched'
    }],has_more:false});
-   if(url.endsWith('/studio/scan-runs/batch-1'))return ok(backgroundRun());
+   if(/\/studio\/scan-runs\/batch-\d+$/.test(url))return ok(savedRuns.find(run=>url.endsWith('/'+run.id)));
+   if(url.includes('/intel/instrument/a1/EURUSD?'))return ok({snapshots:[],history:[],timeframe:'H1'});
    if(url.endsWith('/intel/watchlists'))return ok({items:[]});
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
      const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
@@ -191,8 +201,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      return ok(strategy,201);
    }
    if(url.endsWith('/config/strategies/new-strategy/versions')&&method==='POST')return ok({id:'new-version'},201);
+   if(url.endsWith('/config/strategies/existing-strategy/versions'))return ok({items:[{id:'scan-version',number:2,state:'APPROVED',algorithm:'EMA_CROSSOVER'}]});
    if(url.includes('/config/strategies/')&&url.endsWith('/versions'))return ok({items:[]});
-   if(url.includes('/config/strategies'))return ok({items:registeredStrategies});
+   if(url.includes('/config/strategies'))return ok({items:[...registeredStrategies,
+     ...(largeScanCatalog?Array.from({length:100},(_,i)=>({id:'batch-strategy-'+i,code:'BATCH_STRAT_'+i,status:'ACTIVE'})):[])
+   ]});
    if(url.includes('/config/deployments'))return ok({items:[]});
    if(url.includes('/intel/overview'))return ok({covered:3});
    if(url.endsWith('/config/overview'))return ok({user:{username:'risk-ops',roles:['ADMIN']},feeds:{active_plans:2,collectors:1,live:1,problems:0,paused:false},order_sending:[{environment:'DEMO',enabled:false}],
@@ -611,17 +624,42 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  fill(searchInstruments,'BATCH');await tick();
  assert.equal(checks('Instruments').length,99);
  await clickStudio('Select all matching');
- assert.match(studio.querySelector('.studio-run-bar').textContent,/202 checks.*101 instruments × 2 strategies.*Background run/);
+ assert.match(studio.querySelector('.studio-run-bar').textContent,/10,302 checks.*101 instruments × 102 strategies.*Background run/);
  fill(studioField('Instruments to scan'),'all');await tick();
  assert.equal(studio.querySelector('[aria-label="Instrument scope"] fieldset'),null);
- assert.match(studio.querySelector('.studio-run-bar').textContent,/202 checks/);
+ assert.match(studio.querySelector('.studio-run-bar').textContent,/10,302 checks/);
+ await clickStudio('Check readiness');
+ assert.match(studio.textContent,/10,302 requested · 10,201 ready · 101 blocked/);
+ assert.match(studio.querySelector('[aria-label="Instrument readiness"]').textContent,/Strategy has no approved version \(101\)/);
+ fill(studioField('Preset name'),'Full universe');await tick();
+ await clickStudio('Save preset');
+ assert.equal(savedProfile.name,'Full universe');
+ fill(studioField('Run name'),'Market open');await tick();
  await clickStudio('Run scan');
  assert.equal(backgroundScanRequest.request.instrument_symbols.length,101);
- assert.equal(backgroundScanRequest.request.strategy_codes.length,2);
+ assert.equal(backgroundScanRequest.request.strategy_codes.length,102);
+ assert.equal(backgroundScanRequest.name,'Market open');
  assert.match(studio.querySelector('[aria-label="Run summary"]').textContent,/EURUSD.*EMA_EXISTING/);
  assert.match(studio.querySelector('[aria-label="Run results"]').textContent,/EURUSD.*EMA_EXISTING.*85/);
  assert.equal(studio.querySelector('[aria-label="Ranked signals"]'),null);
- assert.equal(studio.querySelector('progress[aria-label="Scan progress"]').max,202);
+ assert.equal(studio.querySelector('progress[aria-label="Scan progress"]').max,10302);
+ await actSelection(studio.querySelector('[aria-label="Run results"] tbody button'));
+ assert.match(studio.querySelector('[aria-label="Scan result detail"]').textContent,/EMA rules matched.*1.0860.*1.0840.*1.0900/);
+ assert.equal(studioButton('Open chart').disabled,false);
+ assert.equal(studioButton('Open backtest').disabled,false);
+ await clickStudio('Open backtest');
+ assert.equal($('[aria-label="Backtest strategy"]').value,'existing-strategy');
+ assert.equal($('[aria-label="Backtest version"]').value,'scan-version');
+ assert.equal($('[aria-label="Backtest source"]').value,'a1|EURUSD');
+ await go('Strategy Studio');await settle(6);
+ await actSelection(studio.querySelector('[aria-label="Run results"] tbody button'));
+ await clickStudio('Open chart');
+ assert.ok(calls.some(c=>c.url.includes('/intel/instrument/a1/EURUSD?timeframe=H1')));
+ await go('Strategy Studio');await settle(6);
+ await clickStudio('Rerun with current data');
+ assert.equal(savedRuns.length,2);
+ assert.deepEqual(savedRuns[0].request,savedRuns[1].request);
+ assert.match(studio.querySelector('[aria-label="Run comparison"]').textContent,/Market open.*Market open/);
  await clickStudio('Show quick scan results');
  assert.ok(studio.querySelector('[aria-label="Ranked signals"]'));
  console.log('PASS: Strategy Studio build and research workflows, all and selected strategies, instrument ranking, full signal levels, and retry.');

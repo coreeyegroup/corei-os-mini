@@ -185,9 +185,9 @@ def resolve_scan_scope(db, payload):
         WHERE status='ACTIVE' AND (%s::text[] IS NULL OR symbol=ANY(%s::text[])) ORDER BY symbol
     """, (symbols, symbols)).fetchall()
     strategies = db.execute("""
-        SELECT s.code, v.number, v.algorithm, v.parameters
+        SELECT s.code, v.id AS strategy_version_id, v.number, v.algorithm, v.parameters
         FROM cfg_strategies s LEFT JOIN LATERAL (
-            SELECT number, algorithm, parameters FROM cfg_strategy_versions
+            SELECT id, number, algorithm, parameters FROM cfg_strategy_versions
             WHERE strategy_id=s.id AND state='APPROVED' ORDER BY number DESC LIMIT 1
         ) v ON true WHERE s.status='ACTIVE' AND (%s::text[] IS NULL OR s.code=ANY(%s::text[]))
         ORDER BY s.code
@@ -200,7 +200,7 @@ def resolve_scan_scope(db, payload):
     return instruments, strategies
 
 
-def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bars=False):
+def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bars=False, readiness=False):
     out = []
     sources = defaultdict(list)
     for row in db.execute("""
@@ -212,24 +212,31 @@ def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bar
     """, ([i['id'] for i in instruments],)).fetchall():
         sources[str(row['instrument_id'])].append(row)
 
-    custom = engine.custom_definitions()
+    custom = [] if readiness else engine.custom_definitions()
+
+    @cache
+    def load(account_id, symbol, timeframe, size=None):
+        if freeze_bars:
+            cutoff = now - timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
+            return engine._load(db, account_id, symbol, timeframe, size, cutoff=cutoff)
+        if size is None:
+            return engine._load(db, account_id, symbol, timeframe)
+        return engine._load(db, account_id, symbol, timeframe, size)
+
+    @cache
+    def resampled(account_id, symbol, timeframe):
+        return engine.resample(load(account_id, symbol, 'M1'), timeframe)
 
     @cache
     def closed_bars(account_id, symbol, timeframe, window):
-        def load(tf, size=None):
-            if freeze_bars:
-                cutoff = now - timedelta(seconds=TIMEFRAME_SECONDS[tf])
-                return engine._load(db, account_id, symbol, tf, size, cutoff=cutoff)
-            return engine._load(db, account_id, symbol, tf, size) if size is not None else engine._load(db, account_id, symbol, tf)
-
-        native = load(timeframe, window)
+        native = load(account_id, symbol, timeframe, window)
         if timeframe == 'M1':
             return (native,)
         expected = engine._bucket(now, timeframe) - timedelta(seconds=TIMEFRAME_SECONDS[timeframe])
         if len(native) == window and native[-1]['bar_time'] >= expected:
             return (native,)
         # A long but delayed native feed must not hide a fresher M1-derived series.
-        built = engine.resample(load('M1'), timeframe)
+        built = resampled(account_id, symbol, timeframe)
         return native, built[-window:]
 
     @cache
@@ -241,7 +248,8 @@ def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bar
         for strategy in strategies:
             tf = (strategy['parameters'] or {}).get('timeframe')
             base = {'instrument_symbol': instrument['symbol'], 'strategy_code': strategy['code'],
-                    'version': strategy['number'], 'timeframe': tf}
+                    'version': strategy['number'], 'timeframe': tf,
+                    'strategy_version_id': strategy.get('strategy_version_id')}
             try:
                 if strategy['number'] is None:
                     result = {'status': 'WAIT', 'reason': 'Strategy has no approved version'}
@@ -260,15 +268,57 @@ def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bar
                         result = {'status': 'WAIT', 'reason': reason}
                     else:
                         bars, source, index = max(available, key=lambda candidate: candidate[0][-1]['bar_time'])
-                        rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
-                        result = {**_plan_signal(strategy, instrument, bars, rows, payload, now),
-                                  'account_code': source['account_code'], 'broker_symbol': source['broker_symbol']}
+                        if readiness:
+                            length = timedelta(seconds=TIMEFRAME_SECONDS[tf])
+                            closed_at = bars[-1]['bar_time'] + length
+                            result = {'status': 'READY'} if closed_at <= now <= closed_at + 2 * length else {
+                                'status': 'WAIT', 'reason': 'Latest closed bar is outside the scan freshness window'}
+                        else:
+                            rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
+                            result = _plan_signal(strategy, instrument, bars, rows, payload, now)
+                        result.update(account_id=source['account_id'], account_code=source['account_code'],
+                                      broker_symbol=source['broker_symbol'])
             except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
                 result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
             out.append({**base, **result})
         features_for.cache_clear()
         closed_bars.cache_clear()
+        resampled.cache_clear()
+        load.cache_clear()
     return out
+
+
+@router.post('/scan-readiness')
+def scan_readiness(payload: SignalScanIn, response: Response, _: str = Depends(require_operator)):
+    response.headers['Cache-Control'] = 'no-store'
+    now = datetime.now(timezone.utc)
+    with store.transaction('read') as db:
+        instruments, strategies = resolve_scan_scope(db, payload)
+        pairs = evaluate_scan_pairs(db, instruments, strategies, payload, now, freeze_bars=True, readiness=True)
+    groups = {}
+    strategy_checks = {}
+    for pair in pairs:
+        check = strategy_checks.setdefault(pair['strategy_code'], {
+            'strategy': pair['strategy_code'], 'version': pair['version'], 'timeframe': pair['timeframe'],
+            'ready': 0, 'blocked': 0,
+        })
+        check['ready' if pair['status'] == 'READY' else 'blocked'] += 1
+        instrument = pair['instrument_symbol']
+        if instrument not in groups:
+            groups[instrument] = {'instrument': instrument, 'ready': 0, 'blocked': 0, 'reasons': {}, 'sources': set()}
+        group = groups[instrument]
+        if pair.get('broker_symbol'):
+            group['sources'].add(f"{pair['account_code']} · {pair['broker_symbol']}")
+        if pair['status'] == 'READY':
+            group['ready'] += 1
+        else:
+            group['blocked'] += 1
+            reason = pair['reason']
+            group['reasons'][reason] = group['reasons'].get(reason, 0) + 1
+    for group in groups.values():
+        group['sources'] = sorted(group['sources'])
+    return {'requested': len(pairs), 'ready': sum(group['ready'] for group in groups.values()),
+            'items': list(groups.values()), 'strategies': list(strategy_checks.values()), 'checked_at': now}
 
 
 @router.get('/builder/nodes')

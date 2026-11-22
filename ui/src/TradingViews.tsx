@@ -9,7 +9,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
-import { goto } from './nav';
+import { goto, useScanEvidence } from './nav';
 import GraphWorkbench from './calc/GraphWorkbench';
 import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
@@ -230,7 +230,23 @@ function Backtest({ ctx }: { ctx: Ctx }) {
   const [f, setF] = useState<Row>({ use: 'VERSION', strategy_version_id: '', algorithm: 'EMA_CROSSOVER', parameters: { timeframe: 'H1', fast: 9, slow: 21 }, source: '',
     range_from: monthAgo.toISOString().slice(0, 10), range_to: today.toISOString().slice(0, 10), quantity: '1', spread_ticks: 0, commission_per_lot: '0', starting_capital: '100000' });
   const [result, setResult] = useState<Row | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
-  useEffect(() => { if (strategyId) void api(`config/strategies/${strategyId}/versions`).then(d => setVersions(d.items)).catch(() => setVersions([])); }, [strategyId]);
+  const evidence = useScanEvidence('backtest');
+  const evidenceStrategyId = strategies.find((row: Row) => row.code === evidence?.strategy_code)?.id;
+  useEffect(() => {
+    if (!evidence || !evidenceStrategyId || !evidence.strategy_version_id) return;
+    setStrategyId(String(evidenceStrategyId));
+    setF(value => ({ ...value, use: 'VERSION', strategy_version_id: evidence.strategy_version_id,
+      source: evidence.account_id + '|' + evidence.broker_symbol }));
+  }, [evidence, evidenceStrategyId]);
+  useEffect(() => {
+    let live = true;
+    setVersions([]);
+    if (strategyId) void api(`config/strategies/${strategyId}/versions`)
+      .then(data => { if (live) setVersions(data.items); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [strategyId]);
+  const sourceOptions = sources?.items ?? [];
+  const evidenceSource = evidence && evidence.account_id + '|' + evidence.broker_symbol;
   const algo = (algos?.items ?? []).find((a: Row) => a.id === f.algorithm);
   const run = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setErr('');
@@ -245,16 +261,19 @@ function Backtest({ ctx }: { ctx: Ctx }) {
   const m = result?.metrics;
   return <section className="intel">
     <form className="cfg-form" onSubmit={run}>
+      {evidence && <p className="cfg-note">Scan selection · {evidence.instrument_symbol} · {evidence.strategy_code} · {evidence.timeframe} · {evidence.broker_symbol}. Review the date range and costs before running.</p>}
       <Field label="Rules to test"><Choice label="Backtest rules" value={f.use} options={[['VERSION', 'A strategy version'], ['IDEA', 'An algorithm and parameters (idea)']]} onChange={v => setF({ ...f, use: v })} /></Field>
       {f.use === 'VERSION' ? <div className="cfg-pair">
-        <Field label="Strategy"><select aria-label="Backtest strategy" value={strategyId} onChange={e => setStrategyId(e.target.value)}><option value="">Choose…</option>{strategies.map((s: Row) => <option key={s.id} value={s.id}>{s.code}</option>)}</select></Field>
+        <Field label="Strategy"><select aria-label="Backtest strategy" value={strategyId} onChange={e => { setStrategyId(e.target.value); setF({ ...f, strategy_version_id: '' }); }}><option value="">Choose…</option>{strategies.map((s: Row) => <option key={s.id} value={s.id}>{s.code}</option>)}</select></Field>
         <Field label="Version"><select aria-label="Backtest version" required value={f.strategy_version_id} onChange={e => setF({ ...f, strategy_version_id: e.target.value })}><option value="">Choose…</option>
           {versions.map(v => <option key={v.id} value={v.id}>v{v.number} · {v.state.toLowerCase()} · {v.algorithm}</option>)}</select></Field></div>
         : <><Field label="Algorithm" hint={algo?.description}><select aria-label="Backtest algorithm" value={f.algorithm} onChange={e => setF({ ...f, algorithm: e.target.value, parameters: { timeframe: f.parameters.timeframe } })}>
             {(algos?.items ?? []).map((a: Row) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></Field>
           {algo && <ParamInputs schema={algo.schema} value={f.parameters} change={p => setF({ ...f, parameters: p })} />}</>}
       <Field label="Data (collected source)"><select aria-label="Backtest source" required value={f.source} onChange={e => setF({ ...f, source: e.target.value })}><option value="">Choose…</option>
-        {(sources?.items ?? []).map((s: Row) => <option key={s.account_id + s.broker_symbol} value={`${s.account_id}|${s.broker_symbol}`}>{s.account_code} · {s.broker_symbol}{s.first_bar ? ` · bars ${s.first_bar.slice(0, 10)} → ${String(s.last_bar).slice(0, 10)}` : ' · no bars yet'}</option>)}</select></Field>
+        {evidence && evidenceSource && !sourceOptions.some((s: Row) => s.account_id + '|' + s.broker_symbol === evidenceSource) &&
+          <option value={evidenceSource}>{evidence.broker_symbol} · Scan source</option>}
+        {sourceOptions.map((s: Row) => <option key={s.account_id + s.broker_symbol} value={`${s.account_id}|${s.broker_symbol}`}>{s.account_code} · {s.broker_symbol}{s.first_bar ? ` · bars ${s.first_bar.slice(0, 10)} → ${String(s.last_bar).slice(0, 10)}` : ' · no bars yet'}</option>)}</select></Field>
       <div className="cfg-pair"><Field label="From"><input aria-label="Backtest from" type="date" value={f.range_from} onChange={e => setF({ ...f, range_from: e.target.value })} /></Field>
         <Field label="To"><input aria-label="Backtest to" type="date" value={f.range_to} onChange={e => setF({ ...f, range_to: e.target.value })} /></Field></div>
       <div className="cfg-pair"><Field label="Quantity (lots)"><input aria-label="Backtest quantity" value={f.quantity} onChange={e => setF({ ...f, quantity: e.target.value })} /></Field>

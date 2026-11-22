@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './Configuration';
-import { goto, publishSections, useSection } from './nav';
+import { goto, openScanEvidence, publishSections, useSection } from './nav';
 import UniversalCanvas, { readWorkflow, type NodeSpec } from './UniversalCanvas';
 import StudioDrafts, { type DraftVersion } from './StudioDrafts';
 import './strategy-studio.css';
@@ -21,8 +21,8 @@ type ScanPreset = { name: string; mode: ScanScope; request: ScanRequest; allInst
 const presetKey = 'corei.studio.scan-presets';
 const scanRunsPath = 'trading/studio/scan-runs';
 type ScanJob = { id: string; mode: ScanScope; status: string; total: number; created_at: string; updated_at: string;
-  failure?: string; retrying?: boolean; processed_instruments?: number; instruments: string[]; strategies: string[]; summary: Row[] };
-type ScanJobListItem = Pick<ScanJob, 'id' | 'mode' | 'status' | 'created_at'> & { instruments: number; strategies: number };
+  name?: string; request: ScanRequest; failure?: string; retrying?: boolean; processed_instruments?: number; instruments: string[]; strategies: string[]; summary: Row[] };
+type ScanJobListItem = Pick<ScanJob, 'id' | 'mode' | 'status' | 'created_at' | 'name'> & { instruments: number; strategies: number };
 const running = (status: string) => status === 'RUNNING' || status === 'QUEUED';
 
 type ScanFailure = { scope: ScanScope; selection: string; message: string };
@@ -83,8 +83,8 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function StudioTable({ title, columns, items, empty, onGroup }: {
-  title: string; columns: [string, string][]; items: Row[]; empty: string; onGroup?: (group: string) => void;
+function StudioTable({ title, columns, items, empty, onGroup, onInspect }: {
+  title: string; columns: [string, string][]; items: Row[]; empty: string; onGroup?: (group: string) => void; onInspect?: (row: Row) => void;
 }) {
   return <div className="cfg-scroll studio-table" tabIndex={0} role="region" aria-label={title}>
     <table className="cfg-table compact">
@@ -92,7 +92,9 @@ function StudioTable({ title, columns, items, empty, onGroup }: {
       <tbody>
         {items.map((row, index) => <tr key={String(row.id ?? row.deployment_id ?? index)}>
           {columns.map(([label, key]) => <td key={label}>
-            {onGroup && (key === 'scope' || key === 'group') && typeof row[key] === 'string'
+            {onInspect && key === 'instrument_symbol'
+              ? <button type="button" className="studio-result-link" onClick={() => onInspect(row)}>{String(row[key])}</button>
+              : onGroup && (key === 'scope' || key === 'group') && typeof row[key] === 'string'
               ? <button type="button" className="studio-result-link" onClick={() => onGroup(String(row[key]))}>{String(row[key])}</button>
               : Array.isArray(row[key]) ? row[key].join(' · ') : String(row[key] ?? '—')}
           </td>)}
@@ -101,6 +103,47 @@ function StudioTable({ title, columns, items, empty, onGroup }: {
       </tbody>
     </table>
   </div>;
+}
+
+function SignalDetail({ row, close }: { row: Row; close: () => void }) {
+  const instrument = String(row.instrument_symbol);
+  const strategy = String(row.strategy_code);
+  const source = [row.account_code, row.broker_symbol].filter(Boolean).join(' · ');
+  const evidence = {
+    instrument_symbol: instrument, strategy_code: strategy,
+    account_id: String(row.account_id ?? ''), broker_symbol: String(row.broker_symbol ?? ''),
+    timeframe: String(row.timeframe ?? ''),
+    strategy_version_id: typeof row.strategy_version_id === 'string' ? row.strategy_version_id : undefined,
+  };
+  const sourceResolved = evidence.account_id && evidence.broker_symbol && evidence.timeframe;
+  const fields = [
+    ['Strategy', strategy], ['Version', row.version], ['Timeframe', row.timeframe], ['Source', source],
+    ['Outcome', row.status], ['Side', row.side], ['Strength within strategy', row.strength],
+    ['Entry', row.entry], ['Stop loss', row.stop_loss], ['Target', row.take_profit],
+    ['Trigger bar', row.trigger_bar_time], ['Bars since trigger', row.bars_since_trigger],
+    ['Risk per contract', row.risk_per_contract && [row.risk_per_contract, row.quote_currency].join(' ')],
+    ['Reward / risk', row.reward_risk],
+  ];
+  return <section className="studio-panel studio-evidence" aria-label="Scan result detail" tabIndex={-1}
+    ref={element => { if (element && !element.contains(document.activeElement)) element.focus(); }}>
+    <div className="studio-actions"><h3>{instrument} · Result detail</h3><button onClick={close}>Close detail</button></div>
+    <p>{String(row.reason ?? '')}</p>
+    <dl className="studio-scan-summary">{fields.map(([label, value]) => <div key={String(label)}>
+      <dt>{String(label)}</dt><dd>{String(value ?? '—') || '—'}</dd></div>)}</dl>
+    <div className="studio-actions">
+      <button disabled={!sourceResolved} onClick={() => openScanEvidence('chart', evidence)}>Open chart</button>
+      <button disabled={!sourceResolved || !evidence.strategy_version_id} onClick={() => openScanEvidence('backtest', evidence)}>Open backtest</button>
+    </div>
+    {(!sourceResolved || !evidence.strategy_version_id) && <p className="cfg-note">A resolved data source and strategy version are required for the backtest handoff.</p>}
+  </section>;
+}
+
+function runCounts(run: ScanJob | null) {
+  return (run?.summary ?? []).reduce<{ checked: number; signals: number; errors: number }>((counts, row) => ({
+    checked: counts.checked + Number(row.checked),
+    signals: counts.signals + Number(row.signals),
+    errors: counts.errors + Number(row.errors),
+  }), { checked: 0, signals: 0, errors: 0 });
 }
 
 function ScanSelection({ label, items, selected, change, disabled, loading }: {
@@ -146,6 +189,10 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
   const [resultError, setResultError] = useState('');
   const [actionError, setActionError] = useState('');
   const [loadingResults, setLoadingResults] = useState(false);
+  const [detail, setDetail] = useState<Row | null>(null);
+  const [compareId, setCompareId] = useState('');
+  const [comparison, setComparison] = useState<ScanJob | null>(null);
+  const [compareError, setCompareError] = useState('');
   const current = job?.id === runId ? job : null;
 
   useEffect(() => {
@@ -175,6 +222,20 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
     return () => { live = false; window.clearTimeout(timer); };
   }, [runId, revision]);
 
+  useEffect(() => {
+    setDetail(null);
+  }, [runId, group, status, offset]);
+
+  useEffect(() => {
+    if (!compareId || compareId === runId) return;
+    let live = true;
+    setCompareError('');
+    api(scanRunsPath + '/' + compareId).then(data => {
+      if (live) setComparison(data);
+    }).catch(error => { if (live) setCompareError(message(error)); });
+    return () => { live = false; };
+  }, [compareId, runId]);
+
   // Fetch the selected page on demand and once more when the run reaches a final status.
   useEffect(() => {
     if (!runId) return;
@@ -203,15 +264,27 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
     finally { setBusy(false); }
   }
 
-  const checked = (current?.summary ?? []).reduce((sum, row) => sum + Number(row.checked), 0);
-  const errors = (current?.summary ?? []).reduce((sum, row) => sum + Number(row.errors), 0);
-  const signalCount = (current?.summary ?? []).reduce((sum, row) => sum + Number(row.signals), 0);
+  async function rerun() {
+    if (!current?.request) return;
+    setBusy(true); setActionError('');
+    try {
+      const result = await api(scanRunsPath, 'POST', { mode: current.mode, name: current.name,
+        request: { ...current.request, instrument_symbol: undefined, strategy_code: undefined,
+          instrument_symbols: current.instruments, strategy_codes: current.strategies } });
+      setCompareId(current.id);
+      open(result.id);
+    } catch (error) { setActionError(message(error)); }
+    finally { setBusy(false); }
+  }
+
+  const { checked, errors, signals: signalCount } = runCounts(current);
+  const compared = compareId && compareId !== runId && comparison?.id === compareId ? comparison : null;
   return <section className="studio-panel">
     <h3>Saved runs</h3>
     <div className="studio-actions">
       <label>Run history<select value={history.some(row => row.id === runId) ? runId : ''} onChange={event => open(event.target.value)}>
         <option value="">{history.length ? 'Choose a saved run' : 'No runs on this page'}</option>
-        {history.map(row => <option key={row.id} value={row.id}>{new Date(row.created_at).toLocaleString()} · {row.instruments} × {row.strategies} · {row.status}</option>)}
+        {history.map(row => <option key={row.id} value={row.id}>{row.name ? row.name + ' · ' : ''}{new Date(row.created_at).toLocaleString()} · {row.instruments} × {row.strategies} · {row.status}</option>)}
       </select></label>
       <button disabled={!historyOffset} onClick={() => setHistoryOffset(historyOffset - 20)}>Newer runs</button>
       <button disabled={!older} onClick={() => setHistoryOffset(historyOffset + 20)}>Older runs</button>
@@ -221,20 +294,23 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
     {runId && !current && !runError && <p role="status">Loading run…</p>}
     {current && <>
       <div className="studio-actions">
-        <p role="status">{new Date(current.created_at).toLocaleString()} · {current.status} · {checked.toLocaleString()} / {current.total.toLocaleString()} checked · {signalCount} signals · {errors} errors
+        <p role="status">{current.name && current.name + ' · '}{new Date(current.created_at).toLocaleString()} · {current.status} · {checked.toLocaleString()} / {current.total.toLocaleString()} checked · {signalCount} signals · {errors} errors
           {current.retrying && running(current.status) && ` · Retrying errors · ${current.processed_instruments ?? 0}/${current.instruments.length} instruments visited`}</p>
         {running(current.status) && <button disabled={busy} onClick={() => void action('cancel')}>Cancel run</button>}
         {(!running(current.status) && (errors > 0 || current.status !== 'COMPLETED')) &&
           <button disabled={busy} onClick={() => void action('retry')}>{current.status === 'COMPLETED' ? 'Retry errors' : 'Resume run'}</button>}
+        <button disabled={busy || running(current.status) || !current.request} onClick={() => void rerun()}>Rerun with current data</button>
         <button onClick={() => setRevision(value => value + 1)}>Refresh results</button>
       </div>
       <progress className="studio-run-progress" aria-label="Scan progress" value={checked} max={current.total || 1} />
       {current.failure && <p role="alert" className="cfg-error-text">{current.failure}</p>}
       {actionError && <p role="alert" className="cfg-error-text">{actionError}</p>}
-      {current.mode === 'instrument' && <p className="cfg-note">Strength is strategy-specific. Compare scores within the same strategy.</p>}
+      <p className="cfg-note">Strength is strategy-specific. Results are grouped by strategy and ordered by strength within each strategy.</p>
       <StudioTable title="Run summary" items={current.summary} onGroup={value => { setGroup(value); setOffset(0); }}
         columns={[[current.mode === 'instrument' ? 'Instrument' : 'Strategy', 'scope'], ['Checked', 'checked'], ['Signals', 'signals'],
-          ['Errors', 'errors'], ['Highest reported scores', 'strongest'], ['Strength', 'strength']]} empty="Waiting for the first checks." />
+          ['Errors', 'errors'], ...(current.mode === 'instrument'
+            ? [['Strategies with signals', 'signal_strategies'] as [string, string]]
+            : [['Strongest matches', 'strongest'], ['Strength', 'strength']] as [string, string][])]} empty="Waiting for the first checks." />
       <div className="studio-actions">
         <label>{current.mode === 'instrument' ? 'Instrument' : 'Strategy'}<select value={group} onChange={event => { setGroup(event.target.value); setOffset(0); }}>
           <option value="">All results</option>
@@ -247,12 +323,34 @@ function BackgroundScans({ runId, selectRun }: { runId: string; selectRun: (id: 
         <button disabled={!more || loadingResults} onClick={() => setOffset(offset + 50)}>Next page</button>
       </div>
       {resultError && <p role="alert" className="cfg-error-text">{resultError}</p>}
-      <StudioTable title="Run results" items={loadingResults ? [] : results}
+      <StudioTable title="Run results" onInspect={setDetail} items={loadingResults ? [] : results}
         columns={[[ 'Instrument', 'instrument_symbol' ], ['Strategy', 'strategy_code'], ['Version', 'version'], ['Timeframe', 'timeframe'],
           ['Status', 'status'], ['Side', 'side'], ['Strength', 'strength'], ['Entry', 'entry'], ['Stop', 'stop_loss'],
           ['Target', 'take_profit'], ['Trigger', 'trigger_bar_time'], ['Risk / contract', 'risk_per_contract'], ['Currency', 'quote_currency'],
           ['Reward / risk', 'reward_risk'], ['Source', 'account_code'], ['Reason', 'reason']]}
         empty={loadingResults || !results.length && running(current.status) ? 'Waiting for results…' : 'No records on this page.'} />
+      {detail && <SignalDetail row={detail} close={() => setDetail(null)} />}
+      <details className="studio-scan-settings">
+        <summary>Compare saved runs</summary>
+        <label>Compare with<select value={compareId === runId ? '' : compareId} onChange={event => setCompareId(event.target.value)}>
+          <option value="">Select another run</option>
+          {compared && !history.some(row => row.id === compared.id) && <option value={compared.id}>{compared.name || new Date(compared.created_at).toLocaleString()}</option>}
+          {history.filter(row => row.id !== runId).map(row => <option key={row.id} value={row.id}>
+            {row.name ? row.name + ' · ' : ''}{new Date(row.created_at).toLocaleString()} · {row.status}</option>)}
+        </select></label>
+        {compareError && <p role="alert" className="cfg-error-text">{compareError}</p>}
+        {compared && <StudioTable title="Run comparison" empty="Choose a run to compare."
+          columns={[[ 'Run', 'run' ], ['Date','date'], ['Mode','mode'], ['Status','status'], ['Instruments','instruments'],
+            ['Strategies','strategies'], ['Requested','total'], ['Checked','checked'], ['Signals','signals'], ['Errors','errors']]}
+          items={[current, compared].map(run => ({ ...runCounts(run), run: run.name || (run === current ? 'Current' : 'Comparison'),
+            date: new Date(run.created_at).toLocaleString(), mode: run.mode, status: run.status,
+            instruments: run.instruments.length, strategies: run.strategies.length, total: run.total }))} />}
+        {compared && current.request && compared.request &&
+          (['entry_lookback', 'stop_atr', 'reward_risk'] as const).some(field => current.request[field] !== compared.request[field]) &&
+          <p className="cfg-note">The entry window or protection settings differ.</p>}
+        {compared && (current.mode !== compared.mode || current.instruments.join('|') !== compared.instruments.join('|') ||
+          current.strategies.join('|') !== compared.strategies.join('|')) && <p className="cfg-note">The scan scopes differ.</p>}
+      </details>
     </>}
   </section>;
 }
@@ -318,6 +416,10 @@ export default function StrategyStudio() {
         (item.mode === 'instrument' || item.mode === 'strategy')) : [];
     } catch { return []; }
   });
+  const [runName, setRunName] = useState('');
+  const [readiness, setReadiness] = useState<{ key: string; data?: { requested: number; ready: number; items: Row[]; strategies?: Row[]; checked_at: string }; error?: string } | null>(null);
+  const [readinessBusy, setReadinessBusy] = useState(false);
+  const [quickDetail, setQuickDetail] = useState<Row | null>(null);
   const [presetError, setPresetError] = useState('');
   const [scanBusy, setScanBusy] = useState(false);
   const [scanScope, setScanScope] = useState<ScanScope>('instrument');
@@ -514,13 +616,15 @@ export default function StrategyStudio() {
     ? (row.symbol ?? row.instrument_symbol) : row.strategy_code))) : [];
   const currentScanError = scanError?.scope === scanScope && scanError.selection === selection ? scanError.message : '';
   const pairCount = instrumentScope.length * strategyScope.length;
-  const useBackground = background || pairCount > 100;
+  const useBackground = background || pairCount > 100 || Boolean(runName.trim());
   const validProtection = [stopAtr, rewardRisk].every(value => /^\d+(\.\d{1,2})?$/.test(value) && Number(value) >= 0.1 && Number(value) <= 20);
   const canScan = !scanBusy && pairCount > 0 && validProtection;
   const groupKey = scan?.scope === 'strategy' ? 'strategy_code' : 'instrument_symbol';
   const resultItems = scan?.items.filter(item => !resultGroup || item[groupKey] === resultGroup) ?? [];
-  const rankedSignals = resultItems.filter(item => item.status === 'SIGNAL');
-  const strongest = rankedSignals[0];
+  const rankedSignals = resultItems.filter(item => item.status === 'SIGNAL').sort((a, b) =>
+    String(a.strategy_code).localeCompare(String(b.strategy_code)) || Number(b.strength) - Number(a.strength));
+  const comparable = new Set(rankedSignals.map(row => row.strategy_code)).size === 1;
+  const strongest = comparable ? rankedSignals[0] : undefined;
   const tiedForStrongest = strongest ? rankedSignals.filter(item => item.strength === strongest.strength).length : 0;
   const scanCounts = scan && [
     ['Checked', resultItems.length],
@@ -548,14 +652,45 @@ export default function StrategyStudio() {
     entry_lookback: entryLookback, stop_atr: stopAtr, reward_risk: rewardRisk,
   };
 
-  function savePreset() {
+  useEffect(() => {
+    if (mode !== 'scan') return;
+    let live = true;
+    api(scanRunsPath + '/profiles').then(data => {
+      if (!live) return;
+      const profiles = rows(data).map(item => ({ name: String(item.name), mode: item.mode as ScanScope,
+        request: item.request as ScanRequest, allInstruments: Boolean(item.all_instruments), allStrategies: Boolean(item.all_strategies) }));
+      setPresets(previous => [...previous.filter(item => !profiles.some(profile => profile.name === item.name)), ...profiles]);
+    }).catch(error => { if (live) setPresetError(message(error)); });
+    return () => { live = false; };
+  }, [mode]);
+
+  const frozenRequest = { ...scanRequest, instrument_symbols: instrumentScope, strategy_codes: strategyScope };
+  const readinessKey = JSON.stringify([frozenRequest, updated]);
+  const currentReadiness = readiness?.key === readinessKey ? readiness : null;
+
+  async function checkReadiness() {
+    if (!canScan || readinessBusy) return;
+    setReadinessBusy(true);
+    try {
+      const data = await api('trading/studio/scan-readiness', 'POST', frozenRequest);
+      setReadiness({ key: readinessKey, data });
+    } catch (error) {
+      setReadiness({ key: readinessKey, error: message(error) });
+    } finally {
+      setReadinessBusy(false);
+    }
+  }
+
+  async function savePreset() {
     const name = presetName.trim();
     if (!name || !pairCount || !validProtection) return;
-    const saved = [...presets.filter(preset => preset.name !== name), { name, mode: scanScope, request: scanRequest, allInstruments: allInstrumentGroups, allStrategies: allStrategyGroups }];
+    const preset = { name, mode: scanScope, request: scanRequest, allInstruments: allInstrumentGroups, allStrategies: allStrategyGroups };
     try {
-      localStorage.setItem(presetKey, JSON.stringify(saved));
-      setPresets(saved); setPresetError(''); setPresetName('');
-    } catch { setPresetError('Could not save the preset in this browser.'); }
+      await api(scanRunsPath + '/profiles', 'PUT', { name, mode: scanScope, request: scanRequest,
+        all_instruments: allInstrumentGroups, all_strategies: allStrategyGroups });
+      setPresets(previous => [...previous.filter(item => item.name !== name), preset]);
+      setPresetError(''); setPresetName('');
+    } catch (error) { setPresetError(message(error)); }
   }
 
   function openPreset(preset: ScanPreset) {
@@ -581,7 +716,7 @@ export default function StrategyStudio() {
     try {
       if (useBackground) {
         const result = await api(scanRunsPath, 'POST', { mode: scanScope,
-          request: { ...request, instrument_symbols: instrumentScope, strategy_codes: strategyScope } });
+          name: runName.trim() || undefined, request: frozenRequest });
         setBackgroundId(result.id);
         if (currentSection.current === 'scan') advanceResearch('results');
         return;
@@ -593,6 +728,7 @@ export default function StrategyStudio() {
       setScanRuns(current => [completed, ...current].slice(0, 12));
       setViewedRun(0);
       setResultGroup('');
+      setQuickDetail(null);
       if (currentSection.current === 'scan') advanceResearch('results');
     } catch (error) {
       setScanError({ scope: scanScope, selection, message: message(error) });
@@ -914,7 +1050,7 @@ export default function StrategyStudio() {
               {presets.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
             </select></label>
             <label>Preset name<input value={presetName} maxLength={80} onChange={event => setPresetName(event.target.value)} /></label>
-            <button type="button" disabled={scanBusy || !pairCount || !validProtection || !presetName.trim()} onClick={savePreset}>Save preset in this browser</button>
+            <button type="button" disabled={scanBusy || !pairCount || !validProtection || !presetName.trim()} onClick={() => void savePreset()}>Save preset</button>
           </div>
           {presetError && <p role="alert" className="cfg-error-text">{presetError}</p>}
         </details>}
@@ -928,11 +1064,41 @@ export default function StrategyStudio() {
           <div className="studio-actions">
             {pairCount <= 100 && <label className="studio-background-option"><input type="checkbox" checked={background} disabled={scanBusy}
               onChange={event => setBackground(event.target.checked)} /> Run in background and save results</label>}
+            <label>Run name <input placeholder="Optional" maxLength={80} value={runName} disabled={scanBusy}
+              onChange={event => setRunName(event.target.value)} /></label>
+            <button disabled={!canScan || readinessBusy} onClick={() => void checkReadiness()}>
+              {readinessBusy ? 'Checking readiness…' : 'Check readiness'}
+            </button>
             <button className="primary" disabled={!canScan} onClick={() => void runScan()}>
               {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
             </button>
           </div>
         </div>}
+        {!observing && currentReadiness?.error && <p role="alert" className="cfg-error-text">{currentReadiness.error}</p>}
+        {!observing && currentReadiness?.data && <section className="studio-scan-settings">
+          <h3>Scan readiness</h3>
+          <p role="status">{currentReadiness.data.requested.toLocaleString()} requested · {currentReadiness.data.ready.toLocaleString()} ready ·
+            {' '}{(currentReadiness.data.requested - currentReadiness.data.ready).toLocaleString()} blocked</p>
+          <p className="cfg-note">Checked at {new Date(currentReadiness.data.checked_at).toLocaleString()}. Readiness uses the latest approved strategy settings and available closed bars.</p>
+          {!!currentReadiness.data.strategies?.length && <details><summary>Strategy versions and timeframes</summary>
+            <StudioTable title="Strategy readiness" columns={[[ 'Strategy', 'strategy' ], ['Approved version','version'],
+              ['Timeframe','timeframe'], ['Ready','ready'], ['Blocked','blocked']]}
+              items={currentReadiness.data.strategies} empty="No strategies in scope." />
+          </details>}
+          {currentReadiness.data.requested > currentReadiness.data.ready && <>
+            <div className="studio-actions">
+              <button onClick={() => goto('Market data', 'plans')}>Market data setup</button>
+              <button onClick={() => goto('Configuration', 'strategies')}>Strategy setup</button>
+            </div>
+          </>}
+          <details><summary>Data sources and readiness by instrument</summary>
+            <StudioTable title="Instrument readiness" columns={[[ 'Instrument', 'instrument' ], ['Sources','sources'],
+              ['Ready','ready'], ['Blocked','blocked'], ['Blockers','reason']]}
+              items={currentReadiness.data.items.map(row => ({ ...row,
+                reason: Object.entries(row.reasons as Record<string, number>).map(([reason, count]) => reason + ' (' + count + ')') }))}
+              empty="No instruments in scope." />
+          </details>
+        </section>}
         {!observing && !validProtection && <p role="alert" className="cfg-error-text">Use values from 0.10 to 20 with up to two decimal places.</p>}
         {!observing && scanBusy && <p role="status" className="cfg-note">Scanning closed bars for {selection}…</p>}
         {!observing && currentScanError && <p role="alert" className="cfg-error-text">Scan failed. {currentScanError}</p>}
@@ -975,7 +1141,7 @@ export default function StrategyStudio() {
           </button>
         </div>
         {!backgroundId && scanRuns.length > 1 && <div className="studio-actions"><label>Scan history
-          <select value={viewedRun} onChange={event => { setViewedRun(Number(event.target.value)); setResultGroup(''); }}>
+          <select value={viewedRun} onChange={event => { setViewedRun(Number(event.target.value)); setQuickDetail(null); setResultGroup(''); }}>
             {scanRuns.map((run, index) => <option key={index} value={index}>
               {run.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {run.selection} · {run.completedAt.toLocaleTimeString()}
             </option>)}
@@ -985,19 +1151,20 @@ export default function StrategyStudio() {
         {backgroundId && scan && <button onClick={() => setBackgroundId('')}>Show quick scan results</button>}
         {scan && !backgroundId && <>
           {scan.groups.length > 1 && <div className="studio-actions"><label>{scan.scope === 'strategy' ? 'Results by strategy' : 'Results by instrument'}
-            <select value={resultGroup} onChange={event => setResultGroup(event.target.value)}>
+            <select value={resultGroup} onChange={event => { setResultGroup(event.target.value); setQuickDetail(null); }}>
               <option value="">All results</option>
               {scan.groups.map(group => <option key={group} value={group}>{group}</option>)}
             </select>
           </label></div>}
-          {scan.groups.length > 1 && !resultGroup && <StudioTable title="Best matches by selection" onGroup={setResultGroup} items={scan.groups.map(group => {
+          {scan.groups.length > 1 && !resultGroup && <StudioTable title="Best matches by selection" onGroup={value => { setResultGroup(value); setQuickDetail(null); }} items={scan.groups.map(group => {
             const hits = rankedSignals.filter(row => row[groupKey] === group);
             const best = hits[0];
-            const ties = best ? hits.filter(row => row.strength === best.strength) : [];
+            const ties = scan.scope === 'instrument' ? hits : best ? hits.filter(row => row.strength === best.strength) : [];
             return { group, signals: hits.length, best: ties.length ? ties.map(row => row[scan.scope === 'strategy' ? 'instrument_symbol' : 'strategy_code']) : 'No qualifying entry',
               strength: best?.strength };
           })} columns={[[scan.scope === 'strategy' ? 'Strategy' : 'Instrument', 'group'], ['Signals', 'signals'],
-            [scan.scope === 'instrument' ? 'Highest reported scores' : 'Strongest match', 'best'], ['Strength / 100', 'strength']]} empty="No scan results." />}
+            [scan.scope === 'instrument' ? 'Strategies with signals' : 'Strongest match', 'best'],
+            ...(scan.scope === 'strategy' ? [['Strength / 100', 'strength'] as [string, string]] : [])]} empty="No scan results." />}
           <dl className="studio-scan-summary">
             {scanCounts?.map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
           </dl>
@@ -1005,9 +1172,9 @@ export default function StrategyStudio() {
             ? <p><strong>Strongest score</strong> · {String(strongest.strength)}/100 · {tiedForStrongest} tied matches</p>
             : <p><strong>Strongest match</strong> · {String(strongest.instrument_symbol)}
               {' · '}{String(strongest.strategy_code)}{' · '}{String(strongest.strength)}/100</p>)}
-          {scan.scope === 'instrument' && <p className="cfg-note">Strength is strategy-specific. Compare scores within the same strategy.</p>}
+          <p className="cfg-note">Strength is strategy-specific. Results are grouped by strategy and ordered by strength within each strategy.</p>
           <p className="cfg-note">Trigger window · {scan.request.entry_lookback} closed bar(s). Entry and strength come from the trigger bar. The plan uses a {scan.request.stop_atr}× ATR14 stop and a {scan.request.reward_risk}R target. </p>
-          <StudioTable title="Ranked signals" items={rankedSignals.map((row, index) => ({ ...row, rank: index + 1,
+          <StudioTable title="Ranked signals" onInspect={setQuickDetail} items={rankedSignals.map((row, index) => ({ ...row, rank: comparable ? index + 1 : undefined,
             strategy_version: `${row.strategy_code} v${row.version}`,
             signal_age: row.bars_since_trigger === 0 ? 'New entry' : row.bars_since_trigger != null
               ? `${row.bars_since_trigger} bar(s) ago` : '—',
@@ -1021,10 +1188,11 @@ export default function StrategyStudio() {
             empty={resultItems.length ? 'No qualifying entry for this scan. See Scan checks for the reason.' : 'No instruments or strategies were available for this scan.'} />
           {resultItems.length > rankedSignals.length && <details key={viewedRun + String(scan.completedAt.getTime())} open={rankedSignals.length === 0} className="studio-scan-settings">
             <summary>Scan checks · {resultItems.length - rankedSignals.length} without a signal</summary>
-            <StudioTable title="Scan checks" items={resultItems.filter(row => row.status !== 'SIGNAL')}
+            <StudioTable title="Scan checks" onInspect={setQuickDetail} items={resultItems.filter(row => row.status !== 'SIGNAL')}
               columns={[[ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_code' ], [ 'Timeframe', 'timeframe' ],
                 [ 'Status', 'status' ], [ 'Closed bar', 'bar_time' ], [ 'Reason', 'reason' ]]} empty="No scan checks." />
           </details>}
+          {quickDetail && <SignalDetail row={quickDetail} close={() => setQuickDetail(null)} />}
         </>}
         {!scan && !scanBusy && !backgroundId && <p className="cfg-note">Run a scan to see ranked signals here.</p>}
       </section>
