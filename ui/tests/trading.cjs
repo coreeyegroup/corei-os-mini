@@ -80,14 +80,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
      const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
        timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
-     if(body.instrument_symbol)return ok({scanned_at:now,items:[
-       {...candidate,instrument_symbol:body.instrument_symbol},
-       ...(body.strategy_codes?[]:[{instrument_symbol:body.instrument_symbol,strategy_code:'EMA_NEW',status:'WAIT',reason:'Strategy has no approved version'}]),
-     ]});
+     if(body.instrument_symbols)return ok({scanned_at:now,items:body.instrument_symbols.flatMap(symbol=>[
+       {...candidate,instrument_symbol:symbol},
+       ...(body.strategy_codes?[]:[{instrument_symbol:symbol,strategy_code:'EMA_NEW',status:'WAIT',reason:'Strategy has no approved version'}]),
+     ])});
      if(++strategyScanAttempts===1)return fail(503,'Market data temporarily unavailable');
      return ok({scanned_at:now,items:[
        {...candidate,instrument_symbol:'XAUUSD',broker_symbol:'XAUUSD',strength:94,side:'SELL',entry:'2670',stop_loss:'2675',take_profit:'2660'},
        {...candidate,instrument_symbol:'EURUSD'},
+       ...(body.strategy_codes.includes('EMA_NEW')?[{...candidate,strategy_code:'EMA_NEW',instrument_symbol:'EURUSD',strength:80}]:[]),
        {instrument_symbol:'GBPUSD',strategy_code:'EMA_EXISTING',status:'WAIT',reason:'No new entry trigger'},
      ]});
    }
@@ -518,8 +519,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await go('Strategy Studio');
  await clickStudio('Signal scanner');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan signals');
- assert.ok(studioButton('Find strategies for an instrument'));
- assert.ok(studioButton('Find instruments for a strategy'));
+ assert.ok(studioButton('Scan by instrument'));
+ assert.ok(studioButton('Scan by strategy'));
  await openStage('Observe instrument');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Observe instrument');
  assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
@@ -530,44 +531,50 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await openStage('Observe instrument');
  await clickStudio('Open scanner for this instrument');
  assert.equal(w.document.activeElement.id,'studio-research-scope');
- assert.equal(studioButton('Find strategies for an instrument').getAttribute('aria-pressed'),'true');
- assert.equal(studioField('Instrument').value,'EURUSD');
+ assert.equal(studioButton('Scan by instrument').getAttribute('aria-pressed'),'true');
+ const actSelection=async control=>{control.click();await tick();};
+ const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input');
+ assert.ok(checks('Instruments')[0].checked);
  await clickStudio('Run scan');
  assert.equal(w.document.activeElement.id,'studio-assessment');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
  const lastScan=()=>calls.filter(c=>c.url.endsWith('/studio/signal-scan')).at(-1).body;
- assert.deepEqual(lastScan(),{instrument_symbol:'EURUSD',entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.deepEqual(lastScan(),{instrument_symbols:['EURUSD'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
  const ranked=()=>studio.querySelector('[aria-label="Ranked signals"]');
  assert.match(ranked().textContent,/EMA_EXISTING v2.*BUY.*85.*1.0860.*1.0840.*1.0900/);
  assert.deepEqual([...studio.querySelectorAll('.studio-scan-summary dd')].map(el=>el.textContent),['2','1','1','0']);
  assert.match(studio.querySelector('[aria-label="Recorded signals"]').textContent,/STALE_PRICE/);
  await clickStudio('Back to scan');
- fill(studioField('Instrument'),'XAUUSD');await tick();
+ await actSelection(checks('Instruments')[1]);
  fill(studioField('Strategies to scan'),'selected');await tick();
  assert.ok(studioButton('Run scan').disabled);
- studio.querySelector('.studio-strategy-filter input').click();await tick();
+ await actSelection(checks('Strategies')[0]);
  await clickStudio('Run scan');
- assert.deepEqual(lastScan(),{instrument_symbol:'XAUUSD',strategy_codes:['EMA_EXISTING'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
- assert.match(studio.textContent,/Instrument · XAUUSD.*EMA_EXISTING/);
+ assert.deepEqual(lastScan(),{instrument_symbols:['EURUSD','XAUUSD'],strategy_codes:['EMA_EXISTING'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.match(studio.textContent,/Instrument · EURUSD, XAUUSD.*EMA_EXISTING/);
+ assert.match(studio.querySelector('[aria-label="Best matches by selection"]').textContent,/EURUSD.*EMA_EXISTING.*XAUUSD.*EMA_EXISTING/);
  await clickStudio('Back to scan');
- await clickStudio('Find instruments for a strategy');
- assert.equal(studioField('Strategy').value,'EMA_EXISTING');
+ await clickStudio('Scan by strategy');
+ assert.ok(checks('Strategies')[0].checked);
+ await actSelection(checks('Strategies')[1]);
  await clickStudio('Run scan');
- assert.deepEqual(lastScan(),{strategy_code:'EMA_EXISTING',entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
+ assert.deepEqual(lastScan(),{strategy_codes:['EMA_EXISTING','EMA_NEW'],entry_lookback:3,stop_atr:'1.5',reward_risk:'2'});
  assert.match(studio.querySelector('[role="alert"]').textContent,/Market data temporarily unavailable/);
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan signals');
  await openStage('Results');
  assert.match(ranked().textContent,/XAUUSD/);
- assert.match(studio.textContent,/Instrument · XAUUSD/);
+ assert.match(studio.textContent,/Instrument · EURUSD, XAUUSD/);
  await clickStudio('Back to scan');
  await clickStudio('Retry scan');
  assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
  assert.match(studio.textContent,/Strategy · EMA_EXISTING/);
+ assert.match(studio.querySelector('[aria-label="Best matches by selection"]').textContent,/EMA_EXISTING.*XAUUSD.*94.*EMA_NEW.*EURUSD.*80/);
+ fill(studioField('Results by strategy'),'EMA_EXISTING');await tick();
  assert.match(studio.textContent,/Strongest match · XAUUSD · EMA_EXISTING · 94\/100/);
  assert.deepEqual([...ranked().querySelectorAll('tbody tr')].map(row=>row.cells[1].textContent),['XAUUSD','EURUSD']);
  assert.match(studio.querySelector('[aria-label="Scan checks"]').textContent,/GBPUSD.*No new entry trigger/);
  fill(studioField('Scan history'),'1');await tick();
- assert.match(studio.textContent,/Instrument · XAUUSD/);
+ assert.match(studio.textContent,/Instrument · EURUSD, XAUUSD/);
  assert.match(ranked().textContent,/1.0860.*1.0840.*1.0900/);
 
  const researchLinks=[...studio.querySelectorAll('summary')].find(node=>node.textContent==='Runtime and research');

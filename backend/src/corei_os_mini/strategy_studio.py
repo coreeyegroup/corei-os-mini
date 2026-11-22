@@ -80,13 +80,15 @@ def scan(response: Response, strategy_code: str | None = Query(None, max_length=
             'notice': 'Read-only closed-bar evaluation. Target is not an entry signal; no entry, stop, target, sizing or order is implied.'}
 
 
+InstrumentSymbol = Annotated[str, Field(pattern=r'^[A-Z0-9][A-Z0-9._/-]{0,31}$')]
 StrategyCode = Annotated[str, Field(pattern=r'^[A-Z][A-Z0-9_]{1,31}$')]
 
 
 class SignalScanIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-    instrument_symbol: str | None = Field(None, pattern=r'^[A-Z0-9][A-Z0-9._/-]{0,31}$')
+    instrument_symbol: InstrumentSymbol | None = None
+    instrument_symbols: list[InstrumentSymbol] | None = Field(None, min_length=1)
     strategy_code: StrategyCode | None = None
     strategy_codes: list[StrategyCode] | None = Field(None, min_length=1)
     entry_lookback: int = Field(1, ge=1, le=20)
@@ -95,8 +97,12 @@ class SignalScanIn(BaseModel):
 
     @model_validator(mode='after')
     def validate_scope(self):
-        if bool(self.instrument_symbol) == bool(self.strategy_code) or self.strategy_code and self.strategy_codes:
-            raise ValueError('Choose one instrument and optional strategy filters, or one strategy across instruments.')
+        if self.instrument_symbol and self.instrument_symbols:
+            raise ValueError('Provide instrument_symbol or instrument_symbols.')
+        if self.strategy_code and (self.strategy_codes or self.instrument_symbol or self.instrument_symbols):
+            raise ValueError('Provide strategy_code by itself for a single strategy scan.')
+        if not (self.instrument_symbol or self.instrument_symbols or self.strategy_code or self.strategy_codes):
+            raise ValueError('Select instruments or strategies to scan.')
         return self
 
 
@@ -165,12 +171,13 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
     response.headers['Cache-Control'] = 'no-store'
     now = datetime.now(timezone.utc)
     out = []
+    symbols = [payload.instrument_symbol] if payload.instrument_symbol else payload.instrument_symbols
     codes = [payload.strategy_code] if payload.strategy_code else payload.strategy_codes
     with store.transaction('read') as db:
         instruments = db.execute("""
             SELECT id, symbol, tick_size, contract_size, quote_currency FROM cfg_instruments
-            WHERE status='ACTIVE' AND (%s::text IS NULL OR symbol=%s) ORDER BY symbol
-        """, (payload.instrument_symbol, payload.instrument_symbol)).fetchall()
+            WHERE status='ACTIVE' AND (%s::text[] IS NULL OR symbol=ANY(%s::text[])) ORDER BY symbol
+        """, (symbols, symbols)).fetchall()
         strategies = db.execute("""
             SELECT s.code, v.number, v.algorithm, v.parameters
             FROM cfg_strategies s LEFT JOIN LATERAL (
@@ -180,8 +187,8 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
             ORDER BY s.code
         """, (codes, codes)).fetchall()
 
-        if payload.instrument_symbol and not instruments:
-            raise HTTPException(404, 'Instrument is no longer active or could not be found.')
+        if symbols and set(symbols) - {i['symbol'] for i in instruments}:
+            raise HTTPException(404, 'One or more selected instruments are no longer active or could not be found.')
         if codes and set(codes) - {s['code'] for s in strategies}:
             raise HTTPException(404, 'One or more selected strategies are no longer active or could not be found.')
 
@@ -214,8 +221,8 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
             definitions = [d for d in custom if timeframe in (d.get('timeframes') or engine.TIMEFRAMES)]
             return engine.features(closed_bars(account_id, symbol, timeframe, window)[series_index], timeframe, definitions)
 
-        for strategy in strategies:
-            for instrument in instruments:
+        for instrument in instruments:
+            for strategy in strategies:
                 tf = (strategy['parameters'] or {}).get('timeframe')
                 base = {'instrument_symbol': instrument['symbol'], 'strategy_code': strategy['code'],
                         'version': strategy['number'], 'timeframe': tf}
@@ -243,6 +250,8 @@ def signal_scan(payload: SignalScanIn, response: Response, _: str = Depends(requ
                 except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
                     result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
                 out.append({**base, **result})
+            features_for.cache_clear()
+            closed_bars.cache_clear()
 
     out.sort(key=lambda row: (row['status'] != 'SIGNAL', -row.get('strength', 0), row['instrument_symbol'], row['strategy_code']))
     return {'items': out, 'scanned_at': now, 'stop_atr': payload.stop_atr, 'reward_risk': payload.reward_risk}

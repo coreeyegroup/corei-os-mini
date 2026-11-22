@@ -210,7 +210,10 @@ class SignalScanTests(unittest.TestCase):
                      {'instrument_symbol': 'EURUSD', 'strategy_codes': []},
                      {'strategy_code': 'BREAKOUT', 'strategy_codes': ['BREAKOUT']},
                      {'strategy_code': 'BREAKOUT', 'stop_atr': '0'},
-                     {'strategy_code': 'BREAKOUT', 'entry_lookback': 21}):
+                     {'strategy_code': 'BREAKOUT', 'entry_lookback': 21},
+                     {'instrument_symbols': []},
+                     {'instrument_symbols': ['EURUSD', 'bad symbol']},
+                     {'instrument_symbol': 'EURUSD', 'instrument_symbols': ['XAUUSD']}):
             with self.subTest(data=data), self.assertRaises(ValidationError):
                 SignalScanIn.model_validate(data)
 
@@ -226,7 +229,7 @@ class SignalScanTests(unittest.TestCase):
 
         def execute(sql, args):
             if 'FROM cfg_instruments' in sql:
-                return Mock(fetchall=lambda: [i for i in instruments if not args[0] or i['symbol'] == args[0]])
+                return Mock(fetchall=lambda: [i for i in instruments if not args[0] or i['symbol'] in args[0]])
             if 'FROM cfg_strategies' in sql:
                 return Mock(fetchall=lambda: [s for s in strategies if not args[0] or s['code'] in args[0]])
             if 'FROM md_collection_plans' in sql:
@@ -256,6 +259,14 @@ class SignalScanTests(unittest.TestCase):
             result = signal_scan(SignalScanIn(instrument_symbol='EURUSD', strategy_codes=['BREAKOUT']),
                                  Response(), 'operator')['items']
             self.assertEqual([r['strategy_code'] for r in result], ['BREAKOUT'])
+            result = signal_scan(SignalScanIn(instrument_symbols=['EURUSD', 'XAUUSD'],
+                                             strategy_codes=['BREAKOUT', 'UNAPPROVED']), Response(), 'operator')['items']
+            self.assertEqual({(r['instrument_symbol'], r['strategy_code']) for r in result},
+                             {(symbol, code) for symbol in ('EURUSD', 'XAUUSD') for code in ('BREAKOUT', 'UNAPPROVED')})
+            result = signal_scan(SignalScanIn(strategy_codes=['BREAKOUT', 'UNAPPROVED']),
+                                 Response(), 'operator')['items']
+            self.assertEqual(len(result), 6)
+            self.assertEqual({r['instrument_symbol'] for r in result}, {'EURUSD', 'XAUUSD', 'XAGUSD'})
             self.assertTrue(all(call.args == ('read',) for call in transaction.call_args_list))
 
 
