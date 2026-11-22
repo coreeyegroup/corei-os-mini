@@ -255,3 +255,33 @@
   .app[data-studio-active] .tab-tools button span { font-size: 13px; }
   .studio { padding: 8px; }
 }
+
+.studio-research-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+.studio-scan-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.studio-scan-summary > div {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+.studio-scan-summary dt { color: var(--muted); }
+.studio-scan-summary dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.studio-details > summary { font-weight: 600; }
+.studio-details > summary small { font-weight: 400; }
+.studio-details[open] > summary { margin-bottom: 2px; }
+
+@container strategy-studio (max-width: 440px) {
+  .studio .studio-research-steps button {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 4px;
+  }
+  .studio-scan-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

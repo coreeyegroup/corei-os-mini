@@ -7,10 +7,15 @@ import './strategy-studio.css';
 
 type Row = Record<string, unknown>;
 type Mode = 'observe' | 'scan' | 'build' | 'results';
-const modes = [
-  ['build', 'Build strategy'], ['observe', 'Observe instrument'],
-  ['scan', 'Scan strategy'], ['results', 'Results'],
+const researchSteps = [
+  { id: 'observe', title: 'Observe instrument' },
+  { id: 'scan', title: 'Scan strategy' },
+  { id: 'results', title: 'Results' },
 ] as const;
+type ResearchStep = typeof researchSteps[number]['id'];
+type ScanScope = 'instrument' | 'strategy';
+type ScanRun = { scope: ScanScope; selection: string; items: Row[]; completedAt: Date };
+type ScanFailure = { scope: ScanScope; selection: string; message: string };
 const buildSteps = [
   { id: 'templates', title: 'Start', description: 'Choose a template, edit the starter workflow, or reopen a saved revision.' },
   { id: 'canvas', title: 'Build rules', description: 'Add and connect nodes. Select a node to edit its parameters.' },
@@ -20,13 +25,13 @@ const buildSteps = [
 ] as const;
 type BuildStep = typeof buildSteps[number]['id'];
 type EditorView = BuildStep | 'json';
-type StudioSection = 'observe' | 'scan' | 'results' | EditorView;
+type StudioSection = ResearchStep | EditorView;
 type TestOutput = { title: string; draft: string; error?: string; data?: Row };
-const studioSections: StudioSection[] = [...buildSteps.map(step => step.id), 'json', 'observe', 'scan', 'results'];
+const studioSections: StudioSection[] = [...buildSteps.map(step => step.id), 'json', ...researchSteps.map(step => step.id)];
 const explorerSections = [
   ...buildSteps.map(({ id, title }, index) => ({ id, label: `${index + 1}. ${title}`, group: 'Build strategy' })),
   { id: 'json', label: 'Workflow JSON', group: 'Build tools' },
-  ...modes.flatMap(([id, label]) => id === 'build' ? [] : [{ id, label, group: 'Research & results' }]),
+  ...researchSteps.map(({ id, title }, index) => ({ id, label: `${index + 1}. ${title}`, group: 'Research & results' })),
 ];
 const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 
@@ -89,6 +94,10 @@ function StudioTable({ title, columns, items, empty }: {
 export default function StrategyStudio() {
   const [section, setSection] = useSection('Strategy Studio', 'templates', studioSections);
   const lastEditor = useRef<EditorView>('templates');
+  const lastResearch = useRef<ResearchStep>('observe');
+  const currentSection = useRef(section);
+  const researchHeading = useRef<HTMLHeadingElement>(null);
+  const focusResearchHeading = useRef(false);
   const mode: Mode = section === 'observe' || section === 'scan' || section === 'results' ? section : 'build';
   const editor = mode === 'build' ? section as EditorView : lastEditor.current;
   const [draft, setDraft] = useState(starterDraft);
@@ -118,6 +127,7 @@ export default function StrategyStudio() {
   const [instruments, setInstruments] = useState<Row[]>([]);
   const [strategies, setStrategies] = useState<Row[]>([]);
   const [deployments, setDeployments] = useState<Row[]>([]);
+  const [marketSnapshots, setMarketSnapshots] = useState<Row[]>([]);
   const [signals, setSignals] = useState<Row[]>([]);
   const [runtimeCount, setRuntimeCount] = useState<number | null>(null);
   const [instrument, setInstrument] = useState('');
@@ -126,7 +136,9 @@ export default function StrategyStudio() {
   const [refreshError, setRefreshError] = useState('');
   const [updated, setUpdated] = useState('');
   const [scanBusy, setScanBusy] = useState(false);
-  const [scan, setScan] = useState<{ key: string; items: Row[]; error?: string } | null>(null);
+  const [scanScope, setScanScope] = useState<ScanScope>('strategy');
+  const [scan, setScan] = useState<ScanRun | null>(null);
+  const [scanError, setScanError] = useState<ScanFailure | null>(null);
 
   async function loadCatalog() {
     setCatalogBusy(true);
@@ -178,6 +190,7 @@ export default function StrategyStudio() {
       ['Instruments', 'config/instruments', setInstruments],
       ['Strategies', 'config/strategies', setStrategies],
       ['Deployments', 'config/deployments', setDeployments],
+      ['Market context', 'intel/screener?timeframe=H1', setMarketSnapshots],
       ['Signals', 'trading/signals?limit=500', setSignals],
       ['Runtime', 'trading/runtime', (items: Row[]) => setRuntimeCount(items.length)],
     ] as const;
@@ -198,8 +211,16 @@ export default function StrategyStudio() {
     void loadCatalog();
   }, []);
   useEffect(() => {
+    currentSection.current = section;
     if (mode === 'build') lastEditor.current = editor;
-  }, [mode, editor]);
+    else lastResearch.current = mode;
+  }, [mode, editor, section]);
+  useEffect(() => {
+    if (focusResearchHeading.current) {
+      focusResearchHeading.current = false;
+      researchHeading.current?.focus();
+    }
+  }, [section]);
   useEffect(() => {
     if (section === 'templates' && templates === null && !templateBusy && !templateError) void loadTemplates();
   }, [section, templates, templateBusy, templateError]);
@@ -268,27 +289,61 @@ export default function StrategyStudio() {
     ? instrument : instrumentLabel(instruments[0] ?? {});
   const selectedStrategy = strategies.some(item => item.code === strategy)
     ? strategy : String(strategies[0]?.code ?? '');
-  const selection = observing ? selectedInstrument : selectedStrategy;
-  const scanKey = mode + '|' + selection;
-  const currentScan = scan?.key === scanKey ? scan : null;
-  const matching = selection ? deployments.filter(row => observing
+  const scope = observing ? 'instrument' : scanScope;
+  const byInstrument = scope === 'instrument';
+  const selection = byInstrument ? selectedInstrument : selectedStrategy;
+  const matching = selection ? deployments.filter(row => byInstrument
     ? (row.instrument_symbol ?? row.symbol) === selection : row.strategy_code === selection) : [];
-  const visibleSignals = selection ? signals.filter(row => observing
-    ? (row.symbol ?? row.instrument_symbol) === selection : row.strategy_code === selection) : [];
+  const observedSnapshots = observing && selectedInstrument ? marketSnapshots.filter(row => row.instrument === selectedInstrument) : [];
+  const signalScope = observing ? { scope: 'instrument', selection: selectedInstrument } : scan;
+  const visibleSignals = signalScope?.selection ? signals.filter(row => signalScope.scope === 'instrument'
+    ? (row.symbol ?? row.instrument_symbol) === signalScope.selection : row.strategy_code === signalScope.selection) : [];
+  const currentScanError = scanError?.scope === scanScope && scanError.selection === selection ? scanError.message : '';
+  const scanCounts = scan && [
+    ['Evaluated', scan.items.length],
+    ['Qualified', scan.items.filter(item => item.status === 'QUALIFIED').length],
+    ['Waiting', scan.items.filter(item => item.status === 'WAIT').length],
+    ['Errors', scan.items.filter(item => item.status === 'ERROR').length],
+  ] as const;
+
+  function advanceResearch(next: ResearchStep) {
+    focusResearchHeading.current = true;
+    setSection(next);
+  }
+
+  function openScan() {
+    setScanScope(selectedInstrument ? 'instrument' : 'strategy');
+    advanceResearch('scan');
+  }
 
   async function runScan() {
+    if (!selection || scanBusy) return;
     setScanBusy(true);
-    setScan(null);
-    const parameter = observing ? 'instrument_symbol' : 'strategy_code';
+    setScanError(null);
+    const parameter = byInstrument ? 'instrument_symbol' : 'strategy_code';
     try {
       const result = await api('trading/studio/scan?' + new URLSearchParams({ [parameter]: selection }));
-      setScan({ key: scanKey, items: rows(result) });
+      setScan({ scope: scanScope, selection, items: rows(result), completedAt: new Date() });
+      if (currentSection.current === 'scan') advanceResearch('results');
     } catch (error) {
-      setScan({ key: scanKey, items: [], error: message(error) });
+      setScanError({ scope: scanScope, selection, message: message(error) });
     } finally {
       setScanBusy(false);
     }
   }
+
+  const recordedSignals = <details className="studio-panel studio-details">
+    <summary>Recorded signals <small>· {visibleSignals.length} loaded for this scope</small></summary>
+    <p className="cfg-note">Recorded signals come from the runtime. Open signal details to inspect validated trade plans.</p>
+    <div className="studio-actions">
+      <button onClick={() => goto('Strategies', 'signals')}>Signal details</button>
+      <button onClick={() => goto('Risk', 'decisions')}>Risk decisions</button>
+    </div>
+    <StudioTable title="Recorded signals" items={visibleSignals.slice(0, 100)}
+      columns={[[ 'Time', 'bar_time' ], [ 'Strategy', 'strategy_code' ], [ 'Instrument', 'symbol' ],
+        [ 'Side', 'side' ], [ 'State', 'state' ], [ 'Reason', 'reasons' ]]}
+      empty={refreshing ? 'Loading recorded signals…' : 'No recorded signals for this selection.'} />
+  </details>;
 
   const workflow = readWorkflow(draft);
   const saved = opened?.text === draft ? opened.revision : null;
@@ -314,8 +369,10 @@ export default function StrategyStudio() {
       </div>}
     </header>
     <nav className="studio-nav" aria-label="Studio workspace">
-      {modes.map(([id, label]) => <button key={id} aria-pressed={mode === id} disabled={applyingTemplate || draftBusy}
-        onClick={() => setSection(id === 'build' ? lastEditor.current : id)}>{label}</button>)}
+      <button aria-pressed={mode === 'build'} disabled={locked}
+        onClick={() => setSection(lastEditor.current)}>Build strategy</button>
+      <button aria-pressed={mode !== 'build'} disabled={locked}
+        onClick={() => setSection(lastResearch.current)}>Research &amp; results</button>
     </nav>
 
     <div hidden={mode !== 'build'}>
@@ -468,66 +525,108 @@ export default function StrategyStudio() {
       </section>}
     </div>
 
+    {mode !== 'build' && <nav className="studio-steps studio-research-steps" aria-label="Strategy research steps">
+      {researchSteps.map(({ id, title }, index) => <button key={id} type="button"
+        aria-current={mode === id ? 'step' : undefined} onClick={() => setSection(id)}>
+        <span className="studio-step-number" aria-hidden="true">{index + 1}</span>
+        <span className="studio-step-label"><strong>{title}</strong></span>
+      </button>)}
+    </nav>}
     {mode !== 'build' && refreshError && <p role="alert" className="cfg-error-text">Data refresh failed for {refreshError}</p>}
+
     {(observing || mode === 'scan') && <div className="studio-stack">
-      <section className="studio-panel">
+      <section className="studio-panel" aria-labelledby="studio-research-scope">
         <div className="studio-section-title">
-          <div><h3>{observing ? 'Select an instrument' : 'Select a strategy'}</h3>
-            <p className="cfg-note">Choose what to assess, then evaluate its active deployments on closed bars.</p></div>
-          <button onClick={() => goto('Configuration', 'deployments')}>Configure deployments</button>
+          <div><h3 id="studio-research-scope" ref={researchHeading} tabIndex={-1}>{observing ? 'Select an instrument' : 'Choose what to scan'}</h3>
+            <p className="cfg-note">{observing ? 'Review the market context and the strategies assigned to this instrument.'
+              : 'Evaluate active deployments using the latest stored closed bars.'}</p></div>
         </div>
-        <div className="studio-actions">
-          {observing ? <label>Instrument
-            <select value={selectedInstrument} onChange={event => setInstrument(event.target.value)}>
-              {!instruments.length && <option value="">No instruments</option>}
+        <div className="studio-form-row">
+          {!observing && <label>Scan by
+            <select value={scanScope} disabled={scanBusy} onChange={event => setScanScope(event.target.value as ScanScope)}>
+              <option value="strategy">Strategy across instruments</option>
+              <option value="instrument">Instrument across strategies</option>
+            </select>
+          </label>}
+          {byInstrument ? <label>Instrument
+            <select value={selectedInstrument} disabled={scanBusy} onChange={event => setInstrument(event.target.value)}>
+              {!instruments.length && <option value="">{refreshing ? 'Loading instruments…' : 'No instruments'}</option>}
               {instruments.map(item => <option key={String(item.id ?? instrumentLabel(item))} value={instrumentLabel(item)}>
                 {instrumentLabel(item)}
               </option>)}
             </select>
           </label> : <label>Strategy
-            <select value={selectedStrategy} onChange={event => setStrategy(event.target.value)}>
-              {!strategies.length && <option value="">No strategies</option>}
+            <select value={selectedStrategy} disabled={scanBusy} onChange={event => setStrategy(event.target.value)}>
+              {!strategies.length && <option value="">{refreshing ? 'Loading strategies…' : 'No strategies'}</option>}
               {strategies.map(item => <option key={String(item.id ?? item.code)} value={String(item.code)}>
                 {String(item.name ?? item.code)}
               </option>)}
             </select>
           </label>}
-          <button className="primary" disabled={scanBusy || !selection} onClick={() => void runScan()}>
-            {scanBusy ? 'Evaluating…' : 'Evaluate active deployments'}
-          </button>
-        </div>
-        <h3>Deployment coverage</h3>
-        <StudioTable title="Deployment coverage" items={matching.map(row => ({ ...row, instrument: row.instrument_symbol ?? row.symbol }))}
-          columns={[[ 'Strategy', 'strategy_code' ], [ 'Instrument', 'instrument' ], [ 'Account', 'account_code' ],
-            [ 'Status', 'status' ], [ 'Mode', 'mode' ]]} empty={refreshing ? 'Loading deployments…' : 'No matching deployments.'} />
-      </section>
-      <section className="studio-panel">
-        <h3>Closed-bar assessment</h3>
-        {currentScan?.error && <p role="alert" className="cfg-error-text">{currentScan.error}</p>}
-        <StudioTable title="Closed-bar assessment" items={currentScan?.items ?? []}
-          columns={[[ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_code' ], [ 'Target', 'target' ],
-            [ 'Assessment', 'status' ], [ 'Closed bar', 'bar_time' ], [ 'Reference close', 'reference_close' ], [ 'Reason', 'reason' ]]}
-          empty={scanBusy ? 'Evaluating active deployments…' : currentScan?.error ? 'Evaluation failed. Try again.'
-            : currentScan ? 'No active deployments qualified for evaluation.' : 'Run an evaluation to see the assessment.'} />
-      </section>
-      <section className="studio-panel">
-        <div className="studio-section-title">
-          <h3>Recorded signals</h3>
           <div className="studio-actions">
-            <button onClick={() => goto('Strategies', 'signals')}>Signal details</button>
-            <button onClick={() => goto('Risk', 'decisions')}>Risk decisions</button>
+            {observing
+              ? <button className="primary" disabled={scanBusy || (refreshing && !updated)} onClick={openScan}>Next: scan strategy</button>
+              : <button className="primary" disabled={scanBusy || !selection} onClick={() => void runScan()}>
+                {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
+              </button>}
           </div>
         </div>
-        <p className="cfg-note">Entry, stop and target prices come from validated trade plans.</p>
-        <StudioTable title="Recorded signals" items={visibleSignals.slice(0, 100)}
-          columns={[[ 'Time', 'bar_time' ], [ 'Strategy', 'strategy_code' ], [ 'Instrument', 'symbol' ],
-            [ 'Side', 'side' ], [ 'State', 'state' ], [ 'Reason', 'reasons' ]]} empty="No recorded signals for this selection." />
+        {!observing && scanBusy && <p role="status" className="cfg-note">Evaluating active deployments for {selection}…</p>}
+        {!observing && currentScanError && <p role="alert" className="cfg-error-text">Scan failed. {currentScanError}</p>}
       </section>
+      {observing && <section className="studio-panel">
+        <div className="studio-section-title">
+          <h3>Market context · H1</h3>
+          <button onClick={() => goto('Intelligence', 'instrument')}>Open instrument analysis</button>
+        </div>
+        <StudioTable title="Market context" items={observedSnapshots}
+          columns={[[ 'Broker symbol', 'broker_symbol' ], [ 'Account', 'account_code' ], [ 'Regime', 'regime' ],
+            [ 'Volatility', 'volatility' ], [ 'Closed bar', 'bar_time' ]]}
+          empty={refreshing ? 'Loading market context…' : !selection ? 'Select an instrument to see its market context.'
+            : 'No H1 snapshot is available for this instrument.'} />
+      </section>}
+      <section className="studio-panel">
+        <div className="studio-section-title">
+          <h3>Deployment coverage</h3>
+          <button onClick={() => goto('Configuration', 'deployments')}>Configure deployments</button>
+        </div>
+        <StudioTable title="Deployment coverage" items={matching.map(row => ({ ...row, instrument: row.instrument_symbol ?? row.symbol }))}
+          columns={[[ 'Strategy', 'strategy_code' ], [ 'Instrument', 'instrument' ], [ 'Account', 'account_code' ],
+            [ 'Status', 'status' ], [ 'Mode', 'mode' ]]}
+          empty={refreshing ? 'Loading deployments…' : !selection ? 'Select a scope to see deployments.' : 'No matching deployments.'} />
+      </section>
+      {observing && recordedSignals}
     </div>}
 
     {mode === 'results' && <div className="studio-stack">
-      <section className="studio-panel">
-        <h3>Runtime and research</h3>
+      <section className="studio-panel" aria-labelledby="studio-assessment">
+        <div className="studio-section-title">
+          <div>
+            <h3 id="studio-assessment" ref={researchHeading} tabIndex={-1}>Closed-bar assessment</h3>
+            {scan && <p className="cfg-note">{scan.scope === 'instrument' ? 'Instrument' : 'Strategy'} · {scan.selection}
+              {' · '}{scan.completedAt.toLocaleString()}</p>}
+          </div>
+          <button className={scan ? undefined : 'primary'} onClick={() => advanceResearch('scan')}>
+            {scan ? 'Back to scan' : 'Go to scan'}
+          </button>
+        </div>
+        {scanBusy && <p role="status" className="cfg-note">{scan ? 'New scan running. Showing the last completed scan.' : 'Scan in progress…'}</p>}
+        {scan && <>
+          <dl className="studio-scan-summary">
+            {scanCounts?.map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
+          </dl>
+          <p className="cfg-note">Read-only assessment. A position target can reflect an existing setup. Check the reason for each deployment.</p>
+          <StudioTable title="Closed-bar assessment" items={scan.items}
+            columns={[[ 'Instrument', 'instrument_symbol' ], [ 'Strategy', 'strategy_code' ], [ 'Account', 'account_code' ],
+              [ 'Timeframe', 'timeframe' ], [ 'Position target', 'target' ], [ 'Assessment', 'status' ],
+              [ 'Closed bar', 'bar_time' ], [ 'Reference close', 'reference_close' ], [ 'Reason', 'reason' ]]}
+            empty="No active deployments matched this scan." />
+        </>}
+        {!scan && !scanBusy && <p className="cfg-note">Run a scan to see deployment assessments here.</p>}
+      </section>
+      {scan && recordedSignals}
+      <details className="studio-panel studio-details">
+        <summary>Runtime and research</summary>
         <p className="cfg-note">{runtimeCount === null ? 'Runtime data has yet to load.' : runtimeCount + ' runtime records loaded.'}</p>
         <div className="studio-actions">
           <button onClick={() => goto('Strategies', 'runtime')}>Runtime</button>
@@ -535,16 +634,15 @@ export default function StrategyStudio() {
           <button onClick={() => goto('Strategies', 'performance')}>Performance</button>
           <button onClick={() => goto('Strategies', 'drift')}>Drift</button>
         </div>
-      </section>
-      <section className="studio-panel">
-        <h3>Strategy lifecycle</h3>
-        <p className="cfg-note">Build an approved calculation graph or select an algorithm, then version, validate, approve and assign it.</p>
+      </details>
+      <details className="studio-panel studio-details">
+        <summary>Strategy lifecycle</summary>
         <div className="studio-actions">
           <button onClick={() => goto('Strategies', 'graphs')}>Calculation graph builder</button>
           <button onClick={() => goto('Configuration', 'strategies')}>Create strategy or version</button>
           <button onClick={() => goto('Configuration', 'deployments')}>Assign instruments and accounts</button>
         </div>
-      </section>
+      </details>
     </div>}
   </section>;
 }

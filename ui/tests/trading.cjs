@@ -29,6 +29,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    state:'FILLED',filled_qty:'0.1',avg_fill_price:'1.08011',reasons:[],time_in_force:'GTC'};
  const kills=[];
  const studioVersions=[];
+ let strategyScanAttempts=0;
  const studioTemplate={schema_version:'1.0',name:'EMA research template',nodes:[
    {id:'bars',type:'input.bars'},{id:'fast',type:'indicator.ema',params:{period:20}},
  ],edges:[{source:'bars',source_port:'close',target:'fast',target_port:'source'}]};
@@ -73,7 +74,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/studio/drafts/')&&url.endsWith('/versions'))return ok({items:[...studioVersions].reverse()});
    if(url.includes('/studio/drafts/')&&url.endsWith('/promote'))return ok({...studioVersions[0],promoted_graph_code:body.code,promoted_graph_version:1});
    if(url.includes('/studio/drafts/')&&url.includes('/versions/'))return ok(studioVersions[Number(url.split('/').at(-1))-1]);
-   if(url.includes('/studio/scan?'))return ok({items:[{instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',target:'LONG',status:'QUALIFIED'}]});
+   if(url.endsWith('/intel/screener?timeframe=H1'))return ok({items:[
+     {instrument:'EURUSD',broker_symbol:'EURUSD',account_id:'a1',account_code:'VTM_A',provider_name:'Demo',regime:'TREND_UP',bar_time:now,features:{close:1.0853}},
+   ]});
+   if(url.endsWith('/studio/scan?instrument_symbol=EURUSD'))return ok({items:[
+     {deployment_id:'scan-1',instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',account_code:'VTM_A',timeframe:'H1',target:'LONG',status:'QUALIFIED'},
+     {deployment_id:'scan-2',instrument_symbol:'EURUSD',strategy_code:'EMA_FAST',account_code:'VTM_B',timeframe:'H4',status:'WAIT'},
+   ]});
+   if(url.endsWith('/studio/scan?strategy_code=EMA_EXISTING'))return ++strategyScanAttempts === 1
+     ? fail(503,'Market data temporarily unavailable') : ok({items:[]});
    if(url.endsWith('/trading/overview'))return ok({deployments:{ACTIVE:1},active_modes:{PAPER:1},signals_today:{REJECTED:1,ACTED:2},orders_today:{FILLED:2},open_orders:0,unknown_orders:0,
      kill_switches:kills.length,limits:1,refused_today:1,positions:1,accounts:[],backtests:1,runtime:{last_run_at:now,deployments:1,signals:1,orders:1,duration_ms:30,enabled:true,deployments_with_problems:0}});
    if(url.includes('/trading/signals/s1'))return ok({...signal,events:[{id:1,at:now,state:'NEW',actor:'runtime',detail:'EMA 3/5'},{id:2,at:now,state:'REJECTED',actor:'validation',detail:'STALE_PRICE'}],intent:null});
@@ -417,7 +426,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    const control=[...studio.querySelectorAll('.studio-steps button')].find(b=>b.querySelector('strong').textContent===label);
    assert.ok(control&&!control.disabled,label);
    control.click();await settle(3);
-   assert.equal(studioStep(),control);
+   assert.equal(control.getAttribute('aria-current'),'step');
  };
  const studioField=(label)=>[...studio.querySelectorAll('label')].find(item=>!item.closest('[hidden]')&&item.firstChild?.textContent?.trim()===label).querySelector('input,select');
  assert.equal(studioButton('Build strategy').getAttribute('aria-pressed'),'true');
@@ -499,12 +508,45 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual(strategyVersion.body.parameters,{graph_code:'EMA_STUDIO',graph_version:1,timeframe:'H1',direction:'BOTH'});
  console.log('PASS: the Studio opens the exact graph revision, and setup carries the approved rule into existing and new strategies.');
  await go('Strategy Studio');
- await clickStudio('Observe instrument');
- await clickStudio('Evaluate active deployments');
+ await clickStudio('Research & results');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Observe instrument');
+ assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
+ assert.equal(studioField('Instrument').value,'EURUSD');
+ assert.equal(calls.filter(c=>c.url.includes('/studio/scan?')).length,0);
+ await openStage('Results');
+ assert.match(studio.textContent,/Run a scan to see deployment assessments/);
+ await openStage('Observe instrument');
+ await clickStudio('Next: scan strategy');
+ assert.equal(w.document.activeElement.id,'studio-research-scope');
+ assert.equal(studioField('Scan by').value,'instrument');
+ assert.equal(studioField('Instrument').value,'EURUSD');
+ await clickStudio('Run scan');
+ assert.equal(w.document.activeElement.id,'studio-assessment');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
+ assert.match(calls.filter(c=>c.url.includes('/studio/scan?')).at(-1).url,/instrument_symbol=EURUSD$/);
+ assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/VTM_A.*QUALIFIED/);
+ assert.deepEqual([...studio.querySelectorAll('.studio-scan-summary dd')].map(el=>el.textContent),['2','1','1','0']);
+ assert.match(studio.querySelector('[aria-label="Recorded signals"]').textContent,/STALE_PRICE/);
+ await clickStudio('Back to scan');
+ fill(studioField('Scan by'),'strategy');await tick();
+ assert.equal(studioField('Strategy').value,'EMA_EXISTING');
+ await clickStudio('Run scan');
+ assert.match(calls.filter(c=>c.url.includes('/studio/scan?')).at(-1).url,/strategy_code=EMA_EXISTING$/);
+ assert.match(studio.querySelector('[role="alert"]').textContent,/Market data temporarily unavailable/);
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Scan strategy');
+ await openStage('Results');
  assert.match(studio.querySelector('[aria-label="Closed-bar assessment"]').textContent,/QUALIFIED/);
- await clickStudio('Results');
+ assert.match(studio.textContent,/Instrument · EURUSD/);
+ await clickStudio('Back to scan');
+ await clickStudio('Retry scan');
+ assert.equal(studio.querySelector('.studio-research-steps [aria-current="step"] strong').textContent,'Results');
+ assert.match(studio.textContent,/Strategy · EMA_EXISTING/);
+ assert.match(studio.textContent,/No active deployments matched this scan/);
+ const researchLinks=[...studio.querySelectorAll('summary')].find(node=>node.textContent==='Runtime and research');
+ researchLinks.click();
+ assert.ok(researchLinks.parentElement.open);
  assert.ok(studioButton('Backtest'));
- console.log('PASS: Strategy Studio: templates, node search and settings, validation, both previews, version history, review handoff and scan.');
+ console.log('PASS: Strategy Studio build and research workflows, scope handoff, pinned results, retry and empty assessment.');
 
  // Home: the system map — eight stages in order, live figures, the user's path.
  await go('Overview');await settle(6);
