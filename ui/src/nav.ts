@@ -23,6 +23,45 @@ export function goto(view: View, section?: string) {
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));
 }
 
+type DeploymentDestination = 'runtime' | 'signals' | 'intents' | 'queue';
+type DeploymentFocus = { id: string; label: string };
+const deploymentFocus: Partial<Record<DeploymentDestination, DeploymentFocus>> = {};
+
+export function openDeployment(destination: DeploymentDestination, focus: DeploymentFocus) {
+  deploymentFocus[destination] = focus;
+  window.dispatchEvent(new Event('corei-deployment-focus'));
+  goto(destination === 'queue' ? 'Execution' : 'Strategies', destination);
+}
+
+export function useDeploymentFocus(destination: DeploymentDestination, enabled = true) {
+  const [focus, setFocus] = useState(() => deploymentFocus[destination]);
+  useEffect(() => {
+    const update = () => setFocus(deploymentFocus[destination]);
+    update();
+    window.addEventListener('corei-deployment-focus', update);
+    return () => window.removeEventListener('corei-deployment-focus', update);
+  }, [destination]);
+  const clear = () => {
+    delete deploymentFocus[destination];
+    window.dispatchEvent(new Event('corei-deployment-focus'));
+  };
+  return [enabled ? focus : undefined, clear] as const;
+}
+
+let pendingOrder: string | null = null;
+
+export function openOrder(id: string) {
+  pendingOrder = id;
+  goto('Execution', 'orders');
+  window.dispatchEvent(new Event('corei-order-focus'));
+}
+
+export function takeOrder() {
+  const id = pendingOrder;
+  pendingOrder = null;
+  return id;
+}
+
 export type StrategyRule = { code: string; version: number; name: string };
 let pendingStrategyRule: StrategyRule | null = null;
 

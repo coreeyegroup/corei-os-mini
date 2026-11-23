@@ -457,7 +457,7 @@ tr.ex-pending td { background: color-mix(in srgb, var(--cfg-warn) 8%, transparen
 .ex-radio { display: inline-flex; gap: 14px; flex-wrap: wrap; }
 .ex-policy { border: 1px solid var(--accent); border-radius: 4px; padding: 10px; margin-top: 8px; }
 
-.sd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+.sd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 390px), 1fr)); gap: 10px; }
 .sd-card { border: 1px solid var(--line); border-top: 3px solid var(--ready); border-radius: 4px; padding: 8px 10px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .sd-card.sd-off { border-top-color: var(--line); opacity: .85; }
 .sd-card.sd-err { border-top-color: var(--danger); }
@@ -479,3 +479,7 @@ tr.ex-pending td { background: color-mix(in srgb, var(--cfg-warn) 8%, transparen
 @media (max-width: 640px) { .sd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sd-cards, .ex-cards { grid-template-columns: 1fr; } .sig-legend { margin-left: 0; } }
 .intel b.up, .intel i.up { color: var(--ready); } .intel b.down, .intel i.down { color: var(--danger); }
 .sig-quint i.up, .sig-icbars i.up { background: var(--ready); } .sig-quint i.down, .sig-icbars i.down { background: var(--danger); }
+
+.sd-journey { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.sd-pagination { color: var(--muted); }
+.sd-sub, .sd-line, .sd-grid > span { overflow-wrap: anywhere; }

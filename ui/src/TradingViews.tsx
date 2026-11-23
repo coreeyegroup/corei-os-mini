@@ -8,8 +8,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
-import StageShell, { ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
-import { goto, useScanEvidence } from './nav';
+import StageShell, { DeploymentFilter, ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
+import { useDeploymentFocus, goto, takeOrder, useScanEvidence } from './nav';
 import GraphWorkbench from './calc/GraphWorkbench';
 import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
@@ -112,7 +112,8 @@ function SignalTable({ rows, open }: { rows: Row[]; open?: (r: Row) => void }) {
 }
 
 function SignalBoard({ ctx }: { ctx: Ctx }) {
-  const [state, setState] = useState(''), [data, error, reload] = useData<Row>(`trading/signals?limit=500${state ? `&state=${state}` : ''}`, 20_000, [state]);
+  const [focus, clear] = useDeploymentFocus('signals');
+  const [state, setState] = useState(''), [data, error, reload] = useData<Row>(`trading/signals?limit=500${state ? `&state=${state}` : ''}${focus ? `&deployment_id=${encodeURIComponent(focus.id)}` : ''}`, 20_000);
   const [detail, setDetail] = useState<Row | null>(null), [manual, setManual] = useState<Row | null>(null), [msg, setMsg] = useState(''), [err, setErr] = useState('');
   const { deployments } = Lists();
   const show = (r: Row) => void api(`trading/signals/${r.id}`).then(setDetail).catch(e => setErr((e as Error).message));
@@ -123,12 +124,13 @@ function SignalBoard({ ctx }: { ctx: Ctx }) {
   };
   return <section className="intel">
     <div className="intel-bar">
+      {focus && <DeploymentFilter label={focus.label} clear={clear} />}
       <select aria-label="Signal state" value={state} onChange={e => setState(e.target.value)}><option value="">All states</option>{['NEW', 'VALID', 'ACTED', 'REJECTED', 'EXPIRED', 'CANCELLED'].map(s => <option key={s}>{s}</option>)}</select>
-      {ctx.canOps && <button className="primary" onClick={() => setManual({ deployment_id: deployments.find((d: Row) => d.status === 'ACTIVE')?.id ?? '', side: 'BUY', strength: 60, reason: '' })}>Manual signal</button>}
+      {ctx.canOps && <button className="primary" onClick={() => setManual({ deployment_id: focus?.id ?? deployments.find((d: Row) => d.status === 'ACTIVE')?.id ?? '', side: 'BUY', strength: 60, reason: '' })}>Manual signal</button>}
       <button onClick={reload}>Reload</button>
     </div>
     <Msg error={error || err} notice={msg} />
-    <SignalTable rows={data?.items ?? []} open={show} />
+    {data ? <SignalTable rows={data.items ?? []} open={show} /> : !error && <p role="status">Loading strategy signals…</p>}
     {detail && <FloatingWindow storageKey="corei.signal.v1" title={`Signal · ${detail.side} · ${detail.state.toLowerCase()}`} onClose={() => setDetail(null)}
       footer={<div className="cfg-actions">{(detail.state === 'NEW' || detail.state === 'VALID') && (ctx.canOps || ctx.canRisk) && <button onClick={() => {
         const reason = window.prompt('Reason for cancelling this signal'); if (reason) void api(`trading/signals/${detail.id}/cancel`, 'POST', { reason }).then(() => { setDetail(null); reload(); }).catch(e => setErr((e as Error).message)); }}>Cancel signal</button>}
@@ -186,16 +188,20 @@ export function SignalsView() {
 /* ---------- Stage 4 · Strategies ---------- */
 
 function Runtime({ ctx }: { ctx: Ctx }) {
+  const [focus, clear] = useDeploymentFocus('runtime');
   const [data, error] = useData<Row>('trading/runtime', 15_000);
   return <section className="intel">
+    {focus && <DeploymentFilter label={focus.label} clear={clear} />}
     <RuntimeLine canRun={ctx.canOps || ctx.canRisk} />
     <div className="intel-bar"><button onClick={() => goto('Configuration', 'strategies')}>Strategies and versions (Setup)</button><button onClick={() => goto('Configuration', 'deployments')}>Deployments (Setup)</button></div>
     <Msg error={error} />
     <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Algorithm</th><th>Instrument</th><th>Account</th><th>Mode</th><th>Timeframe</th><th>Data from</th><th>Last bar</th><th>Target</th><th>State</th></tr></thead><tbody>
-      {(data?.items ?? []).map((r: Row) => <tr key={r.deployment_id}><td>{r.strategy_code} v{r.version_number}</td><td><small>{r.algorithm}</small></td><td>{r.symbol}</td><td>{r.account_code}</td>
+      {(data?.items ?? []).filter((r: Row) => !focus || r.deployment_id === focus.id).map((r: Row) => <tr key={r.deployment_id}><td>{r.strategy_code} v{r.version_number}</td><td><small>{r.algorithm}</small></td><td>{r.symbol}</td><td>{r.account_code}</td>
         <td>{(r.mode ?? 'PAPER').toLowerCase()}</td><td>{r.timeframe}</td><td><small>{r.source_symbol ?? '—'}</small></td><td><small>{r.last_bar_time ? new Date(r.last_bar_time).toISOString().slice(5, 16).replace('T', ' ') : '—'}</small></td>
         <td>{r.last_target ?? '—'}</td><td>{r.status !== 'ACTIVE' ? pill(r.status, 'off') : r.last_error ? <small className="cfg-error-text">{r.last_error}</small> : pill('running', 'ok')}</td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={10} className="cfg-note">No deployment has run yet. Setup › Strategies (add a version, approve it) › Deployments (instrument, account, Paper) › activate. The runtime picks it up at the next cycle.</td></tr>}
+      {data && !(data.items ?? []).some((r: Row) => !focus || r.deployment_id === focus.id) && <tr><td colSpan={10} className="cfg-note">
+        {focus ? 'This deployment has no runtime record yet.' : 'No deployment has run yet. Approve a version in Setup, then configure and activate a deployment.'}
+      </td></tr>}
     </tbody></table></div>
     <p className="cfg-note">Each active deployment is evaluated once per newly closed bar of its timeframe, from its data source's bars and the same features as Market intelligence. The first bar after activation is only recorded; signals start from the next one.</p>
   </section>;
@@ -317,7 +323,7 @@ export function StrategiesView() {
     { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Every strategy at once: position and P&L, last signal and decision, drift, and how its decisions reach execution — pause, resume, change handoff.', render: ctx => <StrategyDashboard ctx={ctx} /> },
     { id: 'runtime', label: 'Runtime', group: 'Overview', hint: 'Every deployment: is it running, on which bar, what target, and what needs attention.', render: ctx => <Runtime ctx={ctx} /> },
     { id: 'signals', label: 'Strategy signals', group: 'Work', hint: 'Signals raised by running strategies (and by hand) with their state and reasons; open one for its history; raise one by hand.', render: ctx => <SignalBoard ctx={ctx} /> },
-    { id: 'intents', label: 'Decisions', group: 'Work', hint: 'What each signal decided: target, position held, the order needed, and how it went to execution.', render: ctx => <DecisionFlow ctx={ctx} compact /> },
+    { id: 'intents', label: 'Trade decisions', group: 'Work', hint: 'What each signal decided: target, position held, the order needed, and how it went to execution.', render: ctx => <DecisionFlow ctx={ctx} compact /> },
     { id: 'backtest', label: 'Backtest', group: 'Work', hint: 'A version, or an idea, on stored history with costs; trades, equity and metrics.', render: ctx => <Backtest ctx={ctx} /> },
     { id: 'compare', label: 'Compare backtests', group: 'Work', hint: 'Up to four saved backtests side by side: every metric and the equity curves.', render: () => <BacktestCompare /> },
     { id: 'optimise', label: 'Optimise', group: 'Work', hint: 'Every combination of parameter values, and walk-forward: chosen on one part, tested on the next.', render: ctx => <Optimise ctx={ctx} /> },
@@ -333,7 +339,7 @@ export function StrategiesView() {
     { id: 'runtime-settings', label: 'Runtime switch', group: 'Configure', hint: 'Pause or resume every strategy at once.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['runtime_enabled']} intro="Paused: no deployment is evaluated and no new signal is raised; orders already working stay as they are. Pause one deployment from Setup › Deployments." /> },
   ];
-  return <StageShell view="Strategies" sections={sections} />;
+  return <StageShell view="Strategies" sections={sections} defaultSection="overview" initialTabs={['overview', 'runtime', 'signals', 'intents', 'workspace']} />;
 }
 
 /* ---------- Stage 5 · Risk ---------- */
@@ -575,11 +581,21 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
 function Blotter({ ctx, openOnly = false }: { ctx: Ctx; openOnly?: boolean }) {
   const [state, setState] = useState(''), [data, error] = useData<Row>(`trading/orders?limit=500${state ? `&state=${state}` : ''}${openOnly ? '&open_only=true' : ''}`, 10_000, [state]);
   const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    if (openOnly) return;
+    const inspect = () => {
+      const orderId = takeOrder();
+      if (orderId) setId(orderId);
+    };
+    inspect();
+    window.addEventListener('corei-order-focus', inspect);
+    return () => window.removeEventListener('corei-order-focus', inspect);
+  }, [openOnly]);
   return <section className="intel">
     {!openOnly && <div className="intel-bar"><select aria-label="Order state" value={state} onChange={e => setState(e.target.value)}><option value="">All states</option>
       {['FILLED', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'UNKNOWN'].map(s => <option key={s}>{s}</option>)}</select></div>}
     <Msg error={error} /><OrderTable rows={data?.items ?? []} open={o => setId(o.id)} />
-    {id && <OrderDetail id={id} close={() => setId(null)} ctx={ctx} />}
+    {id && <OrderDetail key={id} id={id} close={() => setId(null)} ctx={ctx} />}
   </section>;
 }
 

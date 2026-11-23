@@ -10,8 +10,8 @@
 import { ALGO_DEFAULTS, AlgoFields, algoBody } from './ExecutionAlgos';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Field } from './Configuration';
-import { Kpis, Msg, Reasons, num, pill, useData, when, type Ctx, type Row } from './StageShell';
-import { goto } from './nav';
+import { DeploymentFilter, Kpis, Msg, Reasons, num, pill, useData, when, type Ctx, type Row } from './StageShell';
+import { goto, openOrder, useDeploymentFocus } from './nav';
 
 const OUT_CLS: Record<string, string> = { PENDING: 'warn', ORDERED: 'ok', NO_CHANGE: 'demo', REFUSED: 'live', DECLINED: 'off', EXPIRED: 'off', SUPERSEDED: 'off', RECORDED: 'demo' };
 const OUT_LABEL: Record<string, string> = { PENDING: 'waiting for execution', ORDERED: 'ordered', NO_CHANGE: 'no change needed', REFUSED: 'refused', DECLINED: 'declined',
@@ -40,12 +40,14 @@ function Chain({ r }: { r: Row }) {
 }
 
 export function DecisionFlow({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) {
+  const [focus, clear] = useDeploymentFocus('intents', compact);
   const [filter, setFilter] = useState(''), [q, setQ] = useState('');
-  const [data, error, reload] = useData<Row>(`trading/execution/flow?limit=${compact ? 30 : 300}${filter ? `&outcome=${filter}` : ''}`, 10_000, [filter]);
+  const [data, error, reload] = useData<Row>(`trading/execution/flow?limit=${compact ? 30 : 300}${filter ? `&outcome=${filter}` : ''}${focus ? `&deployment_id=${encodeURIComponent(focus.id)}` : ''}`, 10_000);
   const [act, setAct] = useState<Row | null>(null);
   const sum = data?.summary ?? {}, today = sum.today ?? {};
   const rows: Row[] = (data?.items ?? []).filter((r: Row) => !q || `${r.strategy_code} ${r.symbol} ${r.account_code}`.toLowerCase().includes(q.toLowerCase()));
   return <section className="intel">
+    {focus && <DeploymentFilter label={focus.label} clear={clear} />}
     {!compact && <Kpis items={[['Waiting for execution', sum.pending ?? 0, sum.next_expiry ? `First window closes in ${left(sum.next_expiry)}` : 'Nothing waiting', sum.pending ? 'warn' : ''],
       ['Ordered today', today.ORDERED ?? 0, 'Decisions that became orders (risk passed)', 'up'], ['Refused today', today.REFUSED ?? 0, 'By risk or the order checks: see the reasons', today.REFUSED ? 'warn' : ''],
       ['No change', today.NO_CHANGE ?? 0, 'Already at the target'], ['Recorded only', today.RECORDED ?? 0, 'Signal-only strategies'],
@@ -71,11 +73,11 @@ export function DecisionFlow({ ctx, compact = false }: { ctx: Ctx; compact?: boo
           {r.decided_by && r.decided_by !== 'runtime' && <><br /><small className="cfg-note">by {r.decided_by}{r.decision_note ? `: ${r.decision_note}` : ''}</small></>}</td>
         <td>{r.outcome === 'PENDING' && (ctx.canOps || ctx.canRisk) ? <span className="ex-acts"><button className="primary" onClick={() => setAct(r)}>Execute…</button>
           <button onClick={() => setAct({ ...r, declining: true })}>Decline</button></span>
-          : r.order_id ? <button className="link" onClick={() => goto('Execution', 'orders')}>order →</button> : null}</td>
+          : r.order_id ? <button className="link" onClick={() => openOrder(r.order_id)}>Inspect order</button> : null}</td>
       </tr>)}
       {data && !rows.length && <tr><td colSpan={7} className="cfg-note">No decisions {filter ? 'with this outcome ' : ''}yet. They appear when a running strategy decides a new target (Strategies › Dashboard).</td></tr>}
     </tbody></table></div>
-    {act && <ActDialog r={act} done={() => { setAct(null); reload(); }} />}
+    {act && (!focus || act.deployment_id === focus.id) && <ActDialog r={act} done={() => { setAct(null); reload(); }} />}
   </section>;
 }
 
@@ -116,7 +118,8 @@ function ActDialog({ r, done }: { r: Row; done: () => void }) {
 }
 
 export function DecisionQueue({ ctx }: { ctx: Ctx }) {
-  const [data, error, reload] = useData<Row>('trading/execution/flow?outcome=PENDING&limit=200', 5_000);
+  const [focus, clear] = useDeploymentFocus('queue');
+  const [data, error, reload] = useData<Row>(`trading/execution/flow?outcome=PENDING&limit=200${focus ? `&deployment_id=${encodeURIComponent(focus.id)}` : ''}`, 5_000);
   const [act, setAct] = useState<Row | null>(null), [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const rows: Row[] = data?.items ?? [];
   const all = async () => {
@@ -126,10 +129,11 @@ export function DecisionQueue({ ctx }: { ctx: Ctx }) {
     setMsg(`${ok} executed.`); setErr(bad.join(' · ')); setBusy(false); reload();
   };
   return <section className="intel">
+    {focus && <DeploymentFilter label={focus.label} clear={clear} />}
     <div className="intel-bar">{(ctx.canOps || ctx.canRisk) && rows.length > 1 && <button className="primary" disabled={busy} onClick={() => void all()}>Execute all {rows.length}</button>}
       <small className="cfg-note">Decisions from strategies whose handoff is <b>Trader approves</b>. Refreshes every 5 s. A window that closes expires the decision; a newer decision of the same strategy replaces an older one.</small></div>
     <Msg error={error || err} notice={msg} />
-    {!rows.length ? <p className="cfg-note ex-empty">Nothing is waiting. Set a strategy's handoff to <b>Trader approves</b> under Execution policy to review its decisions here before they are sent.</p>
+    {!data ? !error && <p role="status">Loading decision queue…</p> : !rows.length ? <p className="cfg-note ex-empty">Nothing is waiting. Set a strategy's handoff to <b>Trader approves</b> under Execution policy to review its decisions here before they are sent.</p>
       : <div className="ex-cards">{rows.map(r => <div key={r.id} className="ex-card">
         <header><b>{r.strategy_code}</b> <small className="cfg-note">v{r.version_number} · {r.algorithm}</small><span className="ex-timer">closes in {left(r.expires_at)}</span></header>
         <p className="ex-big">{sideB(r.side)} {num(r.quantity, 2)} <span>{r.symbol}</span> <small>{r.account_code} · {(r.mode ?? 'PAPER') === 'BROKER' ? pill('real', 'live') : pill('paper', 'demo')}</small></p>
@@ -137,7 +141,7 @@ export function DecisionQueue({ ctx }: { ctx: Ctx }) {
         <p><small className="cfg-note">Signal strength {r.strength} on the {r.timeframe} bar {r.bar_time ? new Date(r.bar_time).toISOString().slice(5, 16).replace('T', ' ') : ''} · {r.explanation?.[0]}</small></p>
         {(ctx.canOps || ctx.canRisk) && <div className="cfg-actions"><button className="primary" onClick={() => setAct(r)}>Execute…</button><button onClick={() => setAct({ ...r, declining: true })}>Decline…</button></div>}
       </div>)}</div>}
-    {act && <ActDialog r={act} done={() => { setAct(null); reload(); }} />}
+    {act && (!focus || act.deployment_id === focus.id) && <ActDialog r={act} done={() => { setAct(null); reload(); }} />}
   </section>;
 }
 

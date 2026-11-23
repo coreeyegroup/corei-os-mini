@@ -143,6 +143,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  for(const v of ['Signals','Strategies','Risk','Portfolio','Execution','Post-trade']){
    sq(`nav.activity [aria-label="${v}"]`).click();for(let i=0;i<8;i++)await tick();
    const side=[...sw.document.querySelectorAll('.sb-pane')][0];
+   if(v==='Strategies'){
+     assert.deepEqual([...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),
+       ['Dashboard','Runtime','Strategy signals','Trade decisions','All panels']);
+     for(const name of ['Backtest','Optimise','Calculation graphs','Stage map']){
+       assert.ok([...side.querySelectorAll('.sb-row')].some(b=>b.textContent.trim()===name));
+     }
+     continue;
+   }
    assert.deepEqual([...side.querySelectorAll('.sb-row')].map(b=>b.textContent.trim()),
      [...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),`${v}: side bar = sub-tabs`);
  }
