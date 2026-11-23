@@ -54,7 +54,7 @@ class DatabaseEditor(Base):
         self.assertTrue(all(r['password_hash'] == '‹hidden›' for r in users['rows']))
         key = {k['name']: users['rows'][0][k['name']] for k in users['columns'] if k['primary_key']}
         r = c.patch('/api/admin/db/tables/cfg_users/rows', json={'key': key, 'values': {'password_hash': 'x'}, 'reason': R})
-        self.assertEqual(r.status_code, 422)
+        self.assertEqual(r.status_code, 403, 'users are changed on the Users screen (one policy for both editors)')
         self.assertEqual(c.get('/api/admin/db/tables/no_such_table/rows').status_code, 404)
         self.assertEqual(c.post('/api/admin/db/tables', json={'name': 'Bad Name', 'reason': R}).status_code, 422)
 
@@ -66,6 +66,10 @@ class DatabaseEditor(Base):
         a = self.post('accounts', {'connection_id': conn['id'], 'code': 'LINKED_1', 'name': 'L', 'external_account_id': '1', 'base_currency': 'USD'})
         with self.connect() as db:
             db.execute("INSERT INTO md_collection_plans(id, code, account_id, broker_symbol, purpose, created_by, updated_by) VALUES (gen_random_uuid(), 'LINKED_EURUSD', %s, 'EURUSD', 'RESEARCH', 'a', 'a')", (a['id'],))
+        # Configuration tables follow the same policy as System › Tables: off → refused.
+        self.assertEqual(c.post('/api/admin/db/tables/cfg_providers/rows/delete', json={'key': {'id': p['id']}, 'reason': R}).status_code, 403)
+        with self.connect() as db:
+            db.execute("UPDATE cfg_policies SET value='true'::jsonb WHERE key='infra_edit_controlled_tables'")
         r = c.post('/api/admin/db/tables/cfg_providers/rows/delete', json={'key': {'id': p['id']}, 'reason': R})
         self.assertEqual(r.status_code, 422)
         self.assertIn('foreign key', r.json()['detail'])
@@ -76,3 +80,19 @@ class DatabaseEditor(Base):
         with self.connect() as db:
             self.assertIsNone(db.execute("SELECT 1 FROM cfg_providers WHERE code='LINKED'").fetchone())
             self.assertIsNone(db.execute("SELECT 1 FROM md_collection_plans WHERE code='LINKED_EURUSD'").fetchone())
+
+    def test_trading_ledger_is_never_edited_here(self):
+        c = self.client
+        with self.connect() as db:
+            db.execute("UPDATE cfg_policies SET value='true'::jsonb WHERE key='infra_edit_controlled_tables'")
+        for table in ('oms_orders', 'pf_positions', 'risk_limits', 'risk_kill_switches', 'pt_breaks', 'cfg_audit_log'):
+            r = c.post(f'/api/admin/db/tables/{table}/rows', json={'values': {}, 'reason': R})
+            self.assertEqual(r.status_code, 403, (table, r.text))
+            r = c.post(f'/api/admin/db/tables/{table}/drop', json={'confirm': table, 'reason': R})
+            self.assertEqual(r.status_code, 403, (table, r.text))
+            r = c.post(f'/api/admin/db/tables/{table}/columns', json={'name': 'x_extra', 'type': 'text', 'nullable': True, 'reason': R})
+            self.assertEqual(r.status_code, 403, (table, r.text))
+        # The System › Tables editor reports the same rule.
+        info = c.get('/api/infra/tables/oms_orders').json()
+        self.assertEqual(info.get('mode'), 'READ_ONLY', info)
+

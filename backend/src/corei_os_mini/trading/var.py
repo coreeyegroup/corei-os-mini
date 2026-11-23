@@ -50,12 +50,12 @@ def _returns(db, account_id, instrument_id, tf: str, n: int) -> tuple[dict, str 
     return out, None if len(out) >= min(30, n) else f'only {len(out)} {tf} bars'
 
 
-def _book(db, account_id, extra: tuple | None) -> list[dict]:
-    """Signed position values (account currency) per instrument, with the extra order added."""
+def _book(db, account_id, extra: tuple | None, mode: str | None = None) -> list[dict]:
+    """Signed position values (account currency) per instrument of one book (mode) or all, with the extra order added."""
     acc = db.execute('SELECT base_currency FROM cfg_accounts WHERE id=%s', (str(account_id),)).fetchone()
     ccy = acc['base_currency'] if acc else 'USD'
     net: dict = {}
-    for p in portfolio.positions(db, account_id):
+    for p in portfolio.positions(db, account_id, mode=mode):
         net[str(p['instrument_id'])] = net.get(str(p['instrument_id']), ZERO) + D(p['quantity'])
     if extra:
         net[str(extra[0])] = net.get(str(extra[0]), ZERO) + D(extra[1])
@@ -75,14 +75,14 @@ def _book(db, account_id, extra: tuple | None) -> list[dict]:
     return out
 
 
-def account_var(db, account_id, extra: tuple | None = None, confidence: Decimal | None = None) -> dict:
+def account_var(db, account_id, extra: tuple | None = None, confidence: Decimal | None = None, mode: str | None = None) -> dict:
     cfg = settings(db)
     conf = D(confidence or cfg.get('var_confidence') or 99)
     tf, n = cfg.get('var_timeframe') or 'D1', int(cfg.get('var_lookback_bars') or 250)
-    key = (str(account_id), str(extra), str(conf), tf, n, int(_time.time() // 60))
+    key = (str(account_id), str(extra), str(conf), tf, n, mode, int(_time.time() // 60))
     if key in _cache:
         return _cache[key]
-    book = _book(db, account_id, extra)
+    book = _book(db, account_id, extra, mode)
     if not book:
         return {'var': ZERO, 'es': ZERO, 'confidence': conf, 'timeframe': tf, 'bars': 0, 'positions': []}
     missing = [f"{b['symbol']}: no {b['missing']}" for b in book if b['value'] is None]

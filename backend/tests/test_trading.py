@@ -171,12 +171,18 @@ class Trading(tmd.MarketData):
         self.assertEqual(sig['state'], 'REJECTED')
         self.assertTrue(any(r.startswith('ORDER_SENDING_OFF_DEMO') for r in sig['reasons']), sig['reasons'])
         self.assertTrue(any(r.startswith('ORDER_NEEDS_BRIDGE') for r in sig['reasons']), 'an MT5 account without a bridge cannot take real orders')
-        # A loss limit breached engages the account kill switch by itself.
+        # A loss limit breached stops the book that lost, by itself. A paper loss never stops real trading: the
+        # paper book's breach engages no account-wide switch (this account has no paper deployment to stop).
         with self.connect() as db:
             db.execute("INSERT INTO pf_positions(id, account_id, instrument_id, mode, quantity, avg_price, realised_pnl, currency) "
                        "VALUES (gen_random_uuid(), %s, %s, 'PAPER', 1, 1.10000, 0, 'USD')", (UUID(a['id']), UUID(instrument['id'])))
         self.ok(self.alice.post('/api/trading/risk/limits', json={'scope': 'ACCOUNT', 'target_id': a['id'], 'kind': 'MAX_DAILY_LOSS', 'value': '1000',
                                                                  'reason': 'daily stop'}), 201)
+        runtime.cycle(NOW)
+        self.assertEqual(self.ok(self.alice.get('/api/trading/risk/kill-switches'))['items'], [], 'a paper loss does not stop the broker book')
+        # The same loss in the BROKER book engages the account kill switch.
+        with self.connect() as db:
+            db.execute("UPDATE pf_positions SET mode='BROKER' WHERE account_id=%s", (UUID(a['id']),))
         runtime.cycle(NOW)
         kills = self.ok(self.alice.get('/api/trading/risk/kill-switches'))['items']
         self.assertEqual((kills[0]['scope'], kills[0]['automatic'], kills[0]['engaged_by']), ('ACCOUNT', True, 'risk-engine'))

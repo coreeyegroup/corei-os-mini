@@ -167,3 +167,30 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 4. First adapter once decision 1 is made, behind the adapter contract (G-P1-02).
 5. One real feed through to a reconciled order on DEMO accounts; then the LIVE switch can be considered.
 6. Trading screens on real data.
+
+## E. Wave 0 — 23 Nov 2026 audits (release 0.53.0)
+
+Source: Claude end-to-end audit and build specification, ChatGPT lifecycle audit, commit 673ccf3. Evidence: `backend/tests/test_wave0.py`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| C-01 / L-1 | LIVE order sending possible with no limit policy | DONE 0.53.0 (switch refused; dispatch refuses new LIVE risk) | test_live_policy_gates_switch_dispatch_and_home |
+| C-03 / C-21 | Reconciliation read 3 days by wall clock; aged-out breaks closed as matched | DONE 0.53.0 | test_old_deal_is_still_checked_and_aged_break_stays_open, test_verified_interval_drives_history_read, test_broker_read_failure_clears_nothing |
+| C-04 | Setup › Database could edit the trading ledger | DONE 0.53.0 | test_db_admin.test_trading_ledger_is_never_edited_here |
+| C-12 | Working orders not reserved against limits | DONE 0.53.0 | test_working_orders_count_against_position_limit, test_concurrent_checks_cannot_both_pass |
+| C-14 | Home did not flag unsafe LIVE state | DONE 0.53.0 | test_live_policy_gates_switch_dispatch_and_home |
+| C-16 | Release identity inconsistent | DONE 0.53.0 | test_workstation_reports_release_commit_and_schema |
+| C-17 | Paper book mixed into broker risk | DONE 0.53.0 | test_paper_results_never_reach_the_broker_book; test_trading.test_broker_mode_refused_and_loss_limit_stops |
+| C-18 | Unvalued holding counted as zero / dropped | DONE 0.53.0 | test_unvalued_holding_refuses_risk_increase_but_allows_reduction |
+| C-19 | Broker sizing fell back to internal equity | DONE 0.53.0 | test_broker_sizing_never_falls_back_to_paper_equity |
+| C-20 | Fill with no position row invisible | DONE 0.53.0 | test_fill_without_position_row_is_a_break |
+| C-23 | Manual resolution could overfill | DONE 0.53.0 | test_manual_resolution_capped_and_overfill_recorded |
+| C-28 / C-13 | Order rate limiter never called; no Upstox Algo Name | DONE 0.53.0 (single-process limiter) | test_dispatch_respects_the_connection_order_rate, test_upstox_algo_name_header_on_sending_calls |
+| C-22 | "Brokers agree" without working orders or cash compared | PARTIAL 0.53.0 (coverage recorded, text corrected; UI per-account coverage in W1-3) | run coverage in test_old_deal… |
+| C-25 | Daily loss adds all current unrealised P&L (UTC day) | OPEN — W1-6 (owner to define the trading day) | — |
+| C-05 | No pending-replace state for amendments | OPEN — W1-1 | — |
+| C-02 | No paper-to-live promotion gate | OPEN — W1-2 | — |
+| C-06 | Approved risk/sizing graphs not executed | OPEN — W1-4 | — |
+| C-24 | No account entitlements | OPEN — W1-7 (owner decision 7) | — |
+
+Waves 1–3 and their acceptance criteria: COREI-OS-MINI Final Build Specification (claude.ai artifact LcgAGcpqD6fTsWWgEW9Har).

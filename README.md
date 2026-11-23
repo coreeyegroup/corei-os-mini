@@ -1211,3 +1211,48 @@ Steadier screens:
 - *All panels* shows a light summary of the graphs with *Open* instead of a full canvas in a panel.
 - "Nothing is running yet" shows only on *All panels*, not above every item.
 - A link that opens a domain at an item now opens that item even while the domain is still loading.
+
+## Financial integrity and the pre-LIVE policy (Wave 0) — release 0.53.0
+
+Closes the safety and money defects found by the 23 Nov 2026 audits (Claude and ChatGPT, commit 673ccf3). Migration
+`043_wave0_financial_integrity.sql` (additive). Tests: `backend/tests/test_wave0.py` (13 cases, PostgreSQL).
+
+- **Paper never moves a broker decision.** Equity, daily P&L, exposure, margin, VaR and drawdown are taken from the
+  order's own book (PAPER or BROKER). Account-wide figures are labelled *ALL* and used only for reporting. Equity
+  snapshots are kept per book; older snapshots stay as the account-wide series. A paper loss stops paper
+  deployments, never the account's real trading.
+- **Unknown is not zero.** A holding with no live price has unknown unrealised P&L (it was counted as 0); one with no
+  FX conversion is listed instead of silently dropped from exposure. A risk-increasing order under a money or loss
+  limit is refused with `VALUATION_INCOMPLETE` and the holdings named; reducing orders still pass.
+- **Sizing states its capital.** A BROKER deployment sizes from the broker's equity only when it is present, positive
+  and recent; zero, missing, old or margin-only (Upstox) replies refuse with `CAPITAL_BASIS_UNAVAILABLE` instead of
+  falling back to the paper record. Fixed-quantity and fixed-notional sizing need no equity.
+- **Working orders are reserved.** Position, instrument and gross-exposure limits count every working order's unfilled
+  remainder in the same book (UNKNOWN and cancel-pending included), and the check per account book is serialised, so
+  two orders that each fit cannot together pass a limit.
+- **Reconciliation keeps its evidence.** Broker deals are read from the account's last verified point (not a fixed 3
+  days; MT5 up to 90 days) and every stored deal of a COREI order is checked for its fill, whatever its age. A break
+  closes only when a later run examined the same item and found it matched — never because it fell outside a window
+  or the broker could not be read. Fills with no position row are now a break. Each run records what it compared
+  (positions, deals, working orders, cash) and any history gap; the empty-breaks text no longer claims full agreement.
+- **Manual fills cannot exceed the order.** Resolving an UNKNOWN order is capped at what remains; a broker fill above
+  the order quantity is booked (the exposure is real) and kept as an open break with its evidence.
+- **One protected database editor policy.** Setup › Database and System › Tables share `db_policy.py`: the trading
+  ledger (orders, fills, positions, risk, reconciliation, strategy runtime), logs and secrets are never written, and
+  their structure never changed, from an editor; configuration tables follow `infra_edit_controlled_tables` in both;
+  a delete that would cascade into protected records is refused.
+- **Order rate per connection.** Every send, amend and cancel takes a slot of the connection's
+  `max_orders_per_second` (strict rolling second). Over the rate an order waits APPROVED for the next dispatch;
+  cancels wait for a slot. Upstox connections can carry an exchange-registered Algo Name, sent as `X-Algo-Name` on
+  place, modify and cancel (COREI's tag stays for correlation).
+- **Pre-LIVE policy.** LIVE order sending cannot be turned on until: every LIVE trading account is covered by
+  `MAX_ORDER_NOTIONAL`, `MAX_DAILY_LOSS` and `MAX_POSITION_QTY` or `MAX_GROSS_EXPOSURE`; the four-eyes rule holds every
+  LIVE order (`ALL`); two active risk approvers exist; an alert channel is active. The last three can be waived only
+  by a recorded exception of 1–30 days (Setup API `/api/config/live-readiness`). If LIVE is already on, the
+  dispatcher refuses every new LIVE order that adds risk while the policy is unmet (REJECTED, reason LIVE_POLICY_UNMET;
+  reducing orders still go), and
+  Home shows each unmet rule as CRITICAL. **Existing installs: LIVE stays as it is switched; new LIVE exposure waits
+  for the policy (they are refused until it is met).**
+- **Release identity.** One `VERSION` file; `/api/workstation` and the status bar show release, commit and schema.
+
+Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.

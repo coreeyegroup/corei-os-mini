@@ -111,6 +111,15 @@ class Execution(tt.Trading):
         self.quote(a['id'], 1.08000, 1.08010, NOW)
         return connection, a, b, instrument
 
+    def live_ready(self, account):
+        """Meet the pre-LIVE policy for one LIVE account: firm limits, four-eyes on every LIVE order, an alert channel
+        (alice and bob are both risk approvers)."""
+        for kind, value in (('MAX_ORDER_NOTIONAL', '10000000'), ('MAX_DAILY_LOSS', '100000'), ('MAX_POSITION_QTY', '100')):
+            self.ok(self.alice.post('/api/trading/risk/limits', json={'scope': 'FIRM', 'kind': kind, 'value': value, 'reason': 'pre-LIVE policy'}), 201)
+        with self.connect() as db:
+            db.execute("UPDATE tr_settings SET live_four_eyes='ALL'")
+            db.execute("INSERT INTO cfg_alert_channels(id, kind, name, target) VALUES (gen_random_uuid(), 'WEBHOOK', 'desk', 'https://example.invalid/hook')")
+
     def sending(self, env='DEMO', on=True):
         with self.connect() as db:
             db.execute('UPDATE cfg_execution_controls SET trading_enabled=%s WHERE environment=%s', (on, env))
@@ -247,6 +256,7 @@ class Execution(tt.Trading):
 
     def test_four_eyes_on_live(self):
         _connection, a, _b, ins = self.real_account('LIVE')
+        self.live_ready(a)
         self.sending('LIVE')
         o = self.place(a, ins, 'live-1', source='MANUAL', actor='alice')
         self.assertTrue(o['hold_for_approval'])

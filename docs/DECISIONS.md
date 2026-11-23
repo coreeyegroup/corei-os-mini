@@ -96,3 +96,17 @@ handling, signals from live data, risk limits, and reconciliation — built in 0
 by tests against a scripted broker. Still to be shown on a demo account before LIVE: a run of real demo orders
 through each bridge node (send, partial, cancel, a lost answer resolved by look-up, reconciliation matched), and
 the go-live evidence in docs/GAP_REGISTER.md. Roles and four-eyes activation are in place (DEC-23, DEC-24).
+
+## DEC-97 · Pre-LIVE policy, book isolation and ledger protection (release 0.53.0, 23 Nov 2026)
+
+Context: two independent audits of commit 673ccf3 found LIVE order sending on with no risk limits, paper results in
+broker risk inputs, reconciliation clearing breaks that aged out of a 3-day window, and an editor able to change the
+trading ledger. Decision (engineering, within the existing guardrails; numeric limit values remain owner decision 5):
+1. Every risk figure used for a decision is taken from one book (PAPER or BROKER); consolidated figures are reporting only.
+2. Unknown values (no mark, no FX, no broker equity) refuse risk-increasing orders; they are never read as zero.
+3. LIVE order sending needs the pre-LIVE policy (limits; four-eyes ALL; two risk approvers; an alert channel). The last
+   three may be waived only by a recorded exception of at most 30 days. The policy is enforced again at dispatch for
+   orders that add risk. COREI never turns order sending off by itself.
+4. The trading ledger is written only by domain code; both editors enforce one policy (db_policy.py).
+5. Order rate limiting is in-process (one API process owns dispatch). A second sending process requires a shared
+   limiter first. Status: accepted.

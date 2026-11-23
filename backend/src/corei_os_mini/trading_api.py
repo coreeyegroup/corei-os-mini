@@ -685,7 +685,7 @@ def accounts(response: Response, _: str = Depends(require_operator)):
 def equity_curve(account_id: UUID, response: Response, days: int = Query(30, ge=1, le=400), _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        rows = db.execute('SELECT at, equity FROM pf_equity WHERE account_id=%s AND at > now() - make_interval(days => %s) ORDER BY at', (account_id, days)).fetchall()
+        rows = db.execute("SELECT at, equity FROM pf_equity WHERE account_id=%s AND book='ALL' AND at > now() - make_interval(days => %s) ORDER BY at", (account_id, days)).fetchall()
         step = max(1, len(rows) // 500)
         return {'items': _j([dict(r) for r in rows[::step]])}
 

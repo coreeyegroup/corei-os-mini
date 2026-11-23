@@ -1,7 +1,11 @@
 """Database editor for administrators: browse every table of COREI's database and add, edit or delete rows; add,
 rename, retype, change and drop columns; create and drop tables.
 
-Guard rails (not limits on what can be done):
+Guard rails:
+- One write policy with System › Tables (db_policy.py): the trading ledger (orders, fills, positions, risk,
+  reconciliation, strategy runtime), append-only logs and secrets are never written here; configuration tables with
+  their own controlled screens follow the policy infra_edit_controlled_tables. A delete is refused when it — or the
+  rows it would remove through foreign keys — touches a protected table. COREI's own tables keep their structure.
 - Only tables and columns that exist are named; identifiers are always quoted, values always passed as parameters.
 - Secrets stay secret: encrypted columns (bytea), password hashes and session token hashes are shown masked and
   cannot be written here (use the credential and user screens). Everything else is editable.
@@ -20,6 +24,7 @@ import psycopg
 from psycopg import sql
 
 from . import config_store as store
+from . import db_policy
 from .config import get_settings
 
 
@@ -123,6 +128,10 @@ def rows(table: str, limit: int, offset: int, search: str, order: str | None, de
                 'rows': [{k: _show(v, bycol[k]) for k, v in r.items()} for r in found]}
 
 
+def _guard_rows(db, table: str, cols: list[dict]) -> None:
+    db_policy.check_rows(table, any(c.get('primary_key') for c in cols), bool(store.policy(db, 'infra_edit_controlled_tables', False)))
+
+
 def _writable(cols: list[dict], values: dict) -> dict:
     bycol = {c['name']: c for c in cols}
     for name in values:
@@ -152,6 +161,7 @@ def _key_where(cols: list[dict], key: dict) -> sql.Composable:
 def insert_row(actor: str, table: str, values: dict, reason: str) -> dict:
     with _tx() as db:
         cols = _columns(db, table)
+        _guard_rows(db, table, cols)
         bycol = _writable(cols, values)
         if not values:
             row = db.execute(sql.SQL('INSERT INTO {} DEFAULT VALUES RETURNING *').format(sql.Identifier(table))).fetchone()
@@ -166,6 +176,7 @@ def insert_row(actor: str, table: str, values: dict, reason: str) -> dict:
 def update_row(actor: str, table: str, key: dict, values: dict, reason: str) -> dict:
     with _tx() as db:
         cols = _columns(db, table)
+        _guard_rows(db, table, cols)
         bycol = _writable(cols, values)
         if not values:
             raise HTTPException(422, 'Nothing to change.')
@@ -235,10 +246,16 @@ def delete_row(actor: str, table: str, key: dict, reason: str, with_linked: bool
     """Delete one row. with_linked: first delete every row in other tables that points at it (deepest first)."""
     with _tx() as db:
         cols = _columns(db, table)
+        _guard_rows(db, table, cols)
         where = _key_where(cols, key)
         removed: list[dict] = []
+        touched = [st for st in _linked(db, table, where) if st['rows']]
+        blocked = sorted({st['table'] for st in touched if db_policy.is_ledger(st['table']) or st['table'] in db_policy.READ_ONLY_TABLES})
+        if blocked:
+            raise HTTPException(403, f"Deleting this row would also change protected records in {', '.join(blocked)}; "
+                                     'remove it through its own screen instead.')
         if with_linked:
-            steps = _linked(db, table, where)
+            steps = touched
             for st in steps:
                 if st['action'] == 'delete':
                     n = db.execute(sql.SQL('DELETE FROM {} WHERE {}').format(sql.Identifier(st['table']), st['cond'])).rowcount
@@ -273,6 +290,7 @@ def _ident(name: str) -> str:
 
 def add_column(actor: str, table: str, name: str, type_: str, nullable: bool, default: str | None, reason: str) -> dict:
     with _tx() as db:
+        db_policy.check_structure(table)
         _columns(db, table)
         q = sql.SQL('ALTER TABLE {} ADD COLUMN {} {}').format(sql.Identifier(table), sql.Identifier(_ident(name)), _type(type_))
         if default not in (None, ''):
@@ -287,6 +305,7 @@ def add_column(actor: str, table: str, name: str, type_: str, nullable: bool, de
 def change_column(actor: str, table: str, column: str, rename_to: str | None, type_: str | None, nullable: bool | None,
                   default: str | None, drop_default: bool, reason: str) -> dict:
     with _tx() as db:
+        db_policy.check_structure(table)
         cols = {c['name']: c for c in _columns(db, table)}
         if column not in cols:
             raise HTTPException(404, f'No column {column}.')
@@ -309,6 +328,7 @@ def change_column(actor: str, table: str, column: str, rename_to: str | None, ty
 
 def drop_column(actor: str, table: str, column: str, confirm: str, reason: str) -> dict:
     with _tx() as db:
+        db_policy.check_structure(table)
         cols = {c['name'] for c in _columns(db, table)}
         if column not in cols:
             raise HTTPException(404, f'No column {column}.')
@@ -321,6 +341,8 @@ def drop_column(actor: str, table: str, column: str, confirm: str, reason: str) 
 
 def create_table(actor: str, name: str, reason: str) -> dict:
     with _tx() as db:
+        if db_policy.is_ledger(name) or name in db_policy.READ_ONLY_TABLES:
+            raise HTTPException(403, f'{name} is a name reserved for COREI\'s own record.')
         db.execute(sql.SQL('CREATE TABLE {} (id bigserial PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now())').format(sql.Identifier(_ident(name))))
         store.audit(db, actor, 'DB_CREATE_TABLE', f'db:{name}', name, None, {'table': name}, reason)
         return {'columns': _columns(db, name)}
@@ -328,6 +350,7 @@ def create_table(actor: str, name: str, reason: str) -> dict:
 
 def drop_table(actor: str, table: str, confirm: str, reason: str) -> None:
     with _tx() as db:
+        db_policy.check_structure(table)
         _columns(db, table)
         if confirm != table:
             raise HTTPException(422, f'Type {table} exactly to drop the table.')

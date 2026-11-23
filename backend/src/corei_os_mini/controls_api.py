@@ -94,6 +94,36 @@ def set_policy(key: str, payload: dict, response: Response, user: Principal = De
     return controls.set_policy(user.username, key, data.value, data.version, data.reason)
 
 
+# ---------- LIVE readiness (pre-LIVE policy) ----------
+
+@router.get('/live-readiness')
+def live_readiness(response: Response, _: str = Depends(require_operator)):
+    """The pre-LIVE policy: each unmet rule with where to fix it, waived rules with their exception, and the
+    recorded exceptions."""
+    _no_store(response)
+    from .trading import readiness
+    with store.transaction('read') as db:
+        status = readiness.live_policy(db)
+        items = [store.clean(r) for r in db.execute('SELECT * FROM cfg_policy_exceptions ORDER BY created_at DESC LIMIT 100').fetchall()]
+    return {**status, 'exceptions': items}
+
+
+@router.post('/live-readiness/exceptions', status_code=201)
+def add_policy_exception(payload: dict, response: Response, user: Principal = Depends(_risk), _: Principal = Depends(require_reauth)):
+    """An owner's recorded, expiring waiver of one waivable pre-LIVE rule (not risk limits)."""
+    _no_store(response)
+    from .trading import readiness
+    return readiness.add_exception(user.username, str(payload.get('code') or ''), str(payload.get('reason') or ''), int(payload.get('days') or 0))
+
+
+@router.post('/live-readiness/exceptions/{exception_id}/revoke')
+def revoke_policy_exception(exception_id: UUID, payload: dict, response: Response, user: Principal = Depends(_risk),
+                            _: Principal = Depends(require_reauth)):
+    _no_store(response)
+    from .trading import readiness
+    return readiness.revoke_exception(user.username, exception_id, str(payload.get('reason') or ''))
+
+
 # ---------- alerts ----------
 
 @router.get('/alerts/channels')
@@ -328,6 +358,17 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         'step': nxt['step'], 'goto': {'view': 'Market data', 'section': 'plans'} if nxt['section'] == 'plans' else {'view': 'Configuration', 'section': nxt['section']}},
         'steps': [{'step': c['step'], 'done': c['done'], 'section': c['section']} for c in checklist]}
     order = store.list_execution_controls()
+    from .trading import readiness
+    with store.transaction('read') as db:
+        live_policy = readiness.live_policy(db)
+    live_on = any(o['trading_enabled'] for o in order if o['environment'] == 'LIVE')
+    for u in live_policy['unmet']:
+        attention.append({'severity': 'CRITICAL' if live_on else 'WARNING', 'area': 'LIVE readiness',
+                          'title': ('LIVE order sending is ON but ' if live_on else 'Before LIVE: ') + {
+                              'LIVE_LIMITS_MISSING': 'risk limits are missing', 'LIVE_FOUR_EYES_NOT_ALL': 'automated LIVE orders are not held for a second person',
+                              'LIVE_NO_SECOND_APPROVER': 'there is no second risk approver', 'LIVE_NO_ALERT_CHANNEL': 'no alert channel is set up'}.get(u['code'], u['code']),
+                          'detail': u['detail'] + (' New LIVE orders that add risk are refused until this is fixed.' if live_on else ''),
+                          'goto': u['goto']})
     if any(o['trading_enabled'] for o in order) and not store.ORDER_ADAPTERS:
         on = ', '.join(o['environment'] for o in order if o['trading_enabled'])
         attention.append({'severity': 'WARNING', 'area': 'Order sending',
@@ -339,6 +380,7 @@ def overview(response: Response, user: Principal = Depends(current_user)):
                       'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
+            'live_policy': live_policy,
             'setup': setup,
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}

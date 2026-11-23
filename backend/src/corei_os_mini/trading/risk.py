@@ -14,6 +14,13 @@ trading_api.
 Architectural position: Stage 5, between the decision (Stage 3) and execution (Stage 7).
 Conventions: reduce-only orders (they shrink an open position) skip the position, exposure and loss limits but not
 the kill switches, except an operator's flatten, which a kill switch allows (it removes risk).
+Books: every figure is taken from the order's own book (PAPER or BROKER); paper results never move a broker decision.
+Working orders: position and exposure limits count what is already working at the broker (the unfilled remainder of
+every live order in the same book) as if it filled, so two orders that each fit cannot together exceed a limit; the
+check for an account and book is serialised with a transaction-scoped advisory lock.
+Valuation: a risk-increasing order is refused under a money limit when any holding of its book has no price or no FX
+conversion (VALUATION_INCOMPLETE) — an unknown value is never read as zero. Sizing never substitutes paper equity
+for a broker account whose equity is missing, zero, old or margin-only (CAPITAL_BASIS_UNAVAILABLE).
 """
 from __future__ import annotations
 
@@ -30,6 +37,7 @@ from .. import config_store as store
 from ..md import markets
 from . import portfolio
 from .common import D, ZERO, floor_step, fx_rate, instrument
+from .common import quote as live_quote
 
 SCOPES = ('FIRM', 'ACCOUNT', 'STRATEGY', 'INSTRUMENT', 'DEPLOYMENT')
 KINDS = {
@@ -198,6 +206,9 @@ def size(db, dep: dict, price: Decimal, atr: float | None) -> tuple[Decimal | No
         qty = (D(s.get('quantity')) or Decimal(1)) * weight
         return qty, f"fixed {s.get('quantity')}" + (f' × weight {weight.normalize()}' if weight != 1 else '')
     eq = portfolio.sizing_equity(db, dep)
+    if method != 'FIXED_NOTIONAL' and eq.get('equity') is None:
+        return None, (f"CAPITAL_BASIS_UNAVAILABLE: {eq.get('basis')} is {str(eq.get('state', 'missing')).lower().replace('_', ' ')}"
+                      ' — no figure to size from (the broker book is never sized from the paper record)')
     rate = fx_rate(db, ins.get('quote_currency'), eq['currency'])
     if rate is None:
         return None, f"FX_RATE_MISSING: no collected pair converts {ins.get('quote_currency')} to {eq['currency']}"
@@ -224,6 +235,30 @@ def lot(db, instrument_id, qty: Decimal) -> tuple[Decimal, str | None]:
 
 # ---------- the pre-trade check ----------
 
+WORKING_STATES = ('APPROVED', 'SUBMITTED', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'CANCEL_PENDING', 'UNKNOWN')
+
+
+def lock_book(db, account_id, mode: str) -> None:
+    """Serialise risk checks for one account book until the transaction ends (two orders cannot both pass a limit
+    that only one fits). Taken before any figure is read; never held across a broker call (checks run before sending)."""
+    db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f'risk:{account_id}:{mode}',))
+
+
+def working(db, account_id, mode: str, exclude=None) -> dict[str, dict]:
+    """Unfilled remainders of the book's live orders per instrument: {instrument_id: {'BUY': qty, 'SELL': qty, 'price': {...}}}.
+    UNKNOWN and cancel-pending orders count: their outcome is not known, so their quantity stays reserved."""
+    out: dict[str, dict] = {}
+    rows = db.execute("""SELECT instrument_id, side, sum(quantity - filled_qty) AS rem, max(COALESCE(limit_price, stop_price)) AS level
+                           FROM oms_orders WHERE account_id=%s AND mode=%s AND state = ANY(%s) AND id IS DISTINCT FROM %s
+                          GROUP BY 1, 2""", (str(account_id), mode, list(WORKING_STATES), str(exclude) if exclude else None)).fetchall()
+    for r in rows:
+        e = out.setdefault(str(r['instrument_id']), {'BUY': ZERO, 'SELL': ZERO, 'level': None})
+        e[r['side']] = D(r['rem'])
+        e['level'] = r['level'] if r['level'] is not None else e['level']
+    return out
+
+
+
 def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict | None, flatten: bool = False) -> dict:
     """Every check, in order; returns {approved, quantity, reasons, inputs}. A check that cannot be made refuses."""
     reasons: list[str] = []
@@ -231,11 +266,20 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
     scopes = {'ACCOUNT': str(order['account_id']), 'INSTRUMENT': str(order['instrument_id']),
               'STRATEGY': str(deployment['strategy_id']) if deployment else None, 'DEPLOYMENT': str(deployment['id']) if deployment else None}
     qty = order['quantity']
-    current = portfolio.position_qty(db, order['account_id'], order['instrument_id'], mode=order['mode'])
+    mode = order['mode']
+    lock_book(db, order['account_id'], mode)
+    current = portfolio.position_qty(db, order['account_id'], order['instrument_id'], mode=mode)
     signed = qty if order['side'] == 'BUY' else -qty
     after = current + signed
     reducing = current != 0 and abs(after) < abs(current) and (after == 0 or (after > 0) == (current > 0))
-    inputs = {'position_before': str(current), 'position_after': str(after), 'reduce_only': reducing}
+    work = working(db, order['account_id'], mode, exclude=order.get('id'))
+    mine = work.get(str(order['instrument_id']), {'BUY': ZERO, 'SELL': ZERO})
+    # The largest long and short the book could reach if every working order and this one filled.
+    reach_long = current + mine['BUY'] + (qty if order['side'] == 'BUY' else ZERO)
+    reach_short = current - mine['SELL'] - (qty if order['side'] == 'SELL' else ZERO)
+    projected = max(abs(reach_long), abs(reach_short))
+    inputs = {'book': mode, 'position_before': str(current), 'position_after': str(after), 'reduce_only': reducing,
+              'working_buy': str(mine['BUY']), 'working_sell': str(mine['SELL']), 'position_projected': str(projected)}
 
     # 1. Kill switches (an operator's flatten may still remove risk).
     for k in engaged(db, scopes):
@@ -299,63 +343,91 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
     level = order.get('limit_price') or order.get('stop_price')
     if 'MAX_PRICE_DEVIATION_PCT' in lim and level and quote is not None and quote['mid']:
         over('MAX_PRICE_DEVIATION_PCT', (abs(D(level) - quote['mid']) / quote['mid'] * 100).quantize(Decimal('0.01')), 'price away from the market %')
-    open_orders = db.execute("SELECT count(*) AS n FROM oms_orders WHERE account_id=%s AND state IN ('APPROVED','SUBMITTED','ACKNOWLEDGED','PARTIALLY_FILLED','CANCEL_PENDING','UNKNOWN')",
-                             (str(order['account_id']),)).fetchone()['n']
+    open_orders = db.execute('SELECT count(*) AS n FROM oms_orders WHERE account_id=%s AND mode=%s AND state = ANY(%s) AND id IS DISTINCT FROM %s',
+                             (str(order['account_id']), mode, list(WORKING_STATES), str(order['id']) if order.get('id') else None)).fetchone()['n']
     over('MAX_OPEN_ORDERS', Decimal(open_orders + 1), 'working orders')
     per_min = db.execute('SELECT count(*) AS n FROM oms_orders WHERE account_id=%s AND created_at > %s', (str(order['account_id']), now - timedelta(minutes=1))).fetchone()['n']
     over('MAX_ORDERS_PER_MINUTE', Decimal(per_min + 1), 'orders this minute')
+    valuation = None
     if not reducing:
-        over('MAX_POSITION_QTY', abs(after), 'position')
-        if any(k in lim for k in ('MAX_DAILY_LOSS', 'MAX_DRAWDOWN_PCT')):
-            eq = portfolio.equity(db, order['account_id'])
+        over('MAX_POSITION_QTY', projected, 'position')
+        loss_kinds = ('MAX_DAILY_LOSS', 'MAX_DRAWDOWN_PCT')
+        money_kinds = ('MAX_GROSS_EXPOSURE', 'MAX_INSTRUMENT_EXPOSURE', 'MAX_ORDER_NOTIONAL', 'MAX_MARGIN_PCT', 'MAX_LEVERAGE', 'MAX_VAR_PCT')
+        eq = portfolio.equity(db, order['account_id'], mode) if any(k in lim for k in loss_kinds + money_kinds) else None
+        if eq is not None:
+            valuation = {'book': mode, 'complete': eq['complete'], 'unvalued': eq['unvalued'], 'currency': eq['currency']}
+            if eq['unvalued'] and any(k in lim for k in loss_kinds + money_kinds if k != 'MAX_ORDER_NOTIONAL'):
+                names = ', '.join(f"{u['symbol']} ({'no price' if u['reason'] == 'NO_MARK' else 'no FX rate'})" for u in eq['unvalued'][:5])
+                reasons.append(f'VALUATION_INCOMPLETE: holdings of the {mode.lower()} book cannot be valued: {names}')
+        if any(k in lim for k in loss_kinds):
             if eq['missing_fx']:
                 reasons.append(f"FX_RATE_MISSING: cannot value positions in {', '.join(eq['missing_fx'])} in {eq['currency']}")
-            loss = -portfolio.day_pnl(db, order['account_id'])
+            loss = -portfolio.day_pnl(db, order['account_id'], mode=mode)
             inputs.update({'equity': str(eq['equity']), 'drawdown_pct': str(eq['drawdown_pct']), 'day_loss': str(loss)})
             over('MAX_DAILY_LOSS', loss, 'loss today')
             over('MAX_DRAWDOWN_PCT', eq['drawdown_pct'], 'drawdown %')
-        money_kinds = ('MAX_GROSS_EXPOSURE', 'MAX_INSTRUMENT_EXPOSURE', 'MAX_ORDER_NOTIONAL', 'MAX_MARGIN_PCT', 'MAX_LEVERAGE', 'MAX_VAR_PCT')
         if any(k in lim for k in money_kinds):
-            eq = portfolio.equity(db, order['account_id'])
             if quote is not None:
                 rate = fx_rate(db, ins.get('quote_currency'), eq['currency'])
                 if rate is None:
                     reasons.append(f"FX_RATE_MISSING: no collected pair converts {ins.get('quote_currency')} to {eq['currency']}")
                 else:
                     contract = D(ins.get('contract_size')) or Decimal(1)
-                    exp = portfolio.exposure(db, order['account_id'])
+                    exp = portfolio.exposure(db, order['account_id'], mode)
                     gross = sum((a['gross'] for a in exp['accounts']), ZERO)
-                    this = next((e['net'] for e in exp['instruments'] if e['instrument_id'] == str(order['instrument_id'])), ZERO)
-                    add = qty * quote['mid'] * contract * rate
-                    signed_add = add if order['side'] == 'BUY' else -add
-                    over('MAX_GROSS_EXPOSURE', (gross + add).quantize(Decimal('0.01')), 'gross exposure')
-                    over('MAX_INSTRUMENT_EXPOSURE', abs(this + signed_add).quantize(Decimal('0.01')), 'exposure in this instrument')
+                    held = {str(p['instrument_id']): D(p['quantity']) for p in portfolio.positions(db, order['account_id'], mode=mode)}
+                    # Working orders in other instruments that would grow the book's gross exposure if they filled.
+                    pending = ZERO
+                    for iid, w in work.items():
+                        if iid == str(order['instrument_id']):
+                            continue
+                        cur = held.get(iid, ZERO)
+                        grow = max(abs(cur + w['BUY']), abs(cur - w['SELL'])) - abs(cur)
+                        if grow <= 0:
+                            continue
+                        wins = instrument(db, iid)
+                        wq = live_quote(db, order['account_id'], iid)
+                        wrate = fx_rate(db, wins.get('quote_currency'), eq['currency'])
+                        wpx = wq['mid'] if wq else (D(w['level']) if w['level'] is not None else None)
+                        if wpx is None or wrate is None:
+                            reasons.append(f"VALUATION_INCOMPLETE: a working order in {wins.get('symbol')} cannot be valued")
+                            continue
+                        pending += grow * wpx * (D(wins.get('contract_size')) or Decimal(1)) * wrate
+                    unit = quote['mid'] * contract * rate
+                    add = qty * unit
+                    grow_here = (projected - abs(current)) * unit if projected > abs(current) else ZERO
+                    signed_reach = (reach_long if order['side'] == 'BUY' else reach_short) * unit
+                    inputs['gross_pending_working'] = str(pending.quantize(Decimal('0.01')))
+                    over('MAX_GROSS_EXPOSURE', (gross + pending + grow_here).quantize(Decimal('0.01')), 'gross exposure')
+                    over('MAX_INSTRUMENT_EXPOSURE', abs(signed_reach).quantize(Decimal('0.01')), 'exposure in this instrument')
                     over('MAX_ORDER_NOTIONAL', add.quantize(Decimal('0.01')), 'order value')
                     equity_now = eq['equity']
                     if any(k in lim for k in ('MAX_MARGIN_PCT', 'MAX_LEVERAGE', 'MAX_VAR_PCT')) and equity_now <= 0:
                         reasons.append('EQUITY_NOT_POSITIVE: margin, leverage and VaR limits cannot be checked')
                     elif equity_now > 0:
-                        m = margin(db, order['account_id'], extra=(order['instrument_id'], signed, quote['mid']))
-                        inputs.update({'margin_after': str(m['used_after']), 'leverage_after': str(((gross + add) / equity_now).quantize(Decimal('0.01')))})
+                        m = margin(db, order['account_id'], extra=(order['instrument_id'], signed, quote['mid']), mode=mode)
+                        lev_after = ((gross + pending + grow_here) / equity_now).quantize(Decimal('0.01'))
+                        inputs.update({'margin_after': str(m['used_after']), 'leverage_after': str(lev_after)})
                         over('MAX_MARGIN_PCT', (m['used_after'] / equity_now * 100).quantize(Decimal('0.01')), 'margin in use %')
-                        over('MAX_LEVERAGE', ((gross + add) / equity_now).quantize(Decimal('0.01')), 'leverage')
+                        over('MAX_LEVERAGE', lev_after, 'leverage')
                         if 'MAX_VAR_PCT' in lim:
                             from . import var
-                            v = var.account_var(db, order['account_id'], extra=(str(order['instrument_id']), signed))
+                            v = var.account_var(db, order['account_id'], extra=(str(order['instrument_id']), signed), mode=mode)
                             if v.get('error'):
                                 reasons.append(f"VAR_UNAVAILABLE: {v['error']}")
                             else:
                                 inputs['var_after'] = str(v['var'])
                                 over('MAX_VAR_PCT', (v['var'] / equity_now * 100).quantize(Decimal('0.01')), f"VaR {v['confidence']}% %")
     approved = not reasons
-    db.execute('INSERT INTO risk_decisions(id, order_id, intent_id, deployment_id, account_id, instrument_id, side, requested_qty, approved_qty, approved, reasons, inputs, at) '
-               'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+    db.execute('INSERT INTO risk_decisions(id, order_id, intent_id, deployment_id, account_id, instrument_id, side, requested_qty, approved_qty, approved, reasons, inputs, at, '
+               'book_mode, valuation) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                (uuid4(), order.get('id'), order.get('intent_id'), scopes['DEPLOYMENT'], str(order['account_id']), str(order['instrument_id']), order['side'],
-                qty, qty if approved else None, approved, json.dumps(reasons), json.dumps(inputs, default=str), now))
+                qty, qty if approved else None, approved, json.dumps(reasons), json.dumps(inputs, default=str), now, mode,
+                json.dumps(valuation, default=str) if valuation is not None else None))
     return {'approved': approved, 'quantity': qty, 'reasons': reasons, 'inputs': inputs}
 
 
-def margin(db, account_id, extra: tuple | None = None) -> dict:
+def margin(db, account_id, extra: tuple | None = None, mode: str | None = None) -> dict:
     """Margin in use (account currency) from position values and the account's leverage (1 when not known, i.e. fully
     paid); with extra=(instrument_id, signed qty, price) also after an order. The broker's own figure, when a recent
     snapshot exists, is reported beside it."""
@@ -363,7 +435,7 @@ def margin(db, account_id, extra: tuple | None = None) -> dict:
     lev = Decimal(acc['leverage']) if acc and acc['leverage'] else Decimal(1)
     used = ZERO
     net: dict = {}
-    for p in portfolio.positions(db, account_id):
+    for p in portfolio.positions(db, account_id, mode=mode):
         if p['notional_account'] is None:
             continue
         used += p['notional_account'] / lev
@@ -383,22 +455,31 @@ def margin(db, account_id, extra: tuple | None = None) -> dict:
 
 
 def auto_stop(db, now: datetime) -> list[dict]:
-    """Engage the account kill switch when its daily loss or drawdown limit is breached (once; released by a person)."""
+    """Stop new orders when a daily loss or drawdown limit is breached, book by book (once; released by a person):
+    a BROKER book breach engages the account's kill switch; a PAPER book breach engages a kill switch on each of the
+    account's paper deployments, so a paper loss never stops real trading."""
     engaged_now = []
     for r in db.execute("SELECT * FROM risk_limits WHERE enabled AND kind IN ('MAX_DAILY_LOSS','MAX_DRAWDOWN_PCT') AND scope IN ('ACCOUNT','FIRM')").fetchall():
         accounts = [r['target_id']] if r['scope'] == 'ACCOUNT' else [x['account_id'] for x in db.execute('SELECT DISTINCT account_id FROM pf_positions').fetchall()]
         for aid in accounts:
-            if engaged(db, {'ACCOUNT': str(aid)}) and any(k['scope'] == 'ACCOUNT' for k in engaged(db, {'ACCOUNT': str(aid)})):
-                continue
-            if r['kind'] == 'MAX_DAILY_LOSS':
-                value = -portfolio.day_pnl(db, aid)
-            else:
-                value = portfolio.equity(db, aid)['drawdown_pct']
-            if value > D(r['value']):
+            for mode in [x['mode'] for x in db.execute('SELECT DISTINCT mode FROM pf_positions WHERE account_id=%s', (str(aid),)).fetchall()]:
+                if any(k['scope'] == 'ACCOUNT' for k in engaged(db, {'ACCOUNT': str(aid)})):
+                    break
+                if r['kind'] == 'MAX_DAILY_LOSS':
+                    value = -portfolio.day_pnl(db, aid, mode=mode)
+                else:
+                    value = portfolio.equity(db, aid, mode)['drawdown_pct']
+                if value <= D(r['value']):
+                    continue
                 code = db.execute('SELECT code FROM cfg_accounts WHERE id=%s', (str(aid),)).fetchone()['code']
-                text = (f"{code}: loss today {value:.2f} above the limit {D(r['value']).normalize()}" if r['kind'] == 'MAX_DAILY_LOSS'
-                        else f"{code}: drawdown {value}% above the limit {D(r['value']).normalize()}%")
-                engaged_now.append(engage('risk-engine', KillIn(scope='ACCOUNT', target_id=aid, reason=text), automatic=True, db=db))
+                text = (f"{code} ({mode.lower()} book): loss today {value:.2f} above the limit {D(r['value']).normalize()}" if r['kind'] == 'MAX_DAILY_LOSS'
+                        else f"{code} ({mode.lower()} book): drawdown {value}% above the limit {D(r['value']).normalize()}%")
+                if mode == 'BROKER':
+                    engaged_now.append(engage('risk-engine', KillIn(scope='ACCOUNT', target_id=aid, reason=text), automatic=True, db=db))
+                    continue
+                for d in db.execute("SELECT id FROM cfg_deployments WHERE account_id=%s AND mode='PAPER'", (str(aid),)).fetchall():
+                    if not engaged(db, {'DEPLOYMENT': str(d['id'])}):
+                        engaged_now.append(engage('risk-engine', KillIn(scope='DEPLOYMENT', target_id=d['id'], reason=text), automatic=True, db=db))
     return engaged_now
 
 

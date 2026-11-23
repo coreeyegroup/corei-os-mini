@@ -349,7 +349,7 @@ function Breaks({ ctx }: { ctx: Ctx }) {
         {b.kind === 'FILL_MISSING' && <button className="primary" onClick={() => act(b, 'APPLY_FILL', 'Apply the broker deal to its COREI order')}>Apply fill</button>}
         {['NOT_IN_COREI', 'POSITION_MISMATCH'].includes(b.kind) && <button onClick={() => act(b, 'ADOPT_POSITION', 'Adopt the broker position into COREI (nothing is sent)')}>Adopt</button>}
         <button onClick={() => act(b, 'ACCEPT', 'Accept as known')}>Accept</button><button onClick={() => act(b, 'RESOLVE', 'Mark resolved')}>Resolved</button></>]]}
-      rows={data?.items ?? []} empty={state === 'OPEN' ? 'No open breaks: COREI and the brokers agree.' : 'None.'} />
+      rows={data?.items ?? []} empty={state === 'OPEN' ? 'No open breaks in what was compared (COREI\'s own records, and broker positions and deals where the broker was read). Working orders and cash are not compared yet; each account\'s last run shows what it covered.' : 'None.'} />
     <p className="cfg-note"><b>Position mismatch / missing at broker / not in COREI</b>: net positions differ (COREI's magic number on MT5). <b>Fill missing</b>: the broker has a deal for a COREI order that COREI has not applied.
       <b> External trade</b>: a deal or position placed outside COREI. <b>Internal</b>: a COREI position differs from its own fills. Accepted breaks are not raised again while their values stay the same.</p></section>;
 }

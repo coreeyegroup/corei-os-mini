@@ -42,6 +42,31 @@ class Lost(Exception):
     """The request was sent and no answer came back: outcome unknown."""
 
 
+class Throttled(NotSent):
+    """The connection's order rate is used up: nothing was sent; try again shortly."""
+
+
+def throttle(account_id, wait_up_to: float = 0.0, clock=None) -> None:
+    """Take one slot of the account's connection order rate before an outbound send, amend or cancel; raises
+    Throttled (nothing sent) when none frees within `wait_up_to` seconds. Cancels pass a wait (they remove risk)."""
+    import time as _time
+    from .. import rate_limit
+    with store.transaction('read') as db:
+        row = db.execute('SELECT c.id, c.max_orders_per_second, c.max_order_burst FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id '
+                         'WHERE a.id=%s', (str(account_id),)).fetchone()
+    if not row:
+        raise NotSent('ACCOUNT_NOT_FOUND')
+    limiter = rate_limit.order_limiter(str(row['id']), row['max_orders_per_second'], row['max_order_burst'])
+    deadline = (clock or _time.monotonic)() + wait_up_to
+    while True:
+        wait = limiter.try_acquire()
+        if wait <= 0:
+            return
+        if (clock or _time.monotonic)() + wait > deadline:
+            raise Throttled(f'RATE_LIMITED: {limiter.limit} orders per second for this connection are in use; nothing was sent')
+        _time.sleep(min(wait, 0.25))
+
+
 class Refused(Exception):
     """The broker (or the bridge on its behalf) answered no — the answer is in the message."""
 
@@ -58,8 +83,9 @@ def _account(account_id) -> dict:
         account = store.get_record(db, 'accounts', UUID(str(account_id)))
         if not account:
             raise NotSent('ACCOUNT_NOT_FOUND')
-        account['connection_settings'] = (db.execute('SELECT settings FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone()
-                                          or {}).get('settings') or {}
+        conn = db.execute('SELECT settings, algo_name FROM cfg_connections WHERE id=%s', (account['connection_id'],)).fetchone() or {}
+        account['connection_settings'] = conn.get('settings') or {}
+        account['algo_name'] = conn.get('algo_name')
     return account
 
 
@@ -234,6 +260,7 @@ class Upstox:
         from ..broker_login import session_token
         account = _account(account_id)
         self.base = str(account['connection_settings'].get('api_base_url') or 'https://api.upstox.com').rstrip('/').removesuffix('/v2')
+        self.algo_name = (account.get('algo_name') or '').strip() or None  # exchange-registered algo: sent as X-Algo-Name
         try:
             self._auth = 'Bearer ' + session_token(UUID(str(account_id)), actor, purpose)
         except Exception as exc:  # noqa: BLE001
@@ -242,8 +269,10 @@ class Upstox:
     def call(self, method: str, path: str, params: dict | None = None, body: dict | None = None, sending: bool = False) -> Any:
         url = self.base + path + ('?' + urllib.parse.urlencode(params) if params else '')
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(url, data=data, method=method, headers={'Accept': 'application/json', 'Content-Type': 'application/json',
-                                                                            'Authorization': self._auth, 'User-Agent': 'COREI-OS-MINI/1.0'})
+        headers = {'Accept': 'application/json', 'Content-Type': 'application/json', 'Authorization': self._auth, 'User-Agent': 'COREI-OS-MINI/1.0'}
+        if sending and self.algo_name:
+            headers['X-Algo-Name'] = self.algo_name  # place, modify and cancel of a registered algo app; COREI's tag stays for correlation
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 - https base from the connection
                 out = json.loads(resp.read(5_000_000) or b'{}')

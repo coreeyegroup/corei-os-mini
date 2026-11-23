@@ -82,6 +82,16 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
                 str(order['instrument_id']), order['side'], qty, price, q and q['bid'], q and q['ask'], slip, realised,
                 ins.get('quote_currency') or 'USD', order['mode'], at, str(deal_id) if deal_id is not None else None, latency, arrival))
     filled = D(order['filled_qty']) + qty
+    if filled > D(order['quantity']):
+        # The broker reports more than the order asked for. The exposure is real, so it is booked (never dropped), and
+        # the excess stays an open break with its evidence in this same transaction until a person reviews it.
+        excess = filled - D(order['quantity'])
+        db.execute("INSERT INTO pt_breaks(id, account_id, kind, key, instrument_id, corei_value, broker_value, difference, detail) "
+                   "VALUES (%s,%s,'ORDER_STATE',%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                   (uuid4(), str(order['account_id']), f"overfill:{order['id']}:{deal_id or fill['id']}", str(order['instrument_id']),
+                    format(D(order['quantity']).normalize(), 'f'), format(filled.normalize(), 'f'), format(excess.normalize(), 'f'),
+                    json.dumps({'note': 'fills above the order quantity', 'order_id': str(order['id']), 'deal': deal_id, 'fill_id': str(fill['id'])})))
+        _alert(db, 'CRITICAL', 'Fill above the order quantity', f"Order {order['client_order_id']}: ordered {order['quantity']}, filled {filled}.")
     avg = price if not D(order['filled_qty']) else (D(order['avg_fill_price']) * D(order['filled_qty']) + price * qty) / filled
     to = 'FILLED' if filled >= D(order['quantity']) else 'PARTIALLY_FILLED'
     out = _move(db, order, to, actor, {'fill_qty': str(qty), 'price': str(price), 'slippage': str(slip) if slip is not None else None,
@@ -389,6 +399,7 @@ def modify(actor: str, order_id: UUID, data: ModifyIn) -> dict:
                                              'price': str(changes.get('limit_price', changes.get('stop_price', snapshot.get('limit_price') or snapshot.get('stop_price') or 0))),
                                              'sl': str(changes.get('stop_loss', snapshot.get('stop_loss')) or 0), 'tp': str(changes.get('take_profit', snapshot.get('take_profit')) or 0)}}
     try:
+        brokers.throttle(snapshot['account_id'], wait_up_to=2.0)
         reply = brokers.mt5_call(snapshot['account_id'], actor, 'trade', payload, 'Amend an order at the broker', 30)
     except (brokers.NotSent, brokers.Refused) as exc:
         raise HTTPException(409, f'The broker did not amend it: {exc}') from None
@@ -428,7 +439,11 @@ def resolve(actor: str, order_id: UUID, data: ResolveIn) -> dict:
             return store.clean(_move(db, o, 'CANCELLED', actor, {'resolved': 'not filled', 'reason': data.reason}))
         if not data.price:
             raise HTTPException(422, 'A filled outcome needs the fill price the broker reports.')
-        qty = data.quantity or (D(o['quantity']) - D(o['filled_qty']))
+        remaining = D(o['quantity']) - D(o['filled_qty'])
+        qty = data.quantity or remaining
+        if qty > remaining:
+            raise HTTPException(422, f'The stated fill ({qty}) is more than the order has left ({remaining}). '
+                                     'If the broker really filled more, record what remains here and raise the excess as a break.')
         return store.clean(_fill(db, o, qty, data.price, None, actor, datetime.now(timezone.utc), deal_id=data.broker_deal_id,
                                  detail={'resolved_by_person': True}))
 
