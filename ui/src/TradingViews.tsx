@@ -206,6 +206,11 @@ function ParamInputs({ schema, value, change }: { schema: Row; value: Row; chang
   const props: Row = blend ? Object.fromEntries(Object.entries(all).filter(([k]) => !['components', 'entry', 'exit'].includes(k))) : all;
   return <><div className="st-params">{Object.entries(props).map(([k, p]: [string, any]) => {
     const enumOf = p.enum ?? p.anyOf?.find((x: Row) => x.enum)?.enum ?? (p.$ref ? undefined : undefined);
+    const choices: string[] | undefined = p.type === 'array' ? p.items?.enum ?? p.items?.anyOf?.find((x: Row) => x.enum)?.enum : undefined;
+    if (choices) return <Field key={k} label={k.replace(/_/g, ' ')} hint={p.description}><span className="st-choices">{choices.map(c => {
+      const on: string[] = value[k] ?? [];   // e.g. allowed_regimes: tick the market states this strategy may enter in (none = any)
+      return <label key={c}><input type="checkbox" aria-label={`${k} ${c}`} checked={on.includes(c)}
+        onChange={e => change({ ...value, [k]: e.target.checked ? [...on, c] : on.filter(x => x !== c) })} /> {c.toLowerCase().replace(/_/g, ' ')}</label>; })}</span></Field>;
     if (p.type === 'array') return <Field key={k} label={k.replace(/_/g, ' ')} hint="Conditions as JSON: [{&quot;field&quot;:&quot;rsi14&quot;,&quot;op&quot;:&quot;<&quot;,&quot;value&quot;:&quot;30&quot;}]">
       <textarea aria-label={`Parameter ${k}`} rows={2} value={JSON.stringify(value[k] ?? [])} onChange={e => { try { change({ ...value, [k]: JSON.parse(e.target.value) }); } catch { /* keep typing */ } }} /></Field>;
     const opts = enumOf ?? (k === 'timeframe' ? ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] : k === 'direction' ? ['BOTH', 'LONG_ONLY', 'SHORT_ONLY'] : null);

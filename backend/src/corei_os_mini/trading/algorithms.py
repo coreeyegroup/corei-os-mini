@@ -6,10 +6,11 @@ Purpose: parameter models (validated when a version is saved) and one pure funct
 bars and their features and returns the strategy's target position after each bar (LONG, SHORT or FLAT) with the
 strength and the reasons for each change.
 Responsibilities: moving-average and EMA crossovers, RSI and Bollinger mean reversion, Donchian breakout, and a rule
-builder on any feature (standard or custom indicator). Direction filter (both, long only, short only).
+builder on any feature (standard or custom indicator). Direction filter (both, long only, short only). Regime filter
+(allowed_regimes, blocked_volatility; empty = off): entries only in the allowed Stage 2 market states, exits always.
 Must never: read the clock or the database, size or send anything (risk and execution do), or use the values it
 computes for money (indicators are descriptive).
-Dependencies: intel.indicators. Consumers: trading.runtime, trading.backtest, strategy_registry (catalogue).
+Dependencies: intel.indicators, intel.regime (filter). Consumers: trading.runtime, trading.backtest, strategy_registry (catalogue).
 Architectural position: Stage 4, below the runtime and the backtest.
 Convention: a decision is taken on a closed bar, from that bar and earlier ones only (point-in-time); the walk starts
 FLAT at the first bar of the window, so a window long enough for the indicators is part of the contract.
@@ -26,10 +27,18 @@ TF = Literal['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
 Direction = Literal['BOTH', 'LONG_ONLY', 'SHORT_ONLY']
 
 
+Regime = Literal['TREND_UP', 'TREND_DOWN', 'RANGE', 'TRANSITION']
+Volatility = Literal['HIGH', 'NORMAL', 'LOW']
+
+
 class _P(BaseModel):
     model_config = ConfigDict(extra='forbid')
     timeframe: TF = Field(description='Bar period the strategy runs on')
     direction: Direction = Field('BOTH', description='Trade both ways, long only or short only')
+    allowed_regimes: list[Regime] = Field(default_factory=list, max_length=4,
+                                          description='Enter only in these market states (Market intelligence regime); empty = any. Exits are never blocked')
+    blocked_volatility: list[Volatility] = Field(default_factory=list, max_length=3,
+                                                 description='Do not enter in these volatility states; empty = none blocked. Exits are never blocked')
 
 
 class MaCross(_P):
@@ -402,7 +411,39 @@ for _k, _v in ALGORITHMS.items():
 
 def run(algorithm: str, parameters: dict, bars: list[dict], rows: list[dict]) -> list[dict]:
     spec = ALGORITHMS[algorithm]
-    return spec['run'](bars, rows, spec['model'].model_validate(parameters))
+    p = spec['model'].model_validate(parameters)
+    return regime_filter(spec['run'](bars, rows, p), rows, p.allowed_regimes, p.blocked_volatility)
+
+
+def regime_filter(walk: list[dict], rows: list[dict], allowed: list[str], blocked: list[str]) -> list[dict]:
+    """Entries only in the allowed market states (Stage 2 regime and volatility of the bar, the same classification
+    the screener shows). An exit (to FLAT) always passes; a reversal into a blocked state exits instead; an entry
+    the filter held back is taken on a later bar if the algorithm still wants it and the state now allows it.
+    No filter set: the walk is returned unchanged (the behaviour before filters existed)."""
+    if not allowed and not blocked:
+        return walk
+    from ..intel import regime
+    state, out = 'FLAT', []
+    for i, (w, row) in enumerate(zip(walk, rows)):
+        want, reason, strength = w['target'], w['reason'], w['strength']
+        new = None
+        if want != state:
+            if want == 'FLAT':
+                new = 'FLAT'
+            else:
+                cls = regime.classify(row, i + 1)
+                ok = (not allowed or cls['regime'] in allowed) and (not blocked or cls['volatility'] not in blocked)
+                if ok:
+                    new = want
+                    if not w['change']:
+                        reason, strength = f"entry now allowed ({cls['regime'].lower().replace('_', ' ')})", 50
+                elif state != 'FLAT':
+                    new, reason, strength = 'FLAT', f"exit: reversal held back by the regime filter ({cls['regime'].lower().replace('_', ' ')}, volatility {str(cls['volatility']).lower()})", 50
+        changed = new is not None and new != state
+        if changed:
+            state = new
+        out.append({'target': state, 'change': changed, 'strength': strength if changed else 0, 'reason': reason if changed else ''})
+    return out
 
 
 def warmup(algorithm: str, parameters: dict) -> int:

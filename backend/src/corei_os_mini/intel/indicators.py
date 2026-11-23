@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-FEATURE_VERSION = 3  # 2: + MACD, stochastic, Donchian, z-score; 3: + volume (tick and real), relative volume, VWAP, OBV, bar spread. Bump when any definition below changes; stored with every feature row
+FEATURE_VERSION = 4  # 2: + MACD, stochastic, Donchian, z-score; 3: + volume (tick and real), relative volume, VWAP, OBV, bar spread; 4: session-aligned bars, market trading year for rv20_pct, session VWAP. Bump when any definition below changes; stored with every feature row
 
 
 def sma(values: Sequence[float], n: int) -> list[float | None]:

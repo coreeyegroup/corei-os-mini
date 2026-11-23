@@ -285,3 +285,4 @@
 .ws-head .cfg-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-caret { width: 1em; color: var(--muted); }
 .ws-body { padding: 8px 10px; }
+.st-choices { display: flex; flex-wrap: wrap; gap: 4px 12px; } .st-choices label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }

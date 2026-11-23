@@ -83,7 +83,7 @@ def market_of(plan: dict) -> str | None:
 
 
 def plan_holidays(plan: dict, calendar: dict | None = None) -> frozenset:
-    """The provider's holidays plus calendar HOLIDAY events in the market's currency."""
+    """The provider's holidays plus calendar HOLIDAY events in the market's currency or for its exchange."""
     days = set()
     for h in plan.get('holidays') or []:
         if isinstance(h, dict) and h.get('date'):
@@ -91,9 +91,11 @@ def plan_holidays(plan: dict, calendar: dict | None = None) -> frozenset:
                 days.add(date.fromisoformat(str(h['date'])[:10]))
             except ValueError:
                 pass
-    m = markets.MARKETS.get(market_of(plan) or '')
+    code = market_of(plan) or ''
+    m = markets.MARKETS.get(code)
     if m and m.currency and calendar:
         days |= set(calendar.get(m.currency, ()))
+        days |= set(calendar.get(code.split('_')[0], ()))   # the exchange's own holidays (NSE_FO closes with NSE)
     return frozenset(days)
 
 

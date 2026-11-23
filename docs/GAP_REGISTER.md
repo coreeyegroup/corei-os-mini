@@ -221,3 +221,28 @@ Source: COREI-OS-MINI Stage 1 Market Data: Deep Audit and Polish Plan (claude.ai
 | D-MD-1..5 | Instrument discovery in four places; explorer/tab duplication | OPEN — MD-11 (screen consolidation) | — |
 | F3 | Nightly gap scan of stored history | OPEN — MD-10 part 2 | — |
 
+## G. Stage 2 · Market intelligence — 23 Nov 2026 audit (release 0.55.0)
+
+Source: COREI-OS-MINI Stage 2 Market Intelligence: Deep Audit and Polish Plan (claude.ai doc JZc1YUzEQq66yzMJhX8cJe).
+Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `045_market_intelligence_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| MI-C1 / LI-3 | Stage 2 re-bucketed session markets at UTC | DONE 0.55.0 (shared Stage 1 buckets; bar ends at the session close; feature version 4) | test_nse_hours_follow_the_session_and_end_at_the_close |
+| MI-C2 / MI-C3 / LI-1 | Stale broker bars preferred by count; same rule in runtime and backtest | DONE 0.55.0 (bar-source policy: BROKER, M1, MIXED; broker grid followed) | test_broker_grid_is_followed_and_a_stopped_broker_series_is_continued; runtime parity test |
+| MI-C4 / LI-2 | Freshness by recompute time | DONE 0.55.0 (FRESH, LAGGING, STALE, CLOSED by market hours and holidays) | test_fresh_lagging_stale_and_closed |
+| MI-C5 | Regime unused by trading | DONE 0.55.0 (allowed_regimes, blocked_volatility per strategy; off by default; backtest and live alike) | test_entries_only_in_allowed_states_and_exits_always |
+| MI-C6 | Wrong-symbol plans screened; no feed health | DONE 0.55.0 | screener feed_health |
+| MI-C7 / LI-4 / LI-5 | FX year, FX sessions for every market | DONE 0.55.0 (trading year per market, exchange session label, session VWAP) | test_trading_year_session_vwap_and_label |
+| MI-C8 / LI-6 | No exchange holidays | DONE 0.55.0 (Upstox import; Stage 1 and event risk use them) | test_upstox_holidays_import |
+| MI-C9 / MI-C10 | Event window hard-coded; no event risk for NSE | DONE 0.55.0 | test_exchange_markets_have_event_risk |
+| MI-C12 | Signals not traceable to features | DONE 0.55.0 (feature_version, bars_source on the signal's feature row) | runtime parity test |
+| MI-C13 | Overlapping runs | DONE 0.55.0 (one run at a time; incremental: unchanged bars only refresh freshness) | test_one_run_at_a_time |
+| LI-7 | Rules that never fire | DONE 0.55.0 (preview on 30 days; warnings) | test_rule_preview_and_strength_warning |
+| MI-C16 / LI-8 | Strength from one pair | DONE 0.55.0 (warning under 3 currencies) | same |
+| MI-C11 | Rule fires cannot drive a strategy | OPEN — MI-8 part 2 (the RULES algorithm already takes the same conditions) | — |
+| MI-C14 / H2 | Feature loop and trading cycle share one loop; engine in the API process | OPEN — MI-10 part 2 (owner decision: separate service) | — |
+| MI-C15 / LI-9 | One screener row per source | OPEN — MI-9 (instrument roll-up) | — |
+| — | Economic-calendar provider | OPEN — owner decision (CSV until chosen) | — |
+| — | Volatility risk-limit multiplier | OPEN — MI-4 part 2 | — |
+

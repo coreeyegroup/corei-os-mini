@@ -89,11 +89,11 @@ def validate(db, sig: dict, dep: dict, now: datetime, cfg: dict, q: dict | None)
     if not markets.is_open(market, now):
         reasons.append(f'MARKET_CLOSED: {market} is closed')
     if cfg.get('block_on_event'):
-        from ..intel import workspace
+        from ..intel import engine as intel_engine, workspace
         try:
-            window = 30
+            window = int(intel_engine.settings().get('event_window_minutes') or 30)   # Market intelligence › Engine settings
             near = workspace.event_risk(dep['instrument_symbol'], dep.get('base_currency'), dep.get('quote_currency'), now, window,
-                                        workspace.events(now - timedelta(minutes=window), now + timedelta(minutes=window)))
+                                        workspace.events(now - timedelta(minutes=window), now + timedelta(minutes=window)), market)
         except Exception:  # noqa: BLE001 - no calendar yet
             near = []
         if near:

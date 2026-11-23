@@ -194,7 +194,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  button('Volume').click();await settle();
  assert.match($('.intel-table thead').textContent,/Tick vol\..*Rel\. vol\..*vs VWAP %.*OBV/,'column preset: volume');
  button('Standard').click();await settle();
- button('Columns (17)').click();await settle();
+ button('Columns (18)').click();await settle();
  $$('.intel-colpick label').find(l=>l.textContent.trim()==='MACD hist').querySelector('input').click();await settle();
  assert.match($('.intel-table thead').textContent,/MACD hist/,'column chooser adds a column');
  fill($('.intel-bar [aria-label="Regime"]'),'TREND_UP');await settle();

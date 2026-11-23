@@ -127,3 +127,18 @@ Decision (engineering; owner decisions on price storage and history rebuild rema
 4. Automatic backfill backs off after repeated failures; manual backfill is unchanged.
 5. The journal replay check is read-only; it never repairs. Status: accepted.
 
+## DEC-99 · Features describe the market they come from (release 0.55.0, 23 Nov 2026)
+
+Context: the Stage 2 audit found week-old broker D1 bars shown as current, UTC-cut Indian hours, an FX trading year
+for every market, an empty calendar and a regime no trading decision read.
+Decision (engineering defaults chosen by the owner's request to proceed; reversible):
+1. One bucket function for Stage 1 and Stage 2; feature version 4 starts its own history (versions 1–3 kept).
+2. Bar-source policy shared by the engine, the runtime and the backtest: broker bars when as recent and as many;
+   otherwise their history continued with M1-built bars on the broker's own grid (MIXED); never a series that stopped.
+3. Freshness is judged by the market's hours and holidays, not by when the engine last ran.
+4. Regime and volatility filters are strategy parameters, empty (off) by default, applied inside the algorithm walk
+   so backtest and live agree; exits are never blocked.
+5. Exchange holidays come from Upstox on request; the economic calendar stays manual/CSV until a provider is chosen.
+6. The engine stays in the API process with a run lock and incremental compute; a separate service is deferred.
+Status: accepted.
+

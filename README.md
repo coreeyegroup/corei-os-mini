@@ -1327,3 +1327,29 @@ Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-da
 - [Upstox Modify Order V3](https://upstox.com/developer/api-documentation/v3/modify-order/)
 - [Upstox Cancel Order V3](https://upstox.com/developer/api-documentation/v3/cancel-order/)
 >>>>>>> origin/main
+
+## Market intelligence describes the market it comes from (Stage 2) — release 0.55.0
+
+Closes the defects of the 23 Nov 2026 Market Intelligence audit. Migration `045_market_intelligence_integrity.sql`
+(additive). Tests: `backend/tests/test_intelligence_stage2.py`.
+
+- **No more week-old daily trends.** When the broker's own bars stop (a backfilled D1, say), their history is continued
+  with bars built from M1 on the broker's own grid (shown as *broker, then M1*); the screener, strategies and backtests
+  use the same bars.
+- **Fresh means fresh.** Every row says whether its bar is the latest the market can have closed: *fresh*, *market
+  closed*, *late* or *stale*, from the market's hours and holidays; the Dashboard counts late and stale features.
+- **Indian markets read like Indian charts.** NSE, BSE and MCX features use the Stage 1 session bars (H1 09:15 … 15:15,
+  the last ending 15:30) and the IST day; realised volatility uses each market's trading year; a session VWAP is added;
+  bars are labelled with their exchange session. Feature version 4 starts a new history; older versions are kept.
+- **Regime can guide strategies.** Each strategy has optional *allowed regimes* and *blocked volatility* (off by
+  default). Entries outside them wait; exits always pass; backtests apply the same filter.
+- **Exchange holidays and event risk for every market.** Intelligence › Calendar imports this year's NSE, BSE and MCX
+  trading holidays from Upstox; Stage 1 market hours and event risk use them. Events can name an exchange (NSE, BSE,
+  MCX) as well as a currency; signals use the event window from Engine settings.
+- **Rules you can trust.** *Preview (30 days)* shows how often a rule would have fired and warns when it never would,
+  or always would. Currency strength warns when it rests on fewer than 3 currencies.
+- **Steadier engine.** One run at a time (a manual refresh waits for the cycle); a timeframe with no newly closed bar
+  only refreshes its freshness; the screener shows each source's feed health from Stage 1.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

@@ -7,7 +7,8 @@ Purpose: storage and checks for those three, every change audited in the same tr
 called by the engine after each closed bar.
 Responsibilities: watchlist CRUD; custom indicator definitions CRUD (EMA 9, Bollinger 20/2.5… per strategy, beside the
 standard baseline); rule CRUD (a number or another feature as the threshold, e.g. ema_9 crosses above ema_21), evaluate() with cooldown and one fire per bar, alert queueing;
-calendar add/delete/CSV import, upcoming events and the per-instrument event-risk check.
+calendar add/delete/CSV import, exchange-holiday import from Upstox, upcoming events and the per-instrument
+event-risk check (currencies, and for exchange markets the exchange and its currency); rule preview on stored history.
 Must never: place or change orders, or fire twice for the same bar.
 Dependencies: config_store (database, audit), alerts (queueing), intel.analytics (currencies of a symbol).
 Consumers: intel_api, intel.engine.
@@ -31,7 +32,7 @@ from .analytics import currencies_of
 
 FIELDS = ('close', 'ema20', 'ema50', 'ema200', 'rsi14', 'atr14', 'atr_pct', 'atr_pct_rank100', 'bb_width_pct', 'adx14', 'plus_di', 'minus_di',
           'er20', 'rv20_pct', 'range_pos20', 'ret_1_pct', 'ret_20_pct', 'macd', 'macd_signal', 'macd_hist', 'stoch_k', 'stoch_d', 'zscore20',
-          'tick_volume', 'volume', 'rel_volume20', 'vwap20', 'vwap_dev_pct', 'obv', 'spread_bar',
+          'tick_volume', 'volume', 'rel_volume20', 'vwap20', 'vwap_dev_pct', 'obv', 'spread_bar', 'vwap_session', 'vwap_session_dev_pct',
           'regime', 'volatility')
 CUSTOM_FIELD = re.compile(r'^(ema|sma|rsi|atr|roc|zscore|donchian|vwap|bollinger|macd|stoch)(_[0-9p]+)+(_[a-z]+)?$')
 
@@ -367,6 +368,93 @@ def add_events(actor: str, items: list[EventIn], source: str = 'MANUAL') -> int:
         return added
 
 
+UPSTOX_EXCHANGES = {'NSE': 'NSE', 'BSE': 'BSE', 'MCX': 'MCX'}   # Upstox closed_exchanges code -> calendar code
+
+
+def import_upstox_holidays(actor: str, account_id: UUID | None = None, base_url: str | None = None) -> dict:
+    """Trading holidays of the current year from Upstox's market-holidays API, stored as HOLIDAY events with the
+    exchange as the code (NSE, BSE, MCX) at 00:00 IST. SETTLEMENT_HOLIDAY and SPECIAL_TIMING days are reported, not
+    stored (the market trades). Re-importing updates in place (same date, code and title)."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from zoneinfo import ZoneInfo
+    url = (base_url or os.getenv('COREI_UPSTOX_API_BASE') or 'https://api.upstox.com').rstrip('/') + '/v2/market/holidays'
+    headers = {'Accept': 'application/json', 'User-Agent': 'COREI-OS-MINI/1.0'}
+    if account_id:
+        from ..broker_login import session_token
+        try:
+            headers['Authorization'] = 'Bearer ' + session_token(account_id, actor, 'Import exchange holidays')
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(409, f'Log in to the Upstox account first (Setup › Accounts): {getattr(exc, "detail", exc)}') from None
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as resp:  # noqa: S310 - fixed https host
+            body = json.loads(resp.read(2_000_000) or b'{}')
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(502, f'Upstox answered HTTP {exc.code}' + (' (log in to an Upstox account and choose it)' if exc.code in (401, 403) else '')) from None
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise HTTPException(502, f'Upstox could not be reached: {type(exc).__name__}') from None
+    if not isinstance(body, dict) or body.get('status') != 'success' or not isinstance(body.get('data'), list):
+        raise HTTPException(502, 'Upstox returned an unexpected answer; nothing was imported.')
+    ist = ZoneInfo('Asia/Kolkata')
+    items, other = [], []
+    for h in body['data']:
+        try:
+            day = datetime.fromisoformat(str(h['date'])[:10]).replace(tzinfo=ist)
+        except (KeyError, ValueError):
+            continue
+        if h.get('holiday_type') != 'TRADING_HOLIDAY':
+            other.append({'date': str(h.get('date'))[:10], 'type': h.get('holiday_type'), 'description': h.get('description')})
+            continue
+        for code in sorted({UPSTOX_EXCHANGES[c] for c in h.get('closed_exchanges') or [] if c in UPSTOX_EXCHANGES}):
+            items.append(EventIn(at=day.astimezone(timezone.utc), currency=code, impact='HOLIDAY',
+                                 title=str(h.get('description') or 'Trading holiday')[:200]))
+    added = add_events(actor, items, 'UPSTOX') if items else 0
+    return {'added': added, 'holidays': len(items), 'not_stored': other}
+
+
+def preview_rule(rule: RuleIn, days: int = 30) -> dict:
+    """Fires the rule would have had on the stored feature history (current feature version) of the last `days`,
+    honouring its scope and cooldown."""
+    from . import indicators as ind, regime
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    with store.transaction('read') as db:
+        pairs = [(str(r['account_id']), r['broker_symbol']) for r in db.execute(
+            'SELECT DISTINCT account_id, broker_symbol FROM intel_snapshot WHERE timeframe=%s', (rule.timeframe,)).fetchall()]
+        if rule.scope.get('account_id'):
+            pairs = [p for p in pairs if p == (rule.scope['account_id'], rule.scope.get('broker_symbol'))]
+        elif rule.scope.get('watchlist_id'):
+            wl = db.execute('SELECT items FROM intel_watchlists WHERE id=%s', (rule.scope['watchlist_id'],)).fetchone()
+            keep = {(i['account_id'], i['broker_symbol']) for i in (wl['items'] if wl else [])}
+            pairs = [p for p in pairs if p in keep]
+        results, bars_seen = [], 0
+        for account_id, symbol in pairs:
+            rows = db.execute('SELECT bar_time, features, regime FROM intel_features WHERE account_id=%s AND broker_symbol=%s AND timeframe=%s '
+                              'AND version=%s AND bar_time >= %s ORDER BY bar_time', (account_id, symbol, rule.timeframe, ind.FEATURE_VERSION, since)).fetchall()
+            bars_seen += len(rows)
+            fires, prev, last_fire = [], None, None
+            for r in rows:
+                now = {**(r['features'] or {}), 'regime': r['regime'],
+                       'volatility': regime.classify(r['features'] or {}, regime.MIN_BARS)['volatility']}
+                if prev is not None and _hit(rule.op, rule.value, now.get(rule.field), prev.get(rule.field), now, prev):
+                    if last_fire is None or (r['bar_time'] - last_fire) >= timedelta(minutes=rule.cooldown_minutes):
+                        fires.append({'bar_time': r['bar_time'], 'value': now.get(rule.field)})
+                        last_fire = r['bar_time']
+                prev = now
+            results.append({'account_id': account_id, 'broker_symbol': symbol, 'bars': len(rows), 'fires': len(fires),
+                            'last': [store.clean(f) for f in fires[-3:]]})
+    total = sum(r['fires'] for r in results)
+    warning = None
+    if not bars_seen:
+        warning = f'No {rule.timeframe} feature history in the last {days} days to check against (get history first).'
+    elif total == 0:
+        warning = f'It would not have fired once in {bars_seen} bars over {days} days: check the threshold (the field\'s recent values are shown on the instrument view).'
+    elif total > 0.5 * bars_seen:
+        warning = f'It would have fired on {total} of {bars_seen} bars: almost always true, so its alerts would be noise.'
+    return {'days': days, 'timeframe': rule.timeframe, 'bars': bars_seen, 'fires': total, 'by_instrument': results, 'warning': warning}
+
+
 def delete_event(actor: str, eid: UUID) -> None:
     with store.transaction('delete') as db:
         before = db.execute('DELETE FROM intel_events WHERE id=%s RETURNING *', (eid,)).fetchone()
@@ -398,9 +486,23 @@ def parse_csv(text: str) -> list[EventIn]:
     return out
 
 
-def event_risk(symbol: str, base: str | None, quote: str | None, at: datetime, window_minutes: int, upcoming: list[dict]) -> list[dict]:
-    """HIGH-impact events (and holidays) for the instrument's currencies within ±window of `at`."""
-    cur = currencies_of(symbol, base, quote)
+def event_codes(symbol: str, base: str | None, quote: str | None, market: str | None = None) -> set[str]:
+    """Calendar codes that concern an instrument: its two currencies (FX-style), and for an exchange market its
+    exchange (NSE, BSE, MCX; NSE_FO counts as NSE) and the exchange's currency (INR)."""
+    from ..md import markets
+    codes = set(currencies_of(symbol, base, quote) or ())
+    m = markets.MARKETS.get(market or '')
+    if m is not None and m.open is not None:
+        codes.add(market.split('_')[0])
+        if m.currency:
+            codes.add(m.currency)
+    return codes
+
+
+def event_risk(symbol: str, base: str | None, quote: str | None, at: datetime, window_minutes: int, upcoming: list[dict],
+               market: str | None = None) -> list[dict]:
+    """HIGH-impact events (and holidays) for the instrument's currencies, or its exchange, within ±window of `at`."""
+    cur = event_codes(symbol, base, quote, market)
     if not cur:
         return []
     lo, hi = at - timedelta(minutes=window_minutes), at + timedelta(minutes=window_minutes)

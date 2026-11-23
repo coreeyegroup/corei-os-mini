@@ -37,11 +37,12 @@ def active_plans() -> list[dict]:
 
 
 def holidays() -> dict[str, frozenset]:
-    """Exchange holidays by currency, from the calendar's HOLIDAY events (Intelligence › Calendar), as local dates
-    (India: IST). Used for market hours: an NSE holiday is an INR HOLIDAY event."""
+    """Exchange holidays by calendar code, from the calendar's HOLIDAY events (Intelligence › Calendar), as local dates
+    (India: IST). Used for market hours: an INR HOLIDAY event closes every Indian market; an NSE, BSE or MCX event
+    (imported from Upstox) closes that exchange."""
     try:
         with store.transaction('read') as db:
-            rows = db.execute("""SELECT currency, (at AT TIME ZONE CASE currency WHEN 'INR' THEN 'Asia/Kolkata' ELSE 'UTC' END)::date AS day
+            rows = db.execute("""SELECT currency, (at AT TIME ZONE CASE WHEN currency IN ('INR', 'NSE', 'BSE', 'MCX') THEN 'Asia/Kolkata' ELSE 'UTC' END)::date AS day
                                   FROM intel_events WHERE impact='HOLIDAY' AND at > now() - interval '2 days' AND at < now() + interval '400 days'""").fetchall()
     except Exception:  # noqa: BLE001 - calendar not migrated yet
         return {}
