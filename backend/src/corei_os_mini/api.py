@@ -19,6 +19,7 @@ from .strategy_registry import router as strategy_router
 from .controls_api import router as controls_router
 from .infra_api import router as infra_router
 from .md_api import router as md_router
+from .research_api import router as research_router
 from .db_admin_api import router as db_admin_router
 from .broker_login import oauth_router, router as broker_login_router
 from . import config_store
@@ -84,6 +85,7 @@ app.include_router(strategy_router)
 app.include_router(controls_router)
 app.include_router(infra_router)
 app.include_router(md_router)
+app.include_router(research_router)
 app.include_router(calc_router)
 app.include_router(db_admin_router)
 app.include_router(broker_login_router)

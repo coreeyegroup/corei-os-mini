@@ -1256,3 +1256,18 @@ Closes the safety and money defects found by the 23 Nov 2026 audits (Claude and 
 - **Release identity.** One `VERSION` file; `/api/workstation` and the status bar show release, commit and schema.
 
 Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.
+
+## Optional market research API
+
+Corei OS Mini can supply collected bars to Core AI or other authorized research
+clients. In `/etc/corei-os-mini/workstation.env`, set a dedicated private
+`COREI_RESEARCH_API_TOKEN` of at least 32 characters and list allowed account
+UUIDs in `COREI_RESEARCH_API_ACCOUNTS` (comma separated). Restart
+`corei-os-mini-workstation` after editing the service environment.
+
+Use `Authorization: Bearer <token>` for GET
+`/api/research/v1/capabilities` and GET `/api/research/v1/bars`. Bars accepts
+`account_id`, `symbol`, `timeframe`, and `limit` (1–200). Symbols are broker
+symbols already collected by the authorized account. The credential authorizes
+read-only requests to these two endpoints. Without an explicit token and account
+scope, the optional interface is unavailable.
