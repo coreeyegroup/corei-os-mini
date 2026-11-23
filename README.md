@@ -1353,3 +1353,22 @@ Closes the defects of the 23 Nov 2026 Market Intelligence audit. Migration `045_
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+## Signals you can believe (Stage 3) — release 0.56.0
+
+Closes the defects of the 24 Nov 2026 Signal Intelligence audit. Migration `046_signal_intelligence_integrity.sql`
+(additive). Tests: `backend/tests/test_signal_stage3.py`.
+
+- **Fewer false flips.** Each library signal can have an *exit threshold*: a side, once taken, is held until the score
+  falls back below it (e.g. enter at ±20, hold until ±10). Empty keeps the old behaviour. The dashboard warns when a
+  timeframe flips too often and says what to do.
+- **Honest research.** The t-statistic counts overlapping h-bar returns as n ÷ h observations; *PREDICTIVE* now also needs
+  the edge to hold on the last 30% of bars (out of sample) and to beat the spread (*net edge*). Ranking every signal
+  states how many would look good by chance.
+- **Stale scores don't vote.** A score whose bar is late for its market (Market intelligence freshness) is shown with a
+  *stale bar* label and left out of the composite.
+- **Strategy signals net of cost.** Signal quality shows the spread paid, the net move and the hit rate after cost;
+  manual signals are measured too.
+- **Traceable flips.** Every flip records the definition version that produced it.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

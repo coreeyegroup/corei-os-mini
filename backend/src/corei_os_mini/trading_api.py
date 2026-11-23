@@ -194,6 +194,7 @@ class ResearchIn(BaseModel):
     kind: str
     parameters: dict = Field(default_factory=dict)
     threshold: float = Field(20, ge=1, le=99)
+    exit_threshold: float | None = Field(None, ge=0, le=98)
     days: int = Field(180, ge=1, le=3650)
     horizons: list[int] = Field(default_factory=lambda: [1, 2, 5, 10, 20])
 
@@ -357,8 +358,13 @@ def signal_research_all(payload: dict, _: str = Depends(require_operator)):
         defs = signal_library.definitions(db, active_only=True)
     if len(bars) < 60:
         raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
-    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'horizons': hz,
-               'items': signal_library.research_all(defs, bars, hz)})
+    items = signal_library.research_all(defs, bars, hz)
+    tested = len(items) * len(hz)
+    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'horizons': hz, 'items': items,
+               # Many signals × horizons tested on the same bars: some look good by luck. |t| ≥ 2 happens by chance about 1 time in 20.
+               'multiple_testing': {'tests': tested, 'expected_by_chance': round(tested * 0.05, 1),
+                                    'note': f'{tested} signal × horizon tests on the same bars: about {round(tested * 0.05, 1)} would show |t| ≥ 2 by chance alone. '
+                                            'Trust a signal that is PREDICTIVE (it held out of sample) on more than one instrument.'}})
 
 
 @router.post('/signal-library/research')
@@ -372,7 +378,8 @@ def signal_research(payload: dict, _: str = Depends(require_operator)):
         bars, source = backtest.load_bars(db, data.account_id, data.symbol, data.timeframe, end - timedelta(days=data.days), end)
     if len(bars) < 60:
         raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
-    out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold)
+    out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold, None,
+                                  data.exit_threshold if data.exit_threshold is not None and data.exit_threshold < data.threshold else None)
     out.update(symbol=data.symbol, timeframe=data.timeframe, bar_source=source)
     return _j(out)
 

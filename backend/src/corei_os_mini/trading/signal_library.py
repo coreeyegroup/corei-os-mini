@@ -11,8 +11,13 @@ Purpose:
   explain      the latest score of one instrument with the equation filled in with today's numbers.
   research     does the signal predict? forward returns over several horizons, information coefficient (rank
                correlation), its t-statistic, hit rate, average return by score quintile, turnover, coverage, and
-               the typical move against the typical spread (cost).
-  definitions  the library itself (built-in presets plus the desk's own), versioned and audited.
+               the typical move against the typical spread (cost). Honest by construction (release 0.56.0): the
+               t-statistic counts h-bar returns that overlap as n ÷ h independent observations (overlapping windows
+               otherwise overstate t by about √h); the verdict needs the same sign on the last 30% of bars, which the
+               choice of horizon never saw (out of sample); the edge is shown net of the spread.
+  definitions  the library itself (built-in presets plus the desk's own), versioned and audited. A definition may
+               have an exit threshold below its threshold (hysteresis): a side, once taken, holds until |score| falls
+               under the exit threshold, so a score wobbling around the threshold does not flip on every bar.
   overview, instrument_matrix, events, correlation, research_all
                the dashboard (strongest scores, consensus per instrument), one instrument across timeframes, every flip
                of side (sig_events), how alike the signals are, and every signal researched on the same bars.
@@ -238,8 +243,32 @@ def compute(kind: str, params: dict | None, bars: list[dict]) -> list:
     return KINDS[kind]['fn'](bars, params_of(kind, params))
 
 
-def direction(score: float | None, threshold: float) -> str:
-    return 'FLAT' if score is None or abs(score) < threshold else ('LONG' if score > 0 else 'SHORT')
+def direction(score: float | None, threshold: float, exit_threshold: float | None = None, previous: str | None = None) -> str:
+    """LONG at ≥ +threshold, SHORT at ≤ −threshold, else FLAT; with an exit threshold, a side already held stays until
+    the score on its side falls below the exit threshold (hysteresis)."""
+    if score is None:
+        return 'FLAT'
+    if exit_threshold is not None and previous in ('LONG', 'SHORT'):
+        if (score if previous == 'LONG' else -score) >= exit_threshold:
+            return previous
+    return 'FLAT' if abs(score) < threshold else ('LONG' if score > 0 else 'SHORT')
+
+
+def directions(scores: list[float | None], threshold: float, exit_threshold: float | None = None) -> list[str]:
+    """The side on every bar, walked from the start of the window (deterministic: the same bars give the same sides)."""
+    out, prev = [], 'FLAT'
+    for x in scores:
+        prev = direction(x, threshold, exit_threshold, prev)
+        out.append(prev)
+    return out
+
+
+def _ic_stats(xs: list[float], ys: list[float], h: int) -> tuple[float | None, float | None, float]:
+    """IC and its t-statistic with overlapping h-bar returns counted as n ÷ h observations."""
+    ic = _corr(_rank(xs), _rank(ys))
+    n_eff = len(xs) / max(1, h)
+    t = None if ic is None or abs(ic) >= 1 or n_eff <= 2 else ic * math.sqrt((n_eff - 2) / (1 - ic * ic))
+    return ic, t, n_eff
 
 
 def catalogue() -> list[dict]:
@@ -308,7 +337,8 @@ def _corr(a: list[float], b: list[float]) -> float | None:
     return sum((x - ma) * (y - mb) for x, y in zip(a, b)) / math.sqrt(va * vb)
 
 
-def research(kind: str, params: dict | None, bars: list[dict], horizons: list[int], threshold: float, series: list | None = None) -> dict:
+def research(kind: str, params: dict | None, bars: list[dict], horizons: list[int], threshold: float, series: list | None = None,
+             exit_threshold: float | None = None) -> dict:
     """Forward-looking statistics of the score. Forward returns use later bars — that is the test, never the score.
     `series` is the score already computed (a graph-bound signal); otherwise the library formula computes it."""
     p = params_of(kind, params)
@@ -326,8 +356,9 @@ def research(kind: str, params: dict | None, bars: list[dict], horizons: list[in
         if len(xs) < 10:
             out_h.append({'horizon': h, 'n': len(xs), 'note': 'too few bars'})
             continue
-        ic = _corr(_rank(xs), _rank(ys))
-        t_ic = None if ic is None or abs(ic) >= 1 else ic * math.sqrt((len(xs) - 2) / (1 - ic * ic))
+        ic, t_ic, n_eff = _ic_stats(xs, ys, h)
+        cut = int(len(xs) * 0.7)
+        oos_ic, oos_t, _ = _ic_stats(xs[cut:], ys[cut:], h) if len(xs) - cut >= 20 else (None, None, 0)
         active = [(x, y) for x, y in zip(xs, ys) if abs(x) >= threshold]
         hits = sum(1 for x, y in active if (x > 0 and y > 0) or (x < 0 and y < 0))
         order = sorted(zip(xs, ys))
@@ -339,27 +370,39 @@ def research(kind: str, params: dict | None, bars: list[dict], horizons: list[in
                 quint.append({'quintile': k + 1, 'score_from': round(part[0][0], 1), 'score_to': round(part[-1][0], 1),
                               'avg_return_bp': round(10000 * sum(y for _, y in part) / len(part), 2), 'n': len(part)})
         signed = [(1 if x > 0 else -1) * y for x, y in active]
-        out_h.append({'horizon': h, 'n': len(xs), 'ic': None if ic is None else round(ic, 4), 'ic_t': None if t_ic is None else round(t_ic, 2),
+        out_h.append({'horizon': h, 'n': len(xs), 'n_effective': round(n_eff, 1), 'ic': None if ic is None else round(ic, 4),
+                      'ic_t': None if t_ic is None else round(t_ic, 2),
+                      'oos_ic': None if oos_ic is None else round(oos_ic, 4), 'oos_ic_t': None if oos_t is None else round(oos_t, 2),
                       'hit_rate_pct': round(100 * hits / len(active), 1) if active else None, 'active_bars': len(active),
                       'avg_signed_return_bp': round(10000 * sum(signed) / len(signed), 2) if signed else None,
                       'avg_abs_move_bp': round(10000 * sum(abs(y) for y in ys) / len(ys), 2), 'quintiles': quint})
     valid = [x[0] for x in s if x is not None]
     turnover = (sum(abs(valid[k] - valid[k - 1]) for k in range(1, len(valid))) / (200 * (len(valid) - 1))) if len(valid) > 1 else None
-    flips = sum(1 for k in range(1, len(valid)) if direction(valid[k], threshold) != direction(valid[k - 1], threshold))
+    sides = directions(valid, threshold, exit_threshold)
+    flips = sum(1 for k in range(1, len(sides)) if sides[k] != sides[k - 1])
     cost_bp = round(10000 * (sum(spreads) / len(spreads)) / (sum(c) / len(c)), 2) if spreads and c else None
     best = max((h for h in out_h if h.get('ic') is not None), key=lambda h: abs(h['ic']), default=None)
-    verdict = None
+    verdict, verdict_note = None, ''
     if best:
         edge = abs(best.get('avg_signed_return_bp') or 0)
-        verdict = ('PREDICTIVE' if abs(best['ic']) >= 0.03 and abs(best.get('ic_t') or 0) >= 2 and (cost_bp is None or edge > cost_bp) else
+        held_out = best.get('oos_ic') is not None and (best['oos_ic'] > 0) == (best['ic'] > 0) and abs(best['oos_ic']) >= 0.5 * abs(best['ic'])
+        verdict = ('PREDICTIVE' if abs(best['ic']) >= 0.03 and abs(best.get('ic_t') or 0) >= 2 and (cost_bp is None or edge > cost_bp) and held_out else
                    'WEAK' if abs(best.get('ic_t') or 0) >= 1 else 'NO_EDGE')
+        if not held_out and abs(best.get('ic_t') or 0) >= 2:
+            verdict_note = ('The edge did not hold on the last 30% of bars (out of sample)' if best.get('oos_ic') is not None
+                            else 'Too few bars to check the last 30% (out of sample): widen the history')
+        for h in out_h:
+            if h.get('avg_signed_return_bp') is not None and cost_bp is not None:
+                h['net_edge_bp'] = round(h['avg_signed_return_bp'] - cost_bp, 2)
     return {'kind': kind, 'parameters': p, 'equation': KINDS[kind]['equation'], 'bars': len(bars), 'scored_bars': len(valid),
             'threshold': threshold, 'horizons': out_h, 'turnover_per_bar': None if turnover is None else round(turnover, 4), 'direction_changes': flips,
             'coverage_pct': round(100 * sum(1 for v in valid if abs(v) >= threshold) / len(valid), 1) if valid else None,
-            'avg_spread_bp': cost_bp, 'best_horizon': best['horizon'] if best else None, 'verdict': verdict,
+            'avg_spread_bp': cost_bp, 'best_horizon': best['horizon'] if best else None, 'verdict': verdict, 'verdict_note': verdict_note,
+            'exit_threshold': exit_threshold,
             'how_to_read': 'IC = rank correlation between the score and the return h bars later (0.02–0.05 is useful in practice; |t| ≥ 2 is '
-                           'unlikely by chance). Hit rate counts bars with |score| ≥ threshold. Quintiles should rise from 1 to 5 for a good '
-                           'signal. The edge must beat the spread (cost).',
+                           'unlikely by chance; overlapping h-bar returns count as n ÷ h observations). Hit rate counts bars with |score| ≥ '
+                           'threshold. Quintiles should rise from 1 to 5 for a good signal. The edge must beat the spread (net edge > 0), and '
+                           'the IC must keep its sign on the last 30% of bars (out of sample) for PREDICTIVE.',
             'series': [{'t': b['bar_time'].isoformat() if isinstance(b['bar_time'], datetime) else b['bar_time'], 'close': c[k],
                         'score': None if s[k] is None else round(s[k][0], 1)} for k, b in enumerate(bars)][-500:]}
 
@@ -373,6 +416,7 @@ class DefinitionIn(BaseModel):
     kind: str
     parameters: dict = Field(default_factory=dict)
     threshold: float = Field(20, ge=1, le=99)
+    exit_threshold: float | None = Field(None, ge=0, le=98, description='Hold a side until |score| falls below this (hysteresis); empty = threshold')
     timeframes: list[str] = Field(default_factory=lambda: ['M5', 'M15', 'H1', 'H4', 'D1'])
     status: str = Field('ACTIVE', pattern=r'^(ACTIVE|PAUSED)$')
     notes: str = Field('', max_length=1000)
@@ -412,24 +456,26 @@ def score_series(d: dict, bars: list[dict], tf: str = 'H1') -> list:
 
 def save(actor: str, data: DefinitionIn, def_id: UUID | None = None) -> dict:
     params = params_of(data.kind, data.parameters)
+    if data.exit_threshold is not None and data.exit_threshold >= data.threshold:
+        raise HTTPException(422, 'The exit threshold must be below the threshold (it is how far the score may fall back before the side is dropped).')
     bad = [t for t in data.timeframes if t not in ('M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1')]
     if bad:
         raise HTTPException(422, f'Unknown timeframe {bad[0]}.')
     with store.transaction('write') as db:
         if def_id is None:
-            row = db.execute('INSERT INTO sig_definitions(id, code, name, kind, parameters, threshold, timeframes, status, notes, created_by, updated_by) '
-                             'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
-                             (uuid4(), data.code, data.name, data.kind, Jsonb(params), data.threshold, Jsonb(data.timeframes), data.status, data.notes,
-                              actor, actor)).fetchone()
+            row = db.execute('INSERT INTO sig_definitions(id, code, name, kind, parameters, threshold, exit_threshold, timeframes, status, notes, created_by, updated_by) '
+                             'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                             (uuid4(), data.code, data.name, data.kind, Jsonb(params), data.threshold, data.exit_threshold, Jsonb(data.timeframes), data.status,
+                              data.notes, actor, actor)).fetchone()
             store.audit(db, actor, 'CREATE_SIGNAL_DEFINITION', 'signal_definition', row['id'], None, dict(row), data.reason)
         else:
             before = db.execute('SELECT * FROM sig_definitions WHERE id=%s FOR UPDATE', (str(def_id),)).fetchone()
             if not before:
                 raise HTTPException(404, 'Signal definition not found.')
-            row = db.execute('UPDATE sig_definitions SET code=%s, name=%s, kind=%s, parameters=%s, threshold=%s, timeframes=%s, status=%s, notes=%s, '
-                             'version=version+1, updated_by=%s, updated_at=now() WHERE id=%s RETURNING *',
-                             (data.code, data.name, data.kind, Jsonb(params), data.threshold, Jsonb(data.timeframes), data.status, data.notes, actor,
-                              str(def_id))).fetchone()
+            row = db.execute('UPDATE sig_definitions SET code=%s, name=%s, kind=%s, parameters=%s, threshold=%s, exit_threshold=%s, timeframes=%s, status=%s, '
+                             'notes=%s, version=version+1, updated_by=%s, updated_at=now() WHERE id=%s RETURNING *',
+                             (data.code, data.name, data.kind, Jsonb(params), data.threshold, data.exit_threshold, Jsonb(data.timeframes), data.status,
+                              data.notes, actor, str(def_id))).fetchone()
             db.execute('DELETE FROM sig_live WHERE definition_id=%s', (str(def_id),))
             store.audit(db, actor, 'UPDATE_SIGNAL_DEFINITION', 'signal_definition', def_id, dict(before), dict(row), data.reason)
         return store.clean(row)
@@ -460,26 +506,30 @@ def live_update(db, account_id, symbol: str, tf: str, bars: list[dict], defs: li
             continue
         last, prev = res[-1], (res[-2] if len(res) > 1 else None)
         score = None if last is None else round(last[0], 2)
+        th = float(d['threshold'])
+        ex = None if d.get('exit_threshold') is None else float(d['exit_threshold'])
+        sides = directions([None if x is None else x[0] for x in res], th, ex)
         if last is not None and prev is not None:
-            th = float(d['threshold'])
-            was, now_dir = direction(prev[0], th), direction(last[0], th)
+            was, now_dir = sides[-2], sides[-1]
             if was != now_dir:  # a flip on this bar: kept once per bar, so a re-run never doubles it
-                db.execute('INSERT INTO sig_events(definition_id, account_id, broker_symbol, timeframe, bar_time, from_direction, to_direction, score, previous_score) '
-                           'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
-                           (str(d['id']), str(account_id), symbol, tf, bars[-1]['bar_time'], was, now_dir, score, round(prev[0], 2)))
+                db.execute('INSERT INTO sig_events(definition_id, account_id, broker_symbol, timeframe, bar_time, from_direction, to_direction, score, previous_score, '
+                           'definition_version) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+                           (str(d['id']), str(account_id), symbol, tf, bars[-1]['bar_time'], was, now_dir, score, round(prev[0], 2), d.get('version')))
         db.execute("""INSERT INTO sig_live(definition_id, account_id, broker_symbol, timeframe, bar_time, score, previous_score, direction, inputs, computed_at)
                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
                       ON CONFLICT (definition_id, account_id, broker_symbol, timeframe) DO UPDATE SET bar_time=EXCLUDED.bar_time, score=EXCLUDED.score,
                         previous_score=EXCLUDED.previous_score, direction=EXCLUDED.direction, inputs=EXCLUDED.inputs, computed_at=now()""",
                    (str(d['id']), str(account_id), symbol, tf, bars[-1]['bar_time'], score, None if prev is None else round(prev[0], 2),
-                    direction(score, float(d['threshold'])), Jsonb((last or (None, {}))[1] or {})))
+                    sides[-1] if sides else 'FLAT', Jsonb((last or (None, {}))[1] or {})))
         n += 1
     return n
 
 
 def board(db, timeframe: str) -> dict:
-    rows = db.execute("""SELECT l.*, d.code, d.name, d.kind, d.parameters, d.threshold, a.code AS account_code, p.instrument_id, i.symbol AS instrument
+    rows = db.execute("""SELECT l.*, d.code, d.name, d.kind, d.parameters, d.threshold, d.exit_threshold, a.code AS account_code, p.instrument_id,
+                                i.symbol AS instrument, sn.freshness
                          FROM sig_live l JOIN sig_definitions d ON d.id=l.definition_id JOIN cfg_accounts a ON a.id=l.account_id
+                         LEFT JOIN intel_snapshot sn ON sn.account_id=l.account_id AND sn.broker_symbol=l.broker_symbol AND sn.timeframe=l.timeframe
                          LEFT JOIN md_collection_plans p ON p.account_id=l.account_id AND p.broker_symbol=l.broker_symbol AND p.status <> 'ARCHIVED'
                          LEFT JOIN cfg_instruments i ON i.id=p.instrument_id
                          WHERE l.timeframe=%s AND d.status='ACTIVE' ORDER BY a.code, l.broker_symbol, d.code""", (timeframe,)).fetchall()
@@ -502,16 +552,23 @@ def consensus(scores: list[float]) -> dict:
     return {'score': round(m, 1), 'agree_pct': round(100 * same / len(xs)), 'n': len(xs)}
 
 
+STALE = ('LAGGING', 'STALE')   # Stage 2 freshness: the bar behind these scores is late for its market
+
+
 def overview(db, timeframe: str) -> dict:
-    """Stage 3 dashboard: what the library says now on one timeframe."""
+    """Stage 3 dashboard: what the library says now on one timeframe. A score whose bar is late or stale (Stage 2
+    freshness) is shown but left out of its instrument's consensus."""
     defs = db.execute("SELECT count(*) FILTER (WHERE status='ACTIVE') AS active, count(*) AS total FROM sig_definitions").fetchone()
     rows = board(db, timeframe)['items']
     by_inst: dict = {}
+    stale_by: dict = {}
     for r in rows:
         k = (r['account_code'], r['broker_symbol'], str(r['account_id']))
-        by_inst.setdefault(k, []).append(float(r['score']) if r['score'] is not None else None)
-    cons = sorted(({'account_code': k[0], 'broker_symbol': k[1], 'account_id': k[2], **consensus(v)} for k, v in by_inst.items()),
-                  key=lambda x: -abs(x['score'] or 0))
+        late = r.get('freshness') in STALE
+        stale_by[k] = stale_by.get(k, 0) + (1 if late else 0)
+        by_inst.setdefault(k, []).append(float(r['score']) if r['score'] is not None and not late else None)
+    cons = sorted(({'account_code': k[0], 'broker_symbol': k[1], 'account_id': k[2], **consensus(v), 'stale_scores': stale_by.get(k, 0)}
+                   for k, v in by_inst.items()), key=lambda x: -abs(x['score'] or 0))
     scored = [r for r in rows if r['score'] is not None]
     strongest = sorted(scored, key=lambda r: -abs(float(r['score'])))[:12]
     flips = db.execute("SELECT count(*) AS n FROM sig_events WHERE at >= now() - interval '24 hours' AND timeframe=%s", (timeframe,)).fetchone()['n']
@@ -520,13 +577,16 @@ def overview(db, timeframe: str) -> dict:
     return {'timeframe': timeframe, 'definitions_active': defs['active'], 'definitions_total': defs['total'], 'instruments': len(by_inst),
             'scores': len(scored), 'long': sum(1 for r in scored if r['direction'] == 'LONG'), 'short': sum(1 for r in scored if r['direction'] == 'SHORT'),
             'flat': sum(1 for r in scored if r['direction'] == 'FLAT'), 'flips_24h': flips, 'last_computed': last, 'instruments_by_timeframe': tfs,
-            'strongest': [{k: r[k] for k in ('code', 'account_code', 'broker_symbol', 'score', 'direction', 'worked', 'bar_time', 'threshold')} for r in strongest],
+            'stale_scores': sum(1 for r in scored if r.get('freshness') in STALE),
+            'strongest': [{k: r.get(k) for k in ('code', 'account_code', 'broker_symbol', 'score', 'direction', 'worked', 'bar_time', 'threshold', 'freshness')}
+                          for r in strongest],
             'consensus': cons}
 
 
 def instrument_matrix(db, account_id, symbol: str) -> dict:
     """One instrument: every active signal × every timeframe scored, with the consensus per timeframe."""
-    rows = db.execute("""SELECT l.*, d.code, d.kind, d.threshold, d.parameters FROM sig_live l JOIN sig_definitions d ON d.id=l.definition_id
+    rows = db.execute("""SELECT l.*, d.code, d.kind, d.threshold, d.parameters, sn.freshness FROM sig_live l JOIN sig_definitions d ON d.id=l.definition_id
+                         LEFT JOIN intel_snapshot sn ON sn.account_id=l.account_id AND sn.broker_symbol=l.broker_symbol AND sn.timeframe=l.timeframe
                          WHERE l.account_id=%s AND l.broker_symbol=%s AND d.status='ACTIVE' ORDER BY d.code""", (str(account_id), symbol)).fetchall()
     order = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
     tfs = [t for t in order if any(r['timeframe'] == t for r in rows)]
@@ -535,8 +595,9 @@ def instrument_matrix(db, account_id, symbol: str) -> dict:
         x = store.clean(r)
         x['worked'] = worked(r['kind'], params_of(r['kind'], r['parameters']), None if r['score'] is None else float(r['score']), r['inputs'])
         cells.setdefault(r['code'], {})[r['timeframe']] = x
-    cons = {t: consensus([float(c[t]['score']) for c in cells.values() if t in c and c[t]['score'] is not None]) for t in tfs}
-    allv = [float(c[t]['score']) for c in cells.values() for t in c if c[t]['score'] is not None]
+    fresh = lambda x: x['score'] is not None and x.get('freshness') not in STALE  # noqa: E731
+    cons = {t: consensus([float(c[t]['score']) for c in cells.values() if t in c and fresh(c[t])]) for t in tfs}
+    allv = [float(c[t]['score']) for c in cells.values() for t in c if fresh(c[t])]
     return {'broker_symbol': symbol, 'timeframes': tfs, 'signals': sorted(cells), 'cells': cells, 'consensus': cons, 'overall': consensus(allv)}
 
 
@@ -578,12 +639,14 @@ def research_all(defs: list[dict], bars: list[dict], horizons: list[int]) -> lis
     out = []
     for d in defs:
         try:
-            r = research(d['kind'], d['parameters'], bars, horizons, float(d['threshold']), score_series(d, bars) if d.get('graph') else None)
+            r = research(d['kind'], d['parameters'], bars, horizons, float(d['threshold']), score_series(d, bars) if d.get('graph') else None,
+                         None if d.get('exit_threshold') is None else float(d['exit_threshold']))
         except Exception as exc:  # noqa: BLE001
             out.append({'code': d['code'], 'kind': d['kind'], 'error': str(exc)[:200]})
             continue
         best = next((h for h in r['horizons'] if h['horizon'] == r['best_horizon']), None) or {}
         out.append({'code': d['code'], 'name': d['name'], 'kind': d['kind'], 'family': KINDS[d['kind']]['family'], 'verdict': r['verdict'],
+                    'verdict_note': r['verdict_note'], 'oos_ic': best.get('oos_ic'), 'net_edge_bp': best.get('net_edge_bp'),
                     'best_horizon': r['best_horizon'], 'ic': best.get('ic'), 'ic_t': best.get('ic_t'), 'hit_rate_pct': best.get('hit_rate_pct'),
                     'edge_bp': best.get('avg_signed_return_bp'), 'cost_bp': r['avg_spread_bp'], 'coverage_pct': r['coverage_pct'],
                     'turnover_per_bar': r['turnover_per_bar'], 'ic_by_horizon': {h['horizon']: h.get('ic') for h in r['horizons']}})

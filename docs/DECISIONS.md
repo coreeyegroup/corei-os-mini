@@ -142,3 +142,18 @@ Decision (engineering defaults chosen by the owner's request to proceed; reversi
 6. The engine stays in the API process with a run lock and incremental compute; a separate service is deferred.
 Status: accepted.
 
+## DEC-100 · A signal is believed only after it survives an honest test (release 0.56.0, 24 Nov 2026)
+
+Context: the Stage 3 audit found research that counted overlapping returns as independent, called a signal PREDICTIVE
+on in-sample evidence alone, showed edges before cost, and ~900 side flips a day on M5 from scores wobbling around
+their thresholds; strategy-signal quality ignored the spread.
+Decision:
+1. Research: t-statistic with n ÷ h observations; PREDICTIVE needs the IC to keep its sign (≥ half its size) on the last
+   30% of bars; net edge = edge − spread; ranking many signals shows the expected count of chance winners.
+2. Hysteresis is a definition setting (exit threshold), empty by default (the behaviour before); sides are walked
+   from the window start, so the same bars give the same sides.
+3. Scores whose bar is late or stale (Stage 2 freshness) are shown but do not vote in a composite.
+4. Strategy-signal quality is reported net of the spread paid at the decision, and manual signals are measured from
+   the bar they fell in.
+Status: accepted.
+

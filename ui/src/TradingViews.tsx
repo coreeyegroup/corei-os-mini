@@ -159,11 +159,13 @@ function SignalBoard({ ctx }: { ctx: Ctx }) {
 function Quality() {
   const [data, error] = useData<Row>('trading/signals/quality', 60_000);
   return <section className="intel"><Msg error={error} />
-    <p className="cfg-note">Each signal's move over its horizon (10 bars), signed so that + means the market went the signal's way. Hit rate = share of measured signals that were right.</p>
-    <table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Timeframe</th><th>Signals</th><th>Acted</th><th>Refused</th><th>Measured</th><th>Hit rate</th><th>Average move %</th></tr></thead><tbody>
+    <p className="cfg-note">Each signal's move over its horizon (10 bars), signed so that + means the market went the signal's way. Hit rate = share of measured signals that were right. Net = the move minus the spread paid at the decision: a strategy can be right more often than not and still lose to cost.</p>
+    <table className="cfg-table compact intel-table"><thead><tr><th>Strategy</th><th>Instrument</th><th>Timeframe</th><th>Signals</th><th>Acted</th><th>Refused</th><th>Measured</th><th>Hit rate</th><th>Average move %</th><th title="Spread paid at the decision, % of price">Cost %</th><th title="Average move minus the spread">Net %</th><th title="Share right by more than the spread">Hit after cost</th></tr></thead><tbody>
       {(data?.items ?? []).map((r: Row) => <tr key={r.strategy + r.symbol + r.timeframe}><td>{r.strategy}</td><td>{r.symbol}</td><td>{r.timeframe}</td><td>{r.signals}</td><td>{r.acted}</td><td>{r.rejected}</td>
-        <td>{r.measured}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td className={Number(r.avg_return_pct) > 0 ? 'up' : 'down'}>{num(r.avg_return_pct, 3)}</td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={9} className="cfg-note">No signals measured yet.</td></tr>}</tbody></table></section>;
+        <td>{r.measured}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td className={Number(r.avg_return_pct) > 0 ? 'up' : 'down'}>{num(r.avg_return_pct, 3)}</td>
+        <td>{num(r.avg_cost_pct, 4)}</td><td className={Number(r.net_return_pct) > 0 ? 'up' : Number(r.net_return_pct) < 0 ? 'down' : ''}>{num(r.net_return_pct, 4)}</td>
+        <td>{r.hit_rate_after_cost_pct == null ? '–' : `${r.hit_rate_after_cost_pct}%`}</td></tr>)}
+      {data && !(data.items ?? []).length && <tr><td colSpan={12} className="cfg-note">No signals measured yet.</td></tr>}</tbody></table></section>;
 }
 
 export function SignalsView() {

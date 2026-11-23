@@ -246,3 +246,21 @@ Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `045_market_int
 | — | Economic-calendar provider | OPEN — owner decision (CSV until chosen) | — |
 | — | Volatility risk-limit multiplier | OPEN — MI-4 part 2 | — |
 
+## H. Stage 3 · Signal intelligence — 24 Nov 2026 audit (release 0.56.0)
+
+Source: COREI-OS-MINI Stage 3 Signal Intelligence: Deep Audit and Build (claude.ai doc 3fyTWBacW6JJF8fM7ZurtN).
+Evidence: `backend/tests/test_signal_stage3.py`. Migration `046_signal_intelligence_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| SI-C1 / LS-1 | ~900 M5 flips a day: scores wobble around the threshold | DONE 0.56.0 (exit threshold per definition = hysteresis; off by default; dashboard warns) | test_exit_threshold_holds_a_side_and_cuts_flips; test_exit_threshold_definition_and_fewer_flips |
+| SI-C2 | Research t-stat overstated by overlapping returns | DONE 0.56.0 (n ÷ h) | test_overlap_adjusted_t_and_out_of_sample |
+| SI-C3 | PREDICTIVE with no out-of-sample check; many signals tested on the same bars | DONE 0.56.0 (last 30% must agree; multiple-testing note) | same; research-all API test |
+| SI-C4 | Edge shown gross of cost | DONE 0.56.0 (net edge per horizon) | same |
+| SI-C5 | Scores on stale bars counted in the composite | DONE 0.56.0 (Stage 2 freshness; stale scores shown, left out) | test_stale_scores_leave_the_consensus |
+| SI-C6 | Strategy signal quality gross of spread; manual signals never measured | DONE 0.56.0 (cost, net, hit after cost; bar the signal fell in) | test_quality_net_of_the_spread_and_manual_signals_measured |
+| SI-C7 | Flips not traceable to a definition version | DONE 0.56.0 (definition_version on sig_events) | same |
+| SI-C8 | SIGNAL_BLEND references formula kinds, not library definitions (a tuned or graph-bound definition cannot be blended) | OPEN — pin definition code + version into the strategy version | — |
+| SI-C9 | Signal horizon fixed at 10 bars for strategy-signal quality | OPEN — per-deployment horizon | — |
+| SI-C10 | Library signals and strategy signals both called "signals" in different stages | OPEN — naming: "Library scores" (Stage 3) vs "Strategy signals" (Stage 4) | — |
+
