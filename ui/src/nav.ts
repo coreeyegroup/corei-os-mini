@@ -48,6 +48,23 @@ export function useDeploymentFocus(destination: DeploymentDestination, enabled =
   return [enabled ? focus : undefined, clear] as const;
 }
 
+let pendingRiskOrder: { id: string; label: string } | null = null;
+
+export function openOrderRisk(id: string, label: string) {
+  pendingRiskOrder = { id, label };
+  goto('Risk', 'decisions');
+  window.dispatchEvent(new Event('corei-risk-order'));
+}
+
+export function readRiskOrder() {
+  return pendingRiskOrder;
+}
+
+export function clearRiskOrder() {
+  pendingRiskOrder = null;
+  window.dispatchEvent(new Event('corei-risk-order'));
+}
+
 let pendingOrder: string | null = null;
 
 export function openOrder(id: string) {

@@ -121,7 +121,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  stages.forEach((v,i)=>assert.equal(sq(`nav.activity [aria-label="${v}"] .rail-n`).textContent,String(i+1)));
  sq('nav.activity [aria-label="Risk"]').click();for(let i=0;i<4;i++)await tick();
  const riskNav=[...sqa('.cfg-nav button')].map(b=>b.textContent);
- ['Dashboard','Kill switches','Limits','Decisions','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
+ ['Dashboard','Kill switches','Limits','Risk checks','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
  assert.deepEqual([...sqa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['Overview','Work','Monitor','Configure'],'every stage: the same four groups');
  // With the side bar open (which hides the section bar) the side bar lists the stage's sections.
  assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Risk intelligence')),'the stage\'s own pane in the side bar');

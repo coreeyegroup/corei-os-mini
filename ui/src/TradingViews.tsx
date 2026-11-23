@@ -9,7 +9,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { DeploymentFilter, ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
-import { useDeploymentFocus, goto, takeOrder, useScanEvidence } from './nav';
+import { useDeploymentFocus, goto, openOrder, openOrderRisk, clearRiskOrder, readRiskOrder, takeOrder, useScanEvidence } from './nav';
 import GraphWorkbench from './calc/GraphWorkbench';
 import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
@@ -354,18 +354,31 @@ function TargetPicker({ scope, value, change }: { scope: string; value: string; 
   return <Field label="Which"><select aria-label="Target" required value={value} onChange={e => change(e.target.value)}><option value="">Choose…</option>{opts.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></Field>;
 }
 
-function RiskOverview() {
-  const [ov] = useData<Row>('trading/overview', 15_000), [exp] = useData<Row>('trading/risk/exposure', 20_000), [kills] = useData<Row>('trading/risk/kill-switches', 15_000);
+function RiskOverview({ ctx }: { ctx: Ctx }) {
+  const [ov, overviewError] = useData<Row>('trading/overview', 15_000);
+  const [exp, exposureError] = useData<Row>('trading/risk/exposure', 20_000);
+  const [kills, switchError] = useData<Row>('trading/risk/kill-switches', 15_000);
   return <section className="intel">
-    <Kpis items={[['Kill switches on', ov?.kill_switches ?? 0, 'New orders stopped for these scopes', ov?.kill_switches ? 'warn' : ''], ['Limits in force', ov?.limits ?? 0],
-      ['Refused today', ov?.refused_today ?? 0, 'Orders refused by risk today (Monitor › Decisions)'], ['Open positions', ov?.positions ?? 0], ['Working orders', ov?.open_orders ?? 0]]} />
+    <div className="intel-bar" aria-label="Risk workflow">
+      <button onClick={() => ctx.open('limits')}>Review limits</button>
+      <button onClick={() => ctx.open('kill')}>Review kill switches</button>
+      <button onClick={() => ctx.open('decisions')}>Investigate risk checks</button>
+      <button onClick={() => ctx.open('stress')}>Run a stress test</button>
+    </div>
+    <Msg error={[overviewError, exposureError, switchError].filter(Boolean).join(' · ')} />
+    {!ov && !overviewError && <p role="status">Loading risk summary…</p>}
+    {ov && <Kpis items={[['Kill switches on', ov.kill_switches, 'New orders stopped for these scopes', ov.kill_switches ? 'warn' : ''],
+      ['Enabled limits', ov.limits, 'Across all scopes'], ['Refused today (UTC)', ov.refused_today],
+      ['Open positions', ov.positions], ['Working orders', ov.open_orders]]} />}
+    {ov?.limits === 0 && !overviewError && <p className="cfg-error">No risk limits are enabled. Other pre-trade checks still apply. <button onClick={() => ctx.open('limits')}>Review limit configuration</button></p>}
     {(kills?.items ?? []).length > 0 && <><h4>Kill switches on</h4><ul>{kills!.items.map((k: Row) => <li key={k.id}><b>{k.scope.toLowerCase()} {k.target_name}</b> — {k.reason} <small className="cfg-note">({k.automatic ? 'automatic' : k.engaged_by}, {when(k.engaged_at)})</small></li>)}</ul></>}
-    <h4>Accounts</h4>
+    <h4>Accounts with valued exposure</h4>
+    <div className="intel-bar"><button onClick={() => goto('Portfolio', 'accounts')}>View portfolio accounts</button></div>
     <table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Equity</th><th>Today</th><th>Drawdown</th><th>Gross exposure</th><th>Net exposure</th></tr></thead><tbody>
       {(exp?.accounts ?? []).map((a: Row) => <tr key={a.account_id}><td>{a.account_code}</td><td>{money(a.equity, a.currency)}</td><td className={Number(a.day_pnl) >= 0 ? 'up' : 'down'}>{money(a.day_pnl, a.currency)}</td>
         <td>{a.drawdown_pct}%</td><td>{money(a.gross, a.currency)}</td><td>{money(a.net, a.currency)}</td></tr>)}
-      {exp && !exp.accounts.length && <tr><td colSpan={6} className="cfg-note">No open positions.</td></tr>}</tbody></table>
-    <p className="cfg-note">Order of checks for every order: kill switches → order sending (real orders) → market open and price → lot rules → limits (the tightest of firm, account, strategy, instrument, deployment). A refusal lists every reason.</p>
+      {exp && !exp.accounts.length && <tr><td colSpan={6} className="cfg-note">No valued exposure to display. Check Portfolio for flat accounts or holdings awaiting valuation.</td></tr>}</tbody></table>
+    <p className="cfg-note">Account totals can combine paper and broker positions. Open an individual risk check to see its order mode, recorded inputs and applicable limits.</p>
   </section>;
 }
 
@@ -403,8 +416,9 @@ function Limits({ ctx }: { ctx: Ctx }) {
     {ctx.canRisk && <div className="intel-bar"><button className="primary" onClick={() => setF({ scope: 'ACCOUNT', target_id: '', kind: 'MAX_DAILY_LOSS', value: '', enabled: true, note: '', reason: '' })}>Add a limit</button></div>}
     <Msg error={error || err} notice={msg} />
     {f && <form className="cfg-form intel-edit" onSubmit={save}>
-      <div className="cfg-pair"><Field label="Scope"><Choice label="Limit scope" value={f.scope} options={SCOPES} onChange={v => !f.id && setF({ ...f, scope: v, target_id: '' })} /></Field>
-        <TargetPicker scope={f.scope} value={f.target_id} change={v => setF({ ...f, target_id: v })} /></div>
+      {f.id ? <p className="cfg-note">Editing {f.scope.toLowerCase()} · {f.target_name ?? 'Firm'}. Choose Add a limit to use a different scope or target.</p> :
+      <div className="cfg-pair"><Field label="Scope"><Choice label="Limit scope" value={f.scope} options={SCOPES} onChange={v => setF({ ...f, scope: v, target_id: '' })} /></Field>
+        <TargetPicker scope={f.scope} value={f.target_id} change={v => setF({ ...f, target_id: v })} /></div>}
       <Field label="Limit" hint={kinds[f.kind]}><select aria-label="Limit kind" disabled={!!f.id} value={f.kind} onChange={e => setF({ ...f, kind: e.target.value })}>{Object.entries(kinds).map(([k, t]) => <option key={k} value={k}>{t as string}</option>)}</select></Field>
       <Field label="Value"><input aria-label="Limit value" required inputMode="decimal" value={f.value} onChange={e => setF({ ...f, value: e.target.value })} /></Field>
       <label><input type="checkbox" checked={!!f.enabled} onChange={e => setF({ ...f, enabled: e.target.checked })} /> In force</label>
@@ -412,7 +426,7 @@ function Limits({ ctx }: { ctx: Ctx }) {
       <Field label="Reason (audit log)"><input aria-label="Limit reason" required minLength={5} value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
       <div className="cfg-actions"><button className="primary">Save limit</button><button type="button" onClick={() => setF(null)}>Cancel</button></div></form>}
     <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Limit</th><th>Value</th><th>State</th><th>Changed</th><th /></tr></thead><tbody>
-      {(data?.items ?? []).map((l: Row) => <tr key={l.id}><td>{l.scope.toLowerCase()}</td><td>{l.target_name}</td><td>{kinds[l.kind] ?? l.kind}</td><td><b>{num(l.value, l.kind.includes('QTY') ? 2 : 2)}</b></td>
+      {(data?.items ?? []).map((l: Row) => <tr key={l.id}><td>{l.scope.toLowerCase()}</td><td>{l.target_name}</td><td>{kinds[l.kind] ?? l.kind}</td><td><b>{l.value}</b></td>
         <td>{l.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(l.updated_at)} · {l.updated_by}</small></td>
         <td>{ctx.canRisk && <><button onClick={() => setF({ ...l, reason: '' })}>Edit</button> <button onClick={() => { const r = window.prompt('Reason for deleting this limit'); if (r) void api(`trading/risk/limits/${l.id}?reason=${encodeURIComponent(r)}`, 'DELETE').then(() => reload()).catch(e => setErr((e as Error).message)); }}>Delete</button></>}</td></tr>)}
       {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No limits yet. Start with a daily loss and a position limit per account.</td></tr>}</tbody></table>
@@ -421,14 +435,76 @@ function Limits({ ctx }: { ctx: Ctx }) {
 }
 
 function Decisions() {
-  const [filter, setFilter] = useState(''), [data, error] = useData<Row>(`trading/risk/decisions${filter ? `?approved=${filter}` : ''}`, 20_000, [filter]);
+  const { accounts } = Lists();
+  const [filter, setFilter] = useState('');
+  const [account, setAccount] = useState('');
+  const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    const inspect = () => {
+      setFocus(readRiskOrder());
+      setFilter('');
+      setAccount('');
+      setSelected(null);
+    };
+    inspect();
+    window.addEventListener('corei-risk-order', inspect);
+    return () => window.removeEventListener('corei-risk-order', inspect);
+  }, []);
+  const query = new URLSearchParams({ limit: '200' });
+  if (filter) query.set('approved', filter);
+  if (account) query.set('account_id', account);
+  if (focus) query.set('order_id', focus.id);
+  const [data, error, reload] = useData<Row>(`trading/risk/decisions?${query}`, 20_000);
+  const rows: Row[] = data?.items ?? [];
+  const detail = rows.find(row => row.id === selected);
   return <section className="intel">
-    <div className="intel-bar"><select aria-label="Decision filter" value={filter} onChange={e => setFilter(e.target.value)}><option value="">All</option><option value="false">Refused</option><option value="true">Approved</option></select></div>
+    {focus && <div className="intel-bar"><strong>Order · {focus.label}</strong><button onClick={clearRiskOrder}>Show all orders</button></div>}
+    <div className="intel-bar">
+      <select aria-label="Decision filter" value={filter} onChange={e => { setFilter(e.target.value); setSelected(null); }}><option value="">All outcomes</option><option value="false">Refused</option><option value="true">Approved</option></select>
+      {!focus && <select aria-label="Risk account" value={account} onChange={e => { setAccount(e.target.value); setSelected(null); }}>
+        <option value="">All accounts</option>{accounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}
+      </select>}
+      <button onClick={reload}>Reload checks</button>
+      {data && <small className="cfg-note">{rows.length} shown · latest 200 matching checks</small>}
+    </div>
     <Msg error={error} />
-    <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Side</th><th>Quantity</th><th>Result</th><th>Reasons</th></tr></thead><tbody>
-      {(data?.items ?? []).map((d: Row) => <tr key={d.id}><td><small>{when(d.at)}</small></td><td>{d.strategy_code ?? 'manual'}</td><td>{d.symbol}</td><td>{d.account_code}</td><td>{d.side}</td>
-        <td>{num(d.requested_qty, 2)}</td><td>{d.approved ? pill('approved', 'ok') : pill('refused', 'live')}</td><td><Reasons list={d.reasons} /></td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={8} className="cfg-note">No risk decisions yet.</td></tr>}</tbody></table></section>;
+    {!data && !error && <p role="status">Loading risk checks…</p>}
+    {data && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Side</th><th>Requested</th><th>Result</th><th>Reasons</th><th /></tr></thead><tbody>
+      {rows.map(d => <tr key={d.id}><td><small>{when(d.at)}</small></td><td>{d.strategy_code ?? '—'}</td><td>{d.symbol}</td><td>{d.account_code}</td><td>{d.side}</td>
+        <td>{d.requested_qty}</td><td>{d.approved ? pill('approved', 'ok') : pill('refused', 'live')}</td><td><Reasons list={d.reasons} /></td>
+        <td><button onClick={() => setSelected(d.id)}>Inspect check</button></td></tr>)}
+      {!rows.length && <tr><td colSpan={9} className="cfg-note">No risk checks match this selection.</td></tr>}</tbody></table></div>}
+    {detail && <RiskCheckDetail row={detail} close={() => setSelected(null)} />}
+  </section>;
+}
+
+function RiskCheckDetail({ row, close }: { row: Row; close: () => void }) {
+  const input = row.inputs ?? {};
+  const mode = input.mode ?? row.order_mode;
+  const quote = input.quote;
+  const limits = Object.entries(input.limits ?? {});
+  return <FloatingWindow storageKey="corei.risk.check.v1" title={`Risk check · ${row.symbol} · ${row.account_code}`} onClose={close}
+    footer={<div className="cfg-actions">
+      {row.order_id && <button onClick={() => { close(); openOrder(row.order_id); }}>Inspect order</button>}
+      <button onClick={close}>Close</button>
+    </div>}>
+    <div className="intel">
+      <p><strong>{row.approved ? 'Approved' : 'Refused'}</strong> · {when(row.at)} · {mode === 'BROKER' ? ['Broker', input.environment].filter(Boolean).join(' ') : mode === 'PAPER' ? 'Paper' : 'Mode unavailable'}</p>
+      <p>{row.side} · requested {row.requested_qty} · approved quantity {row.approved_qty ?? '—'}</p>
+      <p className="cfg-note">Position {input.position_before ?? '—'} → {input.position_after ?? '—'}{input.reduce_only === true ? ' · reduces position' : ''}</p>
+      <Reasons list={row.reasons} />
+      {quote && <p className="cfg-note">Quote {[quote.broker_symbol, quote.source].filter(Boolean).join(' · ')} · mid {quote.mid ?? '—'} · {quote.age_seconds ?? '—'} s old at check (limit {quote.max_age_seconds} s) · received {when(quote.received_at)}</p>}
+      <h4>Applicable limits at check time</h4>
+      {limits.length > 0 ? <div className="cfg-scroll"><table className="cfg-table compact"><thead><tr><th>Limit</th><th>Measured</th><th>Threshold</th><th>Scope</th><th>Result</th></tr></thead>
+        <tbody>{limits.map(([kind, threshold]) => {
+          const measured = input.evaluated_limits?.[kind];
+          return <tr key={kind}><td>{kind}</td><td>{measured?.value ?? '—'}</td><td>{String(threshold)}</td><td>{measured?.scope ?? '—'}</td>
+            <td>{measured ? measured.breached ? 'Breached' : 'Within limit' : 'Evaluation unrecorded'}</td></tr>;
+        })}</tbody></table></div> : <p className="cfg-note">{input.limits ? 'No enabled limits applied to this order.' : 'Applicable limits were not recorded.'}</p>}
+      <details><summary>All recorded inputs</summary><pre className="risk-check-evidence">{JSON.stringify(input, null, 2)}</pre></details>
+    </div>
+  </FloatingWindow>;
 }
 
 function Exposure() {
@@ -437,23 +513,23 @@ function Exposure() {
     <table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Instrument</th><th>Net</th><th>Gross</th></tr></thead><tbody>
       {(data?.instruments ?? []).map((e: Row) => <tr key={e.account_id + e.instrument_id}><td>{e.account_code}</td><td>{e.symbol}</td><td className={Number(e.net) >= 0 ? 'up' : 'down'}>{money(e.net, e.currency)}</td><td>{money(e.gross, e.currency)}</td></tr>)}
       {data && !(data.instruments ?? []).length && <tr><td colSpan={4} className="cfg-note">No open positions.</td></tr>}</tbody></table>
-    <p className="cfg-note">Position value at the live mid, converted to the account's currency with collected FX pairs. A position whose currency cannot be converted is listed under Portfolio with a warning and blocks exposure checks.</p></section>;
+    <p className="cfg-note">Position value at the live mid, converted to the account's currency with collected FX pairs. The exposure table covers positions that can be valued in the account currency. Review valuation warnings in Portfolio.</p></section>;
 }
 
 export function RiskView() {
   const sections: Section[] = [
-    { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Kill switches, limits, refusals and each account\'s equity, loss today and exposure.', render: () => <RiskOverview /> },
+    { id: 'overview', label: 'Dashboard', group: 'Overview', hint: 'Review active controls, today’s refusals and account exposure.', render: ctx => <RiskOverview ctx={ctx} /> },
     { id: 'kill', label: 'Kill switches', group: 'Work', hint: 'Stop new orders for the firm, an account, a strategy, an instrument or one deployment.', render: ctx => <KillSwitches ctx={ctx} /> },
     { id: 'limits', label: 'Limits', group: 'Work', hint: 'Order size and value, position, working orders, orders per minute, daily loss, drawdown, exposure, margin, leverage, VaR, price deviation — per scope.', render: ctx => <Limits ctx={ctx} /> },
-    { id: 'decisions', label: 'Decisions', group: 'Monitor', hint: 'Every pre-trade check with its result and reasons.', render: () => <Decisions /> },
+    { id: 'decisions', label: 'Risk checks', group: 'Monitor', hint: 'Every pre-trade check with its result and reasons.', render: () => <Decisions /> },
     { id: 'exposure', label: 'Exposure', group: 'Monitor', hint: 'Net and gross position value per account and instrument.', render: () => <Exposure /> },
     { id: 'var', label: 'VaR and margin', group: 'Monitor', hint: 'How much each account could lose in a bad bar, and the margin in use.', render: () => <VarMargin /> },
     { id: 'stress', label: 'Stress tests', group: 'Monitor', hint: 'Today\'s positions under price shocks: everything, an asset class, a currency or one symbol.', render: ctx => <Stress ctx={ctx} /> },
     { id: 'var-settings', label: 'VaR settings', group: 'Configure', hint: 'Confidence, horizon and look-back of the VaR.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['var_confidence', 'var_timeframe', 'var_lookback_bars']} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every pre-trade check: limits, loss and drawdown, exposure, margin and leverage, price deviation, stale price, VaR, ES and stress.', render: () => <Formulas stage="Risk" /> },
-    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Extra risk refusals as graphs: they can only refuse, fail closed, and the built-in limits always run.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['RISK_CHECK']} /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Draft and test risk graphs. These bindings are recorded for review. The pre-trade engine enforces its built-in checks.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['RISK_CHECK']} /> },
   ];
-  return <StageShell view="Risk" sections={sections} />;
+  return <StageShell view="Risk" sections={sections} defaultSection="overview" />;
 }
 
 /* ---------- Stage 6 · Portfolio ---------- */
@@ -554,7 +630,8 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
         {e.detail?.modified && <small> · amended {Object.entries(e.detail.modified).map(([k, v]: [string, any]) => `${k.replace('_', ' ')} ${v[0] ?? '–'} → ${v[1] ?? '–'}`).join(', ')}</small>}
         {e.detail?.deal && <small> · deal {e.detail.deal}</small>}{e.detail?.found && <small> · {e.detail.found}</small>}{e.detail?.not_sent && <small> · not sent</small>}</li>)}</ol>
       {o.risk && <><h4>Risk check</h4><p className="cfg-note">{o.risk.approved ? 'Approved' : 'Refused'} · position {o.risk.inputs?.position_before} → {o.risk.inputs?.position_after}
-        {o.risk.inputs?.limits && Object.keys(o.risk.inputs.limits).length ? ` · limits ${Object.entries(o.risk.inputs.limits).map(([k, v]) => `${k} ${v}`).join(', ')}` : ' · no limits set'}</p></>}
+        {o.risk.inputs?.limits && Object.keys(o.risk.inputs.limits).length ? ` · ${Object.keys(o.risk.inputs.limits).length} applicable limits` : ''}</p>
+        <button onClick={() => { close(); openOrderRisk(id, o.client_order_id ?? o.symbol); }}>Inspect risk checks</button></>}
       {o.fills.length > 0 && <><h4>Fills</h4><table className="cfg-table compact"><tbody>{o.fills.map((f: Row) => <tr key={f.id}><td>{f.quantity} at {f.price}</td><td><small>bid {f.quote_bid ?? '–'} / ask {f.quote_ask ?? '–'}</small></td><td><small>realised {f.realised_pnl} {f.currency}</small></td><td><small>{f.broker_deal_id ? `deal ${f.broker_deal_id}` : ''}{f.latency_ms != null ? ` · ${f.latency_ms} ms` : ''}</small></td></tr>)}</tbody></table></>}
       {amend && <form className="intel-edit" onSubmit={sendAmend} aria-label="Amend order">
         <p className="cfg-note">{upstox?'Update the working limit or trigger price at Upstox. Corei records the change once Upstox accepts it.':'New prices pass the pre-trade checks. Broker amendments are recorded after acceptance.'}</p>

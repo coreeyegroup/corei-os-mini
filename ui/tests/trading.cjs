@@ -157,6 +157,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/orders'))return ok({items:[order]});
    if(url.includes('/trading/risk/kill-switches')&&method==='POST'){const k={id:'k'+kills.length,...body,engaged:true,target_name:'VTM_A',engaged_by:'risk-ops',engaged_at:now,automatic:false};kills.push(k);return ok(k,201);}
    if(url.includes('/trading/risk/kill-switches'))return ok({items:kills});
+   if(url.includes('/trading/risk/decisions'))return ok({items:[{
+     id:'r1',order_id:'o1',at:now,account_code:'VTM_A',symbol:'EURUSD',side:'BUY',requested_qty:'0.001',approved_qty:'0.001',
+     approved:true,reasons:[],inputs:{mode:'PAPER',position_before:'0',position_after:'0.001',limits:{MAX_ORDER_QTY:'0.01'},
+       evaluated_limits:{MAX_ORDER_QTY:{value:'0.001',threshold:'0.01',scope:'ACCOUNT',breached:false}}}
+   }]});
    if(url.includes('/trading/risk/exposure'))return ok({instruments:[],accounts:[]});
    if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
    if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
@@ -389,6 +394,12 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  nav('Orders').click();await settle(6);
  $$('.intel-table tbody tr')[0].click();await settle(8);
  assert.deepEqual($$('.st-timeline li b').map(b=>b.textContent),['new','approved','submitted','acknowledged','filled']);
+ button('Inspect risk checks').click();await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('/trading/risk/decisions?limit=200&order_id=o1')));
+ button('Inspect check').click();await settle(3);
+ assert.match($('.fw').textContent,/MAX_ORDER_QTY0\.0010\.01ACCOUNTWithin limit/);
+ button('Inspect order').click();await settle(6);
+ assert.match($('.fw').textContent,/Order · EURUSD/);
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
  console.log('PASS: orders: the ticket sends one order per ticket; each order shows every step, the risk check and its fills.');
 

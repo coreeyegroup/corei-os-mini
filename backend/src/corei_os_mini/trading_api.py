@@ -598,10 +598,11 @@ def release(switch_id: UUID, payload: dict, user: Principal = Depends(_risk)):
 
 
 @router.get('/risk/decisions')
-def decision_list(response: Response, approved: bool | None = None, limit: int = Query(200, ge=1, le=2000), _: str = Depends(require_operator)):
+def decision_list(response: Response, approved: bool | None = None, limit: int = Query(200, ge=1, le=2000),
+                  account_id: UUID | None = None, order_id: UUID | None = None, _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        return {'items': _j(risk.decisions(db, limit, approved))}
+        return {'items': _j(risk.decisions(db, limit, approved, account_id=account_id, order_id=order_id))}
 
 
 @router.get('/risk/exposure')

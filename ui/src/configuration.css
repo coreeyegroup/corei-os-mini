@@ -483,3 +483,5 @@ tr.ex-pending td { background: color-mix(in srgb, var(--cfg-warn) 8%, transparen
 .sd-journey { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .sd-pagination { color: var(--muted); }
 .sd-sub, .sd-line, .sd-grid > span { overflow-wrap: anywhere; }
+
+.risk-check-evidence { overflow: auto; max-height: 18rem; }

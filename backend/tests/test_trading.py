@@ -137,6 +137,17 @@ class Trading(tmd.MarketData):
         r = self.ok(self.alice.post('/api/trading/orders', json={**body, 'ticket_key': 'ticket-0003'}), 201)
         self.assertEqual(r['state'], 'REJECTED')
         self.assertTrue(r['reasons'][0].startswith('MAX_POSITION_QTY: position 0.1 > limit 0.08'), r['reasons'])
+        path = f"/api/trading/risk/decisions?approved=false&order_id={r['id']}&account_id={a['id']}&limit=1"
+        checks = self.ok(self.alice.get(path))['items']
+        self.assertEqual([x['order_id'] for x in checks], [r['id']])
+        snapshot = checks[0]['inputs']
+        self.assertEqual(snapshot['mode'], 'PAPER')
+        measured = snapshot['evaluated_limits']['MAX_POSITION_QTY']
+        self.assertEqual((Decimal(measured['value']), Decimal(measured['threshold']), measured['breached']),
+                         (Decimal('0.1'), Decimal('0.08'), True))
+        self.assertEqual((measured['scope'], measured['limit_id']), ('ACCOUNT', lim['id']))
+        self.assertEqual(self.ok(self.alice.get(f"/api/trading/risk/decisions?approved=true&order_id={r['id']}"))['items'], [])
+
         sell = self.ok(self.alice.post('/api/trading/orders', json={**body, 'side': 'SELL', 'quantity': '0.05', 'ticket_key': 'ticket-0004'}), 201)
         self.assertEqual(sell['state'], 'FILLED', 'reducing a position is not blocked by the position limit')
         # Limit order: rests, then cancel.

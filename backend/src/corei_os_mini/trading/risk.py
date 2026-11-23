@@ -235,7 +235,8 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
     signed = qty if order['side'] == 'BUY' else -qty
     after = current + signed
     reducing = current != 0 and abs(after) < abs(current) and (after == 0 or (after > 0) == (current > 0))
-    inputs = {'position_before': str(current), 'position_after': str(after), 'reduce_only': reducing}
+    inputs = {'mode': order['mode'], 'position_before': str(current), 'position_after': str(after),
+              'reduce_only': reducing}
 
     # 1. Kill switches (an operator's flatten may still remove risk).
     for k in engaged(db, scopes):
@@ -275,8 +276,13 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         # a position is still allowed: the broker prices it, and holding risk because a feed stopped is worse.
         seen = quote.get('received_at') or quote.get('source_time')
         limit_s = int((db.execute('SELECT max_quote_age_seconds FROM tr_settings WHERE id').fetchone() or {}).get('max_quote_age_seconds') or 60)
-        if seen is not None and (now - seen).total_seconds() > limit_s and not (order['mode'] == 'BROKER' and reducing):
-            reasons.append(f'STALE_PRICE: the last price is {int((now - seen).total_seconds())} s old (limit {limit_s} s; Trading settings)')
+        age = (now - seen).total_seconds() if seen is not None else None
+        inputs['quote'] = {'broker_symbol': quote.get('broker_symbol'), 'account_id': quote.get('account_id'),
+                           'source': quote.get('source'), 'source_time': quote.get('source_time'),
+                           'received_at': quote.get('received_at'), 'mid': quote.get('mid'),
+                           'age_seconds': int(age) if age is not None else None, 'max_age_seconds': limit_s}
+        if age is not None and age > limit_s and not (order['mode'] == 'BROKER' and reducing):
+            reasons.append(f'STALE_PRICE: the last price is {int(age)} s old (limit {limit_s} s; Trading settings)')
     if order.get('order_type') == 'LIMIT' and not order.get('limit_price'):
         reasons.append('LIMIT_PRICE_MISSING')
     if order['mode'] == 'PAPER' and order.get('order_type') == 'STOP' and not order.get('stop_price'):
@@ -289,11 +295,20 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         reasons.append(f'QUANTITY_STEP: {qty.normalize()} is not a multiple of the quantity step (would be {q.normalize()})')
     # 5. Limits (the tightest of each kind).
     lim = applicable(db, scopes)
-    inputs['limits'] = {k: str(v['value']) for k, v in lim.items()}
+    inputs['limits'] = {kind: str(row['value']) for kind, row in lim.items()}
+    evaluated = {}
+    inputs['evaluated_limits'] = evaluated
 
     def over(kind: str, value: Decimal, text: str):
-        if kind in lim and value > D(lim[kind]['value']):
-            reasons.append(f"{kind}: {text} {value.normalize() if isinstance(value, Decimal) else value} > limit {D(lim[kind]['value']).normalize()} ({lim[kind]['scope'].lower()})")
+        if kind not in lim:
+            return
+        row = lim[kind]
+        threshold = D(row['value'])
+        breached = value > threshold
+        evaluated[kind] = {'value': str(value), 'threshold': str(threshold), 'breached': breached,
+                           'scope': row['scope'], 'limit_id': row['id']}
+        if breached:
+            reasons.append(f"{kind}: {text} {value.normalize()} > limit {threshold.normalize()} ({row['scope'].lower()})")
 
     over('MAX_ORDER_QTY', qty, 'order')
     level = order.get('limit_price') or order.get('stop_price')
@@ -402,12 +417,20 @@ def auto_stop(db, now: datetime) -> list[dict]:
     return engaged_now
 
 
-def decisions(db, limit: int = 200, approved: bool | None = None) -> list[dict]:
-    rows = db.execute("""SELECT r.*, a.code AS account_code, i.symbol, s.code AS strategy_code FROM risk_decisions r
+def decisions(db, limit: int = 200, approved: bool | None = None, *,
+              account_id: UUID | None = None, order_id: UUID | None = None) -> list[dict]:
+    filters, args = [], []
+    for column, value in (('approved', approved), ('account_id', account_id), ('order_id', order_id)):
+        if value is not None:
+            filters.append(f'r.{column}=%s')
+            args.append(value)
+    where = ' WHERE ' + ' AND '.join(filters) if filters else ''
+    rows = db.execute("""SELECT r.*, a.code AS account_code, i.symbol, s.code AS strategy_code, o.mode AS order_mode
+                         FROM risk_decisions r
                          JOIN cfg_accounts a ON a.id=r.account_id JOIN cfg_instruments i ON i.id=r.instrument_id
-                         LEFT JOIN cfg_deployments d ON d.id=r.deployment_id LEFT JOIN cfg_strategies s ON s.id=d.strategy_id"""
-                      + ('' if approved is None else ' WHERE r.approved=%s') + ' ORDER BY r.at DESC LIMIT %s',
-                      ([approved, limit] if approved is not None else [limit])).fetchall()
+                         LEFT JOIN cfg_deployments d ON d.id=r.deployment_id LEFT JOIN cfg_strategies s ON s.id=d.strategy_id
+                         LEFT JOIN oms_orders o ON o.id=r.order_id"""
+                      + where + ' ORDER BY r.at DESC, r.id DESC LIMIT %s', [*args, limit]).fetchall()
     return [store.clean(r) for r in rows]
 
 
