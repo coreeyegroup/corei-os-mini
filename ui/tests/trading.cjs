@@ -128,9 +128,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    }],has_more:false});
    if(/\/studio\/scan-runs\/batch-\d+$/.test(url))return ok(savedRuns.find(run=>url.endsWith('/'+run.id)));
    if(url.includes('/intel/instrument/a1/EURUSD?'))return ok({snapshots:[],history:[],timeframe:'H1'});
-   if(url.endsWith('/intel/watchlists'))return ok({items:[]});
+   if(url.endsWith('/intel/watchlists'))return ok({items:[{id:'test-watchlist',name:'Research FX',items:[{account_id:'a1',broker_symbol:'EURUSD'},{account_id:'a1',broker_symbol:'UNCOLLECTED'}]}]});
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
-     const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
+     const candidate={bar_time:now,strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
        timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
      if(body.instrument_symbols.length===1 || body.strategy_codes.length===1)return ok({scanned_at:now,items:body.instrument_symbols.flatMap(symbol=>[
        {...candidate,instrument_symbol:symbol},
@@ -163,7 +163,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}},
      {id:'SIGNAL_BLEND',label:'Signal blend',description:'Weighted Stage 3 signals',equation:'combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ|',strength_equation:'strength = clamp(|combined|, 10, 100)',
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},components:{type:'array'},entry:{type:'number',default:40},exit:{type:'number',default:10}}}}]});
-   if(url.includes('/trading/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',first_bar:now,last_bar:now}]});
+   if(url.includes('/trading/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',instrument:'EURUSD',first_bar:now,last_bar:now}]});
    if(url.endsWith('/trading/backtests')&&method==='POST')return ok({id:'b1',metrics:{net_pnl:'812.40',return_pct:'0.81',trades:14,win_rate_pct:57.1,profit_factor:1.6,max_drawdown_pct:'0.42',sharpe:1.3,exposure_pct:48,currency:'USD'},
      equity:[{t:now,equity:'100000'},{t:now,equity:'100812.4'}],trades:[{side:'LONG',entry_time:now,entry:'1.08',exit_time:now,exit:'1.081',pnl:'100.00',reason:'EMA cross'}]},201);
    if(url.includes('/trading/backtests'))return ok({items:[]});
@@ -593,6 +593,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
  assert.equal(studioField('Instrument').value,'EURUSD');
  assert.equal(calls.filter(c=>c.url.endsWith('/studio/signal-scan')).length,0);
+ await clickStudio('Open chart');await settle(4);
+ assert.ok(calls.some(c=>c.url.includes('/intel/instrument/a1/EURUSD?timeframe=H1')));
+ await go('Strategy Studio');
  await openStage('Runs & results');
  assert.match(studio.textContent,/Run a new scan or choose a saved run/);
  await openStage('Inspect instrument');
@@ -602,6 +605,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const actSelection=async control=>{control.click();await tick();};
  const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input[type=checkbox]');
  assert.ok(checks('Instruments')[0].checked);
+ fill(studioField('Use instrument watchlist'),'test-watchlist');await tick();
+ assert.match(studio.textContent,/Research FX applied · 1 instruments selected · 1 members excluded/);
+ assert.match(studio.querySelector('[aria-label="Watchlist exclusions"]').textContent,/UNCOLLECTED.*Source is not in the collected universe/);
  await clickStudio('Check readiness');
  const quickReadinessScope=calls.findLast(call=>call.url.endsWith('/studio/scan-readiness')).body;
  await clickStudio('Run scan');

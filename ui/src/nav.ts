@@ -80,6 +80,7 @@ export function takeStrategyRule(): StrategyRule | null {
 export type ScanEvidence = {
   instrument_symbol: string; strategy_code: string; strategy_version_id?: string;
   account_id: string; broker_symbol: string; timeframe: string;
+  account_code?: string; bar_time?: string;
 };
 type EvidenceTarget = 'chart' | 'backtest';
 const pendingEvidence: Partial<Record<EvidenceTarget, ScanEvidence>> = {};

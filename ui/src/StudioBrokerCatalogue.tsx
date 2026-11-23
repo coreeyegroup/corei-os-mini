@@ -131,7 +131,7 @@ export default function StudioBrokerCatalogue({ id, add, disabled }: {
         {!!picked.length && <button disabled={locked} onClick={() => setPicked([])}>Clear broker selection</button>}
         <button onClick={() => goto('Market data', 'dashboard')}>Collection settings</button>
       </div>
-      {canEdit && <p className="cfg-note">Set up and select starts M1 bar collection for research. Backfill history for the strategy timeframe as needed.</p>}
+      {canEdit && <p className="cfg-note">Set up and select starts M1 research collection. Backfill the strategy timeframe and check readiness after the bars arrive. Adding a symbol selects its COREI instrument. The scan can use another mapped source with fresher eligible bars.</p>}
       {picked.length === 500 && <p role="status">500 selected. Set these up before selecting more.</p>}
       <div className="cfg-scroll studio-table" role="region" aria-label="Broker symbol results" tabIndex={0}>
         <table className="cfg-table compact">

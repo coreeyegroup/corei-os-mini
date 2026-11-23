@@ -94,7 +94,7 @@ function StudioTable({ title, columns, items, empty, onGroup, onInspect }: {
       <tbody>
         {items.map((row, index) => <tr key={String(row.id ?? row.deployment_id ?? index)}>
           {columns.map(([label, key]) => <td key={label}>
-            {onInspect && key === 'instrument_symbol'
+            {onInspect && (key === 'instrument_symbol' || key === 'inspect_source') && row[key]
               ? <button type="button" className="studio-result-link" onClick={() => onInspect(row)}>{String(row[key])}</button>
               : onGroup && (key === 'scope' || key === 'group') && typeof row[key] === 'string'
               ? <button type="button" className="studio-result-link" onClick={() => onGroup(String(row[key]))}>{String(row[key])}</button>
@@ -115,14 +115,19 @@ function SignalDetail({ row, close }: { row: Row; close: () => void }) {
     instrument_symbol: instrument, strategy_code: strategy,
     account_id: String(row.account_id ?? ''), broker_symbol: String(row.broker_symbol ?? ''),
     timeframe: String(row.timeframe ?? ''),
+    account_code: typeof row.account_code === 'string' ? row.account_code : undefined,
+    bar_time: typeof row.bar_time === 'string' ? row.bar_time : undefined,
     strategy_version_id: typeof row.strategy_version_id === 'string' ? row.strategy_version_id : undefined,
   };
   const sourceResolved = evidence.account_id && evidence.broker_symbol && evidence.timeframe;
   const fields = [
     ['Strategy', strategy], ['Version', row.version], ['Timeframe', row.timeframe], ['Source', source],
+    ['Bar series', row.series === 'NATIVE' ? 'Native timeframe' : row.series === 'RESAMPLED_M1' ? 'Built from M1 bars' : undefined],
+    ['History', typeof row.available_bars === 'number' && typeof row.required_bars === 'number'
+      ? `${row.available_bars} available · ${row.required_bars} required` : undefined],
     ['Outcome', row.status], ['Side', row.side], ['Strength within strategy', row.strength],
     ['Entry', row.entry], ['Stop loss', row.stop_loss], ['Target', row.take_profit],
-    ['Trigger bar', row.trigger_bar_time], ['Bars since trigger', row.bars_since_trigger],
+    ['Evaluated bar (UTC)', row.bar_time], ['Trigger bar (UTC)', row.trigger_bar_time], ['Bars since trigger', row.bars_since_trigger],
     ['Risk per contract', row.risk_per_contract && [row.risk_per_contract, row.quote_currency].join(' ')],
     ['Reward / risk', row.reward_risk],
   ];
@@ -136,6 +141,7 @@ function SignalDetail({ row, close }: { row: Row; close: () => void }) {
       <button disabled={!sourceResolved} onClick={() => openScanEvidence('chart', evidence)}>Open chart</button>
       <button disabled={!sourceResolved || !evidence.strategy_version_id} onClick={() => openScanEvidence('backtest', evidence)}>Open backtest</button>
     </div>
+    {sourceResolved && <p className="cfg-note">Chart and backtest open this source using currently stored history. The evaluated bar above identifies the scan observation.</p>}
     {(!sourceResolved || !evidence.strategy_version_id) && <p className="cfg-note">A resolved data source and strategy version are required for the backtest handoff.</p>}
   </section>;
 }
@@ -418,6 +424,7 @@ export default function StrategyStudio() {
   const [watchlists, setWatchlists] = useState<Row[]>([]);
   const [watchSources, setWatchSources] = useState<Row[]>([]);
   const [watchlistError, setWatchlistError] = useState('');
+  const [watchlistReview, setWatchlistReview] = useState<{ name: string; included: number; excluded: Row[] } | null>(null);
   const [allInstrumentGroups, setAllInstrumentGroups] = useState(false);
   const [allStrategyGroups, setAllStrategyGroups] = useState(false);
   const [instrumentFilter, setInstrumentFilter] = useState<'all' | 'selected'>('all');
@@ -621,7 +628,8 @@ export default function StrategyStudio() {
   const allStrategies = activeStrategies.map(item => String(item.code));
   const instrumentSet = new Set(allInstruments);
   const strategySet = new Set(allStrategies);
-  const selectedSymbols = (scanInstruments ?? [selectedInstrument]).filter(symbol => instrumentSet.has(symbol));
+  const suggestedScanInstrument = activeInstruments.find(item => item.has_source === true) ?? activeInstruments[0];
+  const selectedSymbols = (scanInstruments ?? [instrumentLabel(suggestedScanInstrument ?? {})]).filter(symbol => instrumentSet.has(symbol));
   const selectedCodes = filteredStrategies.filter(code => strategySet.has(code));
   const chosenStrategies = (scanStrategies ?? allStrategies.slice(0, 1)).filter(code => strategySet.has(code));
   const selectInstruments = byInstrument ? !allInstrumentGroups : instrumentFilter === 'selected';
@@ -668,13 +676,15 @@ export default function StrategyStudio() {
     if (!added.length) throw new Error('No active COREI instruments were found for this selection.');
     setAllInstrumentGroups(false);
     setInstrumentFilter('selected');
-    setScanInstruments(previous => [...new Set([...(previous ?? [selectedInstrument]).filter(symbol => active.has(symbol)), ...added])]);
+    setScanInstruments(previous => [...new Set([...(previous ?? []).filter(symbol => active.has(symbol)), ...added])]);
+    setWatchlistReview(null);
     setReadiness(null);
   }
 
   function openScan() {
     setAllInstrumentGroups(false);
     setScanInstruments(selectedInstrument ? [selectedInstrument] : null);
+    setWatchlistReview(null);
     setScanScope(selectedInstrument ? 'instrument' : 'strategy');
     advanceResearch('scan');
   }
@@ -701,6 +711,10 @@ export default function StrategyStudio() {
   const frozenRequest = { ...scanRequest, instrument_symbols: instrumentScope, strategy_codes: strategyScope };
   const readinessKey = JSON.stringify([frozenRequest, updated]);
   const currentReadiness = readiness?.key === readinessKey ? readiness : null;
+  const inScope = new Set(instrumentScope);
+  const instrumentRows = activeInstruments.filter(row => inScope.has(instrumentLabel(row)));
+  const missingSources = instrumentRows.filter(row => row.has_source === false).length;
+  const diagnosticOnly = currentReadiness?.data?.ready === 0 || (instrumentRows.length > 0 && missingSources === instrumentRows.length);
 
   async function checkReadiness() {
     if (!canScan || readinessBusy) return;
@@ -729,6 +743,7 @@ export default function StrategyStudio() {
 
   function openPreset(preset: ScanPreset) {
     const request = preset.request;
+    setWatchlistReview(null);
     setScanScope(preset.mode);
     setSection(preset.mode === 'strategy' ? 'scan-strategy' : 'scan');
     setAllInstrumentGroups(Boolean(preset.allInstruments));
@@ -803,6 +818,7 @@ export default function StrategyStudio() {
   const instrumentScopeCard = <section key="instruments" className="studio-scope-card" aria-label="Instrument scope">
     <h4>{byInstrument ? '1. Instruments' : '2. Instruments'} <small>{instrumentScope.length.toLocaleString()} in scope</small></h4>
     <small className="cfg-note">{activeInstruments.length.toLocaleString()} registered active · {activeInstruments.filter(row => row.has_source).length.toLocaleString()} with a mapped source</small>
+    <p className="cfg-note studio-scope-note">Search broker symbols to add instruments. The registered list shows instruments COREI can identify across sources. Check readiness to see which pairs have usable bars.</p>
     <div className="studio-actions"><label>Instruments to scan
       <select value={selectInstruments ? 'selected' : 'all'} disabled={scanBusy} onChange={event => {
         const selected = event.target.value === 'selected';
@@ -821,28 +837,40 @@ export default function StrategyStudio() {
         const list = watchlists.find(item => item.id === event.target.value);
         if (!list) return;
         const entries = Array.isArray(list.items) ? list.items as Row[] : [];
-        const keys = new Set(entries.map(sourceId));
-        const mapped = [...new Set(watchSources.filter(source => keys.has(sourceId(source)))
-          .map(source => String(source.instrument ?? ''))
-          .filter(symbol => instrumentSet.has(symbol)))];
+        const collected = new Map(watchSources.map(source => [sourceId(source), source]));
+        const mapped = new Set<string>();
+        const excluded: Row[] = [];
+        for (const entry of entries) {
+          const source = collected.get(sourceId(entry));
+          const symbol = String(source?.instrument ?? '');
+          if (symbol && instrumentSet.has(symbol)) mapped.add(symbol);
+          else excluded.push({ ...entry, reason: !source ? 'Source is not in the collected universe'
+            : symbol ? 'Mapped instrument is not active' : 'Source has no instrument mapping' });
+        }
         setAllInstrumentGroups(false);
-        setScanInstruments(mapped);
+        setScanInstruments([...mapped]);
         setInstrumentFilter('selected');
-        setWatchlistError(mapped.length ? '' : 'This watchlist has no collected sources mapped to active instruments.');
+        setWatchlistReview({ name: String(list.name), included: mapped.size, excluded });
       }}>
         <option value="">Choose a watchlist</option>
         {watchlists.map(item => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}
       </select>
     </label></div>}
-    {!observing && watchlistError && <p className="cfg-note">Watchlists · {watchlistError}</p>}
+    {!observing && watchlistError && <p role="alert" className="cfg-error-text">Watchlists · {watchlistError}</p>}
+    {!observing && watchlistReview && <details className="studio-scan-settings">
+      <summary>{watchlistReview.name} applied · {watchlistReview.included} instruments selected · {watchlistReview.excluded.length} members excluded</summary>
+      <StudioTable title="Watchlist exclusions" columns={[[ 'Broker symbol', 'broker_symbol' ], [ 'Account', 'account_id' ], [ 'Reason', 'reason' ]]}
+        items={watchlistReview.excluded} empty="Every member resolved to an active instrument." />
+    </details>}
     {selectInstruments && <ScanSelection label="Instruments" items={activeInstruments.map(item => ({
       value: instrumentLabel(item),
       label: [instrumentLabel(item), item.name, item.has_source === false ? 'Needs data source' : ''].filter(Boolean).join(' · '),
       search: [item.asset_class, ...(Array.isArray(item.aliases) ? item.aliases : [])].filter(Boolean).join(' ')
-    }))} selected={selectedSymbols} change={setScanInstruments} disabled={scanBusy} loading={refreshing} />}
+    }))} selected={selectedSymbols} change={symbols => { setScanInstruments(symbols); setWatchlistReview(null); }} disabled={scanBusy} loading={refreshing} />}
   </section>;
   const strategyScopeCard = <section key="strategies" className="studio-scope-card" aria-label="Strategy scope">
     <h4>{byInstrument ? '2. Strategies' : '1. Strategies'} <small>{strategyScope.length.toLocaleString()} in scope</small></h4>
+    <p className="cfg-note studio-scope-note">Each strategy uses its latest approved version and that version’s timeframe. A strategy without an approved version appears in the checks with a reason.</p>
     <div className="studio-actions"><label>Strategies to scan
       <select value={selectStrategies ? 'selected' : 'all'} disabled={scanBusy} onChange={event => {
         const selected = event.target.value === 'selected';
@@ -1113,15 +1141,18 @@ export default function StrategyStudio() {
               {readinessBusy ? 'Checking readiness…' : 'Check readiness'}
             </button>
             <button className="primary" disabled={!canScan} onClick={() => void runScan()}>
-              {scanBusy ? 'Scanning…' : currentScanError ? 'Retry scan' : 'Run scan'}
+              {scanBusy ? 'Scanning…' : diagnosticOnly ? 'Run diagnostic scan' : currentScanError ? 'Retry scan' : 'Run scan'}
             </button>
           </div>
         </div>}
+        {!observing && missingSources > 0 && <p className="cfg-note">{missingSources} selected {missingSources === 1 ? 'instrument needs' : 'instruments need'} a mapped source. Browse the broker catalogue or open <button className="studio-result-link" onClick={() => goto('Market data', 'plans')}>Collection plans</button>.</p>}
+        {!observing && diagnosticOnly && <p className="cfg-note">The selected scope currently has no ready pairs. A diagnostic scan returns the reasons for waiting.</p>}
         {!observing && currentReadiness?.error && <p role="alert" className="cfg-error-text">{currentReadiness.error}</p>}
         {!observing && currentReadiness?.data && <section className="studio-scan-settings">
           <h3>Scan readiness</h3>
           <p role="status">{currentReadiness.data.requested.toLocaleString()} requested · {currentReadiness.data.ready.toLocaleString()} ready ·
             {' '}{(currentReadiness.data.requested - currentReadiness.data.ready).toLocaleString()} blocked</p>
+          <p className="cfg-note">Ready means the pair has an approved strategy and sufficient fresh closed bars. A scan can still find no qualifying entry.</p>
           <p className="cfg-note">Checked at {new Date(currentReadiness.data.checked_at).toLocaleString()}. Readiness uses the latest approved strategy settings and available closed bars.</p>
           {!!currentReadiness.data.strategies?.length && <details><summary>Strategy versions and timeframes</summary>
             <StudioTable title="Strategy readiness" columns={[[ 'Strategy', 'strategy' ], ['Approved version','version'],
@@ -1130,7 +1161,9 @@ export default function StrategyStudio() {
           </details>}
           {currentReadiness.data.requested > currentReadiness.data.ready && <>
             <div className="studio-actions">
-              <button onClick={() => goto('Market data', 'plans')}>Market data setup</button>
+              <button onClick={() => { setBrokerOpen(true); document.getElementById(brokerPanelId)?.focus(); }}>Find broker symbols</button>
+              <button onClick={() => goto('Market data', 'plans')}>Review collection plans</button>
+              <button onClick={() => goto('Market data', 'backfill')}>Review backfill jobs</button>
               <button onClick={() => goto('Configuration', 'strategies')}>Strategy setup</button>
             </div>
           </>}
@@ -1149,11 +1182,15 @@ export default function StrategyStudio() {
       {observing && <section className="studio-panel">
         <div className="studio-section-title">
           <h3>Market context · H1</h3>
-          <button onClick={() => goto('Intelligence', 'instrument')}>Open instrument analysis</button>
+
         </div>
-        <StudioTable title="Market context" items={observedSnapshots}
+        <StudioTable title="Market context" onInspect={row => openScanEvidence('chart', {
+          instrument_symbol: selectedInstrument, strategy_code: '',
+          account_id: String(row.account_id), account_code: String(row.account_code ?? ''),
+          broker_symbol: String(row.broker_symbol), timeframe: 'H1',
+        })} items={observedSnapshots.map(row => ({ ...row, inspect_source: row.account_id && row.broker_symbol ? 'Open chart' : null }))}
           columns={[[ 'Broker symbol', 'broker_symbol' ], [ 'Account', 'account_code' ], [ 'Regime', 'regime' ],
-            [ 'Volatility', 'volatility' ], [ 'Closed bar', 'bar_time' ]]}
+            [ 'Volatility', 'volatility' ], [ 'Closed bar', 'bar_time' ], [ 'Analysis', 'inspect_source' ]]}
           empty={refreshing ? 'Loading market context…' : !selection ? 'Select an instrument to see its market context.'
             : 'No H1 snapshot is available for this instrument.'} />
       </section>}

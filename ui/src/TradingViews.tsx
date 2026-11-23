@@ -267,7 +267,7 @@ function Backtest({ ctx }: { ctx: Ctx }) {
   const m = result?.metrics;
   return <section className="intel">
     <form className="cfg-form" onSubmit={run}>
-      {evidence && <p className="cfg-note">Scan selection · {evidence.instrument_symbol} · {evidence.strategy_code} · {evidence.timeframe} · {evidence.broker_symbol}. Review the date range and costs before running.</p>}
+      {evidence && <p className="cfg-note">Scan selection · {evidence.instrument_symbol} · {evidence.strategy_code} · {evidence.timeframe} · {evidence.broker_symbol}{evidence.bar_time ? ` · evaluated ${evidence.bar_time} (UTC)` : ''}. Review the date range and costs before running.</p>}
       <Field label="Rules to test"><Choice label="Backtest rules" value={f.use} options={[['VERSION', 'A strategy version'], ['IDEA', 'An algorithm and parameters (idea)']]} onChange={v => setF({ ...f, use: v })} /></Field>
       {f.use === 'VERSION' ? <div className="cfg-pair">
         <Field label="Strategy"><select aria-label="Backtest strategy" value={strategyId} onChange={e => { setStrategyId(e.target.value); setF({ ...f, strategy_version_id: '' }); }}><option value="">Choose…</option>{strategies.map((s: Row) => <option key={s.id} value={s.id}>{s.code}</option>)}</select></Field>
