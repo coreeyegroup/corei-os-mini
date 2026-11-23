@@ -320,10 +320,15 @@ class Wave0(te.Execution):
         from corei_os_mini.trading import brokers
         connection, a, _b, _ins = self.real_account()
         with self.connect() as db:
-            db.execute("UPDATE cfg_connections SET algo_name='corei-ema-v1' WHERE id=%s", (UUID(connection['id']),))
+            # The Wave 0 column; the connection setting upstox_algo_name (V3 routing) takes precedence when set.
+            db.execute("""UPDATE cfg_connections SET algo_name='corei-ema-v1',
+                          settings = settings || '{"api_base_url": "https://api.upstox.com"}'::jsonb WHERE id=%s""", (UUID(connection['id']),))
         seen: list = []
 
         class Resp:
+            def __init__(self, body):
+                self.body = body
+
             def __enter__(self):
                 return self
 
@@ -331,12 +336,15 @@ class Wave0(te.Execution):
                 return False
 
             def read(self, n):
-                return _json.dumps({'data': {'order_id': '1'}}).encode()
+                return _json.dumps(self.body).encode()
 
-        def fake_urlopen(req, timeout=20):
+        def fake_open(req, timeout=20):
             seen.append({k.lower(): v for k, v in req.header_items()})
-            return Resp()
-        with patch('corei_os_mini.broker_login.session_token', lambda *a, **k: 'tok'), patch('urllib.request.urlopen', fake_urlopen):
+            data = {'order_ids': ['250101000000001']} if req.get_method() == 'POST' else {'equity': {}}
+            return Resp({'status': 'success', 'data': data})
+        with patch('corei_os_mini.broker_login.session_token', lambda *a, **k: 'tok'), \
+                patch.object(brokers.urllib.request, 'build_opener') as make_opener:
+            make_opener.return_value.open.side_effect = fake_open
             up = brokers.Upstox(a['id'], 'test', 'header check')
             up.place({'order_type': 'LIMIT', 'quantity': Decimal('1'), 'limit_price': Decimal('101.05'), 'broker_tag': 'TAG123',
                       'side': 'BUY', 'time_in_force': 'DAY'}, 'NSE_EQ|X', 'D')

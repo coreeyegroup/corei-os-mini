@@ -1272,6 +1272,7 @@ symbols already collected by the authorized account. The credential authorizes
 read-only requests to these two endpoints. Without an explicit token and account
 scope, the optional interface is unavailable.
 
+<<<<<<< HEAD
 ## Market data means what it says (Stage 1) — release 0.54.0
 
 Closes the live defects of the 23 Nov 2026 Market Data audit. Migration `044_market_data_integrity.sql` (additive).
@@ -1298,3 +1299,31 @@ Tests: `backend/tests/test_market_data_stage1.py`.
   journal and lists any difference with the database (read-only).
 
 Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.
+=======
+## Upstox V3 order execution
+
+1. In Setup, use an Upstox REST/OAuth connection with base
+   `https://api.upstox.com`. Configure the exact registered OAuth callback
+   and sign in to the broker for the account. Verify the account and map each
+   trading instrument to its Upstox instrument key.
+2. Verify the server's egress IP and app registration with Upstox. When your
+   approved algo app requires it, put the registered **Algo Name** in the
+   connection's **Registered algo name**. Corei sends it as `X-Algo-Name`.
+3. In **Execution → Order ticket**, test in **Paper**. Live broker orders
+   require a LIVE Upstox connection, trading permission, platform risk and
+   execution controls, and any configured release approval.
+4. Upstox live place, cancel, and price-only amendments use V3 on the official
+   HFT hostname. Read and reconciliation calls use the account API domain.
+   Market and stop-market orders send automatic market protection; the broker
+   can still reject them. Upstox recognizes DAY and IOC; the Corei default GTC
+   is sent as DAY. This integration uses one broker ticket per Corei order, so
+   provider auto-slicing is disabled. Corei Paper remains the local simulation
+   route. A DEMO connection does not dispatch to the live Upstox host.
+5. Review the broker order ID, fills, and audit timeline in **Execution**.
+   For a timeout or uncertain broker response, use **Look up at the broker**
+   and review the broker's order before any further action.
+
+- [Upstox Place Order V3](https://upstox.com/developer/api-documentation/v3/place-order/)
+- [Upstox Modify Order V3](https://upstox.com/developer/api-documentation/v3/modify-order/)
+- [Upstox Cancel Order V3](https://upstox.com/developer/api-documentation/v3/cancel-order/)
+>>>>>>> origin/main

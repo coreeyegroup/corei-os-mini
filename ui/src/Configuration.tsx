@@ -273,7 +273,7 @@ export function toPayload(entity: Entity, draft: Row): Row {
   if (entity === 'connections' && draft.platform === 'REST_API') {
     const s = draft.settings;
     out.settings = { api_base_url: s.api_base_url, auth_method: s.auth_method, stream_url: s.stream_url || null,
-      oauth_redirect_url: s.auth_method === 'OAUTH2' ? s.oauth_redirect_url || null : null, notifier_webhook_url: s.notifier_webhook_url || null };
+      oauth_redirect_url: s.auth_method === 'OAUTH2' ? s.oauth_redirect_url || null : null, notifier_webhook_url: s.notifier_webhook_url || null, upstox_algo_name: s.upstox_algo_name?.trim() || null };
   }
   return out;
 }
@@ -611,6 +611,7 @@ function RestSettings({ settings, change }: { settings: Row; change: (s: Row) =>
     <input aria-label={label} required={required} type="url" value={settings[k] ?? ''} onChange={e => change({ ...settings, [k]: e.target.value })} /></Field>;
   return <>
     {field('api_base_url', 'REST base URL', 'e.g. https://api.upstox.com', true)}
+    {/upstox\.com/i.test(settings.api_base_url ?? '') && field('upstox_algo_name', 'Registered algo name', 'Optional. Enter the exact name configured in Upstox when your app requires X-Algo-Name.')}
     <Field label="Authentication"><Choice label="Authentication" value={settings.auth_method ?? 'API_KEY'} options={[['OAUTH2', 'OAuth 2 login (e.g. Upstox)'], ['API_KEY', 'API key and secret']]}
       onChange={v => change({ ...settings, auth_method: v })} /></Field>
     {settings.auth_method === 'OAUTH2' && field('oauth_redirect_url', 'OAuth redirect URL', 'Must match the broker app exactly, e.g. https://corei-os-mini.coreeye.in/api/oauth/upstox/callback', true)}

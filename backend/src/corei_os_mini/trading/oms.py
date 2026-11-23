@@ -341,8 +341,8 @@ def _modified(db, o: dict, changes: dict, actor: str, reason: str, at_broker: di
 
 def modify(actor: str, order_id: UUID, data: ModifyIn) -> dict:
     """Amend a working order: its limit or stop price, its stop-loss / take-profit, and (paper) a smaller quantity.
-    New prices pass the pre-trade check again (price deviation, limits) before anything changes. A real MT5 order is
-    amended at the broker first (TRADE_ACTION_MODIFY by its ticket) and recorded only when the broker accepts."""
+    New prices pass the pre-trade check before a broker amendment. Upstox accepts price-only amendments
+    for working limit or stop-market orders. The local terms change after the broker accepts."""
     changes: dict = {}
     with store.transaction('write') as db:
         o = db.execute('SELECT * FROM oms_orders WHERE id=%s FOR UPDATE', (str(order_id),)).fetchone()
@@ -388,12 +388,27 @@ def modify(actor: str, order_id: UUID, data: ModifyIn) -> dict:
         if o['mode'] == 'PAPER':
             row = _modified(db, o, changes, actor, data.reason)
             return store.clean(row)
-        if o.get('adapter') == 'UPSTOX':
-            raise HTTPException(409, 'Upstox orders are amended by cancelling and placing a new one.')
         if not o.get('broker_order_id'):
-            raise HTTPException(409, 'The broker has not given this order a ticket yet: look it up at the broker, then amend.')
+            raise HTTPException(409, 'Look the order up at the broker before amending it.')
         snapshot = o
-    from . import brokers   # outside the transaction: the broker is asked first, COREI records only what it accepted
+        if o.get('adapter') == 'UPSTOX':
+            from . import brokers
+            if set(changes) - {'limit_price', 'stop_price'}:
+                raise HTTPException(422, 'Upstox amendments on this ticket change the working limit or trigger price.')
+            # Serialize the broker amendment with other mutations of this order.
+            try:
+                brokers.Upstox(o['account_id'], actor, 'Amend Upstox order price').modify_price(o, changes)
+            except (brokers.NotSent, brokers.Refused) as exc:
+                raise HTTPException(409, f'Upstox did not amend the order: {exc}') from None
+            except brokers.Lost:
+                db.execute('INSERT INTO oms_order_events(order_id,state_from,state_to,detail,actor) VALUES (%s,%s,%s,%s,%s)',
+                           (str(order_id), o['state'], o['state'],
+                            json.dumps({'modify_unanswered': {key:str(value) for key,value in changes.items()}, 'reason':data.reason}), actor))
+            else:
+                return store.clean(_modified(db, o, changes, actor, data.reason, {'adapter':'UPSTOX'}))
+    if snapshot.get('adapter') == 'UPSTOX':
+        raise HTTPException(504, 'Upstox did not confirm the amendment. Check the broker’s order before trying again.')
+    from . import brokers   # MT5 uses its existing broker-first amendment path.
     sym = snapshot['broker_symbol']
     payload = {'action': 'modify', 'order': {'ticket': snapshot['broker_order_id'], 'tag': snapshot['broker_tag'], 'symbol': sym,
                                              'price': str(changes.get('limit_price', changes.get('stop_price', snapshot.get('limit_price') or snapshot.get('stop_price') or 0))),
