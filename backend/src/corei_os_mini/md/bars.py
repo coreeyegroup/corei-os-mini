@@ -13,8 +13,10 @@ Responsibilities:
   - Volume (`volume_kind`): a source that reports the day's running total (Upstox `volume` = traded today) adds
     only the increase since the previous quote (EXCHANGE); a total that falls (new day) starts again. Other sources'
     per-update volume is summed (PER_UPDATE).
-  A bar closes when a quote of a later period arrives or when its period has passed (quiet markets still close);
-  a quote older than the open bar is ignored for building (it is still stored as a tick).
+  A bar closes when a quote of a later period arrives or LATE_GRACE after its period has passed (quiet markets still
+  close). A quote received more than LATE_GRACE after the end of its bar is late for that bar and is not added to it
+  (decided from the quote's own times, so the journal replay makes the same choice); a quote older than the open bar
+  is ignored for building. Late and old quotes are still stored as ticks.
 Must never: read the clock or the database, or round prices (prices are stored as received; fixed-point storage is
   a separate decision, see the Stage 1 audit MD-6).
 Dependencies: markets (session hours), zoneinfo. Consumers: md.collector, md.replay, tests.
@@ -30,6 +32,7 @@ from . import markets
 FRAMES = {'S1': 1, 'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600, 'H4': 14400, 'D1': 86400}
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 MAX_EVENT_SKEW = timedelta(minutes=2)  # an event time further than this from receipt is not trusted for bucketing
+LATE_GRACE = timedelta(seconds=2)       # a bar stays open this long after its end for prices still on their way
 EXCHANGE_MARKETS = {'NSE', 'NSE_FO', 'NSE_CD', 'BSE', 'BSE_FO', 'MCX'}
 
 
@@ -96,7 +99,7 @@ class BarBuilder:
         return v - previous if v >= previous else v   # a lower total: a new trading day started
 
     def add(self, t: datetime, bid: float | None, ask: float | None, last: float | None = None,
-            volume: float | None = None, time_basis: str = 'RECEIPT') -> list[dict]:
+            volume: float | None = None, time_basis: str = 'RECEIPT', received: datetime | None = None) -> list[dict]:
         price = self._price(bid, last)
         traded = self._volume(volume)
         if not price:
@@ -105,6 +108,8 @@ class BarBuilder:
         spread = ask - bid if bid and ask else None
         for frame in self.frames:
             start = bucket(t, FRAMES[frame], self.market)
+            if received is not None and received > start + timedelta(seconds=FRAMES[frame]) + LATE_GRACE:
+                continue   # too late for its bar (the timer may already have closed it)
             bar = self.open.get(frame)
             if bar and start < bar['bar_time']:
                 continue
@@ -129,7 +134,7 @@ class BarBuilder:
     def due(self, now: datetime) -> list[dict]:
         """Close bars whose period has ended."""
         return [self._close(f) for f, bar in list(self.open.items())
-                if now >= bar['bar_time'] + timedelta(seconds=FRAMES[f])]
+                if now >= bar['bar_time'] + timedelta(seconds=FRAMES[f]) + LATE_GRACE]
 
     def partial(self) -> list[dict]:
         return [self._row(bar, complete=False) for bar in self.open.values()]

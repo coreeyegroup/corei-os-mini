@@ -61,6 +61,12 @@ class Bars(unittest.TestCase):
         self.assertEqual((bar['price_basis'], bar['volume_kind'], bar['anchor'], bar['time_basis']), ('LAST', 'EXCHANGE', 'SESSION', 'EVENT'))
         b.add(ist(9, 15, 1, day=24), 101.0, 102.0, 101.5, 20, 'EVENT')   # next day: the total starts again
         self.assertEqual(b.partial()[0]['volume'], 20.0)
+        # A price received more than 2 s after its bar ended is late for that bar (the timer may have closed it).
+        late = BarBuilder(['S1'], market='FX')
+        late.add(t, 1.1, 1.1002, None, None, 'EVENT', received=t)
+        self.assertEqual(late.due(t + timedelta(seconds=3))[0]['ticks'], 1)
+        self.assertEqual(late.add(t + timedelta(milliseconds=500), 1.2, 1.2002, None, None, 'EVENT', received=t + timedelta(seconds=3, milliseconds=100)), [])
+        self.assertEqual(late.partial(), [])                           # not reopened
         fx = BarBuilder(['M1'], market='FX')
         fx.add(t, 1.1, 1.1002, None, 3)
         fx.add(t + timedelta(seconds=1), 1.1001, 1.1003, None, 2)

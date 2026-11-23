@@ -10,7 +10,8 @@ Must never: write to the database or the journal (read-only check); it does not 
   were built by receipt time and UTC alignment, so a day from before the upgrade is expected to differ for session
   markets; run it on days after the upgrade.
 Known limits (reported, not hidden): the collector's clock-skew correction and offset re-measurement are replayed
-  from the journal's own connect lines only, so a day with a skewed reader clock may show small time differences.
+  from the journal's own connect lines only, so a day with a skewed reader clock may show small time differences;
+  lines without a receipt time (some terminal-push builds) are skipped and their bars reported as different.
 Dependencies: md.bars, md.collector (plan market), md.journal, md.quality (server offset), config_store (read).
 Consumers: operators (System › shell), tests.
 Run: python -m corei_os_mini.md.replay --account VTM_A --day 2026-11-24 [--root /var/lib/corei-os-mini/market-data]
@@ -54,7 +55,7 @@ def rebuild(lines: list[bytes], plans: dict[str, dict]) -> dict[tuple, dict]:
         if source and not stated:
             offset, stated = timedelta(minutes=round((source - rx).total_seconds() / 60 / 15) * 15), True
         at, basis = event_time(rx, source - offset if source else None)
-        for bar in builders[m['s']].add(at, m.get('b') or None, m.get('a') or None, m.get('l') or None, m.get('v'), basis):
+        for bar in builders[m['s']].add(at, m.get('b') or None, m.get('a') or None, m.get('l') or None, m.get('v'), basis, received=rx):
             out[(m['s'], bar['timeframe'], bar['bar_time'])] = bar
     return out
 

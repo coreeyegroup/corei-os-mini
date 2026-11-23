@@ -754,7 +754,7 @@ class SourceWorker(threading.Thread):
         self.ticks_total += 1
         st.errors, st.last_error = 0, None   # a price arrived: the symbol works
         at, basis = event_time(rx, source_utc)
-        closed = st.bars.add(at, bid, ask, last, volume, basis)
+        closed = st.bars.add(at, bid, ask, last, volume, basis, received=rx)
         rows, events = st.quality.on_tick(rx, source_utc, bid, ask)
         if bid and ask:
             st.mid, st.mid_at = (bid + ask) / 2, rx
