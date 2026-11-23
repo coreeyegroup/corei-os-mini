@@ -1271,3 +1271,30 @@ Use `Authorization: Bearer <token>` for GET
 symbols already collected by the authorized account. The credential authorizes
 read-only requests to these two endpoints. Without an explicit token and account
 scope, the optional interface is unavailable.
+
+## Market data means what it says (Stage 1) — release 0.54.0
+
+Closes the live defects of the 23 Nov 2026 Market Data audit. Migration `044_market_data_integrity.sql` (additive).
+Tests: `backend/tests/test_market_data_stage1.py`.
+
+- **Plan health in words.** Every active plan shows one state: live, market closed, waiting, delayed, unreliable,
+  error, wrong symbol, source offline or paused — with the reason and next step. "Collecting" no longer hides a plan
+  that receives nothing; the header and the dashboard count plan problems, and Home lists them.
+- **Wrong symbols are caught.** Every minute each plan's symbol is checked against its source's symbol list. A symbol
+  the list lacks (e.g. `Nifty 50` instead of `NSE_INDEX|Nifty 50`) is marked *wrong symbol* with suggestions, left out
+  of the subscription and of automatic backfill, and raised once as a CRITICAL event. On Upstox one rejected key no
+  longer stops the prices of the others.
+- **Bars match the exchange.** New bars use the exchange time of the price (when within 2 minutes of receipt), align
+  NSE/BSE/MCX bars to the session open (NSE H1 = 09:15, 10:15 … 15:15) and D1 to the IST day, use the last traded
+  price for exchange instruments and the increase of Upstox's day volume. FX/CFD bars are unchanged (bid, UTC). Each
+  bar records how it was made. Older bars are kept as they are.
+- **Quality reaches trading.** The risk check refuses a risk-increasing order when its feed is wrong-symbol, error,
+  offline or delayed, or scored below 40 in the last minute (Setup › Policies `md_block_states`,
+  `md_min_quality_score`). Reducing orders still pass.
+- **Calmer failures.** Automatic backfill waits after 3 failures in a row (15 min, doubling to 6 h); every event names
+  its symbol; latency is measured only on new trades (Upstox) and a negative value shows as *clock?*; an old quality
+  score is no longer shown as today's.
+- **Replay check.** `python -m corei_os_mini.md.replay --account CODE --day YYYY-MM-DD` rebuilds a day's bars from the
+  journal and lists any difference with the database (read-only).
+
+Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.

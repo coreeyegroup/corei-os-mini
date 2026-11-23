@@ -319,7 +319,20 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         backup = db.execute("SELECT ok, error, started_at FROM md_backups WHERE kind='DATABASE' ORDER BY id DESC LIMIT 1").fetchone()
         verify = db.execute("SELECT severity, detail FROM md_events WHERE kind='VERIFY' ORDER BY id DESC LIMIT 1").fetchone()
         archive = db.execute("SELECT severity, detail FROM md_events WHERE kind='ARCHIVE' ORDER BY id DESC LIMIT 1").fetchone()
+        plan_health = [dict(r) for r in db.execute("""SELECT h.state, h.detail, h.broker_symbol, p.code, p.purpose, a.code AS account_code
+            FROM md_plan_health h JOIN md_collection_plans p ON p.id=h.plan_id JOIN cfg_accounts a ON a.id=p.account_id
+            WHERE p.status='ACTIVE'""").fetchall()]
     live = sum(1 for c in collectors if c['state'] == 'CONNECTED')
+    from .md.health import PROBLEMS, WORDS
+    plan_states: dict[str, int] = {}
+    for h in plan_health:
+        plan_states[h['state']] = plan_states.get(h['state'], 0) + 1
+        if h['state'] in PROBLEMS:
+            # A plan that collects nothing is a problem even while its source is connected.
+            attention.append({'severity': 'CRITICAL' if h['purpose'] == 'TRADING_FEED' and h['state'] in ('INVALID_SYMBOL', 'ERROR') else 'WARNING',
+                              'area': 'Market data', 'title': f"{h['code']} ({h['broker_symbol']}): {WORDS[h['state']][0].lower()}",
+                              'detail': f"{h['detail'] or WORDS[h['state']][1]} {WORDS[h['state']][2]}".strip(),
+                              'goto': {'view': 'Market data', 'section': 'plans'}})
     for c in collectors:
         if c.get('problem'):
             p = c['problem']
@@ -377,7 +390,8 @@ def overview(response: Response, user: Principal = Depends(current_user)):
                           'goto': {'view': 'Configuration', 'section': 'controls'}})
     return {'user': {'username': user.username, 'roles': sorted(user.roles)},
             'feeds': {'active_plans': active_plans, 'collectors': len(collectors), 'live': live,
-                      'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
+                      'problems': sum(1 for c in collectors if c.get('problem')) + sum(n for k, n in plan_states.items() if k in PROBLEMS),
+                      'paused': paused_all, 'plans': plan_states},
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
             'live_policy': live_policy,

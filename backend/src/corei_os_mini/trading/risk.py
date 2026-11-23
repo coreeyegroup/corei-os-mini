@@ -321,6 +321,13 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         limit_s = int((db.execute('SELECT max_quote_age_seconds FROM tr_settings WHERE id').fetchone() or {}).get('max_quote_age_seconds') or 60)
         if seen is not None and (now - seen).total_seconds() > limit_s and not (order['mode'] == 'BROKER' and reducing):
             reasons.append(f'STALE_PRICE: the last price is {int((now - seen).total_seconds())} s old (limit {limit_s} s; Trading settings)')
+        # Stage 1 feed health: a price from a feed that is offline, rejected, unlisted or scoring badly is not one to add
+        # risk on (signals reach the market only through this check). Reducing orders still pass.
+        if not reducing:
+            from ..md.health import gate as feed_gate
+            unfit = feed_gate(db, quote.get('account_id'), quote.get('broker_symbol'), now, store.policy)
+            if unfit:
+                reasons.append(unfit)
     if order.get('order_type') == 'LIMIT' and not order.get('limit_price'):
         reasons.append('LIMIT_PRICE_MISSING')
     if order['mode'] == 'PAPER' and order.get('order_type') == 'STOP' and not order.get('stop_price'):

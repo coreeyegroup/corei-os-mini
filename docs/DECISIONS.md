@@ -110,3 +110,20 @@ trading ledger. Decision (engineering, within the existing guardrails; numeric l
 4. The trading ledger is written only by domain code; both editors enforce one policy (db_policy.py).
 5. Order rate limiting is in-process (one API process owns dispatch). A second sending process requires a shared
    limiter first. Status: accepted.
+
+## DEC-98 · Market data means what it says (release 0.54.0, 23 Nov 2026)
+
+Context: the Stage 1 audit found a trading feed collecting nothing for days while shown green, bars bucketed by
+receipt time and UTC-aligned for Indian markets, Upstox day volume summed per quote, and feed quality unused by risk.
+Decision (engineering; owner decisions on price storage and history rebuild remain open):
+1. Every active plan has one health state (md_plan_health), shown in words everywhere; screens and the header count
+   plan problems, not only collectors. A symbol missing from its source's list is never subscribed or backfilled.
+2. New bars state how they were made (price basis, volume kind, anchor, time basis, derivation). Session markets align
+   to the exchange open; exchange instruments use the last trade and the day-volume increase; FX keeps bid and UTC.
+   Bars stored before 0.54.0 are not rewritten (labels NULL) — rebuilding history is an owner decision.
+3. A risk-increasing order is refused when its feed is INVALID_SYMBOL, ERROR, OFFLINE or STALE, or scored below 40
+   in the last minute (policies md_block_states, md_min_quality_score; 0 turns the score rule off). Reducing orders
+   pass. Instruments without a plan keep the price-age check only.
+4. Automatic backfill backs off after repeated failures; manual backfill is unchanged.
+5. The journal replay check is read-only; it never repairs. Status: accepted.
+

@@ -194,3 +194,30 @@ Source: Claude end-to-end audit and build specification, ChatGPT lifecycle audit
 | C-24 | No account entitlements | OPEN — W1-7 (owner decision 7) | — |
 
 Waves 1–3 and their acceptance criteria: COREI-OS-MINI Final Build Specification (claude.ai artifact LcgAGcpqD6fTsWWgEW9Har).
+
+## F. Stage 1 · Market data — 23 Nov 2026 audit (release 0.54.0)
+
+Source: COREI-OS-MINI Stage 1 Market Data: Deep Audit and Polish Plan (claude.ai doc Py38xF5fdsmfxqodMzh1Ab). Evidence:
+`backend/tests/test_market_data_stage1.py`. Migration `044_market_data_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| MD-C1 / LM-1 | Plan symbol never re-checked against the source's list (NIFTY50 "Nifty 50") | DONE 0.54.0 (INVALID_SYMBOL, unsubscribed, suggestions, CRITICAL event) | test_unlisted_symbol_is_caught_left_out_and_explained |
+| MD-C2 / LM-3 | Broken plan shown green "collecting"; header counted collectors | DONE 0.54.0 (md_plan_health; header and KPI count plan problems) | same |
+| MD-C3 | Bars by receipt time | DONE 0.54.0 (exchange time when within 2 min of receipt; basis stored) | test_bars_use_exchange_time_when_plausible |
+| MD-C4 | Bars UTC-aligned for NSE/BSE/MCX | DONE 0.54.0 for new bars (session-anchored; old bars kept, labels NULL) | test_nse_bars_align_to_the_session_open |
+| MD-C5 / MD-C6 | Upstox day volume summed; exchange bars from bid | DONE 0.54.0 | test_exchange_instruments_use_last_price_and_day_volume_increase |
+| MD-C7 | Feed quality never reached trading | DONE 0.54.0 (risk check gate: md_block_states, md_min_quality_score) | test_feed_gate |
+| MD-C8 / LM-2 | Failed automatic backfill re-queued forever | DONE 0.54.0 (backoff after md_backfill_max_failures) | test_failed_automatic_backfills_wait_and_events_name_the_symbol |
+| MD-C9 / LM-5 | Clock offset fixed by the first tick | DONE 0.54.0 (median, re-measured every 15 min; Upstox stated) | collector code; covered by end-to-end tests |
+| MD-C10 | Journal replay never existed | DONE 0.54.0 (read-only check `python -m corei_os_mini.md.replay`) | test_journal_replay_rebuilds_the_stored_bars |
+| MD-C14 | Events without symbol | DONE 0.54.0 | test_failed_automatic_backfills_wait_and_events_name_the_symbol |
+| MD-C15 / LM-6 | Old score shown as today's quality | DONE 0.54.0 (score only from the last 5 min on the dashboard) | store.latest |
+| — | One Upstox key rejected failed every key's quotes; old trade time read as latency | DONE 0.54.0 | test_bad_key_is_set_aside_and_others_keep_flowing |
+| D-MD-7 / D-MD-8 / D-MD-9 | Misleading words; negative latency; silent "Live" filter | DONE 0.54.0 (health words, "clock?", hidden-row message) | UI scenarios |
+| MD-C17 | Float price storage | OPEN — MD-6 (owner decision: NUMERIC now or scaled int64) | — |
+| MD-C11 / MD-C12 | Exchange holiday feed; F&O roll; corporate actions | OPEN — MD-9 | — |
+| MD-C13 / C4 / C6 | Depth; Upstox WebSocket; standby collector | OPEN — MD-12 | — |
+| D-MD-1..5 | Instrument discovery in four places; explorer/tab duplication | OPEN — MD-11 (screen consolidation) | — |
+| F3 | Nightly gap scan of stored history | OPEN — MD-10 part 2 | — |
+

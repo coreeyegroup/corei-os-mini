@@ -11,7 +11,15 @@ database, in one transaction — so the database never holds data the journal la
 
 The supervisor (every 5 s) re-reads plans and switches, starts/stops workers and
 (un)subscribes symbols, checks staleness, compares sources of the same instrument,
-switches feeds, guards the disk and hands backfill jobs to workers.
+switches feeds, guards the disk and hands backfill jobs to workers. Every minute it checks every active plan's
+symbol against the source's symbol list; a symbol the list lacks is marked INVALID_SYMBOL, left out of the
+subscription and of automatic backfill, and reported once with the closest matches.
+
+Each plan gets one health state per supervisor cycle (md/health.py), written to md_plan_health: the screens and the
+trading feed gate read it, not the collector's connection state.
+Bars are built from the exchange (event) time when the source gives a plausible one, aligned to the market's
+session, priced and counted per instrument kind (md/bars.py). A broker clock offset that the source does not state
+is re-measured from the median of recent ticks every 15 minutes, not fixed by the first tick.
 
 Run: python -m corei_os_mini.md.collector
 Environment: COREI_DATABASE_URL, COREI_MD_ROOT (default /var/lib/corei-os-mini/market-data),
@@ -37,7 +45,10 @@ from uuid import UUID
 from .. import account_routes
 from .. import config_store as cfg
 from . import markets, store
-from .bars import BarBuilder, FRAMES, floor
+from statistics import median
+
+from .bars import BarBuilder, FRAMES, event_time, floor
+from .health import WORDS, plan_state
 from .bridge_client import BridgeError, BridgeTransport, bridge_of
 from .explain import explain
 from .journal import Journal
@@ -121,13 +132,14 @@ class Sink:
         self.quality: list[dict] = []
         self.events: list[dict] = []
         self.status: dict[str, dict] = {}
+        self.health: dict[str, dict] = {}
         self.dropped = 0
 
     def take(self) -> dict:
         with self.lock:
             batch = {'ticks': self.ticks, 'latest': self.latest, 'bars': list(self.bars.values()), 'quality': self.quality,
-                     'events': self.events, 'status': self.status}
-            self.ticks, self.latest, self.bars, self.quality, self.events, self.status = [], {}, {}, [], [], {}
+                     'events': self.events, 'status': self.status, 'health': self.health}
+            self.ticks, self.latest, self.bars, self.quality, self.events, self.status, self.health = [], {}, {}, [], [], {}, {}
             return batch
 
     def put_back(self, batch: dict) -> None:
@@ -146,16 +158,29 @@ class Sink:
             self.events = batch['events'] + self.events
             for k, v in batch['status'].items():
                 self.status.setdefault(k, v)
+            for k, v in batch.get('health', {}).items():
+                self.health.setdefault(k, v)
 
     def backlog(self) -> int:
         with self.lock:
             return len(self.ticks)
 
 
+def bar_builder(plan: dict) -> BarBuilder:
+    """Bars for this plan: aligned to its market's session, priced by instrument kind; Upstox reports the day's
+    running volume, so only its increase counts."""
+    return BarBuilder(plan['bar_timeframes'] if 'BARS' in plan['data_types'] else [], market=market_of(plan),
+                      cumulative_volume=plan.get('platform') == 'REST_API')
+
+
 class PlanState:
     def __init__(self, plan: dict):
         self.plan = plan
-        self.bars = BarBuilder(plan['bar_timeframes'] if 'BARS' in plan['data_types'] else [])
+        self.bars = bar_builder(plan)
+        self.errors = 0                     # consecutive requests the source rejected for this symbol
+        self.last_error: str | None = None
+        self.invalid: list[str] | None = None   # suggestions when the source's symbol list lacks the symbol
+        self.health: tuple | None = None    # (state, detail) last written
         self.quality = SymbolQuality(self.limits(plan), point=10 ** -int(plan.get('digits') or 5))
         self.last_stored: datetime | None = None
         self.mid: float | None = None
@@ -171,7 +196,8 @@ class PlanState:
 
     def refresh(self, plan: dict, deviation_bp: float) -> None:
         if plan['bar_timeframes'] != self.plan['bar_timeframes'] or plan['data_types'] != self.plan['data_types']:
-            self.bars = BarBuilder(plan['bar_timeframes'] if 'BARS' in plan['data_types'] else [])
+            self.plan = plan
+            self.bars = bar_builder(plan)
         self.plan = plan
         self.quality.limits = self.limits(plan, deviation_bp)
 
@@ -221,6 +247,9 @@ class SourceWorker(threading.Thread):
         self.reported_error: str | None = None
         self.failures = 0
         self.clock_samples: deque = deque(maxlen=20)
+        self.offset_stated = False           # the source stated its clock at connect (no measuring from ticks)
+        self.offset_samples: deque = deque(maxlen=60)
+        self.offset_checked = 0.0
         self.clock_skew_ms: float | None = None
         self.clock_skew_reported = False
         # Routes (DEC-69): the account's ordered ways in; empty = the server's method.
@@ -252,7 +281,25 @@ class SourceWorker(threading.Thread):
 
     # ----- control -----
     def wanted(self) -> set[str]:
-        return {s for s, st in self.plans.items() if 'QUOTES' in st.plan['data_types'] or 'BARS' in st.plan['data_types']}
+        """Symbols to subscribe: a symbol the source does not list is left out (it cannot receive a price, and on
+        Upstox one bad key used to fail the quotes of every key polled with it)."""
+        return {s for s, st in self.plans.items() if ('QUOTES' in st.plan['data_types'] or 'BARS' in st.plan['data_types'])
+                and st.invalid is None}
+
+    def set_invalid(self, invalid: dict[str, list[str]]) -> None:
+        """Symbols the source's list lacks (with suggestions); others are cleared. Re-syncs subscriptions."""
+        changed = False
+        for symbol, st in self.plans.items():
+            new = invalid.get(symbol)
+            if (new is None) != (st.invalid is None):
+                changed = True
+                if new is not None:
+                    self._event('SYMBOL_INVALID', 'CRITICAL', symbol=symbol, plan_id=st.plan['id'],
+                                message=f"{symbol} is not in this source's symbol list, so it can never receive a price.",
+                                suggestions=new, next_step=WORDS['INVALID_SYMBOL'][2])
+            st.invalid = new
+        if changed and self.state == 'CONNECTED':
+            self._sync_subscriptions()
 
     def update(self, plans: dict[str, dict], deviation_bp: float) -> None:
         for s, p in plans.items():
@@ -621,9 +668,21 @@ class SourceWorker(threading.Thread):
                 from .. import controls
                 controls.set_connection_status(self.connection_id, 'DEGRADED', error='Market-data stream disconnected')
             return 'end'
+        elif kind == 'symbol_error':
+            self._symbol_error(m.get('s'), m.get('msg') or 'The source rejected this symbol')
         elif kind == 'error':
-            self._event('ERROR', 'WARNING', message=m.get('msg'))
+            self._event('ERROR', 'WARNING', symbol=m.get('s'), message=m.get('msg'))
         return None
+
+    def _symbol_error(self, symbol: str | None, message: str) -> None:
+        st = self.plans.get(symbol or '')
+        if st is None:
+            return
+        st.errors += 1
+        first = st.last_error != message
+        st.last_error = message
+        if first:
+            self._event('ERROR', 'WARNING', symbol=symbol, plan_id=st.plan['id'], message=message, next_step=WORDS['ERROR'][2])
 
     def _connected(self, m: dict) -> None:
         self.state, self.host, self.port, self.error = 'CONNECTED', m.get('host'), m.get('port'), None
@@ -631,6 +690,8 @@ class SourceWorker(threading.Thread):
             account_routes.record(self.active_route['id'], True)
         self.reported_error, self.failures = None, 0
         self.offset = server_offset(m.get('server_time'), m.get('utc_now'))
+        self.offset_stated = bool(m.get('server_time') and m.get('utc_now'))
+        self.offset_samples.clear()
         # A source that cannot state its clock (the terminal bridge on a closed market) sends no server_time:
         # the offset is then measured from the first live tick instead (see _quote).
         self.offset_known = bool(m.get('server_time') and m.get('utc_now'))
@@ -643,7 +704,7 @@ class SourceWorker(threading.Thread):
                                        server_time_offset_ms=int(self.offset.total_seconds() * 1000))
         if outage:
             for st in self.plans.values():
-                if 'BARS' in st.plan['data_types']:
+                if 'BARS' in st.plan['data_types'] and st.invalid is None:
                     store.queue_gap_backfill(st.plan['id'], 'M1', floor(outage, 60) - timedelta(minutes=1), floor(now, 60) + timedelta(minutes=1))
         self.outage_since = None
 
@@ -677,6 +738,8 @@ class SourceWorker(threading.Thread):
         if st is None:
             return
         source = parse_time(m.get('st'))
+        if source and not self.offset_stated:
+            self._remeasure_offset(source, rx, symbol)
         if source and not self.offset_known:
             # First live tick: broker time minus receipt time, rounded to 15 minutes, is the broker clock offset.
             self.offset = timedelta(minutes=round((source - rx).total_seconds() / 60 / 15) * 15)
@@ -689,7 +752,9 @@ class SourceWorker(threading.Thread):
         bid, ask, last, volume = m.get('b') or None, m.get('a') or None, m.get('l') or None, m.get('v')
         plan = st.plan
         self.ticks_total += 1
-        closed = st.bars.add(rx, bid, ask, last, volume)
+        st.errors, st.last_error = 0, None   # a price arrived: the symbol works
+        at, basis = event_time(rx, source_utc)
+        closed = st.bars.add(at, bid, ask, last, volume, basis)
         rows, events = st.quality.on_tick(rx, source_utc, bid, ask)
         if bid and ask:
             st.mid, st.mid_at = (bid + ask) / 2, rx
@@ -711,11 +776,55 @@ class SourceWorker(threading.Thread):
             for e in events:
                 self.sink.events.append({**e, 'account_id': self.account_id, 'broker_symbol': symbol, 'plan_id': plan['id']})
 
+    OFFSET_RECHECK = 900.0  # seconds between re-measurements of a broker clock offset the source does not state
+
+    def _remeasure_offset(self, source: datetime, rx: datetime, symbol: str | None) -> None:
+        """Broker time minus receipt, over recent ticks: the median rounded to 15 minutes. Re-checked every 15 minutes
+        so a daylight-saving change or one old first tick does not shift every time for the rest of the session."""
+        self.offset_samples.append((source - rx).total_seconds())
+        if len(self.offset_samples) < 5 or time.monotonic() - self.offset_checked < self.OFFSET_RECHECK:
+            return
+        self.offset_checked = time.monotonic()
+        measured = timedelta(minutes=round(median(self.offset_samples) / 60 / 15) * 15)
+        if measured != self.offset:
+            before = self.offset
+            self.offset = measured
+            self.offset_known = True
+            self._event('CLOCK_MEASURED', 'WARNING' if before != timedelta(0) else 'INFO', symbol=symbol,
+                        server_offset_minutes=int(measured.total_seconds() // 60), previous_minutes=int(before.total_seconds() // 60),
+                        samples=len(self.offset_samples))
+
+    def health_rows(self, now: datetime) -> dict[str, dict]:
+        """One health row per plan (md_plan_health), written only when the state or detail changes, plus once a minute."""
+        out = {}
+        for symbol, st in self.plans.items():
+            session = in_session(st.plan, now, CALENDAR)
+            state = plan_state(source_state=self.state, invalid=st.invalid is not None, errors=st.errors, in_session=session,
+                               last_rx=st.quality.last_rx, now=now, stale_seconds=st.plan['stale_seconds'], breaching=st.quality.breaching)
+            if state == 'INVALID_SYMBOL':
+                detail = f"Not in the source's symbol list." + (f" Did you mean: {', '.join(st.invalid[:3])}?" if st.invalid else '')
+            elif state == 'ERROR':
+                detail = (st.last_error or '')[:300]
+            elif state == 'OFFLINE':
+                detail = f'Source {self.state.lower().replace("_", " ")}' + (f': {self.error[:200]}' if self.error else '')
+            elif state == 'DEGRADED':
+                detail = 'Breaching: ' + ', '.join(sorted(st.quality.breaching & {'LATENCY', 'SPREAD', 'DEVIATION'})).lower()
+            else:
+                detail = WORDS[state][1]
+            key = (state, detail, now.replace(second=0, microsecond=0))
+            if key != st.health:
+                st.health = key
+                out[str(st.plan['id'])] = {'plan_id': st.plan['id'], 'account_id': self.account_id, 'broker_symbol': symbol, 'state': state,
+                                           'detail': detail, 'suggestions': st.invalid or [], 'last_price_at': st.quality.last_rx,
+                                           'consecutive_errors': st.errors, 'last_error': st.last_error}
+        return out
+
     # ----- periodic (called by the supervisor) -----
     def tick(self, now: datetime) -> None:
         if self.state == 'UNSUPPORTED':
             with self.sink.lock:
                 self.sink.status[self.account_id] = self.status()
+                self.sink.health.update(self.health_rows(now))
             return
         with self.sink.lock:
             for symbol, st in self.plans.items():
@@ -729,6 +838,7 @@ class SourceWorker(threading.Thread):
                 for e in (st.quality.stale(now) if in_session(st.plan, now, CALENDAR) else []):
                     self.sink.events.append({**e, 'account_id': self.account_id, 'broker_symbol': symbol, 'plan_id': st.plan['id']})
             self.sink.status[self.account_id] = self.status()
+            self.sink.health.update(self.health_rows(now))
         self._next_job()
 
     # ----- backfill -----
@@ -770,6 +880,8 @@ class SourceWorker(threading.Thread):
         if store.job_status(job['id']) == 'CANCELLED':
             return
         bars = []
+        st = self.plans.get(job['symbol'])
+        st_basis = st.bars.price_basis if st else None
         for b in m.get('bars') or []:
             t = parse_time(b.get('t'))
             if t is None or None in (b.get('o'), b.get('h'), b.get('l'), b.get('c')):
@@ -779,7 +891,8 @@ class SourceWorker(threading.Thread):
                 continue
             bars.append({'account_id': self.account_id, 'broker_symbol': job['symbol'], 'timeframe': job['timeframe'], 'bar_time': t,
                          'open': b['o'], 'high': b['h'], 'low': b['l'], 'close': b['c'], 'ticks': 0,
-                         'spread_avg': b.get('sp'), 'volume': b.get('v'), 'source': 'BROKER', 'complete': True})
+                         'spread_avg': b.get('sp'), 'volume': b.get('v'), 'source': 'BROKER', 'complete': True,
+                         'price_basis': st_basis, 'volume_kind': 'BROKER', 'anchor': 'BROKER', 'time_basis': 'BROKER', 'derivation': 'BACKFILLED'})
         done = job['chunk_end']
         store.job_progress(job['id'], 'DONE' if done >= job['range_to'] else 'RUNNING', done_until=done, bars=bars)
 
@@ -800,6 +913,9 @@ class Collector:
         self.workers: dict[str, SourceWorker] = {}
         self.stop_event = threading.Event()
         self.last_disk_warning = 0.0
+        self.last_symbol_check = 0.0
+        self.idle_written: dict[str, tuple] = {}
+        self.invalid: dict[str, dict[str, list[str]]] = {}   # account -> {symbol: suggestions}
         self.writer = threading.Thread(target=self._write_loop, name='md-writer', daemon=True)
 
     # ----- writer -----
@@ -841,20 +957,31 @@ class Collector:
         paused = store.paused_scopes()
         deviation_bp = float(store.policy('md_deviation_bp', 10))
         by_account: dict[str, dict[str, dict]] = {}
-        if 'ALL' not in paused:
-            for p in plans:
-                account = str(p['account_id'])
-                if f'account:{account}' in paused or p['account_status'] == 'ARCHIVED' or not scheduled(p, now, calendar):
-                    continue
+        idle: dict[str, dict] = {}
+        if time.monotonic() - self.last_symbol_check >= self.SYMBOL_CHECK:
+            self.last_symbol_check = time.monotonic()
+            try:
+                self.invalid = store.unknown_symbols()
+            except Exception:  # noqa: BLE001 - keep the last answer; checked again next minute
+                log.warning('Symbol check failed', exc_info=True)
+        for p in plans:
+            account = str(p['account_id'])
+            if 'ALL' in paused or f'account:{account}' in paused or p['account_status'] == 'ARCHIVED':
+                idle[str(p['id'])] = {**self._idle(p, 'PAUSED'), 'detail': 'Collection is paused (Market data › Controls).'}
+            elif not scheduled(p, now, calendar):
+                idle[str(p['id'])] = self._idle(p, 'PAUSED' if p['schedule'] == 'WHILE_DEPLOYED' else 'CLOSED')
+            else:
                 by_account.setdefault(account, {})[p['broker_symbol']] = p
         for account, wanted in by_account.items():
             worker = self.workers.get(account)
             if worker is None or (not worker.is_alive() and worker.state != 'UNSUPPORTED'):
                 worker = SourceWorker(account, wanted, self.sink, self.root, self.clock)
+                worker.set_invalid(self.invalid.get(account, {}))   # before the first login: never subscribe a bad symbol
                 self.workers[account] = worker
                 worker.start()
             else:
                 worker.update(wanted, deviation_bp)
+                worker.set_invalid(self.invalid.get(account, {}))
         for account in list(self.workers):
             if account not in by_account:
                 worker = self.workers.pop(account)
@@ -863,9 +990,25 @@ class Collector:
                     self.sink.status[account] = {**worker.status(), 'state': 'PAUSED' if paused else 'STOPPED', 'pid': None}
         for worker in self.workers.values():
             worker.tick(now)
+        minute = now.replace(second=0, microsecond=0)
+        idle = {k: v for k, v in idle.items() if self.idle_written.get(k) != (v['state'], v['detail'], minute)}
+        if idle:
+            self.idle_written.update({k: (v['state'], v['detail'], minute) for k, v in idle.items()})
+            with self.sink.lock:
+                self.sink.health.update(idle)
         self._compare_sources(now)
         self._switch_feeds(now)
         self._guard_disk()
+
+    SYMBOL_CHECK = 60.0  # seconds between checks of plan symbols against the sources' symbol lists
+
+    def _idle(self, plan: dict, state: str) -> dict:
+        bad = self.invalid.get(str(plan['account_id']), {}).get(plan['broker_symbol'])
+        if bad is not None:
+            state = 'INVALID_SYMBOL'
+        return {'plan_id': plan['id'], 'account_id': str(plan['account_id']), 'broker_symbol': plan['broker_symbol'], 'state': state,
+                'detail': WORDS[state][1] if bad is None else "Not in the source's symbol list." + (f" Did you mean: {', '.join(bad[:3])}?" if bad else ''),
+                'suggestions': bad or [], 'last_price_at': None, 'consecutive_errors': 0, 'last_error': None}
 
     def _states_by_instrument(self) -> dict[str, list[tuple[SourceWorker, PlanState]]]:
         out: dict[str, list] = {}

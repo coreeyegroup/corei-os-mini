@@ -181,6 +181,8 @@
 .sb-rowact button { height: 18px; min-width: 20px; padding: 0 5px; font-size: 11px; margin-left: 2px; }
 .sb-rowact button.danger, .sb-actions button.danger { color: var(--down); border-color: var(--down); }
 .sb-plan { font-size: 11px; } .sb-plan.ACTIVE { color: var(--up); } .sb-plan.PAUSED { color: #d29922; } .sb-plan.DRAFT { color: var(--muted); }
+.sb-plan.H-LIVE { color: var(--up); } .sb-plan.H-CLOSED, .sb-plan.H-PAUSED, .sb-plan.H-WAITING { color: var(--muted); }
+.sb-plan.H-DEGRADED, .sb-plan.H-STALE, .sb-plan.H-OFFLINE { color: #d29922; } .sb-plan.H-ERROR, .sb-plan.H-INVALID_SYMBOL { color: var(--down); font-weight: 600; }
 .sb-expand > td { padding: 6px !important; background: var(--canvas); height: auto; }
 .sb-drill { display: grid; grid-template-columns: 2fr 1fr; gap: 6px; height: 280px; }
 .sb-backfill { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; background: var(--canvas); }
