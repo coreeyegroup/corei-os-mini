@@ -55,6 +55,13 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
+    @research {
+        method GET
+        path /api/research/v1/capabilities /api/research/v1/bars
+    }
+    handle @research {
+        reverse_proxy 127.0.0.1:18786
+    }
     @backend path /api /api/* /docs /docs/* /redoc /openapi.json /health
     handle @backend {
         respond "Operational API access is not enabled on this public shell." 403

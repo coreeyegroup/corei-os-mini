@@ -1211,3 +1211,18 @@ Steadier screens:
 - *All panels* shows a light summary of the graphs with *Open* instead of a full canvas in a panel.
 - "Nothing is running yet" shows only on *All panels*, not above every item.
 - A link that opens a domain at an item now opens that item even while the domain is still loading.
+
+## Optional market research API
+
+Corei OS Mini can supply collected bars to Core AI or other authorized research
+clients. In `/etc/corei-os-mini/workstation.env`, set a dedicated private
+`COREI_RESEARCH_API_TOKEN` of at least 32 characters and list allowed account
+UUIDs in `COREI_RESEARCH_API_ACCOUNTS` (comma separated). Restart
+`corei-os-mini-workstation` after editing the service environment.
+
+Use `Authorization: Bearer <token>` for GET
+`/api/research/v1/capabilities` and GET `/api/research/v1/bars`. Bars accepts
+`account_id`, `symbol`, `timeframe`, and `limit` (1–200). Symbols are broker
+symbols already collected by the authorized account. The credential authorizes
+read-only requests to these two endpoints. Without an explicit token and account
+scope, the optional interface is unavailable.
