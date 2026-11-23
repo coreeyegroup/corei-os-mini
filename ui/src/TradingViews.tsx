@@ -518,17 +518,18 @@ function OrderTable({ rows, open }: { rows: Row[]; open: (r: Row) => void }) {
 
 function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: Ctx }) {
   const [o, error, reload] = useData<Row>(`trading/orders/${id}`, 0, [id]);
-  const [err, setErr] = useState(''), [res, setRes] = useState<Row | null>(null), [amend, setAmend] = useState<Row | null>(null);
+  const [err, setErr] = useState(''), [res, setRes] = useState<Row | null>(null), [amend, setAmend] = useState<Row | null>(null), [amending,setAmending]=useState(false);
   if (!o) return <Msg error={error} />;
+  const upstox = o.mode === 'BROKER' && o.adapter === 'UPSTOX';
   const working = ['ACKNOWLEDGED', 'PARTIALLY_FILLED'].includes(o.state);
-  const sendAmend = async (e: FormEvent) => { e.preventDefault(); setErr('');
+  const sendAmend = async (e: FormEvent) => { e.preventDefault(); if(amending)return; setErr(''); setAmending(true);
     const body: Row = { reason: amend!.reason };
     for (const k of ['limit_price', 'stop_price', 'stop_loss', 'take_profit', 'quantity']) if (String(amend![k] ?? '').trim() !== '') body[k] = String(amend![k]).trim();
-    try { await api(`trading/orders/${id}/modify`, 'POST', body); setAmend(null); reload(); } catch (x) { setErr((x as Error).message); } };
+    try { await api(`trading/orders/${id}/modify`, 'POST', body); setAmend(null); reload(); } catch (x) { setErr((x as Error).message); } finally {setAmending(false);} };
   const cancel = () => { const reason = window.prompt('Reason for cancelling'); if (reason) void api(`trading/orders/${id}/cancel`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); };
   return <FloatingWindow storageKey="corei.order.v1" title={`Order · ${o.symbol} ${o.side} ${o.quantity}`} subtitle={o.client_order_id} onClose={close}
     footer={<div className="cfg-actions">{(['ACKNOWLEDGED', 'PARTIALLY_FILLED'].includes(o.state) || (o.state === 'SUBMITTED' && o.mode === 'PAPER') || (o.state === 'APPROVED' && o.mode === 'BROKER')) && (ctx.canOps || ctx.canRisk) && <button onClick={cancel}>Cancel order</button>}
-      {working && (ctx.canOps || ctx.canRisk) && !amend && <button onClick={() => setAmend({ limit_price: o.limit_price ?? '', stop_price: o.stop_price ?? '', stop_loss: o.stop_loss ?? '', take_profit: o.take_profit ?? '', quantity: '', reason: '' })}>Amend</button>}
+      {working && (!upstox || ['LIMIT','STOP'].includes(o.order_type)) && (ctx.canOps || ctx.canRisk) && !amend && <button onClick={() => setAmend({ limit_price: o.limit_price ?? '', stop_price: o.stop_price ?? '', stop_loss: upstox?'':o.stop_loss ?? '', take_profit: upstox?'':o.take_profit ?? '', quantity: '', reason: '' })}>Amend</button>}
       {o.hold_for_approval && o.state === 'APPROVED' && ctx.canRisk && <button className="primary" onClick={() => { const reason = window.prompt('Release this LIVE order to the broker? Reason:'); if (reason) void api(`trading/orders/${id}/release`, 'POST', { reason }).then(reload).catch(e => setErr((e as Error).message)); }}>Release to broker</button>}
       {o.mode === 'BROKER' && o.broker_tag && !['FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'APPROVED'].includes(o.state) && (ctx.canOps || ctx.canRisk) && <button onClick={() => void api(`trading/orders/${id}/check-broker`, 'POST').then(reload).catch(e => setErr((e as Error).message))}>Look up at the broker</button>}
       {o.state === 'UNKNOWN' && ctx.canRisk && <button onClick={() => setRes({ outcome: 'FILLED', price: '', quantity: '', reason: '' })}>Resolve</button>}<button onClick={close}>Close</button></div>}>
@@ -538,6 +539,7 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
       {o.mode === 'BROKER' && <p className="cfg-note">Adapter {o.adapter ?? '–'} · broker tag <code>{o.broker_tag ?? '–'}</code>{o.broker_order_id ? <> · broker order {o.broker_order_id}</> : null}
         {o.submitted_at && <> · sent {when(o.submitted_at)}</>}{o.checks ? <> · {o.checks} look-ups, last {ago(o.last_check_at)}</> : null}
         {o.stop_loss || o.take_profit ? <> · SL {o.stop_loss ?? '–'} / TP {o.take_profit ?? '–'}</> : null}{o.released_by && <> · released by {o.released_by}</>}</p>}
+      {upstox && <p className="cfg-note">Upstox V3 · {o.time_in_force === 'IOC' ? 'IOC' : 'DAY'} at the broker{o.order_type !== 'LIMIT' ? ' · automatic market protection' : ''}</p>}
       {o.routing && <p className="cfg-note">Routed ({o.routing.rule?.toLowerCase().replace('_', ' ')}): {o.routing.because}</p>}
       {o.reasons?.length > 0 && <><b>Refused because</b><Reasons list={o.reasons} /></>}
       <h4>What happened</h4>
@@ -549,14 +551,14 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
         {o.risk.inputs?.limits && Object.keys(o.risk.inputs.limits).length ? ` · limits ${Object.entries(o.risk.inputs.limits).map(([k, v]) => `${k} ${v}`).join(', ')}` : ' · no limits set'}</p></>}
       {o.fills.length > 0 && <><h4>Fills</h4><table className="cfg-table compact"><tbody>{o.fills.map((f: Row) => <tr key={f.id}><td>{f.quantity} at {f.price}</td><td><small>bid {f.quote_bid ?? '–'} / ask {f.quote_ask ?? '–'}</small></td><td><small>realised {f.realised_pnl} {f.currency}</small></td><td><small>{f.broker_deal_id ? `deal ${f.broker_deal_id}` : ''}{f.latency_ms != null ? ` · ${f.latency_ms} ms` : ''}</small></td></tr>)}</tbody></table></>}
       {amend && <form className="intel-edit" onSubmit={sendAmend} aria-label="Amend order">
-        <p className="cfg-note">The same order with new terms: new prices pass the price-deviation and kill-switch checks again; a real MT5 order is amended at the broker first and recorded only when the broker accepts.</p>
+        <p className="cfg-note">{upstox?'Update the working limit or trigger price at Upstox. Corei records the change once Upstox accepts it.':'New prices pass the pre-trade checks. Broker amendments are recorded after acceptance.'}</p>
         <div className="cfg-pair">{o.order_type === 'LIMIT' && <Field label="Limit price"><input aria-label="Amend limit price" inputMode="decimal" value={amend.limit_price} onChange={e => setAmend({ ...amend, limit_price: e.target.value })} /></Field>}
           {o.order_type === 'STOP' && <Field label="Stop price"><input aria-label="Amend stop price" inputMode="decimal" value={amend.stop_price} onChange={e => setAmend({ ...amend, stop_price: e.target.value })} /></Field>}
           {o.mode === 'PAPER' && <Field label="Smaller quantity" hint={`Above ${o.filled_qty} filled, below ${o.quantity}`}><input aria-label="Amend quantity" inputMode="decimal" value={amend.quantity} onChange={e => setAmend({ ...amend, quantity: e.target.value })} /></Field>}</div>
-        <div className="cfg-pair"><Field label="Stop-loss (0 removes)"><input aria-label="Amend stop loss" inputMode="decimal" value={amend.stop_loss} onChange={e => setAmend({ ...amend, stop_loss: e.target.value })} /></Field>
-          <Field label="Take-profit (0 removes)"><input aria-label="Amend take profit" inputMode="decimal" value={amend.take_profit} onChange={e => setAmend({ ...amend, take_profit: e.target.value })} /></Field></div>
+        {!upstox&&<div className="cfg-pair"><Field label="Stop-loss (0 removes)"><input aria-label="Amend stop loss" inputMode="decimal" value={amend.stop_loss} onChange={e => setAmend({ ...amend, stop_loss: e.target.value })} /></Field>
+          <Field label="Take-profit (0 removes)"><input aria-label="Amend take profit" inputMode="decimal" value={amend.take_profit} onChange={e => setAmend({ ...amend, take_profit: e.target.value })} /></Field></div>}
         <Field label="Reason (audit log)"><input aria-label="Amend reason" value={amend.reason} onChange={e => setAmend({ ...amend, reason: e.target.value })} /></Field>
-        <div className="cfg-actions"><button className="primary" disabled={amend.reason.trim().length < 5}>Amend order</button><button type="button" onClick={() => setAmend(null)}>Cancel</button></div></form>}
+        <div className="cfg-actions"><button className="primary" disabled={amending||amend.reason.trim().length < 5}>{amending?'Amending…':'Amend order'}</button><button type="button" disabled={amending} onClick={() => setAmend(null)}>Cancel</button></div></form>}
       {res && <form className="intel-edit" onSubmit={e => { e.preventDefault(); void api(`trading/orders/${id}/resolve`, 'POST', { outcome: res.outcome, reason: res.reason, price: res.price || null, quantity: res.quantity || null })
         .then(() => { setRes(null); reload(); }).catch(x => setErr((x as Error).message)); }}>
         <p className="cfg-note">Use "Look up at the broker" first; resolve by hand only when the broker shows nothing. COREI never sends an order with an unknown outcome again.</p>

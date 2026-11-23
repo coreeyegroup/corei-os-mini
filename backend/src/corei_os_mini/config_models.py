@@ -166,6 +166,7 @@ class RestApiSettings(_Strict):
     oauth_redirect_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
     # Optional endpoint the broker posts tokens or order updates to (Upstox notifier webhook).
     notifier_webhook_url: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
+    upstox_algo_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r'^[ -~]+$')] | None = None
 
     @field_validator('api_base_url', 'notifier_webhook_url')
     @classmethod
