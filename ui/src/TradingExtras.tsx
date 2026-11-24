@@ -9,7 +9,7 @@ import GraphWorkbench from './calc/GraphWorkbench';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { Formulas } from './SignalLibrary';
-import { useAccountView } from './nav';
+import { goto, openAccountView, openOrder, useAccountView } from './nav';
 import StageShell, { ago, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 
 export function Table({ cols, rows, empty, rowKey }: { cols: [string, (r: Row) => ReactNode][]; rows: Row[]; empty: string; rowKey?: (r: Row, i: number) => string }) {
@@ -339,47 +339,117 @@ export function Routing() {
 
 /* ---------- Stage 8 · Post-trade ---------- */
 
+const breakLabels: Record<string, string> = {
+  INTERNAL_POSITION: 'Position differs from fills', POSITION_MISMATCH: 'Position quantity differs',
+  MISSING_AT_BROKER: 'Position missing at broker', NOT_IN_COREI: 'Position missing in COREI',
+  FILL_MISSING: 'Missing fill', EXTERNAL_TRADE: 'External trade or position', ORDER_STATE: 'Order state differs', CASH: 'Cash differs',
+};
+
+function reconResult(r: Row) {
+  if (!r.status) return pill('Never checked', 'off');
+  if (r.status === 'FAILED') return pill('Read failed', 'live');
+  if (r.status === 'BREAKS') return pill('Open breaks at run time', 'warn');
+  return pill('No open breaks at run time', 'ok');
+}
+
+function reconCoverage(r: Row) {
+  if (!r.at) return '—';
+  const d = r.detail;
+  if (!d?.broker_read) return r.kind === 'BROKER' ? 'Legacy broker run' : 'Legacy internal run';
+  const internal = `${d.internal_books} internal position books`;
+  if (d.broker_read === 'UNAVAILABLE') return `${internal} · broker unavailable`;
+  if (d.broker_read === 'NOT_REQUESTED') return internal;
+  return `${internal} · ${d.broker_positions} broker position rows · ${d.cached_deals_checked} cached deals checked`;
+}
+
 function PtOverview({ ctx }: { ctx: Ctx }) {
   const [ov, error, reload] = useData<Row>('trading/posttrade/overview', 20_000);
-  const [msg, setMsg] = useState(''), [err, setErr] = useState('');
-  return <section className="intel"><Msg error={error || err} notice={msg} />
-    {ov?.open_breaks && <Kpis items={[['Open breaks', ov.open_total, 'Differences between COREI and the broker waiting for a person', ov.open_total ? 'warn' : 'up'], ['Outcome unknown', ov.unknown_orders, undefined, ov.unknown_orders ? 'warn' : ''],
-      ['Fills today', ov.fills_today], ['Average latency today', ov.avg_latency_today_ms != null ? `${ov.avg_latency_today_ms} ms` : '–', 'Submitted → filled']]} />}
-    {ov && Object.keys(ov.open_breaks ?? {}).length > 0 && <p>{Object.entries(ov.open_breaks ?? {}).map(([k, n]) => <span key={k} className="cfg-pill warn">{k.toLowerCase().replace(/_/g, ' ')} {String(n)}</span>)}</p>}
-    <h4>Last reconciliation per account</h4>
-    <Table cols={[['Account', r => r.code], ['When', r => ago(r.at)], ['Against', r => r.kind === 'BROKER' ? 'broker' : 'COREI fills only'], ['Result', r => pill(r.status, r.status === 'MATCHED' ? 'ok' : r.status === 'FAILED' ? 'live' : 'warn')],
-      ['Open breaks', r => r.breaks], ['', r => (ctx.canOps || ctx.canRisk) && <button onClick={() => void api(`trading/posttrade/reconcile/${r.account_id}`, 'POST').then(x => { setMsg(`${r.code}: ${x.status.toLowerCase()}, ${x.checked} checked.`); reload(); }).catch(x => setErr((x as Error).message))}>Reconcile now</button>]]}
-      rows={ov?.accounts ?? []} empty="No reconciliation yet: it runs every few minutes for accounts with real orders or positions." rowKey={r => r.account_id} />
-    <p className="cfg-note">Every few minutes (Execution settings) COREI reads each real account's positions, working orders and deals and compares them with its own record; every account's positions are also
-      checked against the fills behind them. A difference is a break and stays open until the next run matches or a person accepts or resolves it.</p></section>;
+  const [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState('');
+  const run = async (account: Row) => {
+    setBusy(account.account_id); setMsg(''); setErr('');
+    try {
+      const result = await api(`trading/posttrade/reconcile/${account.account_id}`, 'POST');
+      if (result.error) setErr(`${account.code}: ${result.error}`);
+      else setMsg(`${account.code}: ${result.checked} checks, ${result.open_breaks} open breaks.`);
+      reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+  return <section className="intel">
+    <div className="intel-bar">
+      <button onClick={() => openAccountView('breaks', '')}>Review open breaks</button>
+      <button onClick={() => goto('Post-trade', 'runs')}>Check run history</button>
+      <button onClick={() => goto('Execution', 'unknown')}>Investigate unknown orders</button>
+      <button onClick={reload}>Refresh dashboard</button>
+    </div>
+    <Msg error={error || err} notice={msg} />
+    {ov && <Kpis items={[['Open breaks', ov.open_total, 'Discrepancies waiting for review', ov.open_total ? 'warn' : ''],
+      ['Outcome unknown', ov.unknown_orders, 'Orders awaiting confirmation', ov.unknown_orders ? 'warn' : ''],
+      ['Fills today (UTC)', ov.fills_today], ['Average latency today', ov.avg_latency_today_ms != null ? `${ov.avg_latency_today_ms} ms` : '–', 'Submitted to filled']]} />}
+    <h4>Reconciliation by account</h4>
+    <Table cols={[['Account', r => <>{r.code} <small className="cfg-note">{r.environment}</small></>], ['Last run', r => ago(r.at)],
+      ['Coverage', r => <small>{reconCoverage(r)}</small>],
+      ['Result', r => <>{reconResult(r)}{r.detail?.error && <div className="cfg-error">{r.detail.error}</div>}</>],
+      ['Open breaks now', r => <button onClick={() => openAccountView('breaks', r.account_id)}>{r.breaks} · Review</button>],
+      ['Actions', r => <>{(ctx.canOps || ctx.canRisk) && <button disabled={!!busy} onClick={() => void run(r)}>{busy === r.account_id ? 'Checking…' : 'Reconcile now'}</button>}</>]]}
+      rows={ov?.accounts ?? []} empty={error ? 'Account comparison status is unavailable.' : ov ? 'No accounts configured.' : 'Loading reconciliation status…'} rowKey={r => r.account_id} />
+    <p className="cfg-note">A break is a difference that needs review. Internal runs compare COREI positions with its fills. Broker runs add net position and cached deal checks. Cash and working orders are available as broker evidence where supported, outside the reconciliation checks.</p>
+  </section>;
 }
 
 function Breaks({ ctx }: { ctx: Ctx }) {
   const [state, setState] = useState('OPEN'), [account, setAccount] = useAccountView('breaks');
   const [data, error, reload] = useData<Row>(`trading/posttrade/breaks?state=${state}${account ? `&account_id=${account}` : ''}`, 20_000, [state, account]);
-  const [err, setErr] = useState('');
-  const act = (b: Row, action: string, text: string) => { const note = window.prompt(`${text} — note (audit log):`); if (note) void api(`trading/posttrade/breaks/${b.id}`, 'POST', { action, note }).then(reload).catch(x => setErr((x as Error).message)); };
+  const [err, setErr] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState('');
+  const act = async (b: Row, action: string, text: string) => {
+    const note = window.prompt(`${text}. Enter an audit note (at least 5 characters).`)?.trim();
+    if (!note) return;
+    setErr(''); setNotice('');
+    if (note.length < 5) { setErr('Enter an audit note of at least 5 characters.'); return; }
+    setBusy(b.id);
+    try {
+      await api(`trading/posttrade/breaks/${b.id}`, 'POST', { action, note });
+      setNotice(`${breakLabels[b.kind] ?? b.kind}: decision recorded.`);
+      reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
   return <section className="intel">
     <div className="intel-bar"><Choice label="Break state" value={state} options={[['OPEN', 'Open'], ['ACCEPTED', 'Accepted'], ['RESOLVED', 'Resolved'], ['', 'All']]} onChange={setState} />
-      <AccountPick value={account} change={setAccount} label="Break account" all /><a className="link" href="/api/trading/posttrade/export/breaks.csv">CSV</a></div>
-    <Msg error={error || err} />
-    <Table cols={[['Account', b => b.account_code], ['Kind', b => pill(b.kind, ['POSITION_MISMATCH', 'MISSING_AT_BROKER', 'NOT_IN_COREI'].includes(b.kind) ? 'live' : 'warn')], ['About', b => b.symbol ?? b.broker_symbol ?? b.key],
-      ['COREI', b => b.corei_value ?? '–'], ['Broker', b => b.broker_value ?? '–'], ['Difference', b => b.difference ?? '–'], ['Seen', b => <small>{when(b.first_seen)} → {ago(b.last_seen)}</small>],
+      <AccountPick value={account} change={setAccount} label="Break account" all />
+      <button onClick={() => goto('Post-trade', 'runs')}>Check run history</button>
+      <a className="link" href={`/api/trading/posttrade/export/breaks.csv?state=${state}${account ? `&account_id=${account}` : ''}`}>Export this view</a></div>
+    <Msg error={error || err} notice={notice} />
+    <Table cols={[['Account', b => b.account_code], ['Kind', b => pill(breakLabels[b.kind] ?? b.kind, ['POSITION_MISMATCH', 'MISSING_AT_BROKER', 'NOT_IN_COREI'].includes(b.kind) ? 'live' : 'warn')],
+      ['Evidence', b => <>{b.symbol ?? b.broker_symbol ?? b.key}
+        {b.detail?.ticket && <div><code>{b.detail.ticket}</code> <small>{when(b.detail.at)}</small></div>}
+        {b.detail?.order_id && <button onClick={() => openOrder(b.detail.order_id)}>Open order</button>}
+        {b.broker_symbol && <button onClick={() => openAccountView('broker', b.account_id)}>Broker book</button>}</>],
+      ['COREI position', b => b.corei_value ?? '–'], ['Comparison value', b => <>{b.broker_value ?? '–'} <small>{b.kind === 'INTERNAL_POSITION' ? 'COREI fills' : 'broker'}</small></>], ['Difference', b => b.difference ?? '–'], ['First seen · last seen', b => <small>{when(b.first_seen)} · {ago(b.last_seen)}</small>],
       ['State', b => <>{pill(b.state, b.state === 'OPEN' ? 'warn' : 'off')}{b.resolution && <><br /><small className="cfg-note">{b.resolution} · {b.resolved_by}</small></>}</>],
-      ['', b => b.state === 'OPEN' && ctx.canRisk && <>
-        {b.kind === 'FILL_MISSING' && <button className="primary" onClick={() => act(b, 'APPLY_FILL', 'Apply the broker deal to its COREI order')}>Apply fill</button>}
-        {['NOT_IN_COREI', 'POSITION_MISMATCH'].includes(b.kind) && <button onClick={() => act(b, 'ADOPT_POSITION', 'Adopt the broker position into COREI (nothing is sent)')}>Adopt</button>}
-        <button onClick={() => act(b, 'ACCEPT', 'Accept as known')}>Accept</button><button onClick={() => act(b, 'RESOLVE', 'Mark resolved')}>Resolved</button></>]]}
-      rows={data?.items ?? []} empty={state === 'OPEN' ? 'No open breaks in this view. See reconciliation runs for comparison status.' : 'None.'} />
-    <p className="cfg-note"><b>Position mismatch / missing at broker / not in COREI</b>: net positions differ (COREI's magic number on MT5). <b>Fill missing</b>: the broker has a deal for a COREI order that COREI has not applied.
-      <b> External trade</b>: a deal or position placed outside COREI. <b>Internal</b>: a COREI position differs from its own fills. Accepted breaks are not raised again while their values stay the same.</p></section>;
+      ['Actions', b => b.state === 'OPEN' && ctx.canRisk && <>
+        {b.kind === 'FILL_MISSING' && <button disabled={!!busy} className="primary" onClick={() => void act(b, 'APPLY_FILL', 'Apply the broker deal to the COREI order')}>Apply fill</button>}
+        {['NOT_IN_COREI', 'POSITION_MISMATCH'].includes(b.kind) && <button disabled={!!busy} onClick={() => void act(b, 'ADOPT_POSITION', 'Record the broker position in COREI without sending an order')}>Adopt position</button>}
+        <button disabled={!!busy} onClick={() => void act(b, 'ACCEPT', 'Accept as a known discrepancy')}>Accept as known</button>
+        <button disabled={!!busy} onClick={() => void act(b, 'RESOLVE', 'Close this break with an operator note')}>Mark resolved</button></>]]}
+      rows={data?.items ?? []} empty={error ? 'Breaks could not be loaded.' : !data ? 'Loading breaks…' : state === 'OPEN' ? 'No open breaks in this view. See run history for comparison coverage.' : 'No breaks match this view.'} />
+    <p className="cfg-note">Review the broker deal or position before applying a correction. Accepting a known discrepancy records your decision and suppresses repeat alerts for the same values.</p></section>;
 }
 
 function Runs() {
   const [data, error] = useData<Row>('trading/posttrade/runs', 30_000);
   return <section className="intel"><Msg error={error} />
-    <Table cols={[['When', r => <small>{when(r.at)}</small>], ['Account', r => r.account_code], ['Against', r => r.kind.toLowerCase()], ['Result', r => pill(r.status, r.status === 'MATCHED' ? 'ok' : r.status === 'FAILED' ? 'live' : 'warn')],
-      ['Checked', r => r.checked], ['Open breaks', r => r.breaks], ['New', r => <small>{(r.detail?.new ?? []).join('; ') || (r.detail?.error ?? '')}</small>], ['By', r => r.actor]]} rows={data?.items ?? []} empty="No runs yet." /></section>;
+    <Table cols={[['When', r => <small>{when(r.at)}</small>], ['Account', r => r.account_code], ['Coverage', reconCoverage], ['Result', reconResult],
+      ['Checks', r => r.checked], ['Open breaks', r => <button onClick={() => openAccountView('breaks', r.account_id)}>{r.breaks} at run · Review current</button>],
+      ['New or error', r => <small>{[r.detail?.error, ...(r.detail?.new ?? [])].filter(Boolean).join(' · ')}</small>], ['By', r => r.actor]]} rows={data?.items ?? []} empty={error ? 'Run history is unavailable.' : data ? 'No reconciliation runs yet.' : 'Loading run history…'} />
+    <p className="cfg-note">Broker deal retrieval looks back three days on MT5 and covers today’s trades on Upstox. An older broker deal can also be checked if COREI has already cached it.</p>
+  </section>;
 }
 
 function Tca() {
@@ -389,7 +459,7 @@ function Tca() {
     <div className="intel-bar"><Choice label="TCA by" value={by} options={[['account', 'Account'], ['broker', 'Broker'], ['instrument', 'Instrument'], ['strategy', 'Strategy'], ['hour', 'Hour (UTC)'], ['day', 'Day'], ['side', 'Side'], ['adapter', 'Adapter'], ['source', 'Order source'], ['mode', 'Paper / real']]} onChange={setBy} />
       <select aria-label="TCA period" value={d} onChange={e => setD(Number(e.target.value))}>{days(d)}</select>
       <Choice label="TCA mode" value={mode} options={[['', 'Paper and real'], ['BROKER', 'Real only'], ['PAPER', 'Paper only']]} onChange={setMode} />
-      <a className="link" href={`/api/trading/posttrade/export/tca.csv?by=${by}&days=${d}`}>CSV</a></div>
+      <a className="link" href={`/api/trading/posttrade/export/tca.csv?by=${by}&days=${d}${mode ? `&mode=${mode}` : ''}`}>Export this view</a></div>
     <Msg error={error} />
     {data && <Kpis items={[['Slippage cost', money(data.slippage_cost_total, data.currency), 'Positive = paid versus the arrival price'], ['Commission and fees', money(data.commission_total, data.currency)]]} />}
     <Table cols={[['', r => <b>{r.label}</b>], ['Orders', r => r.orders ?? '–'], ['Fill rate', r => r.fill_rate_pct != null ? `${r.fill_rate_pct}%` : '–'], ['Refused', r => r.reject_rate_pct != null ? `${r.reject_rate_pct}%` : '–'],
@@ -428,11 +498,12 @@ function Statements() {
     <Msg error={error} />
     {data?.days && <>
       <h4>{data.account} · {data.from} to {data.to} · {data.currency}</h4>
-      <Table cols={[['Day', r => r.day], ['Fills', r => r.fills], ['Quantity', r => num(r.quantity)], ['Turnover', r => money(r.turnover)], ['Realised', r => signed(r.realised)], ['Commission', r => num(r.commission)],
+      <Table cols={[['Day (UTC)', r => r.day], ['Books', r => (r.modes ?? []).map((m: string) => m === 'PAPER' ? 'Paper' : 'Broker').join(' + ') || '—'],
+        ['Missing FX', r => r.missing_fx?.join(', ') || '—'], ['Fills', r => r.fills], ['Quantity', r => num(r.quantity)], ['Turnover', r => money(r.turnover)], ['Realised', r => signed(r.realised)], ['Commission', r => num(r.commission)],
         ['Swap', r => num(r.swap)], ['Net', r => signed(r.net)], ['COREI equity', r => r.corei_equity != null ? money(r.corei_equity) : '–'], ['Broker balance · equity', r => r.broker_balance ? `${num(r.broker_balance)} · ${num(r.broker_equity)}` : '–']]}
         rows={data.days} empty="Nothing in this period." rowKey={r => r.day} />
-      <p><b>Totals</b>: {data.totals.fills} fills · turnover {money(data.totals.turnover)} · realised {money(data.totals.realised)} · costs {money(Number(data.totals.commission) + Number(data.totals.swap))} · net {money(data.totals.net)}</p>
-      <p className="cfg-note">{data.note}{data.missing_fx?.length ? ` No FX rate for ${data.missing_fx.join(', ')}: those amounts are not converted.` : ''}</p></>}
+      <p><b>{data.missing_fx?.length ? 'Partial totals' : 'Totals'}</b>: {data.totals.fills} fills · turnover {money(data.totals.turnover)} · realised {money(data.totals.realised)} · costs {money(Number(data.totals.commission) + Number(data.totals.swap))} · net {money(data.totals.net)}</p>
+      <p className="cfg-note">{data.note}{data.missing_fx?.length ? ` No FX rate for ${data.missing_fx.join(', ')}. Turnover and realised P&L exclude those currencies.` : ''}</p></>}
     {!f.account && <p className="cfg-note">Choose an account for its daily statement.</p>}</section>;
 }
 
@@ -446,9 +517,9 @@ function AuditTrail() {
       <input aria-label="Audit actor" placeholder="Who (user, risk, broker…)" value={f.actor} onChange={e => setF({ ...f, actor: e.target.value })} />
       <AccountPick value={f.account} change={v => setF({ ...f, account: v })} label="Audit account" all />
       <select aria-label="Audit period" value={f.days} onChange={e => setF({ ...f, days: Number(e.target.value) })}>{days(f.days)}</select>
-      <a className="link" href={`/api/trading/posttrade/export/events.csv?days=${f.days}`}>CSV</a></div>
+      <a className="link" href={`/api/trading/posttrade/export/events.csv?${q}`}>Export this view</a></div>
     <Msg error={error} />
-    <Table cols={[['Time', e => <small>{when(e.at)}</small>], ['Order', e => <><code>{e.client_order_id.slice(0, 14)}…</code><br /><small className="cfg-note">{e.side} {e.quantity} {e.symbol} · {e.account_code} · {e.mode.toLowerCase()}</small></>],
+    <Table cols={[['Time', e => <small>{when(e.at)}</small>], ['Order', e => <><button onClick={() => openOrder(e.order_id)}><code>{e.client_order_id.slice(0, 14)}…</code></button><br /><small className="cfg-note">{e.side} {e.quantity} {e.symbol} · {e.account_code} · {e.mode.toLowerCase()}</small></>],
       ['Change', e => <>{e.state_from ? <small>{e.state_from.toLowerCase()} → </small> : null}{statePill(e.state_to)}</>], ['By', e => e.actor], ['Detail', e => <small className="st-detail">{JSON.stringify(e.detail)}</small>]]}
       rows={data?.items ?? []} empty="No order events match." />
     <p className="cfg-note">Order events are append-only (the database refuses changes). Settings, limits, kill switches, partitions, copy links, releases and break decisions are in Setup › Audit log.</p></section>;
@@ -478,7 +549,7 @@ export function PostTradeView() {
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Reconciliation, TCA slippage in bp and money, fill and refusal rates, latency and the trade journal.', render: () => <Formulas stage="Post-trade" /> },
     { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Post-trade measures as graphs.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['MEASURE']} /> },
   ];
-  return <StageShell view="Post-trade" sections={sections} />;
+  return <StageShell view="Post-trade" sections={sections} defaultSection="overview" />;
 }
 
 export { statePill };

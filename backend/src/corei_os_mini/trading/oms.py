@@ -62,7 +62,7 @@ def _move(db, order: dict, to: str, actor: str, detail: dict | None = None, **fi
 
 
 def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: str, at: datetime, deal_id: str | None = None,
-          detail: dict | None = None) -> dict:
+          detail: dict | None = None, *, copy_to_followers: bool = True) -> dict:
     """One fill: the position in the same transaction, then the order's state. A broker deal is applied once (its ticket)."""
     ins = instrument(db, order['instrument_id'])
     if deal_id is not None and db.execute('SELECT 1 FROM oms_fills WHERE account_id=%s AND broker_deal_id=%s',
@@ -87,6 +87,8 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
     out = _move(db, order, to, actor, {'fill_qty': str(qty), 'price': str(price), 'slippage': str(slip) if slip is not None else None,
                                        'realised_pnl': str(realised), 'deal': deal_id, **(detail or {})}, filled_qty=filled,
                 avg_fill_price=quantize(avg, D(ins.get('tick_size')) / 1000), **({'completed_at': at} if to == 'FILLED' else {}))
+    if not copy_to_followers:
+        return out
     try:
         from . import copytrade
         copytrade.on_fill(db, out, fill)

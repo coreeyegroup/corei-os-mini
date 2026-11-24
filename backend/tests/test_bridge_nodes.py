@@ -71,11 +71,11 @@ class BridgeNodes(tmd.MarketData):
         self.ok(self.public.get('/api/bridge-enroll/files/..%2F..%2Fsecret'), 404)
 
         # The machine enrols (as the installer does), from 127.0.0.1 where the test bridge listens.
-        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': '0.43.2',
+        body = {'fingerprint': LiveBridge.fingerprint, 'token': LiveBridge.token, 'port': LiveBridge.port, 'bridge_version': bridge_nodes.LATEST_BRIDGE,
                 'machine': 'VPS1', 'host': '127.0.0.1'}
         done = self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body))
         self.assertTrue(done['check']['ok'], done)
-        self.assertEqual(done['check']['version'], '0.43.2')
+        self.assertEqual(done['check']['version'], bridge_nodes.LATEST_BRIDGE)
         self.assertEqual(done['check']['terminals_open'], 0, 'the ping starts no terminal')
         self.ok(self.public.post(f'/api/bridge-enroll/{code}', json=body), 404)  # single use
         listed = self.ok(self.alice.get('/api/config/bridge-nodes'))['items'][0]

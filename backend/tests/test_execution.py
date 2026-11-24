@@ -229,13 +229,24 @@ class Execution(tt.Trading):
         self.broker.external.append({'ticket': 99, 'symbol': 'GBPUSD', 'side': 'SELL', 'volume': '0.3', 'price_open': '1.27', 'magic': 0})
         work = self.place(a, ins, 'lim-2', order_type='LIMIT', limit_price=Decimal('1.07500'))
         execution.dispatch()
-        self.broker._deal({'symbol': 'EURUSD', 'side': 'BUY', 'tag': work['broker_tag']}, '0.1', '1.07500')
+        missed = self.broker._deal({'symbol': 'EURUSD', 'side': 'BUY', 'tag': work['broker_tag']}, '0.1', '1.07500')
+        missed['time'] = (datetime.now(UTC) - timedelta(days=8)).isoformat()
         run = self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
         self.assertEqual(run['status'], 'BREAKS')
         kinds = {b['kind']: b for b in self.ok(self.alice.get('/api/trading/posttrade/breaks'))['items']}
         self.assertEqual(set(kinds), {'EXTERNAL_TRADE', 'FILL_MISSING', 'POSITION_MISMATCH'})
         self.assertEqual((kinds['POSITION_MISMATCH']['corei_value'], kinds['POSITION_MISMATCH']['broker_value']), ('0.3', '0.4'))
-        applied = self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['FILL_MISSING']['id']}", json={'action': 'APPLY_FILL', 'note': 'deal seen at broker'}))
+        self.assertEqual(run['detail']['broker_read'], 'COMPARED')
+        # The deal rolled out of the broker's reply, but the cached ticket remains actionable.
+        latest_book = self.broker.call(a['id'], 'test', 'book', {}, 'test')
+        latest_book['deals'] = [d for d in latest_book['deals'] if d['ticket'] != missed['ticket']]
+        with patch.object(brokers, 'mt5_call', return_value=latest_book):
+            self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
+        missing = next(b for b in self.ok(self.alice.get('/api/trading/posttrade/breaks'))['items'] if b['kind'] == 'FILL_MISSING')
+        self.assertEqual(missing['id'], kinds['FILL_MISSING']['id'])
+        with patch('corei_os_mini.trading.copytrade.on_fill') as follower:
+            applied = self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['FILL_MISSING']['id']}", json={'action': 'APPLY_FILL', 'note': 'deal seen at broker'}))
+        follower.assert_not_called()
         self.assertEqual(applied['result']['state'], 'FILLED')
         self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['EXTERNAL_TRADE']['id']}", json={'action': 'ACCEPT', 'note': 'desk hedge by hand'}))
         self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['EXTERNAL_TRADE']['id']}", json={'action': 'ACCEPT', 'note': 'again'}), 409)
@@ -553,6 +564,21 @@ class EndToEnd(Execution):
             src = db.execute("SELECT source, state FROM oms_orders ORDER BY created_at DESC LIMIT 1").fetchone()
         self.assertEqual((src['source'], src['state']), ('PROTECT', 'FILLED'))
 
+    def test_internal_reconciliation_finds_fill_without_position(self):
+        _, a, _, ins = self.real_account()
+        self.sending()
+        order = self.place(a, ins, 'orphan-fill')
+        execution.dispatch()
+        self.assertEqual(self.order(order['id'])['state'], 'FILLED')
+        with self.connect() as db:
+            db.execute('DELETE FROM pf_positions WHERE account_id=%s', (a['id'],))
+        run = posttrade.reconcile(a['id'], broker=False)
+        self.assertEqual(run['status'], 'BREAKS')
+        self.assertEqual(run['detail']['broker_read'], 'NOT_REQUESTED')
+        items = self.ok(self.alice.get(f"/api/trading/posttrade/breaks?account_id={a['id']}"))['items']
+        self.assertEqual([(b['kind'], b['corei_value'], b['broker_value']) for b in items],
+                         [('INTERNAL_POSITION', '0', '0.1')])
+
     def test_working_order_blocks_and_broker_stop_is_booked(self):
         connection, a, _b, ins = self.real_account()
         self.sending()
@@ -563,7 +589,7 @@ class EndToEnd(Execution):
         # The broker closes the position on its stop-loss: a deal with COREI's magic, no COREI tag.
         self.broker.ticket += 1
         self.broker.deals.append({'ticket': self.broker.ticket, 'order': 1, 'symbol': 'EURUSD', 'side': 'SELL', 'entry': 'OUT', 'volume': '0.1', 'price': '1.07500',
-                                  'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '-50.2', 'time': '2026-11-18T11:00:00.000', 'comment': '[sl 1.07500]',
+                                  'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '-50.2', 'time': datetime.now(UTC).isoformat(), 'comment': '[sl 1.07500]',
                                   'magic': MAGIC, 'position_id': 777, 'reason': 'SL'})
         run = self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
         self.assertEqual(run['status'], 'MATCHED', run)

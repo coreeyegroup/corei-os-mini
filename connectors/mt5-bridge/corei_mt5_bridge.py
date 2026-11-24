@@ -60,7 +60,7 @@ def field(tick, name: str):
     return getattr(tick, name) if hasattr(tick, name) else tick[name]
 
 
-BRIDGE_VERSION = '0.43.2'  # shown by --version and in the log at start
+BRIDGE_VERSION = '0.43.3'  # shown by --version and in the log at start
 PORTABLE = False  # the worker's terminal is a portable copy (several accounts on one machine)
 
 
@@ -446,15 +446,22 @@ def book(request: dict) -> dict:
     start = dt.datetime.now(UTC) - dt.timedelta(days=days)
     end = dt.datetime.now(UTC) + dt.timedelta(days=1)
     with api_lock:
-        out = {'t': 'book', 'utc_now': now_iso(), 'server_time': server_time(), 'account': account_dict(),
-               'positions': [_position(_d(p)) for p in (mt5.positions_get() or [])],
-               'orders': [_order(_d(o)) for o in (mt5.orders_get() or [])],
-               'deals': [_deal(_d(d)) for d in (mt5.history_deals_get(start, end) or [])
-                         if int(_d(d).get('type', 0)) in (0, 1)]}  # buys and sells; balance and credit rows are not trades
         acc = mt5.account_info()
-        if acc is not None:
-            a = _d(acc)
-            out['money'] = {k: repr(float(a.get(k) or 0)) for k in ('balance', 'equity', 'margin', 'margin_free', 'margin_level', 'profit', 'credit')}
+        expected = request.get('login')
+        if acc is None or (expected and int(getattr(acc, 'login', 0) or 0) != int(expected)):
+            return {'t': 'failed', 'mode': 'book', 'error': 'BROKER_BOOK_ACCOUNT_UNAVAILABLE', 'sent': False}
+        positions = mt5.positions_get()
+        orders = mt5.orders_get()
+        deals = mt5.history_deals_get(start, end)
+        if any(rows is None for rows in (positions, orders, deals)):
+            return {'t': 'failed', 'mode': 'book', 'error': 'BROKER_BOOK_DATA_UNAVAILABLE', 'sent': False}
+        out = {'t': 'book', 'utc_now': now_iso(), 'server_time': server_time(), 'account': account_dict(),
+               'positions': [_position(_d(p)) for p in positions],
+               'orders': [_order(_d(o)) for o in orders],
+               'deals': [_deal(_d(d)) for d in deals
+                         if int(_d(d).get('type', 0)) in (0, 1)]}  # buys and sells; balance and credit rows are not trades
+        a = _d(acc)
+        out['money'] = {k: repr(float(a.get(k) or 0)) for k in ('balance', 'equity', 'margin', 'margin_free', 'margin_level', 'profit', 'credit')}
     if request.get('tag'):
         found = _tagged(str(request['tag'])[:31], days)
         out['tagged'] = {'orders': [_order(x) for x in found['orders']], 'positions': [_position(x) for x in found['positions']],

@@ -184,9 +184,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      sources:[{account_id:'a1',account_code:'VTM_A',environment:'DEMO',broker_symbol:'EURUSD',instrument:'EURUSD',ready:true}],
      presets:[{id:'EMA_FAST',label:'Fast trend · EMA 3/8 cross',algorithm:'EMA_CROSSOVER',parameters:{fast:3,slow:8},why:'Many signals.'}]});
    if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
-     accounts:[{account_id:'a1',code:'VTM_A',at:now,status:'BREAKS',breaks:1,kind:'BROKER'}]});
+     accounts:[{account_id:'a1',code:'VTM_A',at:now,kind:'BROKER',status:'BREAKS',environment:'DEMO',breaks:1,
+       detail:{broker_read:'COMPARED',internal_books:2,broker_positions:1,cached_deals_checked:3}},
+       {account_id:'a2',code:'NEW_ACCOUNT',environment:'LIVE',breaks:0}]});
    if(url.includes('/trading/posttrade/breaks/b1')&&method==='POST')return ok({break:{id:'b1',state:'ACCEPTED'},result:null});
-   if(url.includes('/trading/posttrade/breaks'))return ok({items:[{id:'b1',account_code:'VTM_A',kind:'POSITION_MISMATCH',broker_symbol:'EURUSD',corei_value:'0.3',broker_value:'0.4',difference:'-0.1',
+   if(url.includes('/trading/posttrade/breaks'))return ok({items:[{id:'b1',account_id:'a1',account_code:'VTM_A',kind:'POSITION_MISMATCH',broker_symbol:'EURUSD',corei_value:'0.3',broker_value:'0.4',difference:'-0.1',
      first_seen:now,last_seen:now,state:'OPEN'}]});
    if(url.includes('/trading/posttrade/tca'))return ok({by:'account',currency:'USD',slippage_cost_total:'12.5',commission_total:'-2.1',rows:[{label:'VTM_A',orders:4,fill_rate_pct:'100',reject_rate_pct:0,fills:4,
      avg_slippage_bps:'0.19',slippage_cost:'12.5',price_improved:1,worse_than_arrival:3,latency_avg_ms:140,latency_p95_ms:210,latency_max_ms:230,commission:'-2.1'}],note:'Slippage = fill vs arrival.'});
@@ -468,13 +470,20 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await go('Post-trade');
  assert.match($('.st-head').textContent,/Stage 8 · Post-trade/);
  assert.match($('.intel-kpis').textContent,/Open breaks1/);
- nav('Breaks').click();await settle(6);
- assert.match($('.intel-table').textContent,/position mismatch.*EURUSD.*0\.3.*0\.4/i);
- promptAnswer='known difference, broker fixing';button('Accept').click();await settle(4);
+ assert.match($('.intel-table').textContent,/3 cached deals checked/);
+ assert.match($('.intel-table').textContent,/NEW_ACCOUNT.*never checked/i);
+ button('1 · Review').click();await settle(6);
+ assert.equal($('[aria-label="Break account"]').value,'a1');
+ assert.match($('.intel-table').textContent,/position quantity differs.*EURUSD.*0\.3.*0\.4/i);
+ assert.ok(calls.some(c=>c.url.includes('/posttrade/breaks?state=OPEN&account_id=a1')));
+ assert.match($('.intel a').getAttribute('href'),/state=OPEN&account_id=a1/);
+ promptAnswer='known difference, broker fixing';button('Accept as known').click();await settle(4);
  assert.deepEqual(calls.filter(c=>c.url.endsWith('/posttrade/breaks/b1')&&c.method==='POST')[0].body,{action:'ACCEPT',note:'known difference, broker fixing'});
  nav('Execution quality').click();await settle(6);
  assert.match($('.intel-table').textContent,/0\.19 bp.*140 · 210 · 230 ms/);
- console.log('PASS: post-trade: breaks are accepted or resolved with a note; TCA shows slippage, latency and costs.');
+ fill($('[aria-label="TCA mode"]'),'BROKER');await settle(4);
+ assert.match($('.intel a').getAttribute('href'),/mode=BROKER/);
+ console.log('PASS: post-trade: per-account comparison coverage, scoped breaks, audited decisions and mode-aware TCA export.');
 
  // Strategies: a backtest of an idea, with metrics and an equity curve.
  await go('Strategies');

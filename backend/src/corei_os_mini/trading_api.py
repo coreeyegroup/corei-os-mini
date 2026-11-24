@@ -1007,6 +1007,8 @@ EXPORTS = ('fills', 'orders', 'trades', 'events', 'breaks', 'tca', 'statement', 
 @router.get('/posttrade/export/{kind}.csv')
 def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650), account_id: UUID | None = None, by: str = Query('account', max_length=20),
               day_from: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'), day_to: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'),
+              mode: Literal['PAPER', 'BROKER'] | None = None, state: str | None = Query(None, max_length=20),
+              actor: str | None = Query(None, max_length=80), search: str | None = Query(None, max_length=80),
               _: str = Depends(require_operator)):
     """CSV of a post-trade report (exact decimals, ISO times)."""
     if kind not in EXPORTS:
@@ -1024,11 +1026,11 @@ def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650
         elif kind == 'trades':
             rows = posttrade.journal(db, since, until, account_id, excursions=False, limit=20000)['trips']
         elif kind == 'events':
-            rows = posttrade.order_events(db, since, until, account_id, limit=20000)
+            rows = posttrade.order_events(db, since, until, account_id, state, actor, search, limit=20000)
         elif kind == 'breaks':
-            rows = posttrade.breaks(db, None, account_id, 20000)
+            rows = posttrade.breaks(db, state or None, account_id, 20000)
         elif kind == 'tca':
-            rows = posttrade.tca(db, by, since, until)['rows']
+            rows = posttrade.tca(db, by, since, until, mode)['rows']
         elif kind == 'attribution':
             rows = strategy_health.attribution(db, by if by in strategy_health.DIMENSIONS else 'strategy', since, until)['rows']
         else:
