@@ -9,7 +9,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { DeploymentFilter, ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
-import { useDeploymentFocus, goto, openOrder, openOrderRisk, clearRiskOrder, readRiskOrder, takeOrder, useScanEvidence } from './nav';
+import { useAccountView, openAccountView, useDeploymentFocus, goto, openOrder, openOrderRisk, clearRiskOrder, readRiskOrder, takeOrder, useScanEvidence } from './nav';
 import GraphWorkbench from './calc/GraphWorkbench';
 import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
@@ -540,40 +540,109 @@ function Accounts({ ctx }: { ctx: Ctx }) {
     const reason = window.prompt('Reason (audit log)'); if (!reason) return;
     void api(`trading/portfolio/accounts/${a.account_id}/capital`, 'PUT', { amount, reason }).then(reload).catch(e => alert((e as Error).message)); };
   return <section className="intel"><Msg error={error} />
+    <div className="intel-bar" aria-label="Portfolio workflow">
+      <button onClick={() => ctx.open('positions')}>Review positions</button>
+      <button onClick={() => ctx.open('allocation')}>Manage allocation</button>
+      <button onClick={() => ctx.open('broker')}>Compare broker book</button>
+    </div>
+    <p className="cfg-note">COREI account estimates can combine paper and broker fills. Broker balances and equity are shown with their source and time in Broker positions.</p>
     <div className="st-cards">{(data?.items ?? []).map((a: Row) => <div key={a.account_id} className="st-card">
       <b>{a.account_code}</b><small className="cfg-note">{a.currency}</small>
-      <div className="st-big">{money(a.equity, a.currency)}</div>
+      <small>COREI equity estimate</small><div className="st-big">{money(a.equity, a.currency)}</div>
       <table className="cfg-table compact"><tbody><tr><td>Starting capital</td><td>{money(a.starting_capital)}{!a.capital_set && <small className="cfg-note"> default</small>}</td></tr>
         <tr><td>Realised</td><td className={Number(a.realised) >= 0 ? 'up' : 'down'}>{money(a.realised)}</td></tr><tr><td>Unrealised</td><td className={Number(a.unrealised) >= 0 ? 'up' : 'down'}>{money(a.unrealised)}</td></tr>
-        <tr><td>Today</td><td className={Number(a.day_pnl) >= 0 ? 'up' : 'down'}>{money(a.day_pnl)}</td></tr><tr><td>Drawdown from peak</td><td>{a.drawdown_pct}%</td></tr></tbody></table>
+        <tr><td>Realised since UTC midnight + open P&L</td><td className={Number(a.day_pnl) >= 0 ? 'up' : 'down'}>{money(a.day_pnl)}</td></tr><tr><td>Drawdown from peak</td><td>{a.drawdown_pct}%</td></tr></tbody></table>
       {a.missing_fx?.length > 0 && <p className="cfg-error">No FX rate for {a.missing_fx.join(', ')} → {a.currency}: collect that pair (e.g. USDINR).</p>}
-      {ctx.canRisk && <button onClick={() => set(a)}>Set starting capital</button>}</div>)}
+      <div className="intel-bar">
+        <button onClick={() => openAccountView('positions', a.account_id)}>Positions</button>
+        <button onClick={() => openAccountView('broker', a.account_id)}>Broker book</button>
+        {ctx.canRisk && <button onClick={() => set(a)}>Set starting paper capital</button>}
+      </div></div>)}
       {data && !(data.items ?? []).length && <p className="cfg-note">No account has a deployment or a position yet.</p>}</div>
-    <p className="cfg-note">Paper equity = starting capital + realised + unrealised P&L, in the account's currency. Real accounts: the broker's own balance and equity are under Monitor › Broker positions; sizing of a real deployment uses the broker's equity.</p></section>;
+    <p className="cfg-note">The estimate uses starting capital and COREI’s recorded P&L. A broker deployment’s sizing basis depends on its capital partition and the availability of broker equity.</p></section>;
 }
 
 function Positions({ ctx }: { ctx: Ctx }) {
   const [closed, setClosed] = useState(false), [data, error, reload] = useData<Row>(`trading/portfolio/positions${closed ? '?include_closed=true' : ''}`, 10_000, [closed]);
+  const { accounts } = Lists();
+  const [account, setAccount] = useAccountView('positions');
+  const [mode, setMode] = useState('');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const [msg, setMsg] = useState(''), [err, setErr] = useState('');
-  const flatten = (p: Row) => { const reason = window.prompt(`Close ${p.account_code} ${p.symbol} (${p.quantity}) at market? Reason:`); if (!reason) return;
-    void api('trading/portfolio/flatten', 'POST', { account_id: p.account_id, instrument_id: p.instrument_id, reason, key: key() })
-      .then(r => { setMsg(`Close orders: ${r.orders.map((o: Row) => o.state.toLowerCase()).join(', ')}.`); reload(); }).catch(e => setErr((e as Error).message)); };
+  const rows: Row[] = data?.items ?? [];
+  const query = search.trim().toLowerCase();
+  const visible = rows.filter(p => (!account || p.account_id === account) && (!mode || p.mode === mode)
+    && (!query || `${p.symbol} ${p.strategy_code ?? 'manual'}`.toLowerCase().includes(query)));
+  const detail = visible.find(p => p.id === selected);
+  const flatten = async (p: Row) => {
+    if (pending) return;
+    const reason = window.prompt(`Request market closes for all ${p.mode} positions in ${p.account_code} · ${p.symbol}, across deployments and manual trading? Reason:`);
+    if (!reason || reason.trim().length < 5) return;
+    setPending(true); setErr(''); setMsg('');
+    try {
+      const result = await api('trading/portfolio/flatten', 'POST', { account_id: p.account_id, instrument_id: p.instrument_id, mode: p.mode, reason, key: key() });
+      setMsg(`Close order states · ${result.orders.map((order: Row) => order.state.toLowerCase()).join(', ')}. Review Execution for updates.`);
+      reload();
+    } catch (error) { setErr((error as Error).message); }
+    finally { setPending(false); }
+  };
   return <section className="intel">
-    <div className="intel-bar"><label className="intel-check"><input type="checkbox" checked={closed} onChange={e => setClosed(e.target.checked)} /> Include closed</label></div>
+    <div className="intel-bar">
+      <select aria-label="Position account" value={account} onChange={e => { setSelected(null); setAccount(e.target.value); }}>
+        <option value="">All accounts</option>{accounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}
+      </select>
+      <select aria-label="Position mode" value={mode} onChange={e => setMode(e.target.value)}>
+        <option value="">All modes</option><option value="PAPER">Paper</option><option value="BROKER">Broker</option>
+      </select>
+      <input type="search" aria-label="Find a position" placeholder="Instrument or strategy" value={search} onChange={e => setSearch(e.target.value)} />
+      <label className="intel-check"><input type="checkbox" checked={closed} onChange={e => setClosed(e.target.checked)} /> Include closed</label>
+      {data && <small>{visible.length} of {rows.length} positions</small>}
+    </div>
+    {!data && !error && <p role="status">Loading positions…</p>}
     <Msg error={error || err} notice={msg} />
     <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Instrument</th><th>Strategy</th><th>Mode</th><th>Quantity</th><th>Average</th><th>Mark</th><th>Unrealised</th><th>Realised</th><th>Value</th><th>Stop / target</th><th>Opened</th><th /></tr></thead><tbody>
-      {(data?.items ?? []).map((p: Row) => <tr key={p.id}><td>{p.account_code}</td><td>{p.symbol}</td><td>{p.strategy_code ?? 'manual'}</td><td>{p.mode.toLowerCase()}</td>
+      {visible.map((p: Row) => <tr key={p.id}><td>{p.account_code}</td><td>{p.symbol}</td><td>{p.strategy_code ?? 'manual'}</td><td>{p.mode.toLowerCase()}</td>
         <td className={Number(p.quantity) > 0 ? 'up' : Number(p.quantity) < 0 ? 'down' : ''}><b>{p.quantity}</b></td><td>{p.avg_price ?? '–'}</td><td>{p.mark ?? '–'}</td>
-        <td className={Number(p.unrealised_pnl) >= 0 ? 'up' : 'down'}>{money(p.unrealised_pnl, p.quote_currency)}</td><td>{money(p.realised_pnl, p.quote_currency)}</td><td>{money(p.notional_account, p.account_currency)}</td>
-        <td><small>{p.stop_loss ?? '–'} / {p.take_profit ?? '–'}</small></td><td><small>{when(p.opened_at)}</small></td><td>{(ctx.canOps || ctx.canRisk) && Number(p.quantity) !== 0 && <button onClick={() => flatten(p)}>Flatten</button>}</td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={13} className="cfg-note">No open positions.</td></tr>}</tbody></table></div>
-    <p className="cfg-note">Positions come only from fills (Orders). Each deployment keeps its own book; Flatten closes every book of that account in the instrument, also when a kill switch is on.</p></section>;
+        <td className={Number(p.unrealised_pnl) >= 0 ? 'up' : 'down'}>{p.mark == null && Number(p.quantity) !== 0 ? 'Awaiting mark' : money(p.unrealised_pnl, p.quote_currency)}</td><td>{money(p.realised_pnl, p.quote_currency)}</td><td>{money(p.notional_account, p.account_currency)}</td>
+        <td><small>{p.stop_loss ?? '–'} / {p.take_profit ?? '–'}</small></td><td><small>{when(p.opened_at)}</small></td><td><button onClick={() => setSelected(p.id)}>Inspect position</button>{(ctx.canOps || ctx.canRisk) && Number(p.quantity) !== 0 &&
+          <button disabled={pending} onClick={() => void flatten(p)}>Flatten {p.mode.toLowerCase()}</button>}</td></tr>)}
+      {data && !visible.length && <tr><td colSpan={13} className="cfg-note">No positions match this view.</td></tr>}</tbody></table></div>
+    <p className="cfg-note">Flatten requests market closes for the selected account, instrument and mode across deployments and manual trading. A request can be refused or await execution.</p>
+    {detail && <PositionEvidence key={detail.id} position={detail} close={() => setSelected(null)} />}
+  </section>;
+}
+
+function PositionEvidence({ position: p, close }: { position: Row; close: () => void }) {
+  const [data, error] = useData<Row>(`trading/fills?position_id=${encodeURIComponent(p.id)}&limit=50`, 15_000);
+  return <FloatingWindow storageKey="corei.portfolio.position.v1" title={`Position · ${p.symbol} · ${p.account_code}`} onClose={close}
+    footer={<div className="cfg-actions">
+      {p.mode === 'BROKER' && <><button onClick={() => { close(); openAccountView('broker', p.account_id); }}>Broker book</button>
+        <button onClick={() => { close(); openAccountView('breaks', p.account_id); }}>Reconciliation breaks</button></>}
+      <button onClick={close}>Close</button>
+    </div>}>
+    <section className="intel">
+      <p><strong>{p.mode}</strong> · {p.strategy_code ?? 'Manual'} · quantity {p.quantity}</p>
+      <p>Mark {p.mark ?? 'unavailable'} · {[p.mark_broker_symbol, p.mark_source].filter(Boolean).join(' · ') || 'source unavailable'} · received {when(p.mark_received_at)}</p>
+      <p>Conversion {p.quote_currency} → {p.account_currency} · {p.fx_to_account ?? 'FX rate unavailable'}</p>
+      {p.mark == null && Number(p.quantity) !== 0 && <p className="cfg-note">Unrealised P&L is unavailable. Displayed exposure can use average cost as an estimate.</p>}
+      <h4>Latest 50 fills in this position book</h4>
+      <Msg error={error} />
+      {!data && !error && <p role="status">Loading fills…</p>}
+      {data && <div className="cfg-scroll"><table className="cfg-table compact"><thead><tr><th>Time</th><th>Side</th><th>Quantity</th><th>Price</th><th>Realised</th><th /></tr></thead><tbody>
+        {(data.items ?? []).map((fill: Row) => <tr key={fill.id}><td>{when(fill.at)}</td><td>{fill.side}</td><td>{fill.quantity}</td><td>{fill.price}</td>
+          <td>{money(fill.realised_pnl, fill.currency)}</td><td>{fill.order_id && <button onClick={() => { close(); openOrder(fill.order_id); }}>Inspect order</button>}</td></tr>)}
+        {!data.items?.length && <tr><td colSpan={6}>No fills are recorded for this book.</td></tr>}
+      </tbody></table></div>}
+    </section>
+  </FloatingWindow>;
 }
 
 export function PortfolioView() {
   const sections: Section[] = [
     { id: 'accounts', label: 'Accounts', group: 'Overview', hint: 'Equity, P&L today and drawdown per account.', render: ctx => <Accounts ctx={ctx} /> },
-    { id: 'positions', label: 'Positions', group: 'Work', hint: 'Every open position with its P&L at the live price; close one in a click.', render: ctx => <Positions ctx={ctx} /> },
+    { id: 'positions', label: 'Positions', group: 'Work', hint: 'Inspect a position’s valuation and fills, or request closes by execution mode.', render: ctx => <Positions ctx={ctx} /> },
     { id: 'allocation', label: 'Allocation', group: 'Work', hint: 'Capital partitions per account, deployment weights, and rebalancing.', render: ctx => <Allocation ctx={ctx} /> },
     { id: 'copy', label: 'Copy trading', group: 'Work', hint: 'Follower accounts that mirror a master account\'s fills, each with its own size and risk.', render: ctx => <CopyTrading ctx={ctx} /> },
     { id: 'attribution', label: 'Performance', group: 'Monitor', hint: 'P&L, win rate and profit factor per strategy, instrument and account.', render: () => <Performance /> },
@@ -583,9 +652,9 @@ export function PortfolioView() {
     { id: 'capital', label: 'Paper capital', group: 'Configure', hint: 'Starting equity of accounts without their own.',
       render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="Each account's own starting capital is set on its card (Overview › Accounts)." /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Average cost, realised and unrealised P&L, equity, drawdown, partitions, allocation, copy size and attribution.', render: () => <Formulas stage="Portfolio" /> },
-    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Allocation weights and portfolio measures as graphs.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['ALLOCATION', 'MEASURE']} /> },
+    { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Draft and test portfolio graphs. The portfolio engine uses its built-in calculations.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['ALLOCATION', 'MEASURE']} /> },
   ];
-  return <StageShell view="Portfolio" sections={sections} />;
+  return <StageShell view="Portfolio" sections={sections} defaultSection="accounts" />;
 }
 
 /* ---------- Stage 7 · Orders ---------- */

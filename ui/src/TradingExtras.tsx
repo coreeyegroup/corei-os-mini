@@ -9,6 +9,7 @@ import GraphWorkbench from './calc/GraphWorkbench';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { Formulas } from './SignalLibrary';
+import { useAccountView } from './nav';
 import StageShell, { ago, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
 
 export function Table({ cols, rows, empty, rowKey }: { cols: [string, (r: Row) => ReactNode][]; rows: Row[]; empty: string; rowKey?: (r: Row, i: number) => string }) {
@@ -153,14 +154,28 @@ export function Attribution() {
 export function Allocation({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/portfolio/partitions', 30_000), [deps] = useData<Row>('config/deployments', 0);
   const [f, setF] = useState<Row | null>(null), [alloc, setAlloc] = useState<Row>({ account_id: '', method: 'WEIGHT', total: '' }), [plan, setPlan] = useState<Row | null>(null);
+  const [allocating, setAllocating] = useState(false);
   const [assign, setAssign] = useState<Row | null>(null), [err, setErr] = useState(''), [msg, setMsg] = useState('');
   const fail = (x: unknown) => setErr((x as Error).message);
   const save = (e: FormEvent) => { e.preventDefault(); setErr('');
     void api(f!.id ? `trading/portfolio/partitions/${f!.id}?version=${f!.version}` : 'trading/portfolio/partitions', f!.id ? 'PUT' : 'POST',
       { account_id: f!.account_id, name: f!.name, capital: f!.capital, weight: f!.weight || '1', max_drawdown_pct: f!.max_drawdown_pct || null, status: f!.status, note: f!.note ?? '', reason: f!.reason })
       .then(() => { setF(null); reload(); }).catch(fail); };
-  const preview = (apply: boolean) => { const reason = apply ? window.prompt('Reason for the new allocation (audit log)') : ''; if (apply && !reason) return;
-    void api('trading/portfolio/allocate', 'POST', { ...alloc, apply, reason }).then(p => { setPlan(p); if (apply) { setMsg('Allocation applied.'); reload(); } }).catch(fail); };
+  const changeAllocation = (patch: Row) => {
+    setAlloc({ ...alloc, ...patch });
+    setPlan(null);
+  };
+  const preview = async (apply: boolean) => {
+    if (allocating || (apply && (!plan || plan.applied))) return;
+    const reason = apply ? window.prompt('Reason for the new allocation (audit log)') : '';
+    if (apply && (!reason || reason.trim().length < 5)) return;
+    setAllocating(true); setErr(''); setPlan(null);
+    try {
+      setPlan(await api('trading/portfolio/allocate', 'POST', { ...alloc, apply, reason }));
+      if (apply) { setMsg('Allocation applied.'); reload(); }
+    } catch (error) { fail(error); }
+    finally { setAllocating(false); }
+  };
   const accountParts = (aid: string) => (data?.items ?? []).filter((p: Row) => p.account_id === aid);
   return <section className="intel">
     {ctx.canRisk && <div className="intel-bar"><button className="primary" onClick={() => setF({ account_id: '', name: '', capital: '', weight: '1', max_drawdown_pct: '', status: 'ACTIVE', reason: '' })}>Add a partition</button></div>}
@@ -190,11 +205,12 @@ export function Allocation({ ctx }: { ctx: Ctx }) {
           <button disabled={assign.reason.trim().length < 5} onClick={() => void api(`trading/portfolio/deployments/${assign.id}/allocation`, 'PUT', { partition_id: assign.partition_id || null, weight: assign.weight, reason: assign.reason })
             .then(() => { setAssign(null); setMsg('Deployment assigned.'); reload(); }).catch(fail)}>Save</button></>}</div>
       <h4>Rebalance capital</h4>
-      <div className="intel-bar"><AccountPick value={alloc.account_id} change={v => setAlloc({ ...alloc, account_id: v })} label="Allocate account" />
-        <Choice label="Allocation method" value={alloc.method} options={[['EQUAL', 'Equal shares'], ['WEIGHT', 'By weight'], ['RISK_PARITY', 'Risk parity (inverse volatility)']]} onChange={v => setAlloc({ ...alloc, method: v })} />
-        <input aria-label="Allocation total" placeholder="Total capital" value={alloc.total} onChange={e => setAlloc({ ...alloc, total: e.target.value })} />
-        <button disabled={!alloc.account_id || !alloc.total} onClick={() => preview(false)}>Preview</button>
-        <button className="primary" disabled={!plan || plan.applied} onClick={() => preview(true)}>Apply</button></div>
+      <fieldset className="intel-bar" disabled={allocating}><AccountPick value={alloc.account_id} change={v => changeAllocation({ account_id: v })} label="Allocate account" />
+        <Choice label="Allocation method" value={alloc.method} options={[['EQUAL', 'Equal shares'], ['WEIGHT', 'By weight'], ['RISK_PARITY', 'Risk parity (inverse volatility)']]} onChange={v => changeAllocation({ method: v })} />
+        <input aria-label="Allocation total" placeholder="Total capital" value={alloc.total} onChange={e => changeAllocation({ total: e.target.value })} />
+        <button disabled={!alloc.account_id || !alloc.total} onClick={() => void preview(false)}>Preview</button>
+        <button className="primary" disabled={!plan || plan.applied} onClick={() => void preview(true)}>Apply</button></fieldset>
+      <p className="cfg-note">Changing the account, method or capital clears the preview. Apply recalculates from current partition data.</p>
       {plan && <Table cols={[['Partition', r => r.name], ['Now', r => money(r.before)], ['After', r => <b>{money(r.after)}</b>], ['Share', r => `${r.share_pct}%`]]} rows={plan.plan} empty="" rowKey={r => r.partition_id} />}
     </>}
     <p className="cfg-note">Partitions are COREI's own book-keeping: they size orders and carry their own drawdown limit; no money moves at the broker.</p></section>;
@@ -232,15 +248,18 @@ export function CopyTrading({ ctx }: { ctx: Ctx }) {
 }
 
 export function BrokerBook({ ctx }: { ctx: Ctx }) {
-  const [account, setAccount] = useState(''), [data, error, reload] = useData<Row>(account ? `trading/posttrade/broker/${account}` : null, 30_000, [account]);
+  const [account, setAccount] = useAccountView('broker'), [data, error, reload] = useData<Row>(account ? `trading/posttrade/broker/${account}` : null, 30_000, [account]);
   const [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const snap = data?.snapshot;
   return <section className="intel">
     <div className="intel-bar"><AccountPick value={account} change={setAccount} label="Broker book account" />
       {account && (ctx.canOps || ctx.canRisk) && <button disabled={busy} onClick={() => { setBusy(true); setErr(''); void api(`trading/posttrade/broker/${account}/read`, 'POST').then(reload).catch(x => setErr((x as Error).message)).finally(() => setBusy(false)); }}>{busy ? 'Reading…' : 'Read from the broker now'}</button>}</div>
     <Msg error={error || err} />
-    {snap && <>
-      <p className="cfg-note">Read {ago(snap.at)} · {snap.source}{snap.ok ? '' : ` · failed: ${snap.error}`}</p>
+    {account && !data && !error && <p role="status">Loading broker snapshot…</p>}
+    {data && !snap && <p className="cfg-note">No broker snapshot has been recorded for this account.</p>}
+    {snap && !snap.ok && <p role="alert" className="cfg-error">Broker read failed {ago(snap.at)} · {snap.source} · {snap.error}</p>}
+    {snap?.ok && <>
+      <p className="cfg-note">Snapshot {when(snap.at)} · {snap.source}</p>
       {snap.ok && <Kpis items={Object.entries(snap.money ?? {}).filter(([, v]) => v !== '').map(([k, v]) => [k.replace(/_/g, ' '), num(v)] as [string, string])} />}
       <h4>Positions at the broker</h4>
       <Table cols={[['Ticket', r => r.ticket], ['Symbol', r => r.symbol], ['Side', r => r.side], ['Volume', r => r.volume], ['Open', r => r.price_open], ['Now', r => r.price_current ?? '–'], ['Profit', r => signed(r.profit)],
@@ -334,7 +353,7 @@ function PtOverview({ ctx }: { ctx: Ctx }) {
 }
 
 function Breaks({ ctx }: { ctx: Ctx }) {
-  const [state, setState] = useState('OPEN'), [account, setAccount] = useState('');
+  const [state, setState] = useState('OPEN'), [account, setAccount] = useAccountView('breaks');
   const [data, error, reload] = useData<Row>(`trading/posttrade/breaks?state=${state}${account ? `&account_id=${account}` : ''}`, 20_000, [state, account]);
   const [err, setErr] = useState('');
   const act = (b: Row, action: string, text: string) => { const note = window.prompt(`${text} — note (audit log):`); if (note) void api(`trading/posttrade/breaks/${b.id}`, 'POST', { action, note }).then(reload).catch(x => setErr((x as Error).message)); };
@@ -349,7 +368,7 @@ function Breaks({ ctx }: { ctx: Ctx }) {
         {b.kind === 'FILL_MISSING' && <button className="primary" onClick={() => act(b, 'APPLY_FILL', 'Apply the broker deal to its COREI order')}>Apply fill</button>}
         {['NOT_IN_COREI', 'POSITION_MISMATCH'].includes(b.kind) && <button onClick={() => act(b, 'ADOPT_POSITION', 'Adopt the broker position into COREI (nothing is sent)')}>Adopt</button>}
         <button onClick={() => act(b, 'ACCEPT', 'Accept as known')}>Accept</button><button onClick={() => act(b, 'RESOLVE', 'Mark resolved')}>Resolved</button></>]]}
-      rows={data?.items ?? []} empty={state === 'OPEN' ? 'No open breaks: COREI and the brokers agree.' : 'None.'} />
+      rows={data?.items ?? []} empty={state === 'OPEN' ? 'No open breaks in this view. See reconciliation runs for comparison status.' : 'None.'} />
     <p className="cfg-note"><b>Position mismatch / missing at broker / not in COREI</b>: net positions differ (COREI's magic number on MT5). <b>Fill missing</b>: the broker has a deal for a COREI order that COREI has not applied.
       <b> External trade</b>: a deal or position placed outside COREI. <b>Internal</b>: a COREI position differs from its own fills. Accepted breaks are not raised again while their values stay the same.</p></section>;
 }

@@ -99,7 +99,8 @@ def positions(db, account_id=None, open_only: bool = True) -> list[dict]:
         unreal = (mark - avg) * qty * size if (mark is not None and avg is not None and qty) else ZERO
         rate = fx_rate(db, r['quote_currency'], r['account_currency'])
         notional = abs(qty) * (mark or avg or ZERO) * size
-        r.update({'mark': mark, 'mark_source': q and q['source'], 'unrealised_pnl': unreal, 'notional': notional,
+        r.update({'mark': mark, 'mark_source': q and q['source'], 'mark_received_at': q and q.get('received_at'),
+                  'mark_broker_symbol': q and q.get('broker_symbol'), 'unrealised_pnl': unreal, 'notional': notional,
                   'fx_to_account': rate, 'unrealised_account': unreal * rate if rate is not None else None,
                   'realised_account': D(r['realised_pnl']) * rate if rate is not None else None,
                   'notional_account': notional * rate if rate is not None else None})
@@ -253,25 +254,25 @@ def set_capital(actor: str, account_id, amount: Decimal, reason: str) -> dict:
 def performance(db, since: datetime | None = None) -> list[dict]:
     """Per deployment (and manual trading per account): fills, realised P&L, open quantity, unrealised, win rate."""
     since = since or datetime.now(timezone.utc) - timedelta(days=3650)
-    rows = db.execute("""SELECT f.deployment_id, f.account_id, f.instrument_id, f.currency, count(*) AS fills,
+    rows = db.execute("""SELECT f.deployment_id, f.account_id, f.instrument_id, f.currency, f.mode, count(*) AS fills,
                                 sum(f.realised_pnl) AS realised, count(*) FILTER (WHERE f.realised_pnl > 0) AS wins,
                                 count(*) FILTER (WHERE f.realised_pnl < 0) AS losses,
                                 sum(f.realised_pnl) FILTER (WHERE f.realised_pnl > 0) AS gross_win,
                                 sum(f.realised_pnl) FILTER (WHERE f.realised_pnl < 0) AS gross_loss
-                         FROM oms_fills f WHERE f.at >= %s GROUP BY 1, 2, 3, 4""", (since,)).fetchall()
-    open_pos = {(str(p['deployment_id']) if p['deployment_id'] else None, str(p['account_id']), str(p['instrument_id'])): p for p in positions(db)}
-    names = {str(r['id']): r for r in db.execute('SELECT d.id, s.code AS strategy, v.number AS version, d.mode FROM cfg_deployments d '
+                         FROM oms_fills f WHERE f.at >= %s GROUP BY 1, 2, 3, 4, 5 ORDER BY 2, 3, 1, 5, 4""", (since,)).fetchall()
+    open_pos = {(str(p['deployment_id']) if p['deployment_id'] else None, str(p['account_id']), str(p['instrument_id']), p['mode']): p for p in positions(db)}
+    names = {str(r['id']): r for r in db.execute('SELECT d.id, s.code AS strategy, v.number AS version FROM cfg_deployments d '
                                                  'JOIN cfg_strategies s ON s.id=d.strategy_id JOIN cfg_strategy_versions v ON v.id=d.strategy_version_id').fetchall()}
     syms = {str(r['id']): r['symbol'] for r in db.execute('SELECT id, symbol FROM cfg_instruments').fetchall()}
     accts = {str(r['id']): r['code'] for r in db.execute('SELECT id, code FROM cfg_accounts').fetchall()}
     out = []
     for r in rows:
         dep = str(r['deployment_id']) if r['deployment_id'] else None
-        p = open_pos.get((dep, str(r['account_id']), str(r['instrument_id'])))
+        p = open_pos.get((dep, str(r['account_id']), str(r['instrument_id']), r['mode']))
         closed = (r['wins'] or 0) + (r['losses'] or 0)
         gw, gl = D(r['gross_win']) or ZERO, D(r['gross_loss']) or ZERO
         out.append({'deployment_id': dep, 'strategy': names.get(dep, {}).get('strategy') if dep else 'Manual', 'version': names.get(dep, {}).get('version') if dep else None,
-                    'mode': names.get(dep, {}).get('mode') if dep else None, 'account_id': str(r['account_id']), 'account_code': accts.get(str(r['account_id'])),
+                    'mode': r['mode'], 'account_id': str(r['account_id']), 'account_code': accts.get(str(r['account_id'])),
                     'instrument_id': str(r['instrument_id']), 'symbol': syms.get(str(r['instrument_id'])), 'currency': r['currency'],
                     'fills': r['fills'], 'realised': D(r['realised']) or ZERO, 'closing_fills': closed,
                     'win_rate_pct': round(100 * (r['wins'] or 0) / closed, 1) if closed else None,

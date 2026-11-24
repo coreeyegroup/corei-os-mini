@@ -500,13 +500,17 @@ def ticket(actor: str, data: TicketIn) -> dict:
     return out[0] if len(out) == 1 else {**out[0], 'legs': out}
 
 
-def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key: str) -> dict:
-    """Close every open position of the account in one instrument (each deployment's and the manual one) with market
-    orders attributed to their owner, so each book closes; allowed through a kill switch (it removes risk)."""
+def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key: str,
+            mode: Literal['PAPER', 'BROKER'] | None = None) -> dict:
+    """Request closes for an account and instrument, optionally limited to one execution mode."""
+    mode_filter = ' AND p.mode=%s' if mode else ''
+    args = [str(account_id), str(instrument_id)]
+    if mode:
+        args.append(mode)
     with store.transaction('write') as db:
         rows = db.execute('SELECT p.*, d.strategy_id FROM pf_positions p LEFT JOIN cfg_deployments d ON d.id=p.deployment_id '
-                          'WHERE p.account_id=%s AND p.instrument_id=%s AND p.quantity <> 0 ORDER BY p.deployment_id NULLS FIRST',
-                          (str(account_id), str(instrument_id))).fetchall()
+                          'WHERE p.account_id=%s AND p.instrument_id=%s AND p.quantity <> 0' + mode_filter
+                          + ' ORDER BY p.deployment_id NULLS FIRST', args).fetchall()
         if not rows:
             raise HTTPException(409, 'There is no open position to close.')
         out = []

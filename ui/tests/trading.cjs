@@ -162,6 +162,13 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      approved:true,reasons:[],inputs:{mode:'PAPER',position_before:'0',position_after:'0.001',limits:{MAX_ORDER_QTY:'0.01'},
        evaluated_limits:{MAX_ORDER_QTY:{value:'0.001',threshold:'0.01',scope:'ACCOUNT',breached:false}}}
    }]});
+   if(url.includes('/trading/portfolio/accounts'))return ok({items:[{account_id:'a1',account_code:'VTM_A',currency:'USD',equity:'10002',day_pnl:'2',drawdown_pct:'0'}]});
+   if(url.includes('/trading/portfolio/positions'))return ok({items:[
+     {id:'p1',account_id:'a1',account_code:'VTM_A',symbol:'EURUSD',instrument_id:'i1',mode:'PAPER',quantity:'0.1',mark:null,unrealised_pnl:'0',quote_currency:'USD',account_currency:'USD'},
+     {id:'p2',account_id:'a1',account_code:'VTM_A',symbol:'EURUSD',instrument_id:'i1',mode:'BROKER',quantity:'0.2',mark:'1.1',quote_currency:'USD',account_currency:'USD'}
+   ]});
+   if(url.endsWith('/trading/portfolio/flatten')&&method==='POST')return ok({orders:[{state:'FILLED'}]});
+   if(url.includes('/trading/fills?position_id=p1'))return ok({items:[{id:'f1',order_id:'o1',side:'BUY',quantity:'0.1',price:'1.08011',at:now,currency:'USD',realised_pnl:'0'}]});
    if(url.includes('/trading/risk/exposure'))return ok({instruments:[],accounts:[]});
    if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
    if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
@@ -432,6 +439,24 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  nav('Stress tests').click();await settle(6);
  assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
+
+ await go('Portfolio');
+ assert.match($('.st-head').textContent,/›Accounts/);
+ assert.match($('.st-card').textContent,/COREI equity estimate/);
+ button('Positions').click();await settle(6);
+ assert.equal($('[aria-label="Position account"]').value,'a1');
+ fill($('[aria-label="Position mode"]'),'PAPER');await settle(2);
+ assert.match($('.intel-table').textContent,/Awaiting mark/);
+ assert.equal(button('Flatten broker'),undefined);
+ button('Inspect position').click();await settle(4);
+ assert.match($('.fw').textContent,/Latest 50 fills.*1\.08011/);
+ button('Inspect order').click();await settle(6);
+ assert.match($('.fw').textContent,/Order · EURUSD/);
+ $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
+ await go('Portfolio');
+ promptAnswer='close paper book';button('Flatten paper').click();await settle(4);
+ assert.equal(calls.findLast(c=>c.url.endsWith('/portfolio/flatten')).body.mode,'PAPER');
+ console.log('PASS: portfolio account scope, position mark, exact fills and paper-only flatten.');
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');

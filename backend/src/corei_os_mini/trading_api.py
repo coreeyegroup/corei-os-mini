@@ -653,12 +653,19 @@ def resolve_order(order_id: UUID, payload: dict, user: Principal = Depends(_risk
 
 
 @router.get('/fills')
-def fills(response: Response, limit: int = Query(300, ge=1, le=2000), _: str = Depends(require_operator)):
+def fills(response: Response, limit: int = Query(300, ge=1, le=2000), position_id: UUID | None = None,
+          _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
+        scope = '' if position_id is None else """ WHERE EXISTS (
+            SELECT 1 FROM pf_positions p WHERE p.id=%s AND p.account_id=f.account_id
+            AND p.instrument_id=f.instrument_id AND p.mode=f.mode
+            AND p.deployment_id IS NOT DISTINCT FROM f.deployment_id)"""
+        args = (limit,) if position_id is None else (position_id, limit)
         rows = db.execute("""SELECT f.*, a.code AS account_code, i.symbol, s.code AS strategy_code FROM oms_fills f JOIN cfg_accounts a ON a.id=f.account_id
                              JOIN cfg_instruments i ON i.id=f.instrument_id LEFT JOIN cfg_deployments d ON d.id=f.deployment_id
-                             LEFT JOIN cfg_strategies s ON s.id=d.strategy_id ORDER BY f.at DESC LIMIT %s""", (limit,)).fetchall()
+                             LEFT JOIN cfg_strategies s ON s.id=d.strategy_id"""
+                          + scope + ' ORDER BY f.at DESC, f.id DESC LIMIT %s', args).fetchall()
         return {'items': _j([store.clean(r) for r in rows])}
 
 
@@ -708,6 +715,7 @@ class FlattenIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     account_id: UUID
     instrument_id: UUID
+    mode: Literal['PAPER', 'BROKER'] | None = None
     reason: str = Field(min_length=5, max_length=500)
     key: str = Field(min_length=8, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
 
@@ -715,7 +723,7 @@ class FlattenIn(BaseModel):
 @router.post('/portfolio/flatten')
 def flatten(payload: dict, user: Principal = Depends(_ops_or_risk)):
     data = parse(FlattenIn, payload)
-    return _j(oms.flatten(user.username, data.account_id, data.instrument_id, data.reason, data.key))
+    return _j(oms.flatten(user.username, data.account_id, data.instrument_id, data.reason, data.key, data.mode))
 
 
 # ----- Stage 7: real execution -----

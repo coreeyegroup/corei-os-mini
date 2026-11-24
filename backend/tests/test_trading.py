@@ -97,6 +97,14 @@ class Trading(tmd.MarketData):
         self.assertEqual(Decimal(pos[0]['unrealised_pnl']), (Decimal('1.08105') - Decimal('1.08011')) * Decimal('0.1') * 100000)
         perf = self.ok(self.alice.get('/api/trading/performance'))['items']
         self.assertEqual((perf[0]['strategy'], perf[0]['fills']), ('EMA_FAST', 1))
+        self.assertEqual(perf[0]['mode'], 'PAPER')
+        history = self.ok(self.alice.get(f"/api/trading/fills?position_id={pos[0]['id']}"))['items']
+        self.assertEqual([fill['order_id'] for fill in history], [o['id']])
+        self.assertEqual(self.ok(self.alice.get('/api/trading/fills?position_id=00000000-0000-0000-0000-000000000000'))['items'], [])
+        other_book = self.alice.post('/api/trading/portfolio/flatten', json={
+            'account_id': a['id'], 'instrument_id': instrument['id'], 'mode': 'BROKER',
+            'reason': 'test book isolation', 'key': 'flatten-other-book'})
+        self.assertEqual(other_book.status_code, 409)
         ov = self.ok(self.alice.get('/api/trading/overview'))
         self.assertEqual((ov['signals_today'].get('ACTED'), ov['positions']), (1, 1))
 

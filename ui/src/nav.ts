@@ -23,6 +23,27 @@ export function goto(view: View, section?: string) {
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));
 }
 
+type AccountDestination = 'positions' | 'broker' | 'breaks';
+const accountContext: Partial<Record<AccountDestination, string>> = {};
+
+export function openAccountView(destination: AccountDestination, accountId: string) {
+  accountContext[destination] = accountId;
+  window.dispatchEvent(new CustomEvent('corei-account-context', { detail: destination }));
+  goto(destination === 'breaks' ? 'Post-trade' : 'Portfolio', destination);
+}
+
+export function useAccountView(destination: AccountDestination) {
+  const [account, setAccount] = useState(() => accountContext[destination] ?? '');
+  useEffect(() => {
+    const update = (event: Event) => {
+      if ((event as CustomEvent).detail === destination) setAccount(accountContext[destination] ?? '');
+    };
+    window.addEventListener('corei-account-context', update);
+    return () => window.removeEventListener('corei-account-context', update);
+  }, [destination]);
+  return [account, setAccount] as const;
+}
+
 type DeploymentDestination = 'runtime' | 'signals' | 'intents' | 'queue';
 type DeploymentFocus = { id: string; label: string };
 const deploymentFocus: Partial<Record<DeploymentDestination, DeploymentFocus>> = {};
