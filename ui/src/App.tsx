@@ -16,9 +16,9 @@ import Stage from "./Pipeline";
 import { PIPELINE, stageOf } from "./flow";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
-import { initialLayout, launchContext, openWorkspace } from "./workspaceLinks";
+import { initialLayout, launchContext, openWorkspace, useAddressBar } from "./workspaceLinks";
 import "./workspaces.css";
-import { ViewVisible } from "./visibility";
+import { ViewFocused, ViewVisible } from "./visibility";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -71,12 +71,11 @@ function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
   } catch {
-    return defaults();
+    return initialLayout(null);
   }
 }
 export default function App() {
-  const launch = launchContext(window.location.search);
-  useEffect(() => { if (launch.detached && launch.view && launch.section) goto(launch.view, launch.section); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [launch] = useState(() => launchContext(window.location.search));
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
@@ -314,6 +313,7 @@ export default function App() {
     });
   }
   const active = layout.active[layout.focus];
+  useAddressBar(active, launch.detached, (view, section) => goto(view, section));
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
   function switchWorkspace(name:string){
     if(!allowLayoutChange())return;
@@ -519,7 +519,7 @@ export default function App() {
                   </span>
                 </div>}
                 <div className="view" role="tabpanel" aria-label={layout.active[i]}>
-                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ViewVisible.Provider value={layout.active[i]===v&&!(layout.maximized&&layout.focus!==i)}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></ViewVisible.Provider></div>)}
+                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ViewVisible.Provider value={layout.active[i]===v&&!(layout.maximized&&layout.focus!==i)}><ViewFocused.Provider value={layout.focus === i && layout.active[i] === v}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></ViewFocused.Provider></ViewVisible.Provider></div>)}
                 </div>
               </section>
             ))}

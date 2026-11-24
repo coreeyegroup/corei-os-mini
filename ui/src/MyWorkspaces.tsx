@@ -3,6 +3,7 @@ import { api } from './Configuration';
 import { SignIn } from './Infrastructure';
 import { goto, openAccountView, openDeployment, openOrder, openScanEvidence, openScopedTicket } from './nav';
 import { Msg, useData, when, type Row } from './StageShell';
+import { launchContext, usePublishRoute } from './workspaceLinks';
 import './my-workspaces.css';
 
 const labels = {
@@ -19,6 +20,13 @@ type Scope = { mode: Mode; timeframe: string; account: string | null; instrument
 type Workspace = Scope & { number: number; name: string; panels: Panel[] };
 type Layouts = { revision: number; next_number: number; active: number; items: Workspace[] };
 const panelIds = Object.keys(labels) as PanelId[];
+function linkedWorkspace() {
+  const route = launchContext(window.location.search);
+  const number = route.view === 'My Workspaces' ? Number(route.section?.match(/^workspace-([1-9]\d*)$/)?.[1]) : NaN;
+  return { number: Number.isSafeInteger(number) ? number : null,
+    panels: panelIds.filter(id => route.panels?.split(',').includes(id)) };
+}
+
 const templates: Record<string, PanelId[]> = {
   Guided: panelIds,
   'Instrument desk': ['market', 'intelligence', 'signals', 'portfolio', 'strategy', 'risk', 'execution', 'posttrade'],
@@ -56,6 +64,22 @@ function SavedWorkspaces() {
   const [state, setState] = useState({ dirty: false, saving: false, error: '', notice: '' });
   const [loadKey, setLoadKey] = useState(0);
   const [customize, setCustomize] = useState(false);
+  const [linked, setLinked] = useState(linkedWorkspace);
+  const [openPanels, setOpenPanels] = useState<Partial<Record<number, PanelId[]>>>(
+    () => linked.number === null ? {} : { [linked.number]: linked.panels });
+  const active = data?.items.some(w => w.number === linked.number) ? linked.number! : data?.active;
+  const expanded = active != null ? openPanels[active] ?? [] : [];
+  usePublishRoute('My Workspaces', active != null ? `workspace-${active}` : undefined, expanded.join(','), !!data);
+  useEffect(() => {
+    const restore = () => {
+      if (launchContext(window.location.search).view !== 'My Workspaces') return;
+      const route = linkedWorkspace();
+      setLinked(route);
+      if (route.number != null) setOpenPanels(previous => ({ ...previous, [route.number!]: route.panels }));
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, []);
   useEffect(() => {
     let current = true;
     api('trading/workspaces').then(v => { if (current) setData(v ?? initial()); })
@@ -76,7 +100,11 @@ function SavedWorkspaces() {
     <h2>My Workspaces</h2><Msg error={state.error} />
     {state.error ? <button onClick={reload}>Retry loading workspaces</button> : <p role="status">Loading saved workspaces…</p>}
   </section>;
-  const current = data.items.find(w => w.number === data.active)!;
+  const current = data.items.find(w => w.number === active)!;
+  const togglePanel = (id: PanelId) => setOpenPanels(previous => {
+    const open = previous[current.number] ?? [];
+    return { ...previous, [current.number]: panelIds.filter(panel => panel === id ? !open.includes(panel) : open.includes(panel)) };
+  });
   const change = (next: Layouts) => {
     setData(next);
     setState({ dirty: true, saving: false, error: '', notice: '' });
@@ -85,17 +113,19 @@ function SavedWorkspaces() {
   const add = (duplicate: boolean) => {
     const number = data.next_number;
     const item = duplicate ? { ...current, number } : newWorkspace(number);
+    setLinked({ number: null, panels: [] });
     change({ ...data, next_number: number + 1, active: number, items: [...data.items, item] });
   };
   const remove = () => {
     if (!window.confirm(`Remove ${title(current)} from your saved layouts?`)) return;
     const items = data.items.filter(w => w.number !== current.number);
+    setLinked({ number: null, panels: [] });
     change({ ...data, items, active: items[0].number });
   };
   const save = async () => {
     setState(s => ({ ...s, saving: true, error: '', notice: '' }));
     try {
-      setData(await api('trading/workspaces', 'PUT', data));
+      setData(await api('trading/workspaces', 'PUT', { ...data, active: current.number }));
       setState({ dirty: false, saving: false, error: '', notice: 'Workspaces saved.' });
     } catch (e) {
       setState(s => ({ ...s, saving: false, error: (e as Error).message }));
@@ -111,9 +141,10 @@ function SavedWorkspaces() {
       </span>
     </header>
     <nav aria-label="Saved workspaces" className="mw-tabs">
-      {data.items.map(w => <button key={w.number} aria-current={w.number === data.active ? 'page' : undefined}
-        disabled={state.saving} onClick={() => w.number !== data.active && change({ ...data, active: w.number })}>{title(w)}</button>)}
+      {data.items.map(w => <button key={w.number} aria-current={w.number === active ? 'page' : undefined}
+        disabled={state.saving} onClick={() => { if (w.number !== active) { setLinked({ number: null, panels: [] }); change({ ...data, active: w.number }); } }}>{title(w)}</button>)}
     </nav>
+    {linked.number !== null && linked.number !== active && <p role="status">The linked workspace is unavailable for this operator. Showing {title(current)}.</p>}
     <Msg error={state.error} notice={state.notice || (state.dirty ? 'Unsaved workspace changes' : '')} />
     {state.error && <button onClick={reload}>Reload saved workspaces</button>}
     {customize && <fieldset className="mw-custom" disabled={state.saving}>
@@ -131,7 +162,7 @@ function SavedWorkspaces() {
       </select></label>
       <PanelOptions panels={current.panels} onChange={panels => patch({ panels })} />
     </fieldset>}
-    <WorkspaceBody key={current.number} workspace={current} update={patch} locked={state.saving} />
+    <WorkspaceBody key={current.number} workspace={current} update={patch} locked={state.saving} expanded={expanded} togglePanel={togglePanel} />
   </section>;
 }
 
@@ -150,11 +181,13 @@ function PanelOptions({ panels, onChange }: { panels: Panel[]; onChange: (panels
   </div>)}</div>;
 }
 
-function WorkspaceBody({ workspace: w, update, locked }: { workspace: Workspace; update: (patch: Partial<Workspace>) => void; locked: boolean }) {
+function WorkspaceBody({ workspace: w, update, locked, expanded, togglePanel }: {
+  workspace: Workspace; update: (patch: Partial<Workspace>) => void; locked: boolean;
+  expanded: PanelId[]; togglePanel: (panel: PanelId) => void;
+}) {
   const [catalogue, catError, reloadCatalogue] = useData<Row>('trading/workspaces/catalogue', 60_000);
   const [data, error, refresh] = useData<Row>(`trading/workspaces/snapshot?${scopeQuery(w)}`, 15_000);
   const [decisionId, setDecisionId] = useState('');
-  const [expanded, setExpanded] = useState<PanelId | null>(null);
   const datalist = useId();
   const [search, setSearch] = useState('');
   const instruments: Row[] = catalogue?.instruments ?? [];
@@ -171,7 +204,6 @@ function WorkspaceBody({ workspace: w, update, locked }: { workspace: Workspace;
   const [lineage, lineageError, refreshLineage] = useData<Row>(query, 15_000);
   const evidence = !catError && !error ? data : null;
   const orders: Row[] = lineageError ? [] : lineage?.items ?? [];
-  const inspect = (id: PanelId) => setExpanded(p => p === id ? null : id);
   const changeScope = (values: Partial<Scope>) => { setDecisionId(''); update(values); };
   const chooseInstrument = (id: string | null) => changeScope({ instrument: id, deployment: null, source: null, symbol: '' });
   const chart = () => openScanEvidence('chart', {
@@ -283,10 +315,10 @@ function WorkspaceBody({ workspace: w, update, locked }: { workspace: Workspace;
     {decisionId && !decision && <button onClick={() => setDecisionId('')}>Follow latest decision</button>}
     <div className="mw-panels">
       {w.panels.filter(p => p.visible).map(p => <section className={`mw-panel${p.wide ? ' mw-wide' : ''}`} key={p.id}>
-        <button className="mw-panel-heading" aria-expanded={expanded === p.id} onClick={() => inspect(p.id)}>
+        <button className="mw-panel-heading" aria-expanded={expanded.includes(p.id)} onClick={() => togglePanel(p.id)}>
           <strong>{labels[p.id]}</strong><span>{error || catError ? 'Evidence unavailable' : !data ? 'Loading…' : cards[p.id].status}</span>
         </button>
-        {expanded === p.id && <div className="mw-panel-body">{cards[p.id].body}</div>}
+        {expanded.includes(p.id) && <div className="mw-panel-body">{cards[p.id].body}</div>}
       </section>)}
       {!w.panels.some(p => p.visible) && <p>Open Customize to show panels.</p>}
     </div>

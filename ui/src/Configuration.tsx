@@ -2090,7 +2090,9 @@ export default function Configuration() {
   // The broker's redirect result, shown once: the address is cleaned so a saved link never repeats an old message.
   const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
   const [brokerReason] = useState(() => new URLSearchParams(window.location.search).get('reason')), [loginShown, setLoginShown] = useState(false);
-  useEffect(() => { if (brokerLogin) { try { window.history.replaceState(null, '', window.location.pathname + window.location.hash); } catch { /* address only */ } } }, []);
+  useEffect(() => { if (brokerLogin) { try { const url = new URL(window.location.href);
+    url.searchParams.delete('broker_login'); url.searchParams.delete('reason');
+    window.history.replaceState(window.history.state, '', url); } catch { /* address only */ } } }, []);
   async function loadRefs() {
     try {
       const [p, c, i, g, a, s] = await Promise.all(['providers', 'connections', 'instruments', 'groups', 'accounts', 'summary'].map(x => api('config/' + x)));

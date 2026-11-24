@@ -42,7 +42,7 @@
 }
 .mw-panel-options > div, .mw-order { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .mw-panel-options label:first-child { flex: 1; }
-.mw-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.mw-panels { display: grid; align-items: start; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .mw-wide { grid-column: 1 / -1; }
 button.mw-panel-heading {
   display: flex;

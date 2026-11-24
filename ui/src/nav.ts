@@ -4,6 +4,7 @@
  * screen mounting after the request. */
 import { useEffect, useState } from 'react';
 import type { View } from './layout';
+import { launchContext, usePublishRoute } from './workspaceLinks';
 
 const pending: Partial<Record<View, string>> = {};
 const pendingAt: Partial<Record<View, number>> = {};
@@ -164,8 +165,12 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
   // A requested section stays available for a few seconds, so a screen that mounts twice while it opens (sign-in check,
   // layout change) still opens at it; the event below consumes it for a screen that is already open.
   const peek = () => { const s = pending[view] as T | undefined; return s && valid.includes(s) && Date.now() - (pendingAt[view] ?? 0) < 4000 ? s : undefined; };
-  const take = () => { const s = peek(); delete pending[view]; return s; };
-  const [section, setSection] = useState<T>(() => peek() ?? initial);
+  const [section, setSection] = useState<T>(() => {
+    const address = launchContext(window.location.search);
+    const linked = address.view === view ? address.section as T | undefined : undefined;
+    return peek() ?? (linked && valid.includes(linked) ? linked : initial);
+  });
+  usePublishRoute(view, section);
   useEffect(() => {
     current[view] = section;
     window.dispatchEvent(new CustomEvent('corei-section', { detail: { view, section } }));
@@ -174,8 +179,8 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
     const on = (e: Event) => {
       const d = (e as CustomEvent).detail as { view: View; section?: string };
       if (d.view !== view || !d.section) return;
-      const s = take();
-      if (s) setSection(s);
+      const s = d.section as T;
+      if (valid.includes(s)) setSection(s);
     };
     window.addEventListener('corei-goto', on);
     return () => window.removeEventListener('corei-goto', on);

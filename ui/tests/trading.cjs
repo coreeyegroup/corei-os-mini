@@ -495,6 +495,21 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match($('.mw-summary').textContent,/EURUSD · LIVE_A · LIVE.*Order created/);
  $$('.mw-panel-heading').find(b=>b.textContent.startsWith('Execution')).click();await settle(5);
  assert.match($('.mw-panel-body').textContent,/LIVE-TEST.*partially filled.*0\.1 @ 1\.10/);
+ const workspacePanel=(name)=>$$('.mw-panel-heading').find(b=>b.querySelector('strong').textContent===name);
+ workspacePanel('Market data').click();await settle(3);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'true');
+ assert.equal(new URL(w.location.href).searchParams.get('section'),'workspace-1');
+ assert.equal(new URL(w.location.href).searchParams.get('panels'),'market,execution');
+ workspacePanel('Market data').click();await settle(3);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'false');
+ w.history.back();await settle(5);
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ w.history.forward();await settle(5);
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'false');
+
  const beforeTicket=calls.filter(c=>c.method==='POST'&&c.url.endsWith('/trading/orders')).length;
  button('Open order ticket').click();await settle(8);
  assert.equal($('[aria-label="Ticket mode"]').value,'BROKER');
@@ -517,6 +532,19 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual(savedWorkspaces.items.map(x=>[x.number,x.mode]),[[1,'LIVE'],[2,'DEMO'],[4,'PAPER']]);
  assert.equal(savedWorkspaces.items[0].source,'a1');
  assert.equal(savedWorkspaces.active,4);
+ assert.equal(new URL(w.location.href).searchParams.get('section'),'workspace-4');
+ button('My Workspace 1').click();await settle(4);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ const workspaceLink=w.location.href;
+ const linked=new JSDOM('<div id="root"></div>',{url:workspaceLink,runScripts:'outside-only',pretendToBeVisual:true});
+ linked.window.HTMLElement.prototype.scrollIntoView=function(){};
+ linked.window.fetch=w.fetch;
+ linked.window.eval(js);await settle(10);
+ assert.equal(linked.window.document.querySelector('.mw-tabs [aria-current]').textContent,'My Workspace 1');
+ assert.equal(linked.window.document.querySelector('.mw-panel-heading[aria-expanded="true"] strong').textContent,'Execution');
+ linked.window.close();
+ console.log('PASS: workspace panels expand independently and copied workspace URLs restore the selected workspace and panels.');
+
  console.log('PASS: numbered workspace layouts, separate market and execution accounts, LIVE order evidence and scoped ticket handoff.');
 
  // Post-trade: breaks with their actions, execution quality.
