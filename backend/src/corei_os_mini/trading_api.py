@@ -30,7 +30,7 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var)
+                      signal_library, strategy_health, var, workspaces)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -57,6 +57,43 @@ def _j(v):
     if isinstance(v, UUID):
         return str(v)
     return v
+
+
+@router.get('/workspaces')
+def workspace_layouts(response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return workspaces.layouts(db, user)
+
+
+@router.put('/workspaces')
+def save_workspace_layouts(payload: workspaces.Layouts, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('update') as db:
+        return workspaces.save_layouts(db, user, payload)
+
+
+@router.get('/workspaces/catalogue')
+def workspace_catalogue(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.catalogue(db))
+
+
+@router.get('/workspaces/snapshot')
+def workspace_snapshot(response: Response, mode: workspaces.Mode, timeframe: workspaces.Timeframe,
+                       account: UUID | None = None, instrument: UUID | None = None, deployment: UUID | None = None,
+                       source: UUID | None = None, symbol: str = Query('', max_length=200), _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.snapshot(db, mode, timeframe, account, instrument, deployment, source, symbol))
+
+
+@router.get('/workspaces/decision/{decision}')
+def workspace_decision(decision: UUID, account: UUID, mode: workspaces.Mode, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.decision_orders(db, decision, account, mode))
 
 
 # ----- overview: one line per stage for the system map and each stage's header -----

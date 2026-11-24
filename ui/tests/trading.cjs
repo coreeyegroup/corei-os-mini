@@ -23,6 +23,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
  const now=new Date().toISOString();
  const calls=[];
+ let savedWorkspaces=null;
  let largeScanCatalog=false;
  let beyondRegistryLimit=false;
  let brokerSymbolCollected=false;
@@ -183,6 +184,23 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/quickstart'))return ok({active:calls.some(c=>c.url.endsWith('/trading/quickstart')&&c.method==='POST')?1:0,strategies:0,deployments:0,
      sources:[{account_id:'a1',account_code:'VTM_A',environment:'DEMO',broker_symbol:'EURUSD',instrument:'EURUSD',ready:true}],
      presets:[{id:'EMA_FAST',label:'Fast trend · EMA 3/8 cross',algorithm:'EMA_CROSSOVER',parameters:{fast:3,slow:8},why:'Many signals.'}]});
+   if(url.endsWith('/trading/workspaces')&&method==='PUT'){
+     savedWorkspaces={...body,revision:body.revision+1};return ok(savedWorkspaces);
+   }
+   if(url.endsWith('/trading/workspaces'))return ok(savedWorkspaces);
+   if(url.endsWith('/trading/workspaces/catalogue'))return ok({
+     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
+     instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
+   if(url.includes('/trading/workspaces/snapshot')){
+     const q=new URL(url,w.location.origin).searchParams;
+     const live=q.get('account')==='a2'&&q.get('mode')==='LIVE';
+     return ok({sources:q.has('instrument')?[{account_id:'a1',code:'VTM_A',broker_symbol:'EURUSD'}]:[],
+       deployments:[],positions:[],orders:[],decisions:live?[{id:'d9',symbol:'EURUSD',strategy_code:'EMA_FAST',
+         outcome:'ORDERED',signal_side:'BUY',side:'BUY',target:'LONG',order_id:'o1',created_at:now,bar_time:now}]:[]});
+   }
+   if(url.includes('/trading/workspaces/decision/d9'))return ok({items:[{id:'o1',client_order_id:'LIVE-TEST',
+     state:'PARTIALLY_FILLED',side:'BUY',quantity:'1',filled_qty:'0.1',risk:{approved:true},
+     fills:[{id:'f1',at:now,quantity:'0.1',price:'1.10'}]}]});
    if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
      accounts:[{account_id:'a1',code:'VTM_A',at:now,kind:'BROKER',status:'BREAKS',environment:'DEMO',breaks:1,
        detail:{broker_read:'COMPARED',internal_books:2,broker_positions:1,cached_deals_checked:3}},
@@ -465,6 +483,41 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  promptAnswer='close paper book';button('Flatten paper').click();await settle(4);
  assert.equal(calls.findLast(c=>c.url.endsWith('/portfolio/flatten')).body.mode,'PAPER');
  console.log('PASS: portfolio account scope, position mark, exact fills and paper-only flatten.');
+
+ // Saved workspace scope and numbered layouts, including a LIVE ticket handoff without submitting it.
+ await go('My Workspaces');
+ assert.ok(button('My Workspace 1'));
+ fill($('.mw-scope label:nth-of-type(1) select'),'LIVE');await settle(4);
+ assert.deepEqual([...$('.mw-scope label:nth-of-type(2) select').options].map(o=>o.value),['','a2']);
+ fill($('.mw-scope label:nth-of-type(2) select'),'a2');fill($('.mw-scope input'),'EURUSD');await settle(6);
+ fill($('.mw-scope label:nth-of-type(4) select'),'0');await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('mode=LIVE')&&c.url.includes('source=a1')&&c.url.includes('account=a2')));
+ assert.match($('.mw-summary').textContent,/EURUSD · LIVE_A · LIVE.*Order created/);
+ $$('.mw-panel-heading').find(b=>b.textContent.startsWith('Execution')).click();await settle(5);
+ assert.match($('.mw-panel-body').textContent,/LIVE-TEST.*partially filled.*0\.1 @ 1\.10/);
+ const beforeTicket=calls.filter(c=>c.method==='POST'&&c.url.endsWith('/trading/orders')).length;
+ button('Open order ticket').click();await settle(8);
+ assert.equal($('[aria-label="Ticket mode"]').value,'BROKER');
+ assert.equal($('[aria-label="Ticket account"]').value,'a2');
+ assert.equal($('[aria-label="Ticket instrument"]').value,'i1');
+ assert.equal(calls.filter(c=>c.method==='POST'&&c.url.endsWith('/trading/orders')).length,beforeTicket);
+ await go('My Workspaces');
+ button('+ New workspace').click();await settle(3);
+ assert.ok(button('My Workspace 2'));
+ fill($('.mw-scope label:nth-of-type(1) select'),'DEMO');await settle(4);
+ assert.deepEqual([...$('.mw-scope label:nth-of-type(2) select').options].map(o=>o.value),['','a1']);
+ button('Customize').click();await settle(3);
+ fill($('.mw-custom input[maxlength]'),'Desk');
+ button('Duplicate workspace').click();await settle(4);
+ assert.ok(button('My Workspace 3 · Desk'));
+ button('Remove workspace').click();await settle(4);
+ button('+ New workspace').click();await settle(4);
+ assert.ok(button('My Workspace 4'));
+ button('Save workspaces').click();await settle(5);
+ assert.deepEqual(savedWorkspaces.items.map(x=>[x.number,x.mode]),[[1,'LIVE'],[2,'DEMO'],[4,'PAPER']]);
+ assert.equal(savedWorkspaces.items[0].source,'a1');
+ assert.equal(savedWorkspaces.active,4);
+ console.log('PASS: numbered workspace layouts, separate market and execution accounts, LIVE order evidence and scoped ticket handoff.');
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');

@@ -100,6 +100,21 @@ export function takeOrder() {
   return id;
 }
 
+type TicketScope = { account_id: string; instrument_id: string; mode: 'PAPER' | 'BROKER' };
+let pendingTicket: TicketScope | null = null;
+
+export function openScopedTicket(scope: TicketScope) {
+  pendingTicket = scope;
+  goto('Execution', 'ticket');
+  window.dispatchEvent(new Event('corei-ticket-scope'));
+}
+
+export function takeTicketScope() {
+  const scope = pendingTicket;
+  pendingTicket = null;
+  return scope;
+}
+
 export type StrategyRule = { code: string; version: number; name: string };
 let pendingStrategyRule: StrategyRule | null = null;
 
@@ -170,6 +185,7 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
 
 /* Every destination, for the search, the navigator and links. */
 export const DESTINATIONS: { view: View; section?: string; label: string; group: string; keywords?: string }[] = [
+  { view: 'My Workspaces', label: 'My Workspaces', group: 'Home', keywords: 'saved custom desk layout market trade lifecycle' },
   { view: 'Overview', label: 'Home', group: 'Home', keywords: 'today attention dashboard' },
   { view: 'Market data', section: 'live', label: 'Live prices', group: 'Market data', keywords: 'quotes bid ask feeds collectors' },
   { view: 'Market data', section: 'plans', label: 'Collection plans', group: 'Market data', keywords: 'collect subscribe symbols' },

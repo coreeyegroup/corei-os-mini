@@ -7,9 +7,10 @@
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
+import { useViewVisible } from './visibility';
 import FloatingWindow from './FloatingWindow';
 import StageShell, { DeploymentFilter, ago, key, Kpis, money, Msg, num, pill, Reasons, statePill, useData, when, type Ctx, type Row, type Section } from './StageShell';
-import { useAccountView, openAccountView, useDeploymentFocus, goto, openOrder, openOrderRisk, clearRiskOrder, readRiskOrder, takeOrder, useScanEvidence } from './nav';
+import { useAccountView, openAccountView, useDeploymentFocus, goto, openOrder, openOrderRisk, clearRiskOrder, readRiskOrder, takeOrder, takeTicketScope, useScanEvidence } from './nav';
 import GraphWorkbench from './calc/GraphWorkbench';
 import { AlgoBlotter, AlgoTicket } from './ExecutionAlgos';
 import { AlgorithmEquations, BlendEditor, Formulas, ResearchAll, SignalBoardLive, SignalCorrelation, SignalDashboard, SignalExplain, SignalFlips, SignalLibrary, SignalResearch, SignalTimeframes } from './SignalLibrary';
@@ -759,6 +760,19 @@ function Ticket({ ctx }: { ctx: Ctx }) {
     stop_loss: '', take_profit: '', time_in_force: 'GTC', reason: '' };
   const [f, setF] = useState<Row>(blank);
   const [k, setK] = useState(key()), [out, setOut] = useState<Row | null>(null), [err, setErr] = useState(''), [confirm, setConfirm] = useState(false);
+  const visible = useViewVisible();
+  useEffect(() => {
+    if (!visible) return;
+    const loadScope = () => {
+      const scope = takeTicketScope();
+      if (!scope) return;
+      setF({ ...blank, ...scope });
+      setK(key()); setOut(null); setErr(''); setConfirm(false);
+    };
+    loadScope();
+    window.addEventListener('corei-ticket-scope', loadScope);
+    return () => window.removeEventListener('corei-ticket-scope', loadScope);
+  }, [visible]);
   const acct = accounts.find((a: Row) => a.id === f.account_id);
   const real = f.mode === 'BROKER', live = real && (f.route === 'NONE' ? acct?.environment === 'LIVE' : accounts.some((a: Row) => f.route_accounts.includes(a.id) && a.environment === 'LIVE'));
   const send = async (e: FormEvent) => { e.preventDefault(); setErr('');

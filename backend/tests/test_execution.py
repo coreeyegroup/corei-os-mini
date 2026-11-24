@@ -564,6 +564,37 @@ class EndToEnd(Execution):
             src = db.execute("SELECT source, state FROM oms_orders ORDER BY created_at DESC LIMIT 1").fetchone()
         self.assertEqual((src['source'], src['state']), ('PROTECT', 'FILLED'))
 
+    def test_saved_workspaces_are_per_user_and_reject_stale_saves(self):
+        url = '/api/trading/workspaces'
+        panels = [{'id': name} for name in ('market', 'intelligence', 'signals', 'strategy', 'risk', 'execution', 'portfolio', 'posttrade')]
+        layouts = {'revision': 0, 'next_number': 4, 'active': 3,
+                   'items': [{'number': number, 'name': '', 'mode': mode, 'timeframe': 'H1', 'panels': panels}
+                             for number, mode in [(1, 'PAPER'), (2, 'DEMO'), (3, 'LIVE')]]}
+        self.assertIsNone(self.ok(self.alice.get(url)))
+        saved = self.ok(self.alice.put(url, json=layouts))
+        self.assertEqual(saved['revision'], 1)
+        self.assertEqual(self.ok(self.alice.get(url)), saved)
+        self.assertIsNone(self.ok(self.bob.get(url)))
+        self.ok(self.alice.put(url, json=layouts), 409)
+        self.ok(self.alice.put(url, json={**saved, 'active': 7}), 422)
+        saved = self.ok(self.alice.put(url, json={**saved, 'active': 2}))
+        self.assertEqual((saved['revision'], saved['active']), (2, 2))
+
+    def test_workspace_snapshot_keeps_paper_and_broker_demo_books_separate(self):
+        _, a, _, ins = self.real_account()
+        self.sending()
+        paper = self.place(a, ins, 'workspaces-paper', mode='PAPER')
+        demo = self.place(a, ins, 'workspaces-demo')
+        execution.dispatch()
+        root = f"/api/trading/workspaces/snapshot?account={a['id']}&instrument={ins['id']}&timeframe=H1&mode="
+        paper_scope = self.ok(self.alice.get(root + 'PAPER'))
+        demo_scope = self.ok(self.alice.get(root + 'DEMO'))
+        self.assertEqual([order['id'] for order in paper_scope['orders']], [paper['id']])
+        self.assertEqual([order['id'] for order in demo_scope['orders']], [demo['id']])
+        self.assertIn('scope_error', self.ok(self.alice.get(root + 'LIVE')))
+        self.assertEqual(paper_scope['decisions'], [])
+        self.assertEqual(demo_scope['decisions'], [])
+
     def test_internal_reconciliation_finds_fill_without_position(self):
         _, a, _, ins = self.real_account()
         self.sending()
