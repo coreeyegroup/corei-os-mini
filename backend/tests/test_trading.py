@@ -169,6 +169,9 @@ class Trading(tmd.MarketData):
         with self.connect() as db:
             db.execute("UPDATE oms_orders SET state='UNKNOWN' WHERE id=%s", (UUID(lo['id']),))
         self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={'outcome': 'FILLED', 'reason': 'no broker answer: filled per statement'}), 422)
+        self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={
+            'outcome': 'FILLED', 'price': '1.07', 'quantity': '0.06', 'reason': 'mistyped broker quantity'}), 422)
+        self.assertEqual(self.ok(self.alice.get(f"/api/trading/orders/{lo['id']}"))['state'], 'UNKNOWN')
         res = self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={'outcome': 'FILLED', 'price': '1.07000', 'reason': 'filled per broker statement'}))
         self.assertEqual(res['state'], 'FILLED')
         with self.connect() as db:

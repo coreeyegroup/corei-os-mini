@@ -662,7 +662,7 @@ export function PortfolioView() {
 function OrderTable({ rows, open }: { rows: Row[]; open: (r: Row) => void }) {
   return <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Type</th><th>State</th><th>Filled</th><th>Average</th><th>Why</th></tr></thead><tbody>
     {rows.map(o => <tr key={o.id} className="clickable" onClick={() => open(o)}><td><small>{when(o.created_at)}</small></td><td>{o.strategy_code ?? o.source.toLowerCase()} <small className="cfg-note">{o.mode.toLowerCase()}</small></td>
-      <td>{o.account_code}</td><td>{o.symbol}</td><td><b className={o.side === 'BUY' ? 'up' : 'down'}>{o.side}</b></td><td>{o.quantity}</td><td>{o.order_type.toLowerCase()}{o.limit_price ? ` ${o.limit_price}` : ''}</td>
+      <td>{o.account_code}</td><td><button className="link" onClick={event => { event.stopPropagation(); open(o); }}>{o.symbol}</button></td><td><b className={o.side === 'BUY' ? 'up' : 'down'}>{o.side}</b></td><td>{o.quantity}</td><td>{o.order_type.toLowerCase()}{o.limit_price ? ` ${o.limit_price}` : ''}</td>
       <td>{statePill(o.state)}</td><td>{o.filled_qty}</td><td>{o.avg_fill_price ?? '–'}</td><td><small>{(o.reasons ?? [])[0] ?? ''}</small></td></tr>)}
     {!rows.length && <tr><td colSpan={11} className="cfg-note">No orders.</td></tr>}</tbody></table></div>;
 }
@@ -727,6 +727,10 @@ function OrderDetail({ id, close, ctx }: { id: string; close: () => void; ctx: C
 function Blotter({ ctx, openOnly = false }: { ctx: Ctx; openOnly?: boolean }) {
   const [state, setState] = useState(''), [data, error] = useData<Row>(`trading/orders?limit=500${state ? `&state=${state}` : ''}${openOnly ? '&open_only=true' : ''}`, 10_000, [state]);
   const [id, setId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLowerCase();
+  const rows: Row[] = (data?.items ?? []).filter((row: Row) => !query
+    || [row.account_code, row.symbol, row.strategy_code, row.client_order_id, row.broker_order_id].some(value => String(value ?? '').toLowerCase().includes(query)));
   useEffect(() => {
     if (openOnly) return;
     const inspect = () => {
@@ -739,8 +743,12 @@ function Blotter({ ctx, openOnly = false }: { ctx: Ctx; openOnly?: boolean }) {
   }, [openOnly]);
   return <section className="intel">
     {!openOnly && <div className="intel-bar"><select aria-label="Order state" value={state} onChange={e => setState(e.target.value)}><option value="">All states</option>
-      {['FILLED', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'UNKNOWN'].map(s => <option key={s}>{s}</option>)}</select></div>}
-    <Msg error={error} /><OrderTable rows={data?.items ?? []} open={o => setId(o.id)} />
+      {['APPROVED', 'SUBMITTED', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'CANCEL_PENDING', 'FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'UNKNOWN'].map(s => <option key={s}>{s}</option>)}</select>
+      <input type="search" aria-label="Find an order" placeholder="Account, symbol, strategy or order ID" value={search} onChange={event => setSearch(event.target.value)} />
+      {data && <small>{rows.length} shown · latest 500 matching state</small>}</div>}
+    <Msg error={error} />
+    {!data && !error && <p role="status">Loading orders…</p>}
+    {data && <OrderTable rows={rows} open={o => setId(o.id)} />}
     {id && <OrderDetail key={id} id={id} close={() => setId(null)} ctx={ctx} />}
   </section>;
 }
@@ -787,25 +795,42 @@ function Ticket({ ctx }: { ctx: Ctx }) {
     </form>
     <Msg error={err} />
     {out && <div className="intel-edit">{(out.legs ?? [out]).map((o: Row) => <p key={o.id}><b>{o.duplicate ? 'Already placed (same ticket): ' : ''}{o.side} {o.quantity}</b> → {statePill(o.state)}{o.avg_fill_price ? ` at ${o.avg_fill_price}` : ''}
-      {o.hold_for_approval ? <> · {pill('waiting for a second person', 'warn')}</> : null}{o.routing ? <small className="cfg-note"> · {o.routing.because}</small> : null}</p>)}<Reasons list={out.reasons} /></div>}
+      {o.hold_for_approval ? <> · {pill('waiting for a second person', 'warn')}</> : null}{o.routing ? <small className="cfg-note"> · {o.routing.because}</small> : null}
+      {o.id && <button className="link" onClick={() => openOrder(o.id)}>Inspect order</button>}</p>)}<Reasons list={out.reasons} /></div>}
   </section>;
 }
 
 function Fills() {
   const [data, error] = useData<Row>('trading/fills', 15_000);
   return <section className="intel"><Msg error={error} />
-    <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Price</th><th>Bid / ask</th><th>Slippage</th><th>Latency</th><th>Realised</th></tr></thead><tbody>
+    <table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Source</th><th>Account</th><th>Instrument</th><th>Side</th><th>Quantity</th><th>Price</th><th>Bid / ask</th><th>Slippage</th><th>Latency</th><th>Realised</th><th /></tr></thead><tbody>
       {(data?.items ?? []).map((f: Row) => <tr key={f.id}><td><small>{when(f.at)}</small></td><td>{f.strategy_code ?? 'manual'} <small className="cfg-note">{f.mode.toLowerCase()}</small></td><td>{f.account_code}</td><td>{f.symbol}</td><td>{f.side}</td>
-        <td>{f.quantity}</td><td>{f.price}</td><td><small>{f.quote_bid ?? '–'} / {f.quote_ask ?? '–'}</small></td><td>{f.slippage ?? '–'}</td><td>{f.latency_ms != null ? `${f.latency_ms} ms` : '–'}</td><td className={Number(f.realised_pnl) >= 0 ? 'up' : 'down'}>{f.realised_pnl} {f.currency}</td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={11} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
+        <td>{f.quantity}</td><td>{f.price}</td><td><small>{f.quote_bid ?? '–'} / {f.quote_ask ?? '–'}</small></td><td>{f.slippage ?? '–'}</td><td>{f.latency_ms != null ? `${f.latency_ms} ms` : '–'}</td><td className={Number(f.realised_pnl) >= 0 ? 'up' : 'down'}>{f.realised_pnl} {f.currency}</td><td>{f.order_id && <button onClick={() => openOrder(f.order_id)}>Inspect order</button>}</td></tr>)}
+      {data && !(data.items ?? []).length && <tr><td colSpan={12} className="cfg-note">No fills yet.</td></tr>}</tbody></table></section>;
 }
 
 function OrdersOverview({ ctx }: { ctx: Ctx }) {
-  const [ov] = useData<Row>('trading/overview', 10_000);
+  const [ov, error] = useData<Row>('trading/overview', 10_000);
+  const [status, statusError] = useData<Row>('trading/execution/status', 10_000);
   const o = ov?.orders_today ?? {};
   return <section className="intel">
-    <Kpis items={[['Orders today', Object.values(o).reduce((a: number, b: any) => a + Number(b), 0)], ['Filled', o.FILLED ?? 0, undefined, 'up'], ['Working', ov?.open_orders ?? 0],
-      ['Refused', o.REJECTED ?? 0, 'By risk: Risk › Decisions', o.REJECTED ? 'warn' : ''], ['Outcome unknown', ov?.unknown_orders ?? 0, 'Needs a check at the broker (Monitor › Unknown)', ov?.unknown_orders ? 'warn' : '']]} />
+    <div className="intel-bar" aria-label="Execution workflow">
+      <button onClick={() => ctx.open('flow')}>From strategies</button>
+      <button onClick={() => ctx.open('queue')}>Review decisions</button>
+      <button onClick={() => ctx.open('waiting')}>Review waiting orders{status ? ` (${status.open?.APPROVED ?? 0})` : ''}</button>
+      <button onClick={() => ctx.open('unknown')}>Investigate unknown orders{ov ? ` (${ov.unknown_orders})` : ''}</button>
+      <button onClick={() => ctx.open('connections')}>Broker connections</button>
+    </div>
+    <Msg error={[error, statusError].filter(Boolean).join(' · ')} />
+    {!ov && !error && <p role="status">Loading execution summary…</p>}
+    {ov && <Kpis items={[['Orders created today (UTC)', Object.values(o).reduce((a: number, b: any) => a + Number(b), 0)],
+      ['Filled', o.FILLED ?? 0, 'Current state of orders created today', 'up'], ['Open order records', ov.open_orders],
+      ['Rejected', o.REJECTED ?? 0, 'Risk, dispatch or broker refusal', o.REJECTED ? 'warn' : ''],
+      ['Outcome unknown', ov.unknown_orders, 'Check with the broker before resolution', ov.unknown_orders ? 'warn' : '']]} />}
+    {status && <Kpis items={[['Held for approval', status.held_for_approval ?? 0], ['Approved for dispatch',
+      Math.max(0, (status.open?.APPROVED ?? 0) - (status.held_for_approval ?? 0))],
+      ['Cancel pending', status.open?.CANCEL_PENDING ?? 0, 'Broker confirmation may still be outstanding'],
+      ['Dispatcher', status.running ? 'Running' : 'Stopped']]}/>}
     <h4>Working orders</h4><Blotter ctx={ctx} openOnly />
     <p className="cfg-note">Every order: new → approved by risk (or refused with reasons) → submitted → acknowledged → filled. A repeat of the same decision or ticket is one order, never two.
       An order whose outcome is not known waits for a check at the broker; it is never sent again.</p>
@@ -845,13 +870,13 @@ export function OrdersView() {
     { id: 'waiting', label: 'Waiting', group: 'Work', hint: 'Real orders waiting for a second person (four-eyes) or for the dispatcher.', render: ctx => <WithDetail ctx={ctx} body={open => <Waiting ctx={ctx} open={open} />} /> },
     { id: 'unknown', label: 'Unknown', group: 'Work', hint: 'Orders sent with no answer: looked up at the broker, never sent again.', render: ctx => <WithDetail ctx={ctx} body={open => <Unknown ctx={ctx} open={open} />} /> },
     { id: 'fills', label: 'Fills', group: 'Monitor', hint: 'Every fill with the price at the time, the slippage and the latency.', render: () => <Fills /> },
-    { id: 'connections', label: 'Broker connections', group: 'Monitor', hint: 'The dispatcher, order sending, and which accounts can take real orders through what.', render: () => <Connections /> },
+    { id: 'connections', label: 'Broker connections', group: 'Monitor', hint: 'The dispatcher, order sending, and which accounts can take real orders through what.', render: ctx => <Connections ctx={ctx} /> },
     { id: 'routing', label: 'Routing', group: 'Monitor', hint: 'Compare accounts for one order: price, spread, slippage, eligibility.', render: () => <Routing /> },
     { id: 'policy', label: 'Execution policy', group: 'Configure', hint: 'Per strategy: automatic, trader approves or signal only; market or limit, offset, time in force, approval window.', render: ctx => <ExecutionPolicies ctx={ctx} /> },
     { id: 'execution', label: 'Execution settings', group: 'Configure', hint: 'Paper fills, real orders (pre-check, four-eyes, timeouts, magic number), reconciliation.', render: ctx => <ExecutionSettings ctx={ctx} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Client order ID, paper fill price, slippage, latency, routing scores and the UNKNOWN look-up.', render: () => <Formulas stage="Execution" /> },
     { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Execution measures as graphs (slippage, cost, fill quality) on stored bars.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['MEASURE']} /> },
   ];
-  return <StageShell view="Execution" sections={sections} />;
+  return <StageShell view="Execution" sections={sections} defaultSection="today" />;
 }
 

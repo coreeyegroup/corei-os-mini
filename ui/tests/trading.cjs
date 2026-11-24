@@ -366,6 +366,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Execution receives every decision from the strategies: the chain, what waits for a trader, execute or decline.
  await go('Execution');
+ assert.match($('.st-head').textContent,/›Dashboard/);
+ assert.ok(button('Review decisions'));
+ nav('All panels').click();await settle(6);
  const ep=name=>$$('.ws-panel').find(p=>p.querySelector('.ws-head b').textContent===name);
  assert.match(ep('From strategies').textContent,/Waiting for execution1.*Ordered today3/);
  assert.match(ep('From strategies').querySelector('.ex-flow').textContent,/EMA_FAST.*SignalSELL.*66.*Decisionshort.*Riskat execution.*waiting for execution/);
@@ -399,7 +402,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const second=calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST');
  assert.notEqual(second[1].body.ticket_key,first[0].body.ticket_key,'after a placed order the next ticket is a new order');
  nav('Orders').click();await settle(6);
- $$('.intel-table tbody tr')[0].click();await settle(8);
+ fill($('[aria-label="Find an order"]'),'missing-symbol');await settle(2);
+ assert.match($('.intel-table').textContent,/No orders/);
+ fill($('[aria-label="Find an order"]'),'EURUSD');await settle(2);
+ button('EURUSD').click();await settle(8);
  assert.deepEqual($$('.st-timeline li b').map(b=>b.textContent),['new','approved','submitted','acknowledged','filled']);
  button('Inspect risk checks').click();await settle(6);
  assert.ok(calls.some(c=>c.url.includes('/trading/risk/decisions?limit=200&order_id=o1')));

@@ -123,10 +123,10 @@ export function DecisionQueue({ ctx }: { ctx: Ctx }) {
   const [act, setAct] = useState<Row | null>(null), [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const rows: Row[] = data?.items ?? [];
   const all = async () => {
-    if (!window.confirm(`Execute all ${rows.length} waiting decisions at market, full size?`)) return;
+    if (!window.confirm(`Execute all ${rows.length} displayed decisions at full size using their saved order terms?`)) return;
     setBusy(true); let ok = 0; const bad: string[] = [];
     for (const r of rows) { try { await api(`trading/execution/decisions/${r.id}/execute`, 'POST', { note: 'executed with all waiting' }); ok += 1; } catch (x) { bad.push(`${r.strategy_code} ${r.symbol}: ${(x as Error).message}`); } }
-    setMsg(`${ok} executed.`); setErr(bad.join(' · ')); setBusy(false); reload();
+    setMsg(`${ok} requests processed. Inspect order states for acceptance and fills.`); setErr(bad.join(' · ')); setBusy(false); reload();
   };
   return <section className="intel">
     {focus && <DeploymentFilter label={focus.label} clear={clear} />}

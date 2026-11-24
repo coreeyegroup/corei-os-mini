@@ -299,7 +299,7 @@ export function Unknown({ ctx, open }: { ctx: Ctx; open: (id: string) => void })
       It is never sent again. If the broker shows nothing, check the terminal and resolve the order by hand (Risk approver).</p></section>;
 }
 
-export function Connections() {
+export function Connections({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/execution/status', 10_000);
   const [msg, setMsg] = useState(''), [err, setErr] = useState('');
   return <section className="intel"><Msg error={error || err} notice={msg} />
@@ -307,7 +307,9 @@ export function Connections() {
       ['Last send', ago(data.last_dispatch_at)], ['Last look-up', ago(data.last_sync_at)], ['Waiting for approval', data.held_for_approval ?? 0, undefined, data.held_for_approval ? 'warn' : ''],
       ['Outcome unknown', data.open?.UNKNOWN ?? 0, undefined, data.open?.UNKNOWN ? 'warn' : ''],
       ...((data.order_sending ?? []).map((o: Row) => [`Order sending ${o.environment}`, o.enabled ? 'on' : 'off', 'Setup › Order sending', o.enabled ? (o.environment === 'LIVE' ? 'warn' : 'up') : '']) as [string, string, string, string][])]} />}
-    <div className="intel-bar"><button onClick={() => void api('trading/execution/dispatch', 'POST').then(r => { setMsg(`Sent ${r.dispatch.sent}, refused ${r.dispatch.rejected}, unknown ${r.dispatch.unknown}; looked up ${r.sync.checked}.`); reload(); }).catch(x => setErr((x as Error).message))}>Send and look up now</button></div>
+    <div className="intel-bar">
+      <button onClick={reload}>Refresh status</button>
+      {(ctx.canOps || ctx.canRisk) && <button onClick={() => { if (!window.confirm('Run dispatch for eligible broker orders and refresh broker outcomes now?')) return; void api('trading/execution/dispatch', 'POST').then(r => { setMsg(`Sent ${r.dispatch.sent}, refused ${r.dispatch.rejected}, unknown ${r.dispatch.unknown}; looked up ${r.sync.checked}.`); reload(); }).catch(x => setErr((x as Error).message)); }}>Send and look up now</button>}</div>
     {(data?.errors ?? []).length > 0 && <><h4>Recent dispatcher errors</h4><ul>{data!.errors.map((e: string, i: number) => <li key={i}><small>{e}</small></li>)}</ul></>}
     <h4>Which accounts can take real orders</h4>
     <Table cols={[['Account', r => <b>{r.account_code}</b>], ['Environment', r => pill(r.environment, r.environment === 'LIVE' ? 'live' : 'demo')], ['Platform', r => r.platform],

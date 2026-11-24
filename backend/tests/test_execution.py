@@ -123,6 +123,27 @@ class Execution(tt.Trading):
     def order(self, oid):
         return self.ok(self.alice.get(f'/api/trading/orders/{oid}'))
 
+    def test_sending_disabled_during_precheck(self):
+        _connection, account, _other, instrument = self.real_account()
+        self.sending()
+        with self.connect() as db:
+            db.execute("UPDATE tr_settings SET pre_check_orders=true WHERE id")
+        order = self.place(account, instrument, 'late-disabled')
+        self.assertEqual(order['state'], 'APPROVED')
+
+        def stop_during_check(*args, **kwargs):
+            self.assertEqual(args[3]['action'], 'check')
+            self.sending(on=False)
+            return {'results': [{'ok': True}]}
+
+        with patch.object(brokers, 'mt5_call', side_effect=stop_during_check) as call:
+            execution.send_one(order['id'])
+        call.assert_called_once()
+        result = self.order(order['id'])
+        self.assertEqual(result['state'], 'REJECTED')
+        self.assertIn('ORDER_SENDING_OFF_DEMO', result['reasons'][0])
+        self.assertNotIn('SUBMITTED', [event['state_to'] for event in result['events']])
+
     def test_real_orders_on_demo_every_path(self):
         connection, a, _b, ins = self.real_account()
         # Order sending off: refused by risk, nothing sent.

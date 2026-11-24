@@ -443,7 +443,10 @@ def resolve(actor: str, order_id: UUID, data: ResolveIn) -> dict:
             return store.clean(_move(db, o, 'CANCELLED', actor, {'resolved': 'not filled', 'reason': data.reason}))
         if not data.price:
             raise HTTPException(422, 'A filled outcome needs the fill price the broker reports.')
-        qty = data.quantity or (D(o['quantity']) - D(o['filled_qty']))
+        remaining = D(o['quantity']) - D(o['filled_qty'])
+        qty = data.quantity if data.quantity is not None else remaining
+        if qty <= 0 or qty > remaining:
+            raise HTTPException(422, f'Resolution quantity must be positive and at most the remaining {remaining.normalize()}.')
         return store.clean(_fill(db, o, qty, data.price, None, actor, datetime.now(timezone.utc), deal_id=data.broker_deal_id,
                                  detail={'resolved_by_person': True}))
 

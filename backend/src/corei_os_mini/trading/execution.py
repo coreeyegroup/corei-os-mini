@@ -132,6 +132,11 @@ def send_one(order_id) -> dict | None:
                             (str(order_id),)).fetchone()
         if not locked:
             return None  # another dispatcher has it, or it was cancelled meanwhile
+        checked_adapter, blockers = gate(db, locked)
+        if checked_adapter != adapter and not blockers:
+            blockers.append('ADAPTER_CHANGED: the route changed during broker pre-check')
+        if blockers:
+            return _reject_locked(db, dict(locked), blockers, sent=False)
         o = oms._move(db, dict(locked), 'SUBMITTED', 'execution', {'adapter': adapter, 'tag': o['broker_tag'], 'symbol': o['broker_symbol']},
                       submitted_at=_now(), adapter=adapter)
     try:
@@ -163,13 +168,17 @@ def _reject(order_id, reasons: list[str], sent: bool, detail: dict | None = None
         o = _lock(db, order_id)
         if o['state'] != 'APPROVED':
             return store.clean(o)
-        db.execute('INSERT INTO risk_decisions(id, order_id, account_id, instrument_id, side, requested_qty, approved, reasons, inputs, deployment_id) '
-                   'VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,false,%s,%s,%s)',
-                   (str(order_id), str(o['account_id']), str(o['instrument_id']), o['side'], o['quantity'], json.dumps(reasons),
-                    json.dumps({'stage': 'dispatch', 'sent': sent}), str(o['deployment_id']) if o.get('deployment_id') else None))
-        out = oms._move(db, o, 'REJECTED', 'execution', {'reasons': reasons, 'sent': sent, **(detail or {})}, reasons=json.dumps(reasons))
-        oms._alert(db, 'WARNING', f"Order not sent: {o.get('broker_symbol')} {o['side']} {D(o['quantity']).normalize()}", '; '.join(reasons)[:1500])
-        return store.clean(out)
+        return _reject_locked(db, o, reasons, sent, detail)
+
+
+def _reject_locked(db, o: dict, reasons: list[str], sent: bool, detail: dict | None = None) -> dict:
+    db.execute('INSERT INTO risk_decisions(id, order_id, account_id, instrument_id, side, requested_qty, approved, reasons, inputs, deployment_id) '
+               'VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,false,%s,%s,%s)',
+               (str(o['id']), str(o['account_id']), str(o['instrument_id']), o['side'], o['quantity'], json.dumps(reasons),
+                json.dumps({'stage': 'dispatch', 'sent': sent}), str(o['deployment_id']) if o.get('deployment_id') else None))
+    out = oms._move(db, o, 'REJECTED', 'execution', {'reasons': reasons, 'sent': sent, **(detail or {})}, reasons=json.dumps(reasons))
+    oms._alert(db, 'WARNING', f"Order not sent: {o.get('broker_symbol')} {o['side']} {D(o['quantity']).normalize()}", '; '.join(reasons)[:1500])
+    return store.clean(out)
 
 
 def _settle(order_id, to: str, detail: dict, reasons: list[str] | None = None) -> dict:
