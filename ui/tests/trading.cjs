@@ -22,6 +22,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
  const now=new Date().toISOString();
+ const pendingWorkspaceDecision='8fda0b19-a858-4b3c-810a-3513a5f92d2f';
+ const workspacePending={id:pendingWorkspaceDecision,deployment_id:'dep-2',symbol:'EURUSD',strategy_code:'TREND',
+   outcome:'PENDING',signal_side:'BUY',target:'LONG',created_at:now,bar_time:now};
  const calls=[];
  let savedWorkspaces=null;
  let largeScanCatalog=false;
@@ -194,13 +197,23 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/workspaces/snapshot')){
      const q=new URL(url,w.location.origin).searchParams;
      const live=q.get('account')==='a2'&&q.get('mode')==='LIVE';
+     const waiting=q.get('deployment')==='dep-2';
      return ok({sources:q.has('instrument')?[{account_id:'a1',code:'VTM_A',broker_symbol:'EURUSD'}]:[],
-       deployments:[],positions:[],orders:[],decisions:live?[{id:'d9',symbol:'EURUSD',strategy_code:'EMA_FAST',
+       deployments:live?[{id:'dep-1',code:'EMA_FAST',status:'ACTIVE',symbol:'EURUSD',timeframe:'H1',last_evaluation:{
+         outcome:'TARGET_UNCHANGED',bar_time:now,timeframe:'H1',source_account:'a1',source_symbol:'EURUSD',target:'LONG',reason:'Rule unchanged'}},
+         {id:'dep-2',code:'TREND',status:'ACTIVE',symbol:'EURUSD',timeframe:'H1'}]:[],
+       evaluation_decision:waiting?{id:pendingWorkspaceDecision}:null,positions:[],
+       orders:live?[{id:'unrelated',symbol:'OTHER',state:'FILLED',side:'SELL',quantity:'1',created_at:now}]:[],
+       decisions:live?[waiting?workspacePending:{id:'d9',symbol:'EURUSD',strategy_code:'EMA_FAST',
          outcome:'ORDERED',signal_side:'BUY',side:'BUY',target:'LONG',order_id:'o1',created_at:now,bar_time:now}]:[]});
    }
+   if(url.includes('/trading/workspaces/decision/'+pendingWorkspaceDecision))return ok({decision:workspacePending,items:[],checks:[]});
    if(url.includes('/trading/workspaces/decision/d9'))return ok({items:[{id:'o1',client_order_id:'LIVE-TEST',
      state:'PARTIALLY_FILLED',side:'BUY',quantity:'1',filled_qty:'0.1',risk:{approved:true},
      fills:[{id:'f1',at:now,quantity:'0.1',price:'1.10'}]}]});
+   if(url.includes('/trading/execution/flow')&&url.includes('intent_id='+pendingWorkspaceDecision))return ok({items:[{
+     ...workspacePending,mode:'BROKER',account_code:'LIVE_A',quantity:'1',side:'BUY',reasons:[],timeframe:'H1',
+   }]});
    if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
      accounts:[{account_id:'a1',code:'VTM_A',at:now,kind:'BROKER',status:'BREAKS',environment:'DEMO',breaks:1,
        detail:{broker_read:'COMPARED',internal_books:2,broker_positions:1,cached_deals_checked:3}},
@@ -543,6 +556,19 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(linked.window.document.querySelector('.mw-tabs [aria-current]').textContent,'My Workspace 1');
  assert.equal(linked.window.document.querySelector('.mw-panel-heading[aria-expanded="true"] strong').textContent,'Execution');
  linked.window.close();
+ const deploymentPicker=$$('.mw-scope select').at(-1);
+ fill(deploymentPicker,'dep-1');await settle(6);
+ assert.match($('.mw-summary').textContent,/Bar evaluated · target unchanged/);
+ assert.match(workspacePanel('Execution').textContent,/No order linked to this evaluation/);
+ fill(deploymentPicker,'dep-2');await settle(6);
+ assert.match($('.mw-summary').textContent,/Waiting for approval/);
+ assert.match(workspacePanel('Execution').textContent,/No order for this decision/);
+ fill($('.mw-summary select'),pendingWorkspaceDecision);await settle(4);
+ assert.equal(new URL(w.location.href).searchParams.get('decision'),pendingWorkspaceDecision);
+ button('Review selected decision').click();await settle(8);
+ assert.ok(calls.some(c=>c.url.includes('intent_id='+pendingWorkspaceDecision)));
+ await go('My Workspaces');
+ console.log('PASS: unchanged evaluation stays separate from account activity and pending decisions open the exact existing approval queue.');
  console.log('PASS: workspace panels expand independently and copied workspace URLs restore the selected workspace and panels.');
 
  console.log('PASS: numbered workspace layouts, separate market and execution accounts, LIVE order evidence and scoped ticket handoff.');

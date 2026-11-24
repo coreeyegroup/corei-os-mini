@@ -73,12 +73,22 @@ class Trading(tmd.MarketData):
         self.bars(a['id'], series(40, False), start)
         self.quote(a['id'], 1.08000, 1.08010)
         first = runtime.cycle(NOW)
+        scope = f"/api/trading/workspaces/snapshot?account={a['id']}&deployment={dep['id']}&mode=PAPER&timeframe=M5"
+        snapshot = self.ok(self.alice.get(scope))
+        self.assertEqual(snapshot['deployments'][0]['last_evaluation']['outcome'], 'BASELINE')
+        self.assertNotIn('signal', snapshot)
         self.assertEqual((first['deployments'], first['signals']), (1, 0), first)
         # The next bar closes with a jump: the fast EMA crosses above the slow one → BUY.
         self.bars(a['id'], series(41, True)[40:], start + timedelta(minutes=5 * 40))
         second = runtime.cycle(NOW)
         self.assertEqual((second['signals'], second['orders']), (1, 1), second)
         self.assertEqual(runtime.cycle(NOW)['signals'], 0, 'a bar is evaluated once')
+        snapshot = self.ok(self.alice.get(scope))
+        decision_id = snapshot['evaluation_decision']['id']
+        evidence = self.ok(self.alice.get(f"/api/trading/workspaces/decision/{decision_id}?account={a['id']}&mode=PAPER"))
+        self.assertEqual(evidence['decision']['evaluated_bar']['timeframe'], 'M5')
+        self.assertEqual(evidence['decision']['signal_id'], snapshot['signal']['id'])
+        self.assertTrue(evidence['items'])
         sigs = self.ok(self.alice.get('/api/trading/signals'))['items']
         self.assertEqual((sigs[0]['side'], sigs[0]['state'], sigs[0]['source']), ('BUY', 'ACTED', 'RUNTIME'))
         self.assertIn('EMA 3/5', sigs[0]['explanation'][0])

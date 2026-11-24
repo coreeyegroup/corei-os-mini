@@ -425,11 +425,11 @@ def strategy_monitor(response: Response, _: str = Depends(require_operator)):
 
 @router.get('/execution/flow')
 def execution_flow(response: Response, outcome: str | None = Query(None, max_length=120, pattern=r'^[A-Z_,]+$'), limit: int = Query(200, ge=1, le=2000),
-                   deployment_id: UUID | None = None, _: str = Depends(require_operator)):
+                   deployment_id: UUID | None = None, intent_id: UUID | None = None, _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        return {'items': _j(handoff.flow(db, outcome, limit, deployment_id)),
-                'summary': _j(handoff.summary(db)) if deployment_id is None else {}}
+        return {'items': _j(handoff.flow(db, outcome, limit, deployment_id, intent_id)),
+                'summary': _j(handoff.summary(db)) if deployment_id is None and intent_id is None else {}}
 
 
 @router.post('/execution/decisions/{intent_id}/execute')

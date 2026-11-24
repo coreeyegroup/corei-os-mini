@@ -119,7 +119,7 @@ function ActDialog({ r, done }: { r: Row; done: () => void }) {
 
 export function DecisionQueue({ ctx }: { ctx: Ctx }) {
   const [focus, clear] = useDeploymentFocus('queue');
-  const [data, error, reload] = useData<Row>(`trading/execution/flow?outcome=PENDING&limit=200${focus ? `&deployment_id=${encodeURIComponent(focus.id)}` : ''}`, 5_000);
+  const [data, error, reload] = useData<Row>(`trading/execution/flow?outcome=PENDING&limit=200${focus ? `&deployment_id=${encodeURIComponent(focus.id)}` : ''}${focus?.intentId ? `&intent_id=${encodeURIComponent(focus.intentId)}` : ''}`, 5_000);
   const [act, setAct] = useState<Row | null>(null), [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const rows: Row[] = data?.items ?? [];
   const all = async () => {
@@ -133,7 +133,8 @@ export function DecisionQueue({ ctx }: { ctx: Ctx }) {
     <div className="intel-bar">{(ctx.canOps || ctx.canRisk) && rows.length > 1 && <button className="primary" disabled={busy} onClick={() => void all()}>Execute all {rows.length}</button>}
       <small className="cfg-note">Decisions from strategies whose handoff is <b>Trader approves</b>. Refreshes every 5 s. A window that closes expires the decision; a newer decision of the same strategy replaces an older one.</small></div>
     <Msg error={error || err} notice={msg} />
-    {!data ? !error && <p role="status">Loading decision queue…</p> : !rows.length ? <p className="cfg-note ex-empty">Nothing is waiting. Set a strategy's handoff to <b>Trader approves</b> under Execution policy to review its decisions here before they are sent.</p>
+    {!data ? !error && <p role="status">Loading decision queue…</p> : !rows.length ? <p className="cfg-note ex-empty">{focus?.intentId ? 'This decision is no longer waiting. Return to the workspace for its latest status.' :
+      <>Nothing is waiting. Set a strategy's handoff to <b>Trader approves</b> under Execution policy to review its decisions here before they are sent.</>}</p>
       : <div className="ex-cards">{rows.map(r => <div key={r.id} className="ex-card">
         <header><b>{r.strategy_code}</b> <small className="cfg-note">v{r.version_number} · {r.algorithm}</small><span className="ex-timer">closes in {left(r.expires_at)}</span></header>
         <p className="ex-big">{sideB(r.side)} {num(r.quantity, 2)} <span>{r.symbol}</span> <small>{r.account_code} · {(r.mode ?? 'PAPER') === 'BROKER' ? pill('real', 'live') : pill('paper', 'demo')}</small></p>

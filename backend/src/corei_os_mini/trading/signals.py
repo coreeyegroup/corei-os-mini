@@ -48,16 +48,19 @@ def _set(db, signal_id, state: str, actor: str, detail: str = '', reasons: list[
 
 
 def create(db, dep: dict, *, side: str, strength: int, bar_time: datetime, timeframe: str, features: dict, explanation: list[str],
-           source: str, actor: str, price: Decimal | None) -> dict | None:
+           source: str, actor: str, price: Decimal | None, bar_evidence: dict | None = None) -> dict | None:
     """Record a signal (once per deployment and bar for the runtime). Returns None when that bar already has one."""
     expiry = bar_time + timedelta(seconds=TIMEFRAME_SECONDS.get(timeframe, 60) * int(dep.get('signal_expiry_bars') or 2))
+    stored_features = {k: v for k, v in features.items() if isinstance(v, (int, float)) and k in KEEP}
+    if bar_evidence is not None:
+        stored_features['_workspace_bar'] = bar_evidence
     row = db.execute("""INSERT INTO tr_signals(id, deployment_id, strategy_id, strategy_version_id, account_id, instrument_id, timeframe, bar_time, side, strength,
                                 horizon_bars, expires_at, source, features, explanation, price, created_by)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT DO NOTHING RETURNING *""",
                      (uuid4(), str(dep['id']), str(dep['strategy_id']), str(dep['strategy_version_id']), str(dep['account_id']), str(dep['instrument_id']),
                       timeframe, bar_time, side, max(0, min(100, int(strength))), 10, expiry, source,
-                      json.dumps({k: v for k, v in features.items() if isinstance(v, (int, float)) and k in KEEP}),
+                      json.dumps(stored_features),
                       json.dumps(explanation), price, actor)).fetchone()
     if not row:
         return None

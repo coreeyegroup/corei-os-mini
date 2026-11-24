@@ -46,7 +46,7 @@ export function useAccountView(destination: AccountDestination) {
 }
 
 type DeploymentDestination = 'runtime' | 'signals' | 'intents' | 'queue';
-type DeploymentFocus = { id: string; label: string };
+type DeploymentFocus = { id: string; label: string; intentId?: string };
 const deploymentFocus: Partial<Record<DeploymentDestination, DeploymentFocus>> = {};
 
 export function openDeployment(destination: DeploymentDestination, focus: DeploymentFocus) {

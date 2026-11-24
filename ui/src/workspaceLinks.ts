@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { defaults, restore, views, type Layout, type View } from './layout';
 import { useViewFocused } from './visibility';
 
-type Route = { view: View; section?: string; panels?: string };
+type Route = { view: View; section?: string; panels?: string; decision?: string };
 const panelPattern = /^[a-z-]+(?:,[a-z-]+){0,7}$/;
 const routeEvent = 'corei-address';
 const sectionViews = new Set<View>(['Market data', 'Intelligence', 'Signals', 'Strategies', 'Strategy Studio', 'Risk',
@@ -14,27 +14,30 @@ export function launchContext(search: string) {
   const view = p.get('view') as View;
   const section = p.get('section') ?? '';
   const panels = p.get('panels') ?? '';
+  const decision = p.get('decision') ?? '';
   return {
     view: views.includes(view) ? view : null,
     detached: p.get('detached') === '1',
     section: /^[a-z0-9-]{1,40}$/.test(section) ? section : undefined,
+    decision: view === 'My Workspaces' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(decision) ? decision : undefined,
     panels: view === 'My Workspaces' && panels.length <= 120 && panelPattern.test(panels) ? panels : undefined,
   };
 }
 
 function setRoute(url: URL, route: Route, detached: boolean) {
-  for (const field of ['view', 'section', 'panels', 'detached']) url.searchParams.delete(field);
+  for (const field of ['view', 'section', 'panels', 'decision', 'detached']) url.searchParams.delete(field);
   url.searchParams.set('view', route.view);
   if (route.section) url.searchParams.set('section', route.section);
   if (route.panels) url.searchParams.set('panels', route.panels);
+  if (route.decision) url.searchParams.set('decision', route.decision);
   if (detached) url.searchParams.set('detached', '1');
 }
 
-export function usePublishRoute(view: View, section?: string, panels?: string, ready = true) {
+export function usePublishRoute(view: View, section?: string, panels?: string, ready = true, decision?: string) {
   const focused = useViewFocused();
   useEffect(() => {
-    if (focused && ready) window.dispatchEvent(new CustomEvent<Route>(routeEvent, { detail: { view, section, panels } }));
-  }, [view, section, panels, focused, ready]);
+    if (focused && ready) window.dispatchEvent(new CustomEvent<Route>(routeEvent, { detail: { view, section, panels, decision } }));
+  }, [view, section, panels, focused, ready, decision]);
 }
 
 export function useAddressBar(active: View, detached: boolean, navigate: (view: View, section?: string) => void) {
@@ -86,7 +89,8 @@ export function workspaceUrl(view: View, section?: string) {
   const url = new URL('/', window.location.origin);
   const current = launchContext(window.location.search);
   setRoute(url, { view, section: section ?? (current.view === view ? current.section : undefined),
-    panels: !section && current.view === view ? current.panels : undefined }, true);
+    panels: !section && current.view === view ? current.panels : undefined,
+    decision: !section && current.view === view ? current.decision : undefined }, true);
   return url.href;
 }
 

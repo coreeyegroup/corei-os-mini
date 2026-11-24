@@ -81,9 +81,9 @@ def catalogue(db):
 def snapshot(db, mode, timeframe, account=None, instrument=None, deployment=None, source=None, symbol=''):
     result = {'sources': [], 'deployments': [], 'quote': None, 'bar': None, 'intelligence': None}
     if instrument:
-        result['sources'] = db.execute("""SELECT DISTINCT a.id AS account_id,a.code,p.broker_symbol
+        result['sources'] = db.execute("""SELECT a.id AS account_id,a.code,p.broker_symbol,min(p.stale_seconds) AS stale_seconds
             FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id
-            WHERE p.instrument_id=%s AND p.status <> 'ARCHIVED' ORDER BY a.code,p.broker_symbol""", (instrument,)).fetchall()
+            WHERE p.instrument_id=%s AND p.status <> 'ARCHIVED' GROUP BY a.id,a.code,p.broker_symbol ORDER BY a.code,p.broker_symbol""", (instrument,)).fetchall()
     params = (source, symbol, timeframe)
     if any(str(s['account_id']) == str(source) and s['broker_symbol'] == symbol for s in result['sources']):
         result['quote'] = db.execute(
@@ -107,7 +107,7 @@ def snapshot(db, mode, timeframe, account=None, instrument=None, deployment=None
         args.append(instrument)
     where = ' AND '.join(position_clauses)
     result['deployments'] = db.execute(f"""SELECT x.id,x.status,s.code,v.number AS version,x.instrument_id,i.symbol,
-        r.last_run_at,r.last_error,r.timeframe,r.source_account,r.source_symbol
+        r.last_run_at,r.last_error,r.timeframe,r.source_account,r.source_symbol,r.last_bar_time,r.last_evaluation
         FROM cfg_deployments x JOIN cfg_strategies s ON s.id=x.strategy_id
         JOIN cfg_strategy_versions v ON v.id=x.strategy_version_id JOIN cfg_instruments i ON i.id=x.instrument_id
         LEFT JOIN tr_runtime_state r ON r.deployment_id=x.id
@@ -134,17 +134,24 @@ def snapshot(db, mode, timeframe, account=None, instrument=None, deployment=None
         event_args.append(deployment)
     event_where = ' AND '.join(event_clauses)
     result['decisions'] = db.execute(f"""SELECT x.id,x.outcome,x.target,x.reasons,x.created_at,x.order_id,x.parent_id,
-        s.side AS signal_side,s.strength,s.bar_time,s.explanation,s.id AS signal_id,i.symbol,
+        s.side AS signal_side,s.strength,s.bar_time,s.explanation,s.state AS signal_state,s.id AS signal_id,i.symbol,
+        x.deployment_id,x.handoff,x.expires_at,x.quantity,x.sizing_note,
         st.code AS strategy_code,sv.number AS strategy_version
         FROM tr_intents x JOIN cfg_deployments d ON d.id=x.deployment_id JOIN tr_signals s ON s.id=x.signal_id
         JOIN cfg_instruments i ON i.id=x.instrument_id LEFT JOIN cfg_strategies st ON st.id=s.strategy_id
         LEFT JOIN oms_orders o ON o.id=x.order_id LEFT JOIN ex_parent_orders p ON p.id=x.parent_id
         LEFT JOIN cfg_strategy_versions sv ON sv.id=s.strategy_version_id
         WHERE {event_where} ORDER BY x.created_at DESC,x.id DESC LIMIT 25""", event_args).fetchall()
-    result['signal'] = db.execute(f"""SELECT s.id,s.side,s.state,s.strength,s.bar_time,s.explanation,i.symbol
-        FROM tr_signals s JOIN cfg_deployments d ON d.id=s.deployment_id JOIN cfg_instruments i ON i.id=s.instrument_id
-        WHERE {event_where.replace('x.', 's.').replace('COALESCE(o.mode,p.mode,d.mode)', 'd.mode')}
-        ORDER BY s.created_at DESC,s.id DESC LIMIT 1""", event_args).fetchone()
+    if deployment:
+        evaluation = next(d for d in result['deployments'] if str(d['id']) == str(deployment))['last_evaluation']
+        if evaluation and evaluation['signal_id']:
+            result['signal'] = db.execute("""SELECT s.id,s.side,s.state,s.strength,s.bar_time,s.explanation,s.reasons,i.symbol
+                FROM tr_signals s JOIN cfg_instruments i ON i.id=s.instrument_id
+                WHERE s.id=%s AND s.deployment_id=%s AND s.account_id=%s""",
+                (evaluation['signal_id'], deployment, account)).fetchone()
+            result['evaluation_decision'] = db.execute("""SELECT id FROM tr_intents
+                WHERE signal_id=%s AND deployment_id=%s AND account_id=%s ORDER BY created_at DESC LIMIT 1""",
+                (evaluation['signal_id'], deployment, account)).fetchone()
     result['reconciliation'] = db.execute("""SELECT at,kind,status,detail FROM pt_recon_runs
         WHERE account_id=%s AND kind=%s ORDER BY at DESC,id DESC LIMIT 1""",
         (account, 'INTERNAL' if mode == 'PAPER' else 'BROKER')).fetchone()
@@ -152,20 +159,42 @@ def snapshot(db, mode, timeframe, account=None, instrument=None, deployment=None
 
 
 def decision_orders(db, decision, account, mode):
-    row = db.execute("""SELECT t.order_id,t.parent_id,p.algo,p.state AS parent_state,p.filled_qty AS parent_filled_qty
+    row = db.execute("""SELECT t.id,t.outcome,t.target,t.reasons,t.created_at,t.deployment_id,t.handoff,t.expires_at,t.quantity,t.sizing_note,
+        s.id AS signal_id,s.side AS signal_side,s.state AS signal_state,s.strength,s.bar_time,s.timeframe,s.features->'_workspace_bar' AS evaluated_bar,s.explanation,
+        i.symbol, st.code AS strategy_code, v.number AS strategy_version,
+        t.order_id,t.parent_id,p.algo,p.state AS parent_state,p.filled_qty AS parent_filled_qty
         FROM tr_intents t JOIN cfg_deployments d ON d.id=t.deployment_id JOIN cfg_accounts a ON a.id=t.account_id
-        JOIN cfg_connections c ON c.id=a.connection_id LEFT JOIN oms_orders o ON o.id=t.order_id
+        JOIN cfg_connections c ON c.id=a.connection_id
+        JOIN tr_signals s ON s.id=t.signal_id JOIN cfg_instruments i ON i.id=t.instrument_id
+        LEFT JOIN cfg_strategies st ON st.id=s.strategy_id LEFT JOIN cfg_strategy_versions v ON v.id=s.strategy_version_id
+        LEFT JOIN oms_orders o ON o.id=t.order_id
         LEFT JOIN ex_parent_orders p ON p.id=t.parent_id WHERE t.id=%s AND t.account_id=%s
         AND (CASE WHEN COALESCE(o.mode,p.mode,d.mode)='PAPER' THEN 'PAPER' ELSE c.environment END)=%s""",
         (decision, account, mode)).fetchone()
     if not row:
         raise HTTPException(404, 'Decision is unavailable for this account and mode.')
     orders = db.execute("""SELECT o.id,o.client_order_id,o.state,o.side,o.quantity,o.filled_qty,
+        (SELECT row_to_json(pos) FROM (SELECT b.id,b.quantity::text AS quantity,b.updated_at FROM pf_positions b WHERE b.account_id=o.account_id AND b.instrument_id=o.instrument_id
+            AND b.deployment_id IS NOT DISTINCT FROM o.deployment_id AND b.mode=o.mode) pos) AS position,
         (SELECT row_to_json(r) FROM (SELECT approved,approved_qty::text AS approved_qty,reasons FROM risk_decisions
             WHERE order_id=o.id ORDER BY at DESC LIMIT 1) r) AS risk,
-        (SELECT json_agg(f ORDER BY f.at,f.id) FROM (SELECT id,at,quantity::text AS quantity,price::text AS price,broker_deal_id FROM oms_fills
-            WHERE order_id=o.id ORDER BY at,id LIMIT 51) f) AS fills
+        (SELECT json_agg(f ORDER BY f.at,f.id) FROM (
+            SELECT f.id,f.at,f.quantity::text AS quantity,f.price::text AS price,f.broker_deal_id,
+                CASE WHEN f.mode='PAPER' THEN 'INTERNAL_FILL'
+                     WHEN f.broker_deal_id IS NULL THEN 'NO_BROKER_TICKET'
+                     WHEN b.id IS NOT NULL THEN 'OPEN_MISSING_FILL_BREAK'
+                     WHEN d.order_id=f.order_id THEN 'BROKER_DEAL_LINKED'
+                     WHEN d.ticket IS NOT NULL THEN 'BROKER_DEAL_UNCONFIRMED'
+                     ELSE 'BROKER_DEAL_UNAVAILABLE' END AS evidence_state
+            FROM oms_fills f
+            LEFT JOIN pt_broker_deals d ON d.account_id=f.account_id AND d.ticket=f.broker_deal_id
+            LEFT JOIN pt_breaks b ON b.account_id=f.account_id AND b.key='deal:' || f.broker_deal_id
+                AND b.kind='FILL_MISSING' AND b.state='OPEN'
+            WHERE f.order_id=o.id ORDER BY f.at,f.id LIMIT 51) f) AS fills
         FROM oms_orders o WHERE o.account_id=%s AND o.mode=%s AND (o.id=%s OR o.parent_id=%s)
         ORDER BY o.created_at,o.id LIMIT 51""",
         (account, 'PAPER' if mode == 'PAPER' else 'BROKER', row['order_id'], row['parent_id'])).fetchall()
-    return {'items': orders[:50], 'more': len(orders) > 50, 'parent': row if row['parent_id'] else None}
+    checks = db.execute('''SELECT id,order_id,approved,requested_qty,approved_qty,reasons,at
+        FROM risk_decisions WHERE intent_id=%s AND account_id=%s ORDER BY at DESC LIMIT 50''', (decision, account)).fetchall()
+    return {'decision': row, 'checks': checks, 'items': orders[:50], 'more': len(orders) > 50,
+            'parent': row if row['parent_id'] else None}
