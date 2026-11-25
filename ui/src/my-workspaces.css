@@ -82,3 +82,16 @@ button.mw-panel-heading {
 .my-workspaces .mw-results-scroll table { width:100%; border-collapse:collapse; white-space:nowrap; font-size:inherit; }
 .my-workspaces .mw-results-scroll th,.my-workspaces .mw-results-scroll td { padding:4px 6px; border-bottom:1px solid var(--line,#788290); text-align:start; }
 @media(max-width:900px){.my-workspaces .mw-control-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));}}
+
+/* Map existing capabilities inside My Workspaces; no global styles. */
+.my-workspaces .mw-mapping,.my-workspaces .mw-evidence { min-width:0; border:1px solid var(--line,#788290); border-radius:4px; padding:8px; display:grid; gap:6px; }
+.my-workspaces .mw-evidence > summary,.my-workspaces .mw-mapping summary { cursor:pointer; font-weight:600; padding:4px 0; }
+.my-workspaces .mw-evidence[open] > .mw-scope { margin-top:6px; }
+.my-workspaces .mw-evidence[open] > .mw-summary,.my-workspaces .mw-evidence[open] > .mw-actions,.my-workspaces .mw-evidence[open] > .mw-panels { margin-top:6px; }
+.my-workspaces .mw-map-inputs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.my-workspaces .mw-map-inputs > details,.my-workspaces .mw-mapped-row { min-width:0; border:1px solid var(--line,#788290); padding:6px; border-radius:3px; overflow-wrap:anywhere; }
+.my-workspaces .mw-mapped-row { display:grid; gap:4px; }
+.my-workspaces .mw-mapped-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px 8px; }
+.my-workspaces .mw-mapped-fields span { display:grid; gap:2px; min-width:0; }
+.my-workspaces .mw-account-choice { display:flex; align-items:center; gap:4px; }
+@media(max-width:760px){.my-workspaces .mw-map-inputs,.my-workspaces .mw-mapped-fields {grid-template-columns:1fr;}}

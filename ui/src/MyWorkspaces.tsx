@@ -5,6 +5,7 @@ import { goto, openAccountView, openDeployment, openOrder, openOrderRisk, openSc
 import { Msg, useData, when, type Row } from './StageShell';
 import { launchContext, usePublishRoute } from './workspaceLinks';
 import WorkspaceControl, { type ScanConfig } from './WorkspaceControl';
+import WorkspaceMapping from './WorkspaceMapping';
 import './my-workspaces.css';
 
 const labels = {
@@ -18,7 +19,7 @@ const modeLabels: Record<Mode, string> = { PAPER: 'Paper', DEMO: 'Broker DEMO', 
 const timeframes = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
 type Scope = { mode: Mode; timeframe: string; account: string | null; instrument: string | null;
   deployment: string | null; source: string | null; symbol: string };
-type Workspace = Scope & { number: number; name: string; panels: Panel[]; scan?: ScanConfig | null };
+type Workspace = Scope & { number: number; name: string; panels: Panel[]; scan?: ScanConfig | null; mapping_accounts?: string[] };
 type Layouts = { revision: number; next_number: number; active: number; items: Workspace[] };
 const panelIds = Object.keys(labels) as PanelId[];
 function linkedWorkspace() {
@@ -170,10 +171,21 @@ function SavedWorkspaces() {
     </fieldset>}
     <WorkspaceControl key={`control-${current.number}`} number={current.number} name={current.name} config={current.scan}
       revision={data.revision} dirty={state.dirty} saving={state.saving} saved={savedNumbers.includes(current.number)}
-      onChange={scan => patch({ scan })} onSave={() => void save()} />
-    <WorkspaceBody key={current.number} workspace={current} update={patch} locked={state.saving} expanded={expanded} togglePanel={togglePanel}
-      decisionId={selectedDecisions[current.number] ?? ''}
-      setDecisionId={id => setSelectedDecisions(previous => ({ ...previous, [current.number]: id || undefined }))} />
+      onChange={scan => patch({ scan })}
+      mapping={<WorkspaceMapping config={current.scan} accounts={current.mapping_accounts ?? []}
+        selectedDeployment={current.deployment} disabled={state.saving}
+        onAccounts={mapping_accounts => patch({ mapping_accounts })}
+        onInspect={d => {
+          setSelectedDecisions(previous => ({ ...previous, [current.number]: undefined }));
+          const mode: Mode = d.mode === 'PAPER' ? 'PAPER' : d.environment === 'LIVE' ? 'LIVE' : 'DEMO';
+          patch({ mode, account: d.account_id, instrument: d.instrument_id, deployment: d.id,
+            source: d.observed_source?.account_id ?? null, symbol: d.observed_source?.broker_symbol ?? '',
+            timeframe: timeframes.includes(d.actual_timeframe) ? d.actual_timeframe : current.timeframe });
+        }} />}>
+      <WorkspaceBody key={current.number} workspace={current} update={patch} locked={state.saving} expanded={expanded} togglePanel={togglePanel}
+        decisionId={selectedDecisions[current.number] ?? ''}
+        setDecisionId={id => setSelectedDecisions(previous => ({ ...previous, [current.number]: id || undefined }))} />
+    </WorkspaceControl>
   </section>;
 }
 
@@ -325,13 +337,13 @@ function WorkspaceBody({ workspace: w, update, locked, expanded, togglePanel, de
   const scopeCaption = `${instrument?.symbol ?? 'All instruments'} · ${accounts.find(a => a.id === w.account)?.code ?? 'No execution account'} · ${modeText}`;
   return <>
     <fieldset className="mw-scope" disabled={locked}>
-      <legend>Existing deployment evidence · workspace scope</legend>
-      <label>Trading mode <select value={w.mode} onChange={e => changeScope({ mode: e.target.value as Mode, account: null, deployment: null })}>
+      <legend>Evidence focus · inspect one account, instrument or deployment</legend>
+      <label>Evidence mode <select value={w.mode} onChange={e => changeScope({ mode: e.target.value as Mode, account: null, deployment: null })}>
         {Object.entries(modeLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-      <label>Execution account <select value={w.account ?? ''} onChange={e => changeScope({ account: e.target.value || null, deployment: null })}>
+      <label>Focused account <select value={w.account ?? ''} onChange={e => changeScope({ account: e.target.value || null, deployment: null })}>
         <option value="">Choose an account</option>{w.account && !accounts.some(a => a.id === w.account) && <option value={w.account}>Saved account unavailable</option>}
         {accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}</select></label>
-      <label>Instrument <input type="search" list={datalist} value={search || instrument?.symbol || ''} placeholder="All instruments · search by symbol"
+      <label>Focused instrument <input type="search" list={datalist} value={search || instrument?.symbol || ''} placeholder="All instruments · search by symbol"
         onChange={e => {
           const value = e.target.value;
           const found = instruments.find(i => i.symbol.toLowerCase() === value.toLowerCase());
@@ -340,7 +352,7 @@ function WorkspaceBody({ workspace: w, update, locked, expanded, togglePanel, de
         }}
         onBlur={() => setSearch('')} />
         <datalist id={datalist}>{instruments.map(i => <option key={i.id} value={i.symbol}>{i.name}</option>)}</datalist></label>
-      <label>Data source <select value={sourceIndex < 0 ? '' : sourceIndex} disabled={!w.instrument} onChange={e => {
+      <label>Chart source <select value={sourceIndex < 0 ? '' : sourceIndex} disabled={!w.instrument} onChange={e => {
         const s = e.target.value ? sources[Number(e.target.value)] : undefined;
         changeScope({ source: s?.account_id ?? null, symbol: s?.broker_symbol ?? '' });
       }}><option value="">{w.source && sourceIndex < 0 ? 'Saved source unavailable' : 'Choose a source'}</option>

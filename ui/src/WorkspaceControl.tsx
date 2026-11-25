@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import { goto } from './nav';
 import { Msg, useData, when, type Row } from './StageShell';
@@ -30,9 +30,9 @@ function Picker({ label, items, selected, code, change, disabled }: {
   </details>;
 }
 
-export default function WorkspaceControl({number,name,config,revision,dirty,saving,saved,onChange,onSave}: {
+export default function WorkspaceControl({number,name,config,revision,dirty,saving,saved,onChange,mapping,children}: {
   number:number; name:string; config?:ScanConfig|null; revision:number; dirty:boolean; saving:boolean; saved:boolean;
-  onChange:(v:ScanConfig)=>void; onSave:()=>void;
+  onChange:(v:ScanConfig)=>void; mapping:ReactNode; children:ReactNode;
 }) {
   const c=config??defaults, path='trading/workspaces/'+number+'/scan';
   const [universe,universeError,reloadUniverse]=useData<Row>('trading/studio/scan-universe',0);
@@ -68,7 +68,6 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
   return <section className="mw-control" aria-label="Workspace control">
     <header className="mw-header"><div><strong>{name||'Workspace '+number} · Control desk</strong> <span className="cfg-pill">{current?.status??'Not started'}</span></div>
       <div className="mw-actions">
-        <button disabled={saving||!dirty} onClick={onSave}>Save control settings</button>
         <button disabled={locked||!eligible} onClick={()=>void action('validate')}>Validate scan</button>
         <button className="primary" disabled={locked||dirty||!saved||!eligible||!!runError} onClick={()=>void action('start')}>Start scan</button>
         <button disabled={busy||!running} onClick={()=>void action('cancel')}>Stop scan</button>
@@ -92,10 +91,10 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
       </fieldset>
       <fieldset><legend>03 · Outputs</legend>
         <label>Scan output <strong>Read-only opportunities</strong></label>
-        <label>Trade execution <strong>Existing deployment evidence below</strong></label>
+        <label>Trade execution <strong>Mapped existing deployments</strong></label>
         <label>Potential checks <strong>{c.instrument_symbols.length*c.strategy_codes.length}</strong></label>
         <p className="cfg-note">Start queues a durable research scan. Stop cancels this scan only; Resume continues its saved request. No orders, deployments or global controls change.</p>
-        <div className="mw-actions"><button onClick={()=>goto('Risk')}>Risk settings ↗</button><button onClick={()=>goto('Execution')}>Execution desk ↗</button></div>
+        <p className="cfg-note">Execution settings below are inherited from the exact existing deployment. Research scans never submit trades.</p>
       </fieldset>
     </div>
     <Msg error={error||universeError||runError||resultError}/>
@@ -103,6 +102,7 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
     {universe&&!eligible&&<p className="cfg-note">Select available instruments and strategies, and valid protection settings. Clear unavailable saved selections if the registry changed.</p>}
     {check&&<div className="mw-readiness" role="status"><strong>Readiness: {check.ready} / {check.requested} · {when(check.checked_at)}</strong>
       <details><summary>Sources and blocked checks</summary>{(check.items??[]).map((i:Row)=><p key={i.instrument}>{i.instrument} · {i.ready} ready · {i.blocked} blocked · {(i.sources??[]).join(', ')} · {Object.entries(i.reasons??{}).map(([r,n])=>r+': '+n).join('; ')}</p>)}</details></div>}
+    {mapping}
     {current&&<section className="mw-scan-results">
       <div className="mw-header"><strong>Latest workspace scan · {current.status}</strong><small>{current.processed_instruments??0}/{current.instruments?.length??0} instruments · {current.total} checks · {when(current.created_at)}</small>
       <button onClick={()=>{reloadRun();reloadResults();}}>Refresh scan</button></div>
@@ -114,5 +114,6 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
         <tbody>{(results?.items??[]).map((i:Row)=><tr key={i.instrument_symbol+':'+i.strategy_code}>{[i.instrument_symbol,i.strategy_code,i.version,i.timeframe,i.account_code,i.status,i.side,i.reason,i.entry,i.stop_loss,i.take_profit].map((v,k)=><td key={k}>{String(v??'—')}</td>)}</tr>)}</tbody></table>
         {!results?.items?.length&&<p className="cfg-note">No results on this page yet.</p>}</div>
     </section>}
+    <details className="mw-evidence" open><summary>Trading evidence · focused record</summary>{children}</details>
   </section>;
 }
