@@ -28,6 +28,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const calls=[];
  let savedWorkspaces=null;
  const desks=[];
+ let govProfile='PROFESSIONAL',presetApplied=false,draftApproved=false;
  const deskCat={sources:[{id:'c1',code:'VTM_L3',environment:'DEMO',purpose:'BOTH',status:'ACTIVE'}],instruments:[{id:'i1',symbol:'EURUSD',status:'ACTIVE',asset_class:'FX'}],
    strategies:[{id:'st1',code:'EMA_FAST',name:'EMA fast',status:'ACTIVE',approved_version_id:'v1',approved_version:1,timeframe:'M5',versions:[{id:'v1',number:1,state:'APPROVED',timeframe:'M5'}]}],
    accounts:[{id:'a1',code:'VTM_A',environment:'DEMO',purpose:'BOTH',status:'ACTIVE',trading_permission:'TRADING'},{id:'a2',code:'LIVE_A',environment:'LIVE',purpose:'BOTH',status:'ACTIVE',trading_permission:'TRADING'}],
@@ -36,7 +37,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    return {ready,environment:cfg.output.environment,handoff:cfg.output.environment==='OBSERVE'?'SIGNAL_ONLY':cfg.output.handoff,
      checks:ready?[{stage:'Input',status:'PASS',title:'Sources · VTM_L3',detail:'',fix:'',view:''},{stage:'Ownership',status:'WARN',title:'1 existing deployment(s) can be adopted',detail:'',fix:'',view:''}]
        :[{stage:'Input',status:'FAIL',title:'Choose at least one data source',detail:'Without a data source no run has prices or bars.',fix:'Add a source under Input → Data sources.',view:'Market data'}],
-     runs:ready?[{action:'ADOPT',deployment_id:'dep-x',strategy_code:'EMA_FAST',version_number:1,symbol:'EURUSD',account_code:'VTM_A',status:'PAUSED'}]:[],
+     runs:ready?[{action:'ADOPT',deployment_id:'dep-x',strategy_code:'EMA_FAST',version_number:1,symbol:'EURUSD',account_code:'VTM_A',status:'PAUSED',switch_mode:cfg.output.environment!=='PAPER',from_mode:'PAPER'}]:[],mode:cfg.output.environment==='PAPER'||cfg.output.environment==='OBSERVE'?'PAPER':'BROKER',
      coverage:{instruments:[ready?1:0,cfg.input.instruments.length],strategies:[ready?1:0,cfg.processing.strategies.length],accounts:[ready?1:0,cfg.output.accounts.length],timeframes:ready?['M5']:[],create:0,keep:0,adopt:ready?1:0,watch:0,skip:0}};};
  let deskScan=null;
  let mappedStatus='ACTIVE';
@@ -66,6 +67,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const registeredStrategies=[{id:'existing-strategy',code:'EMA_EXISTING',name:'Existing EMA strategy',status:'ACTIVE'}];
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';const body=options.body?JSON.parse(options.body):undefined;calls.push({url,method,body});
+   if(url.endsWith('/strategy-versions/draft-version/evidence'))return ok({version_id:'draft-version',number:3,timeframe:'M5',state:draftApproved?'APPROVED':'DRAFT',stage:'DRAFT',ok_for_approval:false,ok_for_live:false,
+     policy:{profile:'PROFESSIONAL',allow_exception:true},backtest:null,exception:null,
+     checks:[{code:'BACKTEST',ok:false,applies:true,found:'no backtest',need:'a backtest of this version, its parameters and timeframe',fix:'Run a backtest of EMA_EXISTING v3.'}],
+     live_checks:[{code:'PAPER_DAYS',ok:false,applies:true,found:'0 day(s) of paper trading',need:'≥ 10',fix:'Run it on Paper first.'}]});
    if(url.endsWith('/calc/nodes'))return ok(CALC.nodes);
    if(url.endsWith('/calc/flow'))return ok(CALC.flow);
    if(url.includes('/calc/flow/live'))return ok({bars:600,bar_time:now,close:'1.0853',values:{in_atr:{value:0.0912,label:'atr_pct'}}});
@@ -187,6 +192,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/portfolio/flatten')&&method==='POST')return ok({orders:[{state:'FILLED'}]});
    if(url.includes('/trading/fills?position_id=p1'))return ok({items:[{id:'f1',order_id:'o1',side:'BUY',quantity:'0.1',price:'1.08011',at:now,currency:'USD',realised_pnl:'0'}]});
    if(url.includes('/trading/risk/exposure'))return ok({instruments:[],accounts:[]});
+   if(url.endsWith('/trading/governance')&&method==='GET')return ok({strategy_evidence:{profile:govProfile,allow_exception:true},risk_minimum:{profile:'PROFESSIONAL',demo_needed:[['MAX_DAILY_LOSS']]},profiles:{},
+     demo_unmet:presetApplied?[]:[{code:'DEMO_LIMITS_MISSING',account:'VTM_A',detail:'VTM_A has no MAX_DAILY_LOSS limit (firm or account).'}]});
+   if(/\/trading\/governance\/strategy_evidence$/.test(url)&&method==='PUT'){govProfile=body.profile;return ok({profile:body.profile});}
+   if(url.endsWith('/trading/risk/presets')){if(!body.dry_run)presetApplied=true;return ok({account:'VTM_A',currency:'USD',equity:body.equity||'100000.00',equity_source:body.equity?'entered':'COREI book',profile:body.profile,
+     limits:[{kind:'MAX_DAILY_LOSS',value:'300.00',basis:'3% of equity',current:'100',action:'KEEP_TIGHTER'},{kind:'MAX_ORDER_NOTIONAL',value:'20000.00',basis:'200% of equity',current:null,action:'CREATE'}]});}
    if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
    if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}},
@@ -314,7 +324,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      return ok(strategy,201);
    }
    if(url.endsWith('/config/strategies/new-strategy/versions')&&method==='POST')return ok({id:'new-version'},201);
-   if(url.endsWith('/config/strategies/existing-strategy/versions'))return ok({items:[{id:'scan-version',number:2,state:'APPROVED',algorithm:'EMA_CROSSOVER'}]});
+   if(url.endsWith('/config/strategies/existing-strategy/versions'))return ok({items:[{id:'scan-version',number:2,state:'APPROVED',algorithm:'EMA_CROSSOVER'},{id:'draft-version',number:3,version:4,state:draftApproved?'APPROVED':'DRAFT',algorithm:'EMA_CROSSOVER',parameters:{timeframe:'M5'}}]});
+   if(url.endsWith('/config/strategy-versions/draft-version/approve')){draftApproved=true;return ok({id:'draft-version',state:'APPROVED'});}
    if(url.includes('/config/strategies/')&&url.endsWith('/versions'))return ok({items:[]});
    if(url.includes('/config/strategies'))return ok({items:[...registeredStrategies,
      ...(largeScanCatalog?Array.from({length:100},(_,i)=>({id:'batch-strategy-'+i,code:'BATCH_STRAT_'+i,status:'ACTIVE'})):[])
@@ -519,6 +530,22 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  await submit($('.intel-edit'));
  assert.deepEqual(calls.filter(c=>c.url.includes('kill-switches')&&c.method==='POST')[0].body,{scope:'ACCOUNT',target_id:'a1',reason:'broker incident'});
  console.log('PASS: risk: a kill switch is engaged with a scope, a target and a reason.');
+ nav('Limits').click();await settle(8);
+ assert.match($('[aria-label="Risk profiles"]').textContent,/DEMO accounts below the minimum: VTM_A has no MAX_DAILY_LOSS/);
+ const beforePreset=calls.filter(c=>c.method!=='GET').length;
+ fill($('[aria-label="Preset account"]'),'a1');fill($('[aria-label="Preset equity"]'),'10000');await settle(2);
+ assert.ok($$('.gv-preset button').find(b=>b.textContent==='Apply').disabled,'apply only after a preview');
+ await submit($('.gv-preset'));await settle(4);
+ const dry=calls.findLast(c=>c.url.endsWith('/risk/presets'));
+ assert.deepEqual([dry.body.dry_run,dry.body.equity,dry.body.profile],[true,'10000','PROFESSIONAL'],'equity is sent as exact text');
+ assert.match($('[aria-label="Risk profiles"]').textContent,/kept \(yours is tighter\).*create/);
+ promptAnswer='size the demo account';$$('.gv-preset button').find(b=>b.textContent==='Apply').click();await settle(6);
+ assert.equal(calls.findLast(c=>c.url.endsWith('/risk/presets')).body.dry_run,false);
+ assert.match($('[aria-label="Risk profiles"]').textContent,/Applied to VTM_A/);
+ assert.equal(calls.filter(c=>c.method!=='GET').length,beforePreset+2,'a preview and one apply, nothing else');
+ promptAnswer='institutional desk';fill($('[aria-label="strategy_evidence profile"]'),'INSTITUTIONAL');await settle(6);
+ assert.deepEqual(calls.findLast(c=>c.url.endsWith('/governance/strategy_evidence')).body,{profile:'INSTITUTIONAL',overrides:{},reason:'institutional desk'});
+ console.log('PASS: risk: profile presets preview first, keep tighter limits, apply with a reason; governance profiles change with a reason.');
  nav('Stress tests').click();await settle(6);
  assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
@@ -547,7 +574,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const deskStart=calls.length;
  promptAnswer='Gold desk';button('Create a workspace').click();await settle(8);
  assert.deepEqual([calls.findLast(c=>c.url.endsWith('/trading/desks')&&c.method==='POST').body.name,calls.findLast(c=>c.url.endsWith('/trading/desks')&&c.method==='POST').body.template],['Gold desk','CUSTOM']);
- assert.match($('.dk-ready').textContent,/not checked yet/);
+ assert.match($('.dk-ready').textContent,/Next step: Choose at least one data source.*Add a source under Input/,'an empty desk says what to do first, without pressing Validate');
  const pick=(col,text)=>{const l=$$('.dk-col')[col].querySelectorAll('.dk-radio');const hit=[...l].find(x=>x.textContent.includes(text));assert.ok(hit,text);hit.querySelector('input').click();};
  pick(0,'VTM_L3');await settle(2);pick(0,'EURUSD');await settle(2);
  assert.match($$('.dk-col')[0].textContent,/VTM_L3 · demo · primary/);
@@ -561,19 +588,29 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  pick(2,'VTM_A');await settle(2);pick(2,'Ask me to approve');await settle(16);
  assert.ok(calls.some(c=>c.url.endsWith('/trading/desks/plan')),'unsaved settings are checked live');
  assert.match($('.dk-ready').textContent,/1\/1 instruments × 1\/1 strategies × 1\/1 accounts · M5/);
- button('Save').click();await settle(8);
+ assert.match($('.dk-ready').textContent,/Next step: Settings look ready\. Press Start/);
+ assert.ok(!button('Validate').disabled&&!button('Start…').disabled,'unsaved changes never block Validate or Start');
+ button('Start…').click();await settle(10);
  const saved=calls.findLast(c=>c.method==='PUT'&&c.url.includes('/trading/desks/'));
+ assert.ok(saved,'Start saves the settings on screen first');
+ const deskOrder=calls.slice(deskStart).filter(c=>c.method!=='GET').map(c=>c.url.split('/').pop());
+ assert.deepEqual(deskOrder.slice(-2),['11111111-2222-3333-4444-555555555555','validate'],'save, then validate');
  assert.deepEqual([saved.body.config.input.sources,saved.body.config.output.environment,saved.body.config.output.handoff,saved.body.config.processing.sizing.quantity],[['c1'],'PAPER','APPROVE','1']);
  assert.equal(typeof saved.body.config.processing.sizing.quantity,'string','sizes stay exact text, never a float');
- button('Start…').click();await settle(8);
  assert.match($('[aria-label="Start workspace"]').textContent,/Existing deployments outside any workspace.*Adopt EMA_FAST v1 × EURUSD × VTM_A/);
  assert.match($('[aria-label="Start workspace"]').textContent,/Watch 1 run\(s\) without controlling them/);
+ assert.match($('[aria-label="Start workspace"]').textContent,/Tick at least one to adopt/,'nothing ticked: says Start would have nothing to run');
  $$('[aria-label="Start workspace"] .dk-radio').find(l=>l.textContent.includes('Adopt EMA_FAST')).querySelector('input').click();await settle(3);
  assert.match($('[aria-label="Start workspace"]').textContent,/Adopt and activate 1 existing deployment/);
  $$('[aria-label="Start workspace"] button').find(b=>b.textContent==='Start').click();await settle(8);
  assert.deepEqual(calls.findLast(c=>c.url.endsWith('/start')).body.adopt,['dep-x']);
+ assert.equal(calls.findLast(c=>c.url.endsWith('/start')).body.version,2,'start uses the version the save returned, not a stale one');
  assert.match($('.dk-desk').textContent,/Started: 1 run\(s\) active/);
  assert.match($('.dk-head').textContent,/running/);
+ const beforeShort=calls.filter(c=>c.method!=='GET').length;
+ promptAnswer='ok';button('Pause').click();await settle(4);
+ assert.equal(calls.filter(c=>c.method!=='GET').length,beforeShort,'a too-short reason sends nothing');
+ assert.match($('.dk-desk').textContent,/please give a reason of at least 5 characters/,'and says so');
  promptAnswer='lunch break';button('Pause').click();await settle(8);
  assert.equal(calls.findLast(c=>c.url.endsWith('/pause')).body.reason,'lunch break');
  button('Stop…').click();await settle(4);
@@ -874,6 +911,17 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match($('.cfg-main').textContent,/EMA studio rule · v1/);
  const existing=$$('.cfg-table tbody tr').find(row=>row.textContent.includes('EMA_EXISTING'));
  existing.click();await settle(3);
+ button('Evidence & approve').click();await settle(6);
+ const evPanel=$('[aria-label="Evidence of v3"]');
+ assert.match(evPanel.textContent,/✕ backtest · no backtest.*Run a backtest of EMA_EXISTING v3/);
+ assert.match(evPanel.textContent,/To run on LIVE.*paper days/);
+ assert.ok($$('[aria-label="Evidence of v3"] button').find(b=>b.textContent==='Evidence incomplete').disabled,'no approval on missing evidence');
+ const exBtn=()=>$$('[aria-label="Evidence of v3"] button').find(b=>b.textContent==='Approve by exception');
+ assert.ok(exBtn().disabled,'an exception needs a reason');
+ fill($('[aria-label="Exception reason"]'),'replaces v2 with the same rules, 2 years of record');await settle(2);
+ exBtn().click();await settle(8);
+ assert.deepEqual(calls.findLast(c=>c.url.endsWith('/draft-version/approve')).body,{version:4,exception:'replaces v2 with the same rules, 2 years of record'});
+ console.log('PASS: strategy evidence: missing checks with fixes; approval needs evidence or a recorded exception with a reason.');
  button('New version').click();await settle(4);
  assert.equal($('[aria-label="Strategy graph"]').value,'EMA_STUDIO');
  assert.equal($('[aria-label="Strategy graph version"]').value,'1');

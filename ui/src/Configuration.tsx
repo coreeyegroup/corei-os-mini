@@ -6,6 +6,7 @@
  * (/api/config); this screen shows the backend's own validation messages.
  * Secrets are write-only: the screen never receives a stored credential back.
  */
+import { VersionEvidence, copyToTimeframe } from './Governance';
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
 import { SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
@@ -1764,6 +1765,7 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
   const [rows, setRows] = useState<Row[] | null>(null), [algos, setAlgos] = useState<Row[]>([]), [q, setQ] = useState('');
   const [draft, setDraft] = useState<Row | null>(null), [versions, setVersions] = useState<Row[]>([]), [form, setForm] = useState<Row | null>(null);
   const [rule, setRule] = useState<StrategyRule | null>(null);
+  const [evidenceFor, setEvidenceFor] = useState<string | null>(null);
   const visible = useViewVisible();
   useEffect(() => {
     if (!visible || !canEdit) return;
@@ -1860,11 +1862,14 @@ function Strategies({ roles, reloadRefs }: { roles: string[]; reloadRefs: () => 
             <td><small>created {v.created_by}{v.approved_by ? <><br />approved {v.approved_by}</> : null}</small></td>
             <td className="cfg-row-actions">
               {v.state === 'DRAFT' && canEdit && <button type="button" onClick={() => setForm({ ...v })}>Edit</button>}
-              {v.state === 'DRAFT' && canApprove && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Approve v${v.number}? Its rules and parameters can no longer be changed.`)) void run(() => api(`config/strategy-versions/${v.id}/approve`, 'POST', { version: v.version }), `v${v.number} approved.`, draft.id); }}>Approve</button>}
+              <button type="button" aria-expanded={evidenceFor === v.id} onClick={() => setEvidenceFor(evidenceFor === v.id ? null : v.id)}>{v.state === 'DRAFT' && canApprove ? 'Evidence & approve' : 'Evidence'}</button>
+              {canEdit && v.state !== 'RETIRED' && <button type="button" disabled={busy} onClick={() => void run(async () => { const m = await copyToTimeframe(v.id, v.parameters?.timeframe ?? 'H1'); if (!m) throw new Error('No copy made.'); return { id: draft.id }; }, 'Timeframe copy made: find it in the list as a draft.', draft.id)}>Copy to timeframe…</button>}
               {v.state !== 'RETIRED' && (canEdit || canApprove) && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Retire v${v.number}? It cannot be used again.`)) void run(() => api(`config/strategy-versions/${v.id}/retire`, 'POST', { version: v.version }), `v${v.number} retired.`, draft.id); }}>Retire</button>}
-            </td></tr>)}
+            </td></tr>).flatMap((tr, i) => evidenceFor === versions[i].id ? [tr, <tr key={versions[i].id + '-ev'}><td colSpan={5}>
+              <VersionEvidence versionId={versions[i].id} version={versions[i].version} canApprove={canApprove}
+                onDone={m => { setEvidenceFor(null); void run(async () => ({ id: draft.id }), m, draft.id); }} /></td></tr>] : [tr])}
         </tbody></table>}
-        <small>Approved versions cannot be changed; create a new version to change rules or parameters.</small>
+        <small>Approved versions cannot be changed; create a new version to change rules or parameters. Approval needs the evidence of the strategy-evidence profile (Risk › Limits).</small>
       </section>}
       </div>
     </FloatingWindow>}

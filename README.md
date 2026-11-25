@@ -1392,3 +1392,38 @@ A workspace now runs. Migration `048_workspace_control.sql` (additive). Tests: `
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+### 0.57.1 · the desk runs from what is on screen
+
+- Validate, Test run and Start save your changes first. In 0.57.0 they were greyed out until you pressed Save, with no
+  hint, so a desk looked as if it could not run.
+- The readiness line shows the next step at once (for example, "Choose at least one data source" with its fix), without
+  waiting for Validate.
+- A too-short reason for Pause, Stop or Emergency stop now says so; before, nothing happened.
+- Draft strategies are listed after approved ones and say they cannot run until a version is approved in Strategies.
+- After a save, Start always sends the current workspace version, so there are no spurious "changed by someone else" errors.- **Adopt across modes.** An existing deployment in another mode, such as Paper while the desk is Broker DEMO, can now be
+  adopted. You tick it in the Start window, which says it will move (for example "moves it from paper to broker demo (real
+  demo orders)"). A broker run with an open broker position or working order is never moved to paper.
+- **No empty start.** "Nothing to run" names each combination and its exact reason. Start refuses when nothing would run;
+  before, the desk could start while controlling nothing.
+
+## Strategy evidence and risk minimums — release 0.58.0
+
+Migration `049_strategy_risk_governance.sql` (additive). Tests: `backend/tests/test_governance.py`.
+
+- **Profiles.** Choose *None* (sandbox), *Retail*, *Professional* (default) or *Institutional* for strategy evidence and
+  for risk minimums (Risk › Limits). Single values can be overridden; every change needs a reason.
+- **Approve on evidence.** A version is approved only when a backtest of its exact parameters shows enough trades and
+  history, includes costs, is net positive and holds on the last 30% of trades. Strategies › Versions › *Evidence &
+  approve* shows each check with how to fix it. Where the profile allows it, a risk approver can approve by exception
+  with a recorded reason; Institutional allows none.
+- **Paper before LIVE.** A version runs on LIVE only after its paper record (days and closed trades) meets the profile.
+- **Limits before orders.** DEMO order sending and a DEMO workspace Start need the profile's minimum limits. *Size
+  limits from a profile* previews limits from the account's equity and applies them; a tighter limit you already set
+  is kept.
+- **Loss stops per run.** A daily-loss limit on a strategy or a run stops only those runs.
+- **Timeframes.** *Copy to timeframe…* makes a new draft strategy on another timeframe; it needs its own evidence.
+- **Workspace checks.** A desk shows, before Start, missing limits, the pre-LIVE policy, missing LIVE evidence and an
+  order size that every order would breach.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

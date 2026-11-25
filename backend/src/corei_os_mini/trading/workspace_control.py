@@ -381,7 +381,23 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
         check('Output', 'FAIL', f'{env} order sending is off',
               'LIVE order sending is an owner control; a workspace never turns it on.' if env == 'LIVE' else 'DEMO order sending is off in Controls.',
               'An authorised owner switches it on in Setup → Controls, or choose Observe or Paper.', 'Configuration')
+    if env == 'DEMO' and usable_acc:
+        from . import governance
+        unmet = governance.demo_unmet(db, usable_acc)
+        if unmet:
+            check('Risk', 'FAIL', 'Minimum risk limits are missing', '; '.join(u['detail'] for u in unmet),
+                  'Risk › Limits › Apply a profile (Retail, Professional or Institutional), or add the limits by hand.', 'Risk')
     if env == 'LIVE':
+        from . import readiness
+        live = readiness.live_policy(db)
+        if not live['ok']:
+            check('Risk', 'FAIL', 'The pre-LIVE policy is not met', '; '.join(u['detail'] for u in live['unmet']),
+                  'Meet each rule (Risk › Limits, Execution, Setup › Users and Alerts) or record an exception where allowed.', 'Risk')
+        from . import governance
+        gaps = [g for g in (governance.live_evidence_gap(db, v['id']) for v in chosen.values()) if g]
+        if gaps:
+            check('Processing', 'FAIL', 'Strategies without LIVE evidence', '; '.join(gaps),
+                  'Run them on Paper until the paper record is met (Strategies › Evidence).', 'Strategies')
         check('Output', 'WARN', 'LIVE needs a second person',
               'A different person must start this workspace than the one who last changed its settings; every LIVE order also follows the LIVE four-eyes policy.')
 
@@ -405,11 +421,13 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                AND instrument_id = ANY(%s)""", (list(data),)).fetchall()}
         existing = {(str(r['strategy_id']), str(r['instrument_id']), str(r['account_id'])): dict(r) for r in db.execute(
             """SELECT d.id, d.strategy_id, d.instrument_id, d.account_id, d.status, d.mode, d.strategy_version_id,
-                      w.id AS desk_id, w.name AS desk_name, r.role
+                      w.id AS desk_id, w.name AS desk_name, r.role,
+                      EXISTS (SELECT 1 FROM pf_positions p WHERE p.deployment_id=d.id AND p.mode='BROKER' AND p.quantity <> 0) AS broker_open,
+                      EXISTS (SELECT 1 FROM oms_orders o WHERE o.deployment_id=d.id AND o.mode='BROKER' AND o.state = ANY(%s)) AS broker_orders
                FROM cfg_deployments d LEFT JOIN ws_runs r ON r.deployment_id=d.id AND r.role IN ('OWNED','ADOPTED')
                LEFT JOIN ws_workspaces w ON w.id=r.workspace_id
                WHERE d.strategy_id = ANY(%s) AND d.instrument_id = ANY(%s) AND d.account_id = ANY(%s)""",
-            (list(chosen), list(data), usable_acc)).fetchall()}
+            (list(oms.OPEN), list(chosen), list(data), usable_acc)).fetchall()}
         no_trade = []
         for sid, v in chosen.items():
             for i, m in data.items():
@@ -432,9 +450,16 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                     elif e['desk_id']:
                         runs.append({**base, 'action': 'WATCH', 'deployment_id': str(e['id']), 'controlled_by': e['desk_name'],
                                      'reason': f"Runs in “{e['desk_name']}”: only one workspace may control it; watched here"})
-                    elif e['mode'] != mode:
+                    elif e['mode'] != mode and e['mode'] == 'BROKER' and (e['broker_open'] or e['broker_orders']):
                         runs.append({**base, 'action': 'WATCH', 'deployment_id': str(e['id']),
-                                     'reason': f"An existing {e['mode'].lower()} deployment, not {mode.lower()}: watched here, not adopted"})
+                                     'reason': 'An existing broker deployment with an open broker position or working order: close them '
+                                               'before it can move to paper; watched here'})
+                    elif e['mode'] != mode:
+                        target = {'PAPER': 'paper', 'BROKER': f"broker {env}"}[mode]
+                        runs.append({**base, 'action': 'ADOPT', 'deployment_id': str(e['id']), 'status': e['status'],
+                                     'switch_mode': True, 'from_mode': e['mode'],
+                                     'reason': f"An existing {e['mode'].lower()} deployment outside any workspace: adopt it and move it to "
+                                               f"{target} to run it here (asked at Start), or leave it watched"})
                     else:
                         runs.append({**base, 'action': 'ADOPT', 'deployment_id': str(e['id']), 'status': e['status'],
                                      'reason': f"An existing {e['status'].lower()} deployment outside any workspace: adopt it to control it here, or watch it"})
@@ -442,6 +467,7 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
             check('Output', 'WARN', 'Some instruments cannot be traded on some accounts',
                   'No trading symbol on the account connection: ' + ', '.join(no_trade[:12]) + (' …' if len(no_trade) > 12 else ''),
                   'Map the trading symbol in Setup → Symbols.', 'Configuration')
+        _size_check(db, cfg, runs, instruments, accounts, check)
         watched = [r for r in runs if r['action'] == 'WATCH' and r.get('controlled_by')]
         if watched:
             check('Ownership', 'WARN', f'{len(watched)} run(s) are controlled by another workspace',
@@ -449,13 +475,20 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                   'They are watched here. Stop them there, or remove them from that workspace, to run them here.')
         adoptable = [r for r in runs if r['action'] == 'ADOPT']
         if adoptable:
+            moving = [r for r in adoptable if r.get('switch_mode')]
             check('Ownership', 'WARN', f'{len(adoptable)} existing deployment(s) can be adopted',
-                  'Start asks you to confirm each one; unconfirmed ones are watched, not changed.')
+                  'Start asks you to confirm each one; unconfirmed ones are watched, not changed.'
+                  + (f" {len(moving)} of them run in another mode ({', '.join(sorted({r['from_mode'].lower() for r in moving}))}); adopting moves "
+                     f"them to {'paper' if mode == 'PAPER' else 'broker ' + env}." if moving else ''),
+                  'Tick them in the Start window to run them from this workspace.')
         if not watched and not adoptable:
             check('Ownership', 'PASS', 'No other workspace controls these runs')
     controllable = [r for r in runs if r['action'] in ('CREATE', 'KEEP', 'ADOPT')]
     if chosen and data and usable_acc and not controllable:
-        check('Ownership', 'FAIL', 'Nothing to run', 'Every combination is controlled elsewhere, ended, or cannot be traded on these accounts.')
+        why = '; '.join(f"{r['strategy_code']} × {r['symbol']} × {r['account_code']}: {r['reason']}" for r in runs[:6]) \
+            or 'No instrument can be traded on these accounts (no trading symbol).'
+        check('Ownership', 'FAIL', 'Nothing to run', why,
+              'Stop it in the workspace that controls it, delete an ended deployment in Strategies, or map the trading symbol.', 'Strategies')
     order = {'FAIL': 0, 'WARN': 1, 'PASS': 2}
     checks.sort(key=lambda c: (['Input', 'Market data', 'Processing', 'Risk', 'Output', 'Ownership'].index(c['stage']), order[c['status']]))
     return {
@@ -468,6 +501,40 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                      'skip': sum(r['action'] == 'SKIP' for r in runs)},
         'checked_at': datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _size_check(db, cfg: Config, runs: list[dict], instruments: dict, accounts: dict, check) -> None:
+    """A fixed size that every order would breach is a configuration error, not a market event: say so before Start."""
+    from .common import D, fx_rate, quote
+    from .risk import applicable
+    sz = cfg.processing.sizing
+    if sz.method != 'FIXED_QTY' or not sz.quantity:
+        return
+    qty = D(sz.quantity)
+    seen, refused, notes = set(), [], []
+    for r in runs:
+        if r['action'] not in ('CREATE', 'KEEP', 'ADOPT') or (r['instrument_id'], r['account_id']) in seen:
+            continue
+        seen.add((r['instrument_id'], r['account_id']))
+        lim = applicable(db, {'ACCOUNT': r['account_id'], 'INSTRUMENT': r['instrument_id'], 'STRATEGY': r['strategy_id']})
+        ins = db.execute('SELECT symbol, contract_size, quote_currency FROM cfg_instruments WHERE id=%s', (r['instrument_id'],)).fetchone()
+        if 'MAX_ORDER_QTY' in lim and qty > D(lim['MAX_ORDER_QTY']['value']):
+            refused.append(f"{ins['symbol']} on {r['account_code']}: {qty.normalize()} lots > order limit {D(lim['MAX_ORDER_QTY']['value']).normalize()}")
+        q = quote(db, r['account_id'], r['instrument_id'])
+        if q and q.get('mid'):
+            ccy = db.execute('SELECT base_currency FROM cfg_accounts WHERE id=%s', (r['account_id'],)).fetchone()['base_currency'] or 'USD'
+            rate = fx_rate(db, ins['quote_currency'], ccy)
+            if rate is not None:
+                value = (qty * (D(ins['contract_size']) or 1) * q['mid'] * rate).quantize(D('0.01'))
+                notes.append(f"{ins['symbol']}: {qty.normalize()} lots ≈ {value.normalize()} {ccy}")
+                if 'MAX_ORDER_NOTIONAL' in lim and value > D(lim['MAX_ORDER_NOTIONAL']['value']):
+                    refused.append(f"{ins['symbol']} on {r['account_code']}: order value {value.normalize()} {ccy} > limit "
+                                   f"{D(lim['MAX_ORDER_NOTIONAL']['value']).normalize()} {ccy}")
+    if refused:
+        check('Risk', 'FAIL', 'Every order would be refused by a risk limit', '; '.join(refused),
+              'Reduce the quantity under Processing → Sizing, or use Risk % of equity sizing.')
+    elif notes:
+        check('Risk', 'PASS', 'Order size fits the limits', '; '.join(notes[:6]))
 
 
 # ---------- writing ----------
@@ -566,6 +633,11 @@ def _activate(db, dep_id, actor: str, reason: str, env: str) -> str | None:
         return ', '.join(b.replace('_', ' ').lower() for b in structural)
     if env == 'LIVE' and current['proposed_by'] == actor:
         return 'on LIVE a different person must activate than the one who proposed it'
+    if env == 'LIVE':
+        from . import governance
+        gap = governance.live_evidence_gap(db, current['strategy_version_id'])
+        if gap:
+            return gap
     _set_status(db, dep_id, 'ACTIVE', actor, reason)
     return None
 
@@ -613,6 +685,13 @@ def _converge(db, desk: dict, cfg: Config, result: dict, actor: str, adopt: set[
                        (str(desk['id']), dep_id, r['status'], actor))
             store.audit(db, actor, 'ADOPT', 'deployment', dep_id, None, {'workspace': str(desk['id']), 'prior_status': r['status']},
                         f"Adopted by workspace {desk['name']} with confirmation")
+            if r.get('switch_mode'):
+                before = dict(db.execute('SELECT * FROM cfg_deployments WHERE id=%s FOR UPDATE', (dep_id,)).fetchone())
+                after = dict(db.execute('UPDATE cfg_deployments SET mode=%s, version=version+1, updated_at=now() WHERE id=%s RETURNING *',
+                                        (mode, dep_id)).fetchone())
+                store.audit(db, actor, 'UPDATE', 'deployment', dep_id, before, after,
+                            f"Moved from {before['mode'].lower()} to {mode.lower()} on adoption by workspace {desk['name']} (confirmed)")
+                out['updated'].append(dep_id)
             out['adopted'].append(dep_id)
             wanted.add(dep_id)
         elif r['action'] in ('ADOPT', 'WATCH'):
@@ -662,6 +741,9 @@ def start(db, user, desk_id: UUID, data: StartIn) -> dict:
     unknown = adopt - {r['deployment_id'] for r in result['runs'] if r['action'] == 'ADOPT'}
     if unknown:
         raise HTTPException(409, 'A deployment to adopt is no longer adoptable. Validate again.')
+    if not any(r['action'] in ('CREATE', 'KEEP') for r in result['runs']) and not adopt:
+        raise HTTPException(422, 'Nothing would run: every run here already exists outside this workspace. '
+                                 'Tick the deployments to adopt in the Start window.')
     done = _converge(db, desk, cfg, result, user.username, adopt, True, data.reason)
     after = dict(db.execute("""UPDATE ws_workspaces SET state='RUNNING', state_reason=%s, state_by=%s, state_at=now(), last_check=%s,
                                version=version+1, updated_at=now() WHERE id=%s RETURNING *""",

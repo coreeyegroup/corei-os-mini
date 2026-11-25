@@ -29,6 +29,7 @@ class StrategyDeploymentTests(unittest.TestCase):
         with self.connect() as db:
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
+            db.execute("UPDATE cfg_policies SET value='{\"profile\": \"NONE\", \"overrides\": {}}' WHERE key IN ('strategy_evidence', 'risk_minimum')")  # tests before 0.58: no gate; governance tests choose a profile
             # Four-eyes on LIVE changes is covered in test_controls; these tests exercise other rules.
             db.execute("UPDATE cfg_policies SET value='false' WHERE key='four_eyes_live_changes'")
         self.patches = [patch('corei_os_mini.config_store._connect', self.connect),

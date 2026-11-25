@@ -99,12 +99,10 @@ class WorkspaceControl(te.Execution):
         self.assertEqual([r['action'] for r in plan['runs']], ['ADOPT'])
         target = plan['runs'][0]['deployment_id']
         before = next(d for d in self.deps() if str(d['id']) == target)
-        self.ok(self.alice.post(f"/api/trading/desks/{third['id']}/start", json={'version': third['version']}))
+        self.ok(self.alice.post(f"/api/trading/desks/{third['id']}/start", json={'version': third['version']}), 422)
         after = next(d for d in self.deps() if str(d['id']) == target)
         self.assertEqual((after['version'], after['status']), (before['version'], before['status']), 'not adopted: untouched')
-        self.assertEqual([r['role'] for r in self.desk(third['id'])['runs']], ['WATCH'])
-        t = self.desk(third['id'])
-        self.ok(self.alice.post(f"/api/trading/desks/{third['id']}/stop", json={'version': t['version'], 'reason': 'try adopting'}))
+        self.assertEqual(self.desk(third['id'])['runs'], [], 'nothing would run: refused, not started empty')
         t = self.desk(third['id'])
         self.ok(self.alice.post(f"/api/trading/desks/{third['id']}/start", json={'version': t['version'], 'adopt': [target]}))
         self.assertEqual([r['role'] for r in self.desk(third['id'])['runs']], ['ADOPTED'])
@@ -176,6 +174,8 @@ class WorkspaceControl(te.Execution):
         desk, _cfg, (_c, a, *_rest) = self.setup_desk('LIVE', 'LIVE', handoff='APPROVE')
         plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
         self.assertIn('LIVE order sending is off', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
+        self.assertIn('The pre-LIVE policy is not met', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
+        self.live_ready(a)
         self.sending('LIVE')
         plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
         self.assertTrue(plan['ready'], plan['checks'])
@@ -233,3 +233,45 @@ class WorkspaceControl(te.Execution):
                          ('EUR desk', [connection['id']], [ins['id']], [{'strategy_id': s['id'], 'version_id': None}], [a['id']]))
         self.ok(self.alice.post('/api/trading/desks/import/1'), 409)
         self.assertTrue(self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))['ready'])
+
+    def test_paper_deployment_adopted_into_broker_demo_with_confirmation(self):
+        """The live case of 25 Nov: a paper deployment already holds the combination and the desk is set to Broker DEMO."""
+        connection, a, _b, ins = self.real_account('DEMO')
+        s, _v = self.strategy()
+        existing = self.deploy_existing_for(s, a, ins)
+        self.sending('DEMO')
+        cfg = {'input': {'sources': [connection['id']], 'instruments': [ins['id']]},
+               'processing': {'strategies': [{'strategy_id': s['id']}]},
+               'output': {'environment': 'DEMO', 'handoff': 'AUTO', 'accounts': [a['id']]}}
+        desk = self.ok(self.alice.post('/api/trading/desks', json={'name': 'Demo desk', 'config': cfg}), 201)
+        plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
+        self.assertTrue(plan['ready'], plan['checks'])
+        self.assertEqual([(r['action'], r.get('switch_mode'), r.get('from_mode')) for r in plan['runs']], [('ADOPT', True, 'PAPER')])
+        refused = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/start", json={'version': desk['version']}), 422)
+        self.assertIn('Tick the deployments to adopt', str(refused))
+        self.assertEqual(self.deps()[0]['mode'], 'PAPER', 'nothing changed without confirmation')
+        self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/start", json={'version': desk['version'], 'adopt': [existing['id']]}))
+        dep = self.deps()[0]
+        self.assertEqual((dep['mode'], dep['status']), ('BROKER', 'ACTIVE'))
+        self.assertEqual([r['role'] for r in self.desk(desk['id'])['runs']], ['ADOPTED'])
+
+    def test_broker_run_with_open_orders_is_not_moved_to_paper(self):
+        connection, a, _b, ins = self.real_account('DEMO')
+        s, _v = self.strategy()
+        existing = self.deploy_existing_for(s, a, ins)
+        with self.connect() as db:
+            db.execute("UPDATE cfg_deployments SET mode='BROKER' WHERE id=%s", (UUID(existing['id']),))
+        with store.transaction('write') as db:
+            o = oms.place(db, account_id=a['id'], instrument_id=ins['id'], side='BUY', quantity=Decimal('0.10'), mode='BROKER',
+                          deployment={'id': existing['id'], 'strategy_id': s['id']}, seed='ws-open', actor='alice', at=te.NOW)
+        self.assertIn(o['state'], ('APPROVED', 'REJECTED'))
+        if o['state'] == 'REJECTED':
+            with self.connect() as db:
+                db.execute("UPDATE oms_orders SET state='ACKNOWLEDGED' WHERE id=%s", (o['id'],))
+        cfg = {'input': {'sources': [connection['id']], 'instruments': [ins['id']]},
+               'processing': {'strategies': [{'strategy_id': s['id']}]}, 'output': {'environment': 'PAPER', 'accounts': [a['id']]}}
+        desk = self.ok(self.alice.post('/api/trading/desks', json={'name': 'Paper desk', 'config': cfg}), 201)
+        plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
+        self.assertEqual([r['action'] for r in plan['runs']], ['WATCH'])
+        fail = next(c for c in plan['checks'] if c['title'] == 'Nothing to run')
+        self.assertIn('open broker position or working order', fail['detail'], 'Nothing to run names the exact reason')

@@ -343,8 +343,14 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         reasons.append(problem)
     elif q != qty:
         reasons.append(f'QUANTITY_STEP: {qty.normalize()} is not a multiple of the quantity step (would be {q.normalize()})')
-    # 5. Limits (the tightest of each kind).
+    # 5. Limits (the tightest of each kind). Loss limits set on a strategy or a run are compared with that run's own
+    # loss (below), not with the whole account's.
     lim = applicable(db, scopes)
+    run_loss_limits = {k: lim.pop(k) for k in ('MAX_DAILY_LOSS',) if k in lim and lim[k]['scope'] in ('STRATEGY', 'DEPLOYMENT')}
+    if run_loss_limits:
+        account_only = applicable(db, {'ACCOUNT': scopes['ACCOUNT']})
+        if 'MAX_DAILY_LOSS' in account_only:
+            lim['MAX_DAILY_LOSS'] = account_only['MAX_DAILY_LOSS']
     inputs['limits'] = {kind: str(row['value']) for kind, row in lim.items()}
     evaluated = {}
     inputs['evaluated_limits'] = evaluated
@@ -387,6 +393,18 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
             inputs.update({'equity': str(eq['equity']), 'drawdown_pct': str(eq['drawdown_pct']), 'day_loss': str(loss)})
             over('MAX_DAILY_LOSS', loss, 'loss today')
             over('MAX_DRAWDOWN_PCT', eq['drawdown_pct'], 'drawdown %')
+        if run_loss_limits and deployment:
+            from . import governance
+            row = run_loss_limits['MAX_DAILY_LOSS']
+            ids = [deployment['id']] if row['scope'] == 'DEPLOYMENT' else [r['id'] for r in db.execute(
+                'SELECT id FROM cfg_deployments WHERE strategy_id=%s AND account_id=%s', (str(deployment['strategy_id']), str(order['account_id']))).fetchall()]
+            run_loss = governance.run_day_loss(db, ids, order['account_id'])
+            inputs['run_day_loss'] = str(run_loss)
+            threshold = D(row['value'])
+            evaluated['MAX_DAILY_LOSS_RUN'] = {'value': str(run_loss), 'threshold': str(threshold), 'breached': run_loss > threshold,
+                                               'scope': row['scope'], 'limit_id': row['id']}
+            if run_loss > threshold:
+                reasons.append(f"MAX_DAILY_LOSS: {row['scope'].lower()} loss today {run_loss.normalize()} > limit {threshold.normalize()} ({row['scope'].lower()})")
         if any(k in lim for k in money_kinds):
             if quote is not None:
                 rate = fx_rate(db, ins.get('quote_currency'), eq['currency'])
@@ -501,7 +519,32 @@ def auto_stop(db, now: datetime) -> list[dict]:
                 for d in db.execute("SELECT id FROM cfg_deployments WHERE account_id=%s AND mode='PAPER'", (str(aid),)).fetchall():
                     if not engaged(db, {'DEPLOYMENT': str(d['id'])}):
                         engaged_now.append(engage('risk-engine', KillIn(scope='DEPLOYMENT', target_id=d['id'], reason=text), automatic=True, db=db))
+    engaged_now += _auto_stop_runs(db)
     return engaged_now
+
+
+def _auto_stop_runs(db) -> list[dict]:
+    """Daily-loss limits set on a strategy or a run stop only the runs that made the loss: a kill switch on each of
+    them (per account), released by a person. Other strategies and accounts keep trading."""
+    from . import governance
+    out = []
+    for r in db.execute("SELECT * FROM risk_limits WHERE enabled AND kind='MAX_DAILY_LOSS' AND scope IN ('STRATEGY','DEPLOYMENT')").fetchall():
+        col = 'strategy_id' if r['scope'] == 'STRATEGY' else 'id'
+        groups: dict[str, list] = {}
+        for d in db.execute(f'SELECT id, account_id FROM cfg_deployments WHERE {col}=%s', (str(r['target_id']),)).fetchall():
+            groups.setdefault(str(d['account_id']), []).append(str(d['id']))
+        for aid, ids in groups.items():
+            if all(engaged(db, {'DEPLOYMENT': i}) for i in ids):
+                continue
+            loss = governance.run_day_loss(db, ids, aid)
+            if loss <= D(r['value']):
+                continue
+            code = db.execute('SELECT code FROM cfg_accounts WHERE id=%s', (aid,)).fetchone()['code']
+            text = f"{r['scope'].lower()} loss today {loss:.2f} on {code} above the limit {D(r['value']).normalize()}"
+            for i in ids:
+                if not engaged(db, {'DEPLOYMENT': i}):
+                    out.append(engage('risk-engine', KillIn(scope='DEPLOYMENT', target_id=UUID(i), reason=text[:500]), automatic=True, db=db))
+    return out
 
 
 def decisions(db, limit: int = 200, approved: bool | None = None, *,

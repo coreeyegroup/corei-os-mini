@@ -7,7 +7,7 @@ research of one or all signals: IC, hit rate, quintiles); the strategy monitor; 
 execute / decline a waiting decision, execution policy per deployment); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
-dispatcher status); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
+dispatcher status); governance (strategy evidence, risk-minimum profiles, presets, timeframe copies); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
 attribution; VaR, stress scenarios, margin; optimisation and walk-forward, drift; post-trade reconciliation and breaks,
 broker book, TCA, trade journal, statements, order audit trail and CSV exports.
 Roles: signed-in operators read; Trading operations places tickets, manual signals, flattens, cancels and engages
@@ -30,7 +30,7 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, current_user, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var, workspace_control as desks, workspaces)
+                      signal_library, strategy_health, var, workspace_control as desks, workspaces, governance)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -121,6 +121,47 @@ def workspace_scan_action(number: int, run_id: UUID, action: Literal['cancel', '
     _no_store(response)
     with store.transaction('write') as db:
         return _j(workspaces.scan_action(db, user, number, run_id, action))
+
+
+# ----- governance: strategy evidence and risk minimums (profiles: none / retail / professional / institutional) -----
+
+@router.get('/governance')
+def governance_policies(response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'strategy_evidence': governance.evidence_policy(db), 'risk_minimum': governance._public_risk(governance.risk_policy(db)),
+                   'profiles': {'strategy_evidence': governance.EVIDENCE_PROFILES, 'risk_minimum': governance.RISK_PROFILES,
+                                'demo_needed': {k: [list(g) for g in v] for k, v in governance.DEMO_NEEDED.items()}},
+                   'demo_unmet': governance.demo_unmet(db)})
+
+
+@router.put('/governance/{key}')
+def governance_set(key: Literal['strategy_evidence', 'risk_minimum'], payload: governance.PolicyIn, response: Response,
+                   user: Principal = Depends(_risk)):
+    _no_store(response)
+    return _j(governance.set_policy(user.username, key, payload))
+
+
+@router.get('/strategy-versions/{version_id}/evidence')
+def version_evidence(version_id: UUID, response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(governance.evidence(db, version_id))
+
+
+@router.post('/strategies/clone-timeframe', status_code=201)
+def strategy_clone_timeframe(payload: governance.CloneIn, response: Response, user: Principal = Depends(_ops)):
+    _no_store(response)
+    return _j(governance.clone_to_timeframe(user.username, payload))
+
+
+@router.post('/risk/presets')
+def risk_preset(payload: governance.PresetIn, response: Response, user: Principal = Depends(current_user)):
+    """dry_run: what the profile would set (anyone); otherwise create or tighten the account's limits (Risk approver)."""
+    _no_store(response)
+    if not payload.dry_run and not user.has('RISK_APPROVER'):
+        raise HTTPException(403, 'Applying limits needs the Risk approver role.')
+    return _j(governance.apply_preset(user.username, payload))
 
 
 # ----- workspace control desks: shared Input → Processing → Output with Start / Pause / Stop -----
