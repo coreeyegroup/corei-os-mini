@@ -28,6 +28,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const calls=[];
  let savedWorkspaces=null;
  let deskScan=null;
+ let mappedStatus='ACTIVE';
  let largeScanCatalog=false;
  let beyondRegistryLimit=false;
  let brokerSymbolCollected=false;
@@ -288,7 +289,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/config/strategies'))return ok({items:[...registeredStrategies,
      ...(largeScanCatalog?Array.from({length:100},(_,i)=>({id:'batch-strategy-'+i,code:'BATCH_STRAT_'+i,status:'ACTIVE'})):[])
    ]});
-   if(url.includes('/config/deployments'))return ok({items:[{id:'mapped-eur',strategy_code:'EMA_EXISTING',instrument_symbol:'EURUSD',instrument_id:'i1',account_id:'a1',account_code:'VTM_A',environment:'DEMO',mode:'PAPER',status:'ACTIVE',version:3,version_number:1,data_symbol:'EURUSD',data_connection_code:'DEMO',trading_symbol:'EURUSD',blockers:[],sizing:{method:'FIXED_QTY',quantity:'0.1'},execution:{handoff:'APPROVE',order_type:'MARKET'}}]});
+   if(url.endsWith('/config/deployments/mapped-eur/pause')&&method==='POST'){mappedStatus='PAUSED';return ok({id:'mapped-eur',status:mappedStatus});}
+    if(url.includes('/config/deployments'))return ok({items:[{id:'mapped-eur',strategy_code:'EMA_EXISTING',instrument_symbol:'EURUSD',instrument_id:'i1',account_id:'a1',account_code:'VTM_A',environment:'DEMO',mode:'PAPER',status:mappedStatus,version:3,version_number:1,data_symbol:'EURUSD',data_connection_code:'DEMO',trading_symbol:'EURUSD',blockers:[],sizing:{method:'FIXED_QTY',quantity:'0.1'},execution:{handoff:'APPROVE',order_type:'MARKET'}}]});
    if(url.includes('/intel/overview'))return ok({covered:3});
    if(url.endsWith('/config/overview'))return ok({user:{username:'risk-ops',roles:['ADMIN']},feeds:{active_plans:2,collectors:1,live:1,problems:0,paused:false},order_sending:[{environment:'DEMO',enabled:false}],
      approvals:0,attention:[],setup:{done:3,total:6,next:null,steps:[]}});
@@ -615,6 +617,27 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
   assert.ok(deskWrites.some(c=>c.url.includes('/workspaces/')&&c.url.endsWith('/scan')));
   assert.ok(deskWrites.every(c=>c.url.includes('/trading/workspaces')),'desk scan must not write other settings or runtime');
   console.log('PASS: saved desk scan start, stop and resume only touch workspace endpoints.');
+  const mappedFilter=$$('.mw-account-choice input');
+  assert.equal(mappedFilter.length,2);
+  mappedFilter[1].click();await settle(4);
+  assert.match($('.mw-mapping').textContent,/No existing deployment matches/);
+  mappedFilter[1].click();await settle(4);
+  assert.ok(button('Inspect mapped deployment'));
+  mappedFilter[0].click();await settle(4);
+  button('Save workspaces').click();await settle(6);
+  assert.deepEqual(savedWorkspaces.items.find(d=>d.number===savedWorkspaces.active).mapping_accounts,['a1']);
+  const actionStart=calls.length;
+  promptAnswer='review this mapped deployment';w.confirm=()=>false;
+  button('Pause existing deployment').click();await settle(4);
+  assert.equal(calls.slice(actionStart).filter(c=>c.method!=='GET').length,0,'declining shared action must not write');
+  w.confirm=()=>true;
+  button('Pause existing deployment').click();await settle(8);
+  const actionWrites=calls.slice(actionStart).filter(c=>c.method!=='GET');
+  assert.equal(actionWrites.length,1);
+  assert.ok(actionWrites[0].url.endsWith('/config/deployments/mapped-eur/pause'));
+  assert.deepEqual(actionWrites[0].body,{version:3,reason:'review this mapped deployment'});
+  assert.match($('.mw-mapping').textContent,/PAUSED/);
+  console.log('PASS: account filter persists in the desk; explicit shared deployment action targets only its ID.');
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');
