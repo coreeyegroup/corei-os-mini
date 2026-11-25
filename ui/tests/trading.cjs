@@ -27,6 +27,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    outcome:'PENDING',signal_side:'BUY',target:'LONG',created_at:now,bar_time:now};
  const calls=[];
  let savedWorkspaces=null;
+ let deskScan=null;
  let largeScanCatalog=false;
  let beyondRegistryLimit=false;
  let brokerSymbolCollected=false;
@@ -191,7 +192,17 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      savedWorkspaces={...body,revision:body.revision+1};return ok(savedWorkspaces);
    }
    if(url.endsWith('/trading/workspaces'))return ok(savedWorkspaces);
-   if(/\/trading\/workspaces\/\d+\/scan$/.test(url))return ok(null);
+   if(/\/trading\/workspaces\/\d+\/scan$/.test(url)){
+      if(method==='POST'){
+        const desk=savedWorkspaces.items.find(d=>url.endsWith('/'+d.number+'/scan'));
+        deskScan={id:'desk-scan',status:'QUEUED',total:desk.scan.instrument_symbols.length*desk.scan.strategy_codes.length,
+          instruments:desk.scan.instrument_symbols,strategies:desk.scan.strategy_codes,created_at:now,updated_at:now};
+      }
+      return ok(deskScan);
+    }
+    if(url.endsWith('/scan/desk-scan/cancel')){deskScan={...deskScan,status:'CANCELLED'};return ok(deskScan);}
+    if(url.endsWith('/scan/desk-scan/resume')){deskScan={...deskScan,status:'QUEUED'};return ok(deskScan);}
+    if(url.includes('/scan-runs/desk-scan/results?'))return ok({items:[],has_more:false});
     if(url.endsWith('/trading/workspaces/catalogue'))return ok({
      accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
      instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
@@ -576,6 +587,26 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: workspace panels expand independently and copied workspace URLs restore the selected workspace and panels.');
 
  console.log('PASS: numbered workspace layouts, separate market and execution accounts, LIVE order evidence and scoped ticket handoff.');
+  const scanStart=calls.length;
+  await settle(4);
+  $('.mw-picker').forEach(p=>{p.open=true;});
+  const pickers=$('.mw-picker');
+  pickers[0].querySelector('input[type=checkbox]').click();await settle(3);
+  pickers[1].querySelector('input[type=checkbox]').click();await settle(3);
+  assert.ok(button('Start scan').disabled,'unsaved scan settings cannot run');
+  button('Save control settings').click();await settle(6);
+  assert.ok(!button('Start scan').disabled,'saved valid scan is available');
+  button('Start scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/QUEUED/);
+  button('Stop scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/CANCELLED/);
+  button('Resume saved scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/QUEUED/);
+  button('Stop scan').click();await settle(6);
+  const deskWrites=calls.slice(scanStart).filter(c=>c.method!=='GET');
+  assert.ok(deskWrites.some(c=>c.url.includes('/workspaces/')&&c.url.endsWith('/scan')));
+  assert.ok(deskWrites.every(c=>c.url.includes('/trading/workspaces')),'desk scan must not write other settings or runtime');
+  console.log('PASS: saved desk scan start, stop and resume only touch workspace endpoints.');
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');

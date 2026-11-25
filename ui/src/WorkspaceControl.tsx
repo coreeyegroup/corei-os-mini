@@ -77,8 +77,8 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
     <div className="mw-control-grid">
       <fieldset disabled={locked}><legend>01 · Inputs</legend>
         <Picker label="Instruments" items={instruments} selected={c.instrument_symbols} code="symbol" disabled={locked} change={v=>patch({instrument_symbols:v})}/>
-        <label>Data source <strong>Auto · collection plans</strong></label>
-        <label>Timeframe <strong>Approved strategy version</strong></label>
+        <label>Scan data source <strong>Auto · mapped collection plans</strong></label>
+        <label>Scan timeframe <strong>Latest approved strategy version</strong></label>
         <div className="mw-actions"><button onClick={()=>goto('Market data','plans')}>Collection plans ↗</button><button onClick={reloadUniverse}>Refresh universe</button></div>
       </fieldset>
       <fieldset disabled={locked}><legend>02 · Processing</legend>
@@ -100,7 +100,7 @@ export default function WorkspaceControl({number,name,config,revision,dirty,savi
     </div>
     <Msg error={error||universeError||runError||resultError}/>
     {dirty&&<p className="cfg-note">Save workspace changes before starting.</p>}
-    {universe&&!eligible&&<p className="cfg-note">Select available instruments and strategies, and valid protection settings.</p>}
+    {universe&&!eligible&&<p className="cfg-note">Select available instruments and strategies, and valid protection settings. Clear unavailable saved selections if the registry changed.</p>}
     {check&&<div className="mw-readiness" role="status"><strong>Readiness: {check.ready} / {check.requested} · {when(check.checked_at)}</strong>
       <details><summary>Sources and blocked checks</summary>{(check.items??[]).map((i:Row)=><p key={i.instrument}>{i.instrument} · {i.ready} ready · {i.blocked} blocked · {(i.sources??[]).join(', ')} · {Object.entries(i.reasons??{}).map(([r,n])=>r+': '+n).join('; ')}</p>)}</details></div>}
     {current&&<section className="mw-scan-results">

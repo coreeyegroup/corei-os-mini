@@ -81,7 +81,7 @@ def save_layouts(db, username, data: Layouts):
 
 
 def _scan_key(number):
-    return f'trading-workspace-scan.v1:{number}'
+    return f'trading-workspace-scan.v1.{number}'
 
 
 def _saved_workspace(db, username, number, lock=False):

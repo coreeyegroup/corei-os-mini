@@ -87,8 +87,17 @@ class Trading(tmd.MarketData):
         self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/cancel"))['status'], 'CANCELLED')
         self.assertEqual(self.ok(self.alice.get(second))['status'], 'QUEUED')
         self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/resume"))['status'], 'QUEUED')
+        from corei_os_mini import strategy_scan_runs
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertEqual(self.ok(self.alice.get(path))['status'], 'COMPLETED')
+        self.assertEqual(self.ok(self.alice.get(second))['status'], 'COMPLETED')
+        results = self.ok(self.alice.get(f"/api/trading/studio/scan-runs/{job['id']}/results"))
+        self.assertEqual(len(results['items']), 1)
+        self.assertEqual(results['items'][0]['instrument_symbol'], 'EURUSD')
         self.assertEqual(self.ok(self.alice.get('/api/trading/settings')), before)
         self.assertEqual(self.ok(self.alice.get('/api/trading/orders'))['items'], [])
+        self.assertEqual(self.ok(self.alice.get('/api/trading/signals'))['items'], [])
 
     def test_paper_trade_end_to_end(self):
         connection, (a, _b, _c), instrument = self.setup_accounts()
