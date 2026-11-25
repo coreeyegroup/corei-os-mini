@@ -288,7 +288,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/config/strategies'))return ok({items:[...registeredStrategies,
      ...(largeScanCatalog?Array.from({length:100},(_,i)=>({id:'batch-strategy-'+i,code:'BATCH_STRAT_'+i,status:'ACTIVE'})):[])
    ]});
-   if(url.includes('/config/deployments'))return ok({items:[]});
+   if(url.includes('/config/deployments'))return ok({items:[{id:'mapped-eur',strategy_code:'EMA_EXISTING',instrument_symbol:'EURUSD',instrument_id:'i1',account_id:'a1',account_code:'VTM_A',environment:'DEMO',mode:'PAPER',status:'ACTIVE',version:3,version_number:1,data_symbol:'EURUSD',data_connection_code:'DEMO',trading_symbol:'EURUSD',blockers:[],sizing:{method:'FIXED_QTY',quantity:'0.1'},execution:{handoff:'APPROVE',order_type:'MARKET'}}]});
    if(url.includes('/intel/overview'))return ok({covered:3});
    if(url.endsWith('/config/overview'))return ok({user:{username:'risk-ops',roles:['ADMIN']},feeds:{active_plans:2,collectors:1,live:1,problems:0,paused:false},order_sending:[{environment:'DEMO',enabled:false}],
      approvals:0,attention:[],setup:{done:3,total:6,next:null,steps:[]}});
@@ -594,7 +594,11 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
   pickers[0].querySelector('input[type=checkbox]').click();await settle(3);
   pickers[1].querySelector('input[type=checkbox]').click();await settle(3);
   assert.ok(button('Start scan').disabled,'unsaved scan settings cannot run');
-  button('Save control settings').click();await settle(6);
+  assert.ok($('.mw-mapping'),'workspace has a mapped deployment roster');
+  assert.match($('.mw-mapping').textContent,/EMA_EXISTING.*EURUSD.*VTM_A/,'matching existing deployment is shown inside the desk');
+  assert.match($('.mw-mapping').textContent,/APPROVE/,'actual execution handoff is shown');
+  assert.ok(button('Inspect mapped deployment'),'exact deployment evidence can be opened in the same workspace');
+  button('Save workspaces').click();await settle(6);
   assert.ok(!button('Start scan').disabled,'saved valid scan is available');
   button('Start scan').click();await settle(6);
   assert.match($('.mw-control').textContent,/QUEUED/);
