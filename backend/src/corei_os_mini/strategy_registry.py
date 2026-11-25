@@ -463,6 +463,9 @@ def transition(deployment_id: UUID, action: Literal['activate', 'pause', 'end'],
                 raise HTTPException(422, 'Resolve these before activating: ' + ', '.join(b.replace('_', ' ').lower() for b in structural) + '.')
             if current['environment'] == 'LIVE' and before['proposed_by'] == user.username:
                 raise HTTPException(422, 'On LIVE accounts a different person must activate the deployment than the one who proposed it.')
+            from .trading import setup_gates
+            setup_gates.enforce(db, 'activating a deployment', 'PAPER' if before['mode'] == 'PAPER' else current['environment'],
+                                accounts=[before['account_id']], instruments=[before['instrument_id']], strategies=[before['strategy_id']])
             if current['environment'] == 'LIVE' and before['mode'] == 'BROKER':
                 from .trading import governance
                 gap = governance.live_evidence_gap(db, before['strategy_version_id'])

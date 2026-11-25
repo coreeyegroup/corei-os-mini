@@ -119,6 +119,7 @@ class Governance(te.Execution):
     def test_demo_switch_needs_minimum_limits_and_presets_never_loosen(self):
         _c, a, _b, _ins = self.real_account('DEMO')
         self.policy('risk_minimum', 'PROFESSIONAL')
+        self.ok(self.alice.put('/api/trading/setup/policy', json={'preset': 'ALL_OFF', 'levels': {'DEMO': {'RISK': 'SOFT'}}, 'reason': 'risk gate on'}))
         self.ok(self.alice.post('/api/operator/reauth', json={'password': tmd.PASSWORD}))
         ctl = {c['environment']: c for c in self.ok(self.alice.get('/api/config/execution-controls'))['items']}['DEMO']
         on = {'trading_enabled': True, 'reason': 'Start demo', 'version': ctl['version'], 'confirm_environment': 'DEMO'}
@@ -175,16 +176,17 @@ class Governance(te.Execution):
     def test_desk_says_before_start_when_limits_are_missing_or_size_is_refused(self):
         connection, a, _b, ins = self.real_account('DEMO')
         self.policy('risk_minimum', 'PROFESSIONAL')
+        self.ok(self.alice.put('/api/trading/setup/policy', json={'preset': 'ALL_OFF', 'levels': {'DEMO': {'RISK': 'SOFT'}}, 'reason': 'risk gate on'}))
         self.sending('DEMO')
         s, v = self.version()
         self.approve(v)
         cfg = {'input': {'sources': [connection['id']], 'instruments': [ins['id']]}, 'processing': {'strategies': [{'strategy_id': s['id']}]},
                'output': {'environment': 'DEMO', 'accounts': [a['id']]}}
         plan = self.ok(self.alice.post('/api/trading/desks/plan', json=cfg))
-        self.assertIn('Minimum risk limits are missing', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
+        self.assertIn('Setup gate: Risk (soft)', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
         self.ok(self.alice.post('/api/trading/risk/presets', json={'profile': 'PROFESSIONAL', 'account_id': a['id'], 'equity': '10000', 'reason': 'size the demo'}))
         plan = self.ok(self.alice.post('/api/trading/desks/plan', json=cfg))
-        self.assertNotIn('Minimum risk limits are missing', [c['title'] for c in plan['checks']])
+        self.assertNotIn('Setup gate: Risk (soft)', [c['title'] for c in plan['checks']])
         refused = next(c for c in plan['checks'] if c['title'] == 'Every order would be refused by a risk limit')
         self.assertIn('order value 108', refused['detail'], '1 lot of EURUSD ≈ 108,000 USD > 20,000 (2 × equity)')
         small = {**cfg, 'processing': {**cfg['processing'], 'sizing': {'method': 'FIXED_QTY', 'quantity': '0.1'}}}

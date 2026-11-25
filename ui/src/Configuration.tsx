@@ -9,7 +9,8 @@
 import { VersionEvidence, copyToTimeframe } from './Governance';
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
-import { SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
+import { openSetupItem, SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
+import { SetupGates, SetupHome } from './SetupHome';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -20,8 +21,8 @@ import { SubWorkspace } from './SubWorkspace';
 import { useViewVisible } from './visibility';
 
 export type Row = Record<string, any>;
-type Section = 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
-type Entity = Exclude<Section, 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
+type Section = 'guide' | 'gates' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
+type Entity = Exclude<Section, 'guide' | 'gates' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -29,7 +30,9 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
   RISK_APPROVER: 'Turn order sending on or off', OBSERVER: 'Read configuration and audit log' };
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
-  { id: 'health', label: 'Overview', hint: 'Can each account collect data and trade right now; what to set up next' },
+  { id: 'guide', label: 'Setup path', hint: 'The steps from nothing to a first trade, per track (Paper, DEMO, LIVE): checked from your real data, with what to do next' },
+  { id: 'gates', label: 'Gates & overrides', hint: 'How strictly each step holds actions (off · warn · soft · supervised · hard), scoped time-boxed overrides, the setup report' },
+  { id: 'health', label: 'Readiness per account', hint: 'Can each account collect data and trade right now; what to set up next' },
   { id: 'brokers', label: 'Connectivity', hint: 'Provider › account › server. Select a level to add the next one' },
   { id: 'providers', label: 'Providers', hint: 'Step 1 · who you deal with: broker, exchange, ECN, feed … legal entity, regulator, contacts, exposure' },
   { id: 'accounts', label: 'Accounts', hint: 'Step 2 · the accounts you hold at each provider: login, credentials, permission, the server each uses, readiness' },
@@ -2092,7 +2095,7 @@ function Users({ me }: { me: Session }) {
 export default function Configuration() {
   const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
-  const [section, setSection] = useSection<Section>('Configuration', 'health', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
+  const [section, setSection] = useSection<Section>('Configuration', 'guide', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
   const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
   const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   // The broker's redirect result, shown once: the address is cleaned so a saved link never repeats an old message.
@@ -2155,9 +2158,8 @@ export default function Configuration() {
   return <div className="cfg">
     {/* One compact line: the set-up path in order (also in the side bar; this stays when the side bar is hidden). */}
     <nav className="cfg-nav" aria-label="Setup sections">
-      <button aria-current={row === 'health' ? 'page' : undefined} onClick={() => navigate('health')}><span>Overview</span></button>
       {SETUP_GROUPS.map(([g, items]) => <Fragment key={g}><span className="cfg-nav-group">{g}</span>
-        {items.filter(([id]) => id !== 'users' || user.roles.includes('ADMIN')).map(([id, label]) => <button key={id} aria-current={row === id ? 'page' : undefined} onClick={() => navigate(id)}>
+        {items.filter(([id]) => id !== 'users' || user.roles.includes('ADMIN')).map(([id, label]) => <button key={id} aria-current={row === id ? 'page' : undefined} onClick={() => openSetupItem(id, x => navigate(x))}>
           <span>{label}</span>
           {summary && (id === 'brokers' ? summary.counts?.accounts : summary.counts?.[id]) != null && <small className={id === 'approvals' && summary.counts.approvals > 0 ? 'cfg-live-on' : ''}>{id === 'brokers' ? summary.counts.accounts : summary.counts[id]}</small>}
           {id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}</Fragment>)}
@@ -2171,13 +2173,15 @@ export default function Configuration() {
       {brokerLogin && !loginShown && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
         : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`} <button type="button" className="cfg-link" aria-label="Dismiss" onClick={() => setLoginShown(true)}>✕</button></p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
-      <SubWorkspace view="Configuration" label="Setup" tab={current.id} setTab={id => setSection(id as Section)} initial={['health', 'brokers', 'bridges', 'instruments', 'strategies', 'deployments', 'controls']}
+      <SubWorkspace view="Configuration" label="Setup" tab={current.id} setTab={id => setSection(id as Section)} initial={['guide', 'health', 'brokers', 'instruments', 'strategies', 'controls']}
         items={sections.map(x => ({ id: x.id, label: x.label, hint: x.hint, group: (SETUP_GROUPS.find(([, its]) => its.some(([k]) => k === x.id))?.[0] ?? '').replace(/^\d · /, '') }))}
         render={(id: string) => <Fragment key={id === section && openId.id ? `${id}:${openId.n}` : id}>
           {BROKER_TABS.some(([b]) => b === id) && <nav className="cfg-views" aria-label="Brokers and accounts views">
             {BROKER_TABS.map(([b, label]) => <button key={b} aria-current={id === b ? 'page' : undefined} onClick={() => navigate(b)}><span>{label}</span>
               {summary && b !== 'brokers' && <small>{summary.counts?.[b]}</small>}</button>)}</nav>}
-          {id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
+          {id === 'guide' ? <SetupHome />
+        : id === 'gates' ? <SetupGates me={user.username} roles={user.roles} />
+        : id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
         : id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={id === section ? openId.id : undefined} /></div>
         : id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
-import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, SETUP_GROUPS, setupRowOf, stageSections, type Overview } from './nav';
+import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, openSetupItem, SETUP_GROUPS, setupRowOf, stageSections, type Overview } from './nav';
 import { FlowList } from './Pipeline';
 import { stageOf } from './flow';
 
@@ -94,14 +94,12 @@ function Problems({ overview }: { overview: Overview | null }) {
 
 function SetupTree() {
   const summary = usePoll<Row>('config/summary', 15000);
-  const section = setupRowOf(useCurrent('Configuration') ?? 'health');
+  const section = setupRowOf(useCurrent('Configuration') ?? 'guide');
   const counts = summary?.counts ?? {};
   const countOf = (id: string) => id === 'brokers' ? counts.accounts : counts[id];
   return <>
-    <button className={`sb-row ${section === 'health' ? 'selected' : ''}`} onClick={() => goto('Configuration', 'health')}><span className="sb-grow">Overview</span>
-      {summary && <span className="sb-meta">{summary.counts?.accounts ?? 0} acct</span>}</button>
     {SETUP_GROUPS.map(([g, items]) => <div key={g}><div className="sb-group">{g}</div>
-      {items.map(([id, label]) => <button key={id} className={`sb-row sb-indent ${section === id ? 'selected' : ''}`} onClick={() => goto('Configuration', id)}>
+      {items.map(([id, label]) => <button key={id} className={`sb-row sb-indent ${section === id ? 'selected' : ''}`} onClick={() => openSetupItem(id, x => goto('Configuration', x))}>
         <span className="sb-grow">{label}</span>{countOf(id) != null && <span className={`sb-meta ${id === 'approvals' && countOf(id) ? 'warn' : ''}`}>{countOf(id)}</span>}
         {id === 'controls' && summary && <span className="sb-meta">{(summary.execution_controls ?? []).map((c: Row) => `${c.environment} ${c.trading_enabled ? 'ON' : 'off'}`).join(' · ')}</span>}
       </button>)}</div>)}

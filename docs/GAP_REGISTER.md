@@ -306,3 +306,21 @@ Evidence: `backend/tests/test_governance.py`, `ui/tests/trading.cjs` (risk profi
 | R5 | Net exposure and correlation across workspaces | OPEN — proposal | — |
 | R6 | Second approver for LIVE limit changes | OPEN — proposal (four-eyes exists for LIVE configuration) | — |
 | R2b | Workspace-scope limits | OPEN — proposal (strategy and run scopes exist) | — |
+
+## K. Setup: systematic flow, gates and menus — 26 Nov 2026 (release 0.59.0)
+
+Source: the owner's request for clarity ("all features but no systematic flow") and the final design (DEC-103).
+Evidence: `backend/tests/test_setup_gates.py`, `ui/tests/configuration.cjs` (setup path, menus, override, gate levels). Migration `050_setup_gates.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| SU-1 | No order and no "done" in Setup | DONE 0.59.0 (8 computed steps per track, next step, Do it) | test_status_is_computed_per_track |
+| SU-2 | Safety steps could be skipped (orders on, no limits) | DONE 0.59.0 (gates at order sending, activation, workspace; hard at dispatch) | test_soft_gate_blocks_until_fixed_or_overridden; test_activation_and_workspace_plan_honour_the_gates |
+| SU-3 | No controlled bypass | DONE 0.59.0 (soft / supervised / hard; scoped, time-boxed, revocable overrides) | test_supervised_needs_a_second_person_and_hard_takes_none; test_account_override_covers_only_that_account |
+| SU-4 | Gate changes uncontrolled | DONE 0.59.0 (Admin / Risk approver, reason; LIVE loosening needs a second person) | test_loosening_live_waits_for_a_second_person |
+| SU-5 | No landing and no setup indicator | DONE 0.59.0 (landing on Setup until the target track is set up; header chip) | test_landing_until_the_target_track_is_complete |
+| SU-6 | Menus not in work order; duplicate homes | DONE 0.59.0 (8 ordered groups; stage-owned items are links) | configuration.cjs |
+| SU-7 | Setup report for audit | DONE 0.59.0 (state per track, overrides, last 200 gate decisions; print) | test_landing_until_the_target_track_is_complete |
+| SU-8 | Alert-channel test delivery as part of step 1 | OPEN — step 1 checks an active channel; proof of a delivered test is a proposal | — |
+| SU-9 | Market-data history depth in step 4 | OPEN — history is checked by the evidence profile (step 6); a depth check per plan is a proposal | — |
+| SU-10 | Choosing the target track in the screen | OPEN — set by API today (default DEMO); a selector is a small follow-up | — |

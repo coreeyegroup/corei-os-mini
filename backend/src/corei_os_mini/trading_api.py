@@ -7,7 +7,7 @@ research of one or all signals: IC, hit rate, quintiles); the strategy monitor; 
 execute / decline a waiting decision, execution policy per deployment); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
-dispatcher status); governance (strategy evidence, risk-minimum profiles, presets, timeframe copies); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
+dispatcher status); setup gates and overrides; governance (strategy evidence, risk-minimum profiles, presets, timeframe copies); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
 attribution; VaR, stress scenarios, margin; optimisation and walk-forward, drift; post-trade reconciliation and breaks,
 broker book, TCA, trade journal, statements, order audit trail and CSV exports.
 Roles: signed-in operators read; Trading operations places tickets, manual signals, flattens, cancels and engages
@@ -30,7 +30,7 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, current_user, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var, workspace_control as desks, workspaces, governance)
+                      signal_library, strategy_health, var, workspace_control as desks, workspaces, governance, setup_gates)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -121,6 +121,77 @@ def workspace_scan_action(number: int, run_id: UUID, action: Literal['cancel', '
     _no_store(response)
     with store.transaction('write') as db:
         return _j(workspaces.scan_action(db, user, number, run_id, action))
+
+
+# ----- setup: eight gates per track (Paper, DEMO, LIVE), levels from off to hard, scoped and time-boxed overrides -----
+
+class _Reason(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.get('/setup')
+def setup_status(response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(setup_gates.status(db))
+
+
+@router.get('/setup/landing')
+def setup_landing(response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(setup_gates.landing(db, user))
+
+
+@router.get('/setup/report')
+def setup_report(response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(setup_gates.report(db))
+
+
+@router.put('/setup/policy')
+def setup_policy(payload: setup_gates.PolicyIn, response: Response, user: Principal = Depends(current_user)):
+    """Gate levels: Administrator or Risk approver; loosening a LIVE gate waits for a second person."""
+    _no_store(response)
+    if not user.has('ADMIN', 'RISK_APPROVER'):
+        raise HTTPException(403, 'Changing gate levels needs Administrator or Risk approver.')
+    return _j(setup_gates.set_policy(user.username, payload))
+
+
+@router.post('/setup/policy/approve')
+def setup_policy_approve(payload: _Reason, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    if not user.has('ADMIN', 'RISK_APPROVER'):
+        raise HTTPException(403, 'Approving gate levels needs Administrator or Risk approver.')
+    return _j(setup_gates.approve_pending(user.username, payload.reason))
+
+
+@router.post('/setup/policy/reject')
+def setup_policy_reject(payload: _Reason, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    if not user.has('ADMIN', 'RISK_APPROVER'):
+        raise HTTPException(403, 'Rejecting gate levels needs Administrator or Risk approver.')
+    return _j(setup_gates.reject_pending(user.username, payload.reason))
+
+
+@router.post('/setup/overrides', status_code=201)
+def setup_override(payload: setup_gates.OverrideIn, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    return _j(setup_gates.request_override(user, payload))
+
+
+@router.post('/setup/overrides/{override_id}/approve')
+def setup_override_approve(override_id: UUID, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    return _j(setup_gates.approve_override(user, override_id))
+
+
+@router.post('/setup/overrides/{override_id}/revoke')
+def setup_override_revoke(override_id: UUID, payload: _Reason, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    return _j(setup_gates.revoke_override(user, override_id, payload.reason))
 
 
 # ----- governance: strategy evidence and risk minimums (profiles: none / retail / professional / institutional) -----

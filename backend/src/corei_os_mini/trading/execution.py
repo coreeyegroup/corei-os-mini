@@ -83,7 +83,12 @@ def gate(db, o: dict) -> tuple[str | None, list[str]]:
         policy = readiness.live_policy(db)
         if not policy['ok'] and readiness.adds_risk(db, o):
             reasons.append('LIVE_POLICY_UNMET: ' + '; '.join(u['detail'] for u in policy['unmet'])[:900])
-    elif env == 'DEMO':
+    if env in ('DEMO', 'LIVE'):
+        from . import readiness, setup_gates
+        hard = setup_gates.hard_reason(db, env, o['account_id']) if readiness.adds_risk(db, o) else None
+        if hard:
+            reasons.append(hard)
+    if env == 'DEMO':
         from . import governance, readiness
         if governance.risk_policy(db)['enforce_demo_at_dispatch'] and readiness.adds_risk(db, o):
             unmet = governance.demo_unmet(db, [o['account_id']])

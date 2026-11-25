@@ -32,8 +32,24 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
+const setupOverrides=[],setupPolicyPuts=[];
+const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
+const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
+  policy:{preset:'RECOMMENDED',custom:{},target_track:'DEMO',default_hours:24,max_hours:{PAPER:168,DEMO:168,LIVE:24},
+    levels:{PAPER:{PEOPLE:'OFF',ACCOUNTS:'WARN',SYMBOLS:'SOFT',MARKET_DATA:'WARN',EVIDENCE:'WARN'},DEMO:{PEOPLE:'WARN',ACCOUNTS:'SOFT',SYMBOLS:'SOFT',MARKET_DATA:'SOFT',RISK:'SOFT',EVIDENCE:'SOFT',PAPER_RECORD:'WARN'},
+      LIVE:{PEOPLE:'SUPERVISED',ACCOUNTS:'HARD',SYMBOLS:'HARD',MARKET_DATA:'SUPERVISED',RISK:'SUPERVISED',EVIDENCE:'SUPERVISED',PAPER_RECORD:'SUPERVISED'}}},
+  tracks:{PAPER:{done:5,total:5,complete:true,next:null,gates:[gate('ACCOUNTS',1,'Brokers and accounts','DONE','WARN',[])]},
+    DEMO:{done:1,total:3,complete:false,next:{gate:'RISK',name:'Risk',text:'ICM_DEMO has no MAX_DAILY_LOSS limit (firm or account).',fix:'Risk › Limits › Size limits from a profile.',goto:{view:'Risk',section:'limits'}},
+      gates:[gate('ACCOUNTS',1,'Brokers and accounts','DONE','SOFT',[]),
+        gate('RISK',2,'Risk','BLOCKED','SOFT',[{gate:'RISK',text:'ICM_DEMO has no MAX_DAILY_LOSS limit (firm or account).',fix:'Risk › Limits',account_id:'acc-1',account:'ICM_DEMO',goto:{view:'Risk',section:'limits'}}]),
+        gate('ORDER_SENDING',3,'Order sending','OPEN','INFO',[{gate:'ORDER_SENDING',text:'DEMO order sending is off.',fix:'Settings › Order sending',goto:{view:'Configuration',section:'controls'}}])]},
+    LIVE:{done:0,total:1,complete:false,next:null,gates:[gate('PEOPLE',1,'People and alerts','BLOCKED','SUPERVISED',[{gate:'PEOPLE',text:'Only 1 person can approve.',fix:'Add a second approver.',goto:{view:'Configuration',section:'users'}}])]}}});
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
+   if(url.endsWith('/trading/setup/overrides')&&method==='POST'){const b=JSON.parse(options.body);setupOverrides.push(b);return ok({id:'ov1',...b,approved_at:'2026-11-26T00:00:00Z',expires_at:'2026-11-27T00:00:00Z',requested_by:'risk-ops'},201);}
+   if(url.endsWith('/trading/setup/policy')&&method==='PUT'){setupPolicyPuts.push(JSON.parse(options.body));return ok({pending:null});}
+   if(url.includes('/trading/setup/landing'))return ok({target_track:'DEMO',land_on_setup:true,done:3,total:8,overrides:0,next:null});
+   if(url.includes('/trading/setup'))return ok(setupStatus());
    if(url==='/api/workstation')return ok({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:true,demo_enabled:false,capabilities:[]});
    const me={username:'risk-ops',display_name:'risk-ops',roles:session.roles,must_change_password:session.must};
    if(url.endsWith('/operator/session'))return signedIn?ok(me):fail(401,'Sign in');
@@ -167,7 +183,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const nav=label=>vis('.cfg-nav button').find(b=>b.querySelector('span').textContent===label);
  const tab=label=>vis('.cfg-views button').filter(x=>!x.closest('[hidden]')).find(b=>b.querySelector('span').textContent===label);
  // The three record lists are tabs of the Connect screen (Connectivity): open it, then the tab.
- const open2=async label=>{nav('Connectivity').click();await tick();await tick();tab(label).click();await tick();await tick();};
+ const open2=async label=>{nav('Connectivity map').click();await tick();await tick();tab(label).click();await tick();await tick();};
  const vis=sel=>[...w.document.querySelectorAll(sel)].filter(x=>!x.closest('[hidden]'));
  const visibleFirst=sel=>{const all=[...w.document.querySelectorAll(sel)];return [...all.filter(x=>!x.closest('[hidden]')),...all.filter(x=>x.closest('[hidden]'))];};
  const button=text=>visibleFirst('button').find(b=>b.textContent.trim()===text);
@@ -193,7 +209,27 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.match($('.cfg-user').textContent,/risk-ops/);
  assert.match($('.cfg-nav').textContent,/Order sending/);
  assert.match($('.cfg-user').textContent,/Administrator, Observer, Risk approver, Trading operations/);
- assert.match($('.cfg-head h1').textContent,/Overview/);  // opens on the overview board
+ const qa=sel=>[...w.document.querySelectorAll(sel)];
+ assert.match($('.cfg-head h1').textContent,/Setup path/);  // opens on the guided path
+ assert.match($('[aria-label="Setup path"]').textContent,/Next step · Risk: ICM_DEMO has no MAX_DAILY_LOSS/);
+ assert.match($('[aria-label="Track"]').textContent,/Broker DEMO 1\/3 · target/);
+ assert.match($('.su-steps').textContent,/✕2 · Risk.*soft.*blocked/);
+ assert.deepEqual([...qa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['1 · Setup','2 · Connect','3 · Markets','4 · Risk','5 · Strategies','6 · Run','7 · Settings','8 · Admin']);
+ const beforeOv=requests.filter(r=>r.method!=='GET').length;
+ w.prompt=()=>'ok';[...qa('.su-items button')].find(b=>/override for ICM_DEMO only/.test(b.textContent)).click();await tick();await tick();
+ assert.equal(requests.filter(r=>r.method!=='GET').length,beforeOv,'a too-short reason asks nothing');
+ assert.match($('[aria-label="Setup path"]').textContent,/a reason of at least 5 characters/);
+ w.prompt=()=>'limits sized after the open';[...qa('.su-items button')].find(b=>/override for ICM_DEMO only/.test(b.textContent)).click();await tick();await tick();
+ assert.deepEqual(setupOverrides[0],{gate:'RISK',track:'DEMO',reason:'limits sized after the open',account_id:'acc-1'},'scoped to one gate, one track, one account');
+ [...qa('.su-tracks button')].find(b=>/LIVE/.test(b.textContent)).click();await tick();await tick();
+ assert.ok([...qa('.su-step button')].some(b=>b.textContent==='Override…'),'a supervised gate can be asked to override');
+ nav('Gates & overrides').click();await tick();await tick();await tick();
+ assert.match($('[aria-label="Gate levels"]').textContent,/Brokers and accounts.*Hard · no override/);
+ fill($('[aria-label="RISK LIVE"]'),'HARD');await tick();
+ w.prompt=()=>'tighten live risk';[...qa('[aria-label="Gate levels"] button')].find(b=>b.textContent==='Save levels').click();await tick();await tick();
+ assert.equal(setupPolicyPuts[0].levels.LIVE.RISK,'HARD');assert.equal(setupPolicyPuts[0].reason,'tighten live risk');
+ console.log('PASS: setup path: next step, eight ordered menus, scoped override with a reason, gate levels saved with a reason.');
+ nav('Readiness per account').click();await tick();await tick();await tick();
  assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
  assert.match($('.cfg-health').textContent,/Next: 1 Broker/);
  console.log('PASS: operator sign-in, forced password change, roles shown, section navigation.');
@@ -491,7 +527,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  $('[aria-label="Close window"]')?.click();await tick();
  console.log('PASS: a FIX connection is created with its session settings and the Data source role.');
  // Connectivity tree: technology › who › server › account; add a who (new ECN + FIX session) in one step; add an account on a server.
- nav('Connectivity').click();await tick();await tick();await tick();
+ nav('Connectivity map').click();await tick();await tick();await tick();
  const rows=()=>vis('.ct-row');const row=t=>rows().find(r=>r.querySelector('.ct-label').textContent===t);
  // Default: provider › account › server; the overview shows the six steps; + Provider opens the one provider form.
  assert.match($('.ct-head').textContent,/Provider › account › server/);
@@ -528,13 +564,13 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(v.connection.platform,'FIX');assert.equal(v.connection.settings.port,443);assert.equal(v.connection.settings.target_comp_id,'LMXBDM');
  const fixAcct=db.accounts.find(x=>x.external_account_id==='LMX-1');assert.ok(fixAcct,'FIX account on its new session');
  $('[aria-label="Close window"]')?.click();await tick();
- nav('Connectivity').click();await tick();await tick();
+ nav('Connectivity map').click();await tick();await tick();
  vis('[aria-label="Expand all"]')[0].click();await tick();
  rows().find(r=>r.classList.contains('ct-conn')&&r.querySelector('.ct-label').textContent==='fix-md.example.net:443').click();await tick();
  vis('.ct-actions button').find(b=>b.textContent==='Add account').click();await tick();await tick();await tick();
  assert.equal($('#cfg-add-account [aria-label="Server"]').value,fixAcct.connection_id,'Add account opens on that server');
  $('[aria-label="Close window"]')?.click();await tick();
- nav('Connectivity').click();await tick();await tick();
+ nav('Connectivity map').click();await tick();await tick();
  vis('.ct-seg button').find(b=>b.textContent==='Provider type').click();await tick();
  vis('[aria-label="Expand all"]')[0].click();await tick();
  assert.ok(row('Broker')&&row(db.providers[0].name),'grouped by provider type');
@@ -619,7 +655,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal($('.fw'),null,'window closes; nothing created yet');
  assert.match($('.cfg-records').textContent,/Sent for approval: New LIVE connection ICM_MT5_LIVE adds address 198\.51\.100\.7:443/);
  assert.ok(!db.connections.some(c=>c.environment==='LIVE'));
- nav('Approvals').click();await tick();await tick();
+ nav('Approvals (four-eyes)').click();await tick();await tick();
  assert.match($('.cfg-requests').textContent,/create connection/);
  button('Approve and apply').click();await tick();await tick();
  assert.ok(db.connections.some(c=>c.environment==='LIVE'));
@@ -661,7 +697,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  console.log('PASS: bridge nodes: a machine is connected with a one-time code and copy-ready commands, then used for accounts in one click.');
 
  // Users (administrator): create a user with roles.
- nav('Users').click();await tick();await tick();
+ nav('Users & roles').click();await tick();await tick();
  assert.match($('.cfg-head h1').textContent,/Users/);
  assert.match($('.cfg-table').textContent,/risk-ops \(you\)/);
  button('New user').click();await tick();

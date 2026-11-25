@@ -1427,3 +1427,24 @@ Migration `049_strategy_risk_governance.sql` (additive). Tests: `backend/tests/t
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+## Setup path, gates and menus — release 0.59.0
+
+Migration `050_setup_gates.sql` (additive). Tests: `backend/tests/test_setup_gates.py`.
+
+- **Setup path.** Setup opens on eight steps for Paper, DEMO and LIVE: people and alerts, accounts, symbols, market
+  data, risk, strategies on evidence, paper record, order sending. Each step is checked from your real data, says what
+  is missing and how to fix it, and has a *Do it* button to the right form. The header shows *Setup DEMO n/8*.
+- **Gates, from flexible to hard.** Under *Gates & overrides* each step has a level per track: off, warn, soft (you
+  override with a reason), supervised (a second person approves the override) or hard (no override). Presets:
+  Recommended, All warn, Strict, All off. Loosening a LIVE level waits for a second person.
+- **Overrides.** One step, one track, optionally one account, for a limited time (24 h by default; at most 24 h on
+  LIVE). They are revocable and audited, and appear in the printable setup report.
+- **Where gates hold.** Switching order sending on, activating a deployment, starting a workspace, and (hard gates) the
+  order dispatcher.
+- **Menus in work order.** 1 Setup · 2 Connect · 3 Markets · 4 Risk · 5 Strategies · 6 Run · 7 Settings · 8 Admin.
+  Market data plans, risk limits, kill switches and workspaces open their own stage pages.
+- **Landing.** Until the DEMO track is set up, opening the workstation without a chosen page starts on the Setup path
+  (once per browser session).
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

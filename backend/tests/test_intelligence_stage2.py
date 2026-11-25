@@ -133,10 +133,12 @@ class EventRisk(unittest.TestCase):
         self.assertEqual(workspace.event_risk('EURUSD', None, None, at, 30, hol, 'FX'), [])
 
 
+# A holiday ten days ahead (IST): the calendar keeps holidays from two days ago, so a fixed date would age out of the test.
+HOL_DAY = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date() + timedelta(days=10)
 HOLIDAYS = {'status': 'success', 'data': [
-    {'date': '2026-11-24', 'description': 'Guru Nanak Jayanti', 'holiday_type': 'TRADING_HOLIDAY', 'closed_exchanges': ['NSE', 'NFO', 'BSE', 'BFO'],
+    {'date': HOL_DAY.isoformat(), 'description': 'Guru Nanak Jayanti', 'holiday_type': 'TRADING_HOLIDAY', 'closed_exchanges': ['NSE', 'NFO', 'BSE', 'BFO'],
      'open_exchanges': [{'exchange': 'MCX', 'start_time': 1, 'end_time': 2}]},
-    {'date': '2026-11-27', 'description': 'Settlement only', 'holiday_type': 'SETTLEMENT_HOLIDAY', 'closed_exchanges': [], 'open_exchanges': []}]}
+    {'date': (HOL_DAY + timedelta(days=3)).isoformat(), 'description': 'Settlement only', 'holiday_type': 'SETTLEMENT_HOLIDAY', 'closed_exchanges': [], 'open_exchanges': []}]}
 
 
 class FakeUpstox(BaseHTTPRequestHandler):
@@ -235,12 +237,12 @@ class Stage2(tmd.MarketData):
         with self.connect() as db:
             rows = db.execute("SELECT currency, source, (at AT TIME ZONE 'Asia/Kolkata')::text AS local FROM intel_events ORDER BY currency").fetchall()
         self.assertEqual([(r['currency'], r['source'], r['local'][:16]) for r in rows],
-                         [('BSE', 'UPSTOX', '2026-11-24 00:00'), ('NSE', 'UPSTOX', '2026-11-24 00:00')])
+                         [('BSE', 'UPSTOX', f'{HOL_DAY} 00:00'), ('NSE', 'UPSTOX', f'{HOL_DAY} 00:00')])
         self.assertEqual(again['added'], 2)                                    # re-import updates in place
         from corei_os_mini.md import collector, store as md_store
         cal = md_store.holidays()
         plan = {'instrument_market': 'NSE_FO', 'broker_symbol': 'NSE_FO|X', 'platform': 'REST_API'}
-        self.assertIn(datetime(2026, 11, 24).date(), collector.plan_holidays(plan, cal), 'Stage 1 closes NSE F&O that day')
+        self.assertIn(HOL_DAY, collector.plan_holidays(plan, cal), 'Stage 1 closes NSE F&O that day')
 
 
 if __name__ == '__main__':

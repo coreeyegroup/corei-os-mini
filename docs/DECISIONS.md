@@ -217,3 +217,32 @@ Decision:
 8. A workspace plan refuses a fixed size that every order would breach (order quantity or order value against the
    limits) and shows the order value it would send.
 Status: accepted.
+
+## DEC-103 · Setup is a computed path with chosen strictness (release 0.59.0, 26 Nov 2026)
+
+Context: the platform had every feature but no systematic flow. Setup listed 17 sections with no order and no "done",
+objects lived in several places, and on 25 Nov order sending was on with zero risk limits. The owner asked for all
+three tracks (Paper, DEMO, LIVE), a production-grade landing, a menu in work order, and enforcement selectable from
+flexible to fully hard, with bypass possible even on LIVE when the firm chooses.
+Decision:
+1. Setup is eight steps per track: people and alerts, brokers and accounts, instruments and symbols, market data,
+   risk, strategies on evidence, paper record, order sending. Each step's status is computed from real data on every
+   read and is never ticked by hand, so a dead feed or a deleted limit reopens its step at once.
+2. Each step on each track has a level: off, warn, soft (the person overrides with a reason), supervised (a second
+   person approves the override) or hard (no override; only changing the level lets it through). The presets are
+   Recommended (Paper light, DEMO soft, LIVE supervised/hard), All warn, Strict and All off (a sandbox).
+3. An override covers one step on one track, optionally one account. It is time-boxed (default 24 h; at most 7 days
+   on Paper and DEMO and 24 h on LIVE by default), revocable, shown in the header and the report, and audited. A hard
+   gate ignores an override granted while it was softer.
+4. The gates are checked when order sending is switched on, when a deployment is activated and in a workspace plan
+   (narrowed to the accounts, instruments and strategies involved). Hard gates are also checked at the order
+   dispatcher (cached 30 s). The pre-LIVE policy and the evidence and risk profiles stay in force; gates decide how
+   strictly their outcome holds an action.
+5. Gate levels are changed by an Administrator or a Risk approver with a reason. Tightening applies at once;
+   loosening a LIVE level (or the LIVE override maximum) waits for a second person.
+6. Landing: until the firm's target track (DEMO by default) is set up, a session opened without a chosen view starts on
+   the Setup path once per browser session. The header shows "Setup DEMO n/8" at all times.
+7. The menu follows the work: 1 Setup, 2 Connect, 3 Markets, 4 Risk, 5 Strategies, 6 Run, 7 Settings, 8 Admin. Each
+   object keeps one home; items owned by a stage (market data plans, risk limits, kill switches, workspaces) are links
+   to that stage, not copies.
+Status: accepted.
