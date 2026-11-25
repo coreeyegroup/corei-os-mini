@@ -157,3 +157,34 @@ Decision:
    the bar they fell in.
 Status: accepted.
 
+
+## DEC-101 · A workspace runs its own runs, and only its own (release 0.57.0, 25 Nov 2026)
+
+Context: My Workspace saved a per-user layout and could launch a read-only scan, but could not run anything. Starting
+real work meant visiting Strategies, Execution and Risk separately, and nothing stopped two desks from driving the
+same strategy on the same account (duplicate orders). The owner asked for one simplified, customisable control desk:
+Input, Processing and Output, then Start, Pause and Stop, then Results. It had to be shared with an owner; Start had to
+offer both "create runs" and "adopt existing deployments"; and nothing already built could be lost.
+Decision:
+1. A control desk (`ws_workspaces`) is shared by default and held by an owner (it can be made private). It stores
+   input (data connections, the first one primary; instruments; timeframes), processing (strategies on approved versions,
+   sizing, protection, decision expiry) and output (environment Observe / Paper / Broker DEMO / LIVE, hand-off,
+   accounts, order type, approval window, stop policy).
+2. A run is a deployment, one per strategy × instrument × account (the existing unique key). The workspace links it as
+   OWNED (it created the run), ADOPTED (an existing deployment, adopted only with explicit confirmation) or WATCH
+   (shown, never controlled). A partial unique index allows one controller per deployment.
+3. Validate lists every check by stage with why and a fix. Start, Resume and Apply follow the Strategies rules: the
+   Risk approver role; structural blockers hold a run; on LIVE the person who starts must differ from the person who
+   last changed the settings. A workspace reads the DEMO and LIVE order-sending controls and never switches them.
+4. Stop first pauses every controlled run (committed), then applies the policy through the OMS: keep everything, cancel
+   working orders, or close positions (closing must be confirmed). An order with an UNKNOWN outcome is never cancelled;
+   it is listed for resolution. Emergency stop engages a deployment-scoped kill switch on each controlled run; the
+   switches are released in Risk.
+5. Changes to a running or paused desk are staged. Review shows running → staged and validates again; Apply converges
+   the runs: it creates new ones, updates the ones it owns, and pauses and releases runs no longer in the settings.
+6. The timeframe stays a property of the strategy version (the deployment key has no timeframe). The desk's timeframes
+   filter which strategies run and show why one is left out. One strategy cannot run on two timeframes on the same
+   account and instrument without a second strategy version.
+7. Saved per-user layouts, their research scan and the deployment mapping remain under "Saved layouts". A layout can
+   be imported into a control desk on request.
+Status: accepted.

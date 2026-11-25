@@ -264,3 +264,23 @@ Evidence: `backend/tests/test_signal_stage3.py`. Migration `047_signal_intellige
 | SI-C9 | Signal horizon fixed at 10 bars for strategy-signal quality | OPEN — per-deployment horizon | — |
 | SI-C10 | Library signals and strategy signals both called "signals" in different stages | OPEN — naming: "Library scores" (Stage 3) vs "Strategy signals" (Stage 4) | — |
 
+
+## I. My Workspace control desk — 25 Nov 2026 (release 0.57.0)
+
+Source: owner request and the approved design (Input / Processing / Output, Start / Pause / Stop, Results; shared with an owner;
+create and adopt). Evidence: `backend/tests/test_workspace_control.py`, `ui/tests/trading.cjs` (control desk scenario). Migration `048_workspace_control.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| WS-1 | A workspace could not run anything (scan only) | DONE 0.57.0 (Start creates owned runs; Observe / Paper / DEMO / LIVE) | test_plan_checks_explain_and_start_creates_owned_runs |
+| WS-2 | Two desks could drive the same strategy × account (duplicate orders) | DONE 0.57.0 (one controller per deployment, database-enforced; others watch) | test_one_controller_per_run_and_adoption_needs_confirmation |
+| WS-3 | Existing deployments could not be brought under a desk | DONE 0.57.0 (adopt with confirmation; unconfirmed are watched, unchanged) | same |
+| WS-4 | No Start / Pause / Stop for a desk; no stop policy | DONE 0.57.0 (keep / cancel orders / close positions with confirmation; UNKNOWN never cancelled) | test_pause_resume_stop_policies_never_touch_unknown |
+| WS-5 | Editing a running desk changed it at once | DONE 0.57.0 (staged → review → apply) | test_staged_changes_apply_only_after_review |
+| WS-6 | No readiness before running | DONE 0.57.0 (Validate: sources, plan health, approved versions, timeframes, accounts, order sending, risk, ownership; live check of unsaved settings) | plan tests; UI scenario |
+| WS-7 | No one-click emergency for a desk | DONE 0.57.0 (deployment-scoped kill switches, audited) | test_emergency_stop_engages_scoped_kill_switches |
+| WS-8 | Layouts were private per user only | DONE 0.57.0 (control desks shared with an owner; optionally private; layouts kept and importable) | test_private_desks_roles_and_results; test_import_saved_layout |
+| WS-9 | Data-source backup does not switch automatically when the primary feed fails | OPEN — the deployment holds one data mapping; failover needs a runtime change (proposal) | — |
+| WS-10 | One strategy on several timeframes for the same account and instrument | OPEN — the deployment key has no timeframe; use a second strategy version (DEC-101 §6) | — |
+| WS-11 | Workspace-level notifications (Telegram, e-mail) | OPEN — alerts are firm-wide today (proposal) | — |
+| WS-12 | Per-desk P&L and schedule (start / stop at session times) | OPEN — proposal | — |

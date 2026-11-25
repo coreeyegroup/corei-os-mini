@@ -6,6 +6,7 @@ import { Msg, useData, when, type Row } from './StageShell';
 import { launchContext, usePublishRoute } from './workspaceLinks';
 import WorkspaceControl, { type ScanConfig } from './WorkspaceControl';
 import WorkspaceMapping from './WorkspaceMapping';
+import DeskControl from './DeskControl';
 import './my-workspaces.css';
 
 const labels = {
@@ -58,7 +59,30 @@ export default function MyWorkspaces({ username, signedOut, loadError, refreshSe
 }) {
   if (signedOut) return <SignIn title="MY WORKSPACES" done={refreshSession} />;
   if (!username) return <section className="my-workspaces"><Msg error={loadError} /><p role="status">Waiting for your operator session…</p></section>;
-  return <SavedWorkspaces key={username} />;
+  return <WorkspaceHome key={username} />;
+}
+
+const TAB_KEY = 'corei-os-mini.my-workspaces.tab';
+function initialTab(): 'desks' | 'layouts' {
+  const section = launchContext(window.location.search).section ?? '';
+  if (/^workspace-\d+$/.test(section)) return 'layouts';
+  if (section === 'desks' || section.startsWith('d-')) return 'desks';
+  try { return window.localStorage.getItem(TAB_KEY) === 'layouts' ? 'layouts' : 'desks'; } catch { return 'desks'; }
+}
+
+/** Control desks (run a workspace: input → processing → output, Start / Pause / Stop) and the saved per-user layouts. */
+function WorkspaceHome() {
+  const [tab, setTabState] = useState(initialTab);
+  const setTab = (t: 'desks' | 'layouts') => { setTabState(t); try { window.localStorage.setItem(TAB_KEY, t); } catch { /* storage may be unavailable */ } };
+  if (tab === 'layouts') return <>
+    <nav className="mw-switch" aria-label="Workspace kind"><button onClick={() => setTab('desks')}>Control desks</button><button aria-current="page">Saved layouts</button></nav>
+    <SavedWorkspaces />
+  </>;
+  return <section className="my-workspaces">
+    <header className="mw-header"><h2>My Workspaces</h2>
+      <small>Choose input, processing and output; Validate; Start, Pause or Stop. Every order still passes the risk check.</small></header>
+    <DeskControl onLayouts={() => setTab('layouts')} />
+  </section>;
 }
 
 function SavedWorkspaces() {

@@ -1372,3 +1372,23 @@ Closes the defects of the 24 Nov 2026 Signal Intelligence audit. Migration `047_
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+## My Workspace control desk — release 0.57.0
+
+A workspace now runs. Migration `048_workspace_control.sql` (additive). Tests: `backend/tests/test_workspace_control.py`.
+
+- **One desk, three columns.** Input (data sources, instruments, timeframes), Processing (approved strategies, sizing,
+  stop and target, decision expiry) and Output (Observe / Paper / Broker DEMO / LIVE, what happens to a decision,
+  accounts, order type, what Stop does). The readiness line checks unsaved settings as you change them.
+- **Validate, Test run, Start, Pause, Stop.** Validate shows every check with why and a fix. A test run is a read-only
+  scan. Start creates runs the workspace owns, and adopts existing deployments only when you tick them; the rest are
+  watched. Stop pauses first, then keeps, cancels working orders, or closes positions (asked again). An order with an
+  unknown outcome is never cancelled blind. Emergency stop puts a kill switch on each of the desk's runs.
+- **Shared, with an owner.** Every operator sees shared desks; one desk controls a run, so two desks can never send
+  duplicate orders. Changes to a running desk are staged, reviewed and applied.
+- **Nothing lost.** The saved layouts, their scan and the deployment mapping are under *Saved layouts*; a layout can be
+  imported into a control desk.
+- **Safety unchanged.** Every order passes the risk check. A desk reads the DEMO / LIVE order-sending switches and never
+  turns them on. Starting needs the Risk approver role; on LIVE, a second person starts.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

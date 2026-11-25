@@ -129,7 +129,7 @@ export async function api(path: string, method = 'GET', body?: unknown, raw?: Bo
       : detail && typeof detail === 'object' && typeof detail.message === 'string'
         ? [detail.message, ...(Array.isArray(detail.unmet) ? detail.unmet.map((u: any) => u.detail) : [])].join(' · ')
       : `Request failed (HTTP ${response.status})`;
-    const error = new ApiError(message); (error as any).status = response.status; throw error;
+    const error = new ApiError(message); (error as any).status = response.status; (error as any).detail = detail; throw error;
   }
   return data;
 }

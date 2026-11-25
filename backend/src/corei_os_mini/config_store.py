@@ -62,6 +62,8 @@ SPECS: dict[str, Spec] = {
 ARCHIVABLE = ('providers', 'connections', 'accounts', 'groups')
 
 UNIQUE_MESSAGES = {
+    'ws_runs_one_controller': 'Another workspace already controls this run. Validate again.',
+    'ws_workspaces_legacy_user_legacy_number_key': 'This layout was already imported.',
     'cfg_providers_code_key': 'A provider with this code already exists.',
     'cfg_connections_code_key': 'A connection with this code already exists.',
     'cfg_accounts_code_key': 'An account with this code already exists.',
