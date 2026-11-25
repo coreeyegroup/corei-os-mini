@@ -44,6 +44,7 @@ class Workspace(WorkspaceModel):
     symbol: str = Field(default='', max_length=200)
     panels: Annotated[list[Panel], Field(min_length=8, max_length=8)]
     scan: WorkspaceScan | None = None
+    mapping_accounts: list[UUID] = Field(default_factory=list)
 
 
 class Layouts(WorkspaceModel):
