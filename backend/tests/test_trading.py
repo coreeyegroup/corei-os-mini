@@ -65,6 +65,40 @@ class Trading(tmd.MarketData):
         dep = self.ok(self.bob.post(f"/api/config/deployments/{dep['id']}/activate", json={'version': dep['version'], 'reason': 'paper test run'}))
         return strat, ver, dep
 
+    def test_workspace_scan_is_scoped_and_read_only(self):
+        connection, (a, _b, _c), instrument = self.setup_accounts()
+        self.start(self.plan(a, instrument, 'EU_M5'))
+        self.deploy(connection, a, instrument, sizing={'method': 'FIXED_QTY', 'quantity': '0.10'})
+        panels = [{'id': key} for key in ('market','intelligence','signals','strategy','risk','execution','portfolio','posttrade')]
+        scan = {'instrument_symbols': ['EURUSD'], 'strategy_codes': ['EMA_FAST']}
+        layout = {'revision': 0, 'next_number': 3, 'active': 1, 'items': [
+            {'number': n, 'name': f'Desk {n}', 'mode': 'PAPER', 'timeframe': 'M5', 'panels': panels, 'scan': scan}
+            for n in (1, 2)]}
+        saved = self.ok(self.alice.put('/api/trading/workspaces', json=layout))
+        before = self.ok(self.alice.get('/api/trading/settings'))
+        path, second = '/api/trading/workspaces/1/scan', '/api/trading/workspaces/2/scan'
+        job = self.ok(self.alice.post(path, json={'revision': saved['revision']}), 202)
+        self.assertEqual(self.ok(self.alice.get(path))['id'], job['id'])
+        self.assertEqual(self.alice.post(path, json={'revision': saved['revision']}).status_code, 409)
+        other = self.ok(self.alice.post(second, json={'revision': saved['revision']}), 202)
+        self.assertNotEqual(job['id'], other['id'])
+        self.assertEqual(self.alice.post(f"{second}/{job['id']}/cancel").status_code, 409)
+        self.assertEqual(self.bob.get(path).status_code, 404)
+        self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/cancel"))['status'], 'CANCELLED')
+        self.assertEqual(self.ok(self.alice.get(second))['status'], 'QUEUED')
+        self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/resume"))['status'], 'QUEUED')
+        from corei_os_mini import strategy_scan_runs
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertEqual(self.ok(self.alice.get(path))['status'], 'COMPLETED')
+        self.assertEqual(self.ok(self.alice.get(second))['status'], 'COMPLETED')
+        results = self.ok(self.alice.get(f"/api/trading/studio/scan-runs/{job['id']}/results"))
+        self.assertEqual(len(results['items']), 1)
+        self.assertEqual(results['items'][0]['instrument_symbol'], 'EURUSD')
+        self.assertEqual(self.ok(self.alice.get('/api/trading/settings')), before)
+        self.assertEqual(self.ok(self.alice.get('/api/trading/orders'))['items'], [])
+        self.assertEqual(self.ok(self.alice.get('/api/trading/signals'))['items'], [])
+
     def test_paper_trade_end_to_end(self):
         connection, (a, _b, _c), instrument = self.setup_accounts()
         self.start(self.plan(a, instrument, 'EU_M5'))

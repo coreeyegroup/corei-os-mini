@@ -96,6 +96,33 @@ def workspace_decision(decision: UUID, account: UUID, mode: workspaces.Mode, res
         return _j(workspaces.decision_orders(db, decision, account, mode))
 
 
+class WorkspaceScanStart(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int = Field(ge=0)
+
+
+@router.get('/workspaces/{number}/scan')
+def workspace_scan_status(number: int, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.scan_status(db, user, number))
+
+
+@router.post('/workspaces/{number}/scan', status_code=202)
+def workspace_scan_start(number: int, payload: WorkspaceScanStart, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(workspaces.start_scan(db, user, number, payload.revision))
+
+
+@router.post('/workspaces/{number}/scan/{run_id}/{action}')
+def workspace_scan_action(number: int, run_id: UUID, action: Literal['cancel', 'resume'],
+                          response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(workspaces.scan_action(db, user, number, run_id, action))
+
+
 # ----- overview: one line per stage for the system map and each stage's header -----
 
 @router.get('/overview')

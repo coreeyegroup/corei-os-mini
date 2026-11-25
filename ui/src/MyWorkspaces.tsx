@@ -4,6 +4,7 @@ import { SignIn } from './Infrastructure';
 import { goto, openAccountView, openDeployment, openOrder, openOrderRisk, openScanEvidence, openScopedTicket } from './nav';
 import { Msg, useData, when, type Row } from './StageShell';
 import { launchContext, usePublishRoute } from './workspaceLinks';
+import WorkspaceControl, { type ScanConfig } from './WorkspaceControl';
 import './my-workspaces.css';
 
 const labels = {
@@ -17,7 +18,7 @@ const modeLabels: Record<Mode, string> = { PAPER: 'Paper', DEMO: 'Broker DEMO', 
 const timeframes = ['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
 type Scope = { mode: Mode; timeframe: string; account: string | null; instrument: string | null;
   deployment: string | null; source: string | null; symbol: string };
-type Workspace = Scope & { number: number; name: string; panels: Panel[] };
+type Workspace = Scope & { number: number; name: string; panels: Panel[]; scan?: ScanConfig | null };
 type Layouts = { revision: number; next_number: number; active: number; items: Workspace[] };
 const panelIds = Object.keys(labels) as PanelId[];
 function linkedWorkspace() {
@@ -61,6 +62,7 @@ export default function MyWorkspaces({ username, signedOut, loadError, refreshSe
 
 function SavedWorkspaces() {
   const [data, setData] = useState<Layouts | null>(null);
+  const [savedNumbers, setSavedNumbers] = useState<number[]>([]);
   const [state, setState] = useState({ dirty: false, saving: false, error: '', notice: '' });
   const [loadKey, setLoadKey] = useState(0);
   const [customize, setCustomize] = useState(false);
@@ -85,7 +87,7 @@ function SavedWorkspaces() {
   }, []);
   useEffect(() => {
     let current = true;
-    api('trading/workspaces').then(v => { if (current) setData(v ?? initial()); })
+    api('trading/workspaces').then(v => { if (current) { setData(v ?? initial()); setSavedNumbers(v?.items.map((item: Workspace) => item.number) ?? []); } })
       .catch(e => { if (current) setState(s => ({ ...s, error: e.message })); });
     return () => { current = false; };
   }, [loadKey]);
@@ -120,7 +122,7 @@ function SavedWorkspaces() {
     change({ ...data, next_number: number + 1, active: number, items: [...data.items, item] });
   };
   const remove = () => {
-    if (!window.confirm(`Remove ${title(current)} from your saved layouts?`)) return;
+    if (!window.confirm(`Remove ${title(current)} from your saved layouts? Any running research scan continues in Strategy Studio Runs & results.`)) return;
     const items = data.items.filter(w => w.number !== current.number);
     setLinked({ number: null, panels: [], decision: undefined });
     change({ ...data, items, active: items[0].number });
@@ -128,7 +130,8 @@ function SavedWorkspaces() {
   const save = async () => {
     setState(s => ({ ...s, saving: true, error: '', notice: '' }));
     try {
-      setData(await api('trading/workspaces', 'PUT', { ...data, active: current.number }));
+      const saved = await api('trading/workspaces', 'PUT', { ...data, active: current.number });
+      setData(saved); setSavedNumbers(saved.items.map((item: Workspace) => item.number));
       setState({ dirty: false, saving: false, error: '', notice: 'Workspaces saved.' });
     } catch (e) {
       setState(s => ({ ...s, saving: false, error: (e as Error).message }));
@@ -165,6 +168,9 @@ function SavedWorkspaces() {
       </select></label>
       <PanelOptions panels={current.panels} onChange={panels => patch({ panels })} />
     </fieldset>}
+    <WorkspaceControl key={`control-${current.number}`} number={current.number} name={current.name} config={current.scan}
+      revision={data.revision} dirty={state.dirty} saving={state.saving} saved={savedNumbers.includes(current.number)}
+      onChange={scan => patch({ scan })} onSave={() => void save()} />
     <WorkspaceBody key={current.number} workspace={current} update={patch} locked={state.saving} expanded={expanded} togglePanel={togglePanel}
       decisionId={selectedDecisions[current.number] ?? ''}
       setDecisionId={id => setSelectedDecisions(previous => ({ ...previous, [current.number]: id || undefined }))} />
@@ -319,7 +325,7 @@ function WorkspaceBody({ workspace: w, update, locked, expanded, togglePanel, de
   const scopeCaption = `${instrument?.symbol ?? 'All instruments'} · ${accounts.find(a => a.id === w.account)?.code ?? 'No execution account'} · ${modeText}`;
   return <>
     <fieldset className="mw-scope" disabled={locked}>
-      <legend>Workspace scope</legend>
+      <legend>Existing deployment evidence · workspace scope</legend>
       <label>Trading mode <select value={w.mode} onChange={e => changeScope({ mode: e.target.value as Mode, account: null, deployment: null })}>
         {Object.entries(modeLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <label>Execution account <select value={w.account ?? ''} onChange={e => changeScope({ account: e.target.value || null, deployment: null })}>
