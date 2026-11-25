@@ -77,6 +77,7 @@ export function StrengthView() {
       <label>Over <select aria-label="Bars" value={bars} onChange={e => setBars(Number(e.target.value))}>{[5, 10, 20, 50, 100].map(n => <option key={n} value={n}>{n} bars</option>)}</select></label>
       <small className="cfg-note">Each currency's average move against the others, from every FX pair collected.</small></div>
     <Err e={error} />{data?.note && <p className="cfg-note">{data.note}</p>}
+    {data?.warning && <p className="mb-problem" role="status">{data.warning}</p>}
     <div className="intel-strength">{(data?.currencies ?? []).map((c: Row) => <div key={c.currency} className="intel-strength-row">
       <b>{c.currency}</b><span className="bar"><i className={c.strength_pct >= 0 ? 'up' : 'down'} style={{ width: `${50 * Math.abs(c.strength_pct) / max}%`, [c.strength_pct >= 0 ? 'left' : 'right']: '50%' } as any} /></span>
       <span className={c.strength_pct >= 0 ? 'up' : 'down'}>{c.strength_pct >= 0 ? '+' : ''}{num(c.strength_pct, 3)} %</span><small className="cfg-note">{c.pairs} pairs</small></div>)}</div>
@@ -122,7 +123,7 @@ export function RulesView({ canEdit }: { canEdit: boolean }) {
   const [data, error, reload] = useLoad<Row>('intel/rules', [], 0);
   const [fires] = useLoad<Row>('intel/fires?limit=50', [], 30_000);
   const [lists] = useLoad<Row>('intel/watchlists', [], 0);
-  const [edit, setEdit] = useState<Row | null>(null), [err, setErr] = useState('');
+  const [edit, setEdit] = useState<Row | null>(null), [err, setErr] = useState(''), [preview, setPreview] = useState<Row | null>(null);
   const blank = { name: '', enabled: true, timeframe: 'H1', field: 'rsi14', op: 'CROSSES_BELOW', value: '30', severity: 'INFO', cooldown_minutes: 60, scope: {}, notes: '' };
   const save = async (e: FormEvent) => {
     e.preventDefault(); if (!edit) return;
@@ -130,6 +131,12 @@ export function RulesView({ canEdit }: { canEdit: boolean }) {
     for (const k of ['created_at', 'created_by', 'updated_at', 'updated_by']) delete body[k];
     try { if (edit.id) await api(`intel/rules/${edit.id}`, 'PUT', { ...body, version: edit.version }); else await api('intel/rules', 'POST', body);
       setEdit(null); setErr(''); reload(); } catch (x) { setErr((x as Error).message); }
+  };
+  // What the rule would have done on the last 30 days of feature history, before it is saved.
+  const runPreview = async () => {
+    if (!edit) return;
+    const body: Row = { ...edit, days: 30 }; for (const k of ['id', 'version', 'fires', 'last_fired_at', 'created_at', 'created_by', 'updated_at', 'updated_by']) delete body[k];
+    try { setPreview(await api('intel/rules/preview', 'POST', body)); setErr(''); } catch (x) { setPreview(null); setErr((x as Error).message); }
   };
   const cat = edit && ['regime', 'volatility'].includes(edit.field);
   const vsField = !!edit && !cat && edit.value !== '' && Number.isNaN(Number(edit.value));
@@ -176,7 +183,12 @@ export function RulesView({ canEdit }: { canEdit: boolean }) {
       <label>Severity <select aria-label="Rule severity" value={edit.severity} onChange={e => setEdit({ ...edit, severity: e.target.value })}>{['INFO', 'WARNING', 'CRITICAL'].map(v => <option key={v}>{v}</option>)}</select></label>
       <label>Cooldown (minutes) <input aria-label="Rule cooldown" type="number" min={0} max={10080} value={edit.cooldown_minutes} onChange={e => setEdit({ ...edit, cooldown_minutes: Number(e.target.value) })} /></label>
       <label><input type="checkbox" checked={!!edit.enabled} onChange={e => setEdit({ ...edit, enabled: e.target.checked })} /> On</label>
-      <div className="cfg-actions"><button className="primary">Save rule</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
+      <div className="cfg-actions"><button className="primary">Save rule</button>
+        <button type="button" onClick={() => void runPreview()} title="Check the rule on the last 30 days of stored features before saving">Preview (30 days)</button>
+        <button type="button" onClick={() => { setEdit(null); setPreview(null); }}>Cancel</button></div>
+      {preview && <div className="cfg-note" role="status"><strong>Would have fired {preview.fires} time{preview.fires === 1 ? '' : 's'}</strong> in {preview.bars} {preview.timeframe} bars over {preview.days} days
+        {preview.by_instrument?.length ? ` (${preview.by_instrument.map((x: Row) => `${x.broker_symbol} ${x.fires}`).join(', ')})` : ''}.
+        {preview.warning && <p className="cfg-error-text">{preview.warning}</p>}</div>}
     </form>}
     <h4>Fired</h4>
     <table className="cfg-table compact intel-table"><thead><tr><th>When</th><th>Rule</th><th>Instrument</th><th>Bar (UTC)</th><th>Message</th></tr></thead><tbody>
@@ -199,9 +211,18 @@ export function CalendarView({ canEdit }: { canEdit: boolean }) {
   };
   const importCsv = async () => { try { const r = await api('intel/events/import', 'POST', { csv }); setNotice(`${r.added} events imported.`); setErr(''); setCsv(''); reload(); } catch (x) { setErr((x as Error).message); } };
   const readFile = (f?: File) => { if (f) void f.text().then(setCsv); };
+  const [upstox, setUpstox] = useState('');
+  const [accounts] = useLoad<Row>('config/accounts', [], 0);
+  const upstoxAccounts = ((accounts?.items ?? []) as Row[]).filter((a: Row) => a.platform === 'REST_API' && a.status !== 'ARCHIVED');
+  // Exchange trading holidays of the year from Upstox (NSE, BSE, MCX): Stage 1 market hours and event risk use them.
+  const importHolidays = async () => {
+    try { const r = await api('intel/events/import-holidays', 'POST', upstox ? { account_id: upstox } : {});
+      setNotice(`${r.holidays} exchange holidays imported from Upstox${r.not_stored?.length ? ` (${r.not_stored.length} settlement or special-timing days listed, not stored: the market trades)` : ''}.`); setErr(''); reload(); }
+    catch (x) { setErr((x as Error).message); }
+  };
   return <section className="intel">
     <div className="intel-bar"><label>Show next <select aria-label="Days ahead" value={ahead} onChange={e => setAhead(Number(e.target.value))}>{[1, 3, 7, 14, 30].map(n => <option key={n} value={n}>{n} days</option>)}</select></label>
-      <small className="cfg-note">High-impact events and holidays mark instruments in those currencies with event risk (Screener) within the window set on the Dashboard. Times are UTC; shown in your local time.</small></div>
+      <small className="cfg-note">High-impact events and holidays mark instruments in those currencies (or on that exchange: NSE, BSE, MCX) with event risk (Screener) within the window set on the Dashboard. Times are UTC; shown in your local time.</small></div>
     <Err e={error || err} />{notice && <p role="status" className="cfg-ok">{notice}</p>}
     <table className="cfg-table compact intel-table"><thead><tr><th>When</th><th>Currency</th><th>Impact</th><th>Event</th><th>Forecast</th><th>Previous</th><th>Actual</th><th>Source</th><th /></tr></thead><tbody>
       {(data?.items ?? []).map((e: Row) => <tr key={e.id} className={new Date(e.at).getTime() < Date.now() ? 'muted' : ''}><td>{when(e.at)}</td><td>{e.currency}</td>
@@ -212,12 +233,18 @@ export function CalendarView({ canEdit }: { canEdit: boolean }) {
     {canEdit && <div className="intel-cols">
       <form className="cfg-form" onSubmit={add}><h4>Add an event</h4>
         <label>When (your local time) <input aria-label="Event time" type="datetime-local" required value={form.at} onChange={e => setForm({ ...form, at: e.target.value })} /></label>
-        <label>Currency <input aria-label="Event currency" required pattern="[A-Z]{3}|ALL" maxLength={3} value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value.toUpperCase() })} /></label>
+        <label>Currency or exchange <input aria-label="Event currency" required pattern="[A-Z]{3}|ALL" maxLength={3} value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value.toUpperCase() })} />
+          <small className="cfg-note">USD, EUR, INR… or an exchange: NSE, BSE, MCX. ALL concerns every instrument.</small></label>
         <label>Impact <select aria-label="Event impact" value={form.impact} onChange={e => setForm({ ...form, impact: e.target.value })}>{['HIGH', 'MEDIUM', 'LOW', 'HOLIDAY'].map(v => <option key={v}>{v}</option>)}</select></label>
         <label>Event <input aria-label="Event title" required maxLength={200} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
         <label>Forecast <input aria-label="Event forecast" maxLength={40} value={form.forecast} onChange={e => setForm({ ...form, forecast: e.target.value })} /></label>
         <label>Previous <input aria-label="Event previous" maxLength={40} value={form.previous} onChange={e => setForm({ ...form, previous: e.target.value })} /></label>
         <div className="cfg-actions"><button className="primary">Add event</button></div></form>
+      <div className="cfg-form"><h4>Exchange holidays from Upstox</h4>
+        <p className="cfg-note">This year's NSE, BSE and MCX trading holidays, from Upstox's market-holidays service. Market hours (Stage 1) and event risk use them. Importing again updates them.</p>
+        <label>Upstox login <select aria-label="Upstox account for holidays" value={upstox} onChange={e => setUpstox(e.target.value)}>
+          <option value="">None (public request)</option>{upstoxAccounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code}</option>)}</select></label>
+        <div className="cfg-actions"><button className="primary" onClick={() => void importHolidays()}>Import exchange holidays</button></div></div>
       <div className="cfg-form"><h4>Import a CSV</h4>
         <p className="cfg-note">First line: <code>datetime_utc,currency,impact,title,forecast,previous,actual</code>. Example: <code>2026-11-20 13:30,USD,HIGH,CPI y/y,3.1%,3.0%,</code>. Every line must be valid or nothing is imported (the errors are listed). Up to about 600 lines per file.</p>
         <input aria-label="CSV file" type="file" accept=".csv,text/csv" onChange={e => readFile(e.target.files?.[0])} />

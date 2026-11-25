@@ -89,7 +89,8 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
     : { code: '', name: '', kind: kinds[0]?.kind ?? 'EMA_TREND', parameters: { ...(kinds[0]?.defaults ?? {}) }, threshold: 20, timeframes: ['M5', 'M15', 'H1', 'H4', 'D1'], status: 'ACTIVE', notes: '', reason: '' }); };
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    const body = { code: edit!.code, name: edit!.name, kind: edit!.kind, parameters: edit!.parameters, threshold: Number(edit!.threshold), timeframes: edit!.timeframes,
+    const body = { code: edit!.code, name: edit!.name, kind: edit!.kind, parameters: edit!.parameters, threshold: Number(edit!.threshold),
+      exit_threshold: edit!.exit_threshold === '' || edit!.exit_threshold == null ? null : Number(edit!.exit_threshold), timeframes: edit!.timeframes,
       status: edit!.status, notes: edit!.notes ?? '', reason: edit!.reason };
     try { if (edit!.id) await api(`trading/signal-library/definitions/${edit!.id}`, 'PUT', body); else await api('trading/signal-library/definitions', 'POST', body);
       setMsg(`${body.code} saved — scores are recomputed at the next engine run.`); setEdit(null); reload(); } catch (x) { setErr((x as Error).message); }
@@ -99,14 +100,15 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
     if (reason.trim().length < 5) return;
     try {
       if (what === 'delete') await api(`trading/signal-library/definitions/${d.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
-      else await api(`trading/signal-library/definitions/${d.id}`, 'PUT', { code: d.code, name: d.name, kind: d.kind, parameters: d.parameters, threshold: Number(d.threshold), timeframes: d.timeframes,
+      else await api(`trading/signal-library/definitions/${d.id}`, 'PUT', { code: d.code, name: d.name, kind: d.kind, parameters: d.parameters, threshold: Number(d.threshold),
+        exit_threshold: d.exit_threshold == null ? null : Number(d.exit_threshold), timeframes: d.timeframes,
         status: d.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE', notes: d.notes ?? '', reason });
       reload();
     } catch (x) { setErr((x as Error).message); }
   };
   return <section className="intel">
     <div className="intel-bar">{ctx.canRisk && <button className="primary" onClick={() => start()}>+ New signal</button>}
-      <small className="cfg-note">Every signal is a score from −100 (strong short) to +100 (strong long) per instrument and closed bar. LONG at ≥ +threshold, SHORT at ≤ −threshold, else FLAT.</small></div>
+      <small className="cfg-note">Every signal is a score from −100 (strong short) to +100 (strong long) per instrument and closed bar. LONG at ≥ +threshold, SHORT at ≤ −threshold, else FLAT; with an exit threshold a side is held until the score falls back below it.</small></div>
     <Msg error={error || err} notice={msg} />
     {edit && <form className="cfg-form sig-edit" onSubmit={save}>
       <div className="cfg-pair"><Field label="Code" hint="Capitals, digits and _"><input aria-label="Signal code" required value={edit.code} onChange={e => setEdit({ ...edit, code: e.target.value.toUpperCase() })} /></Field>
@@ -117,6 +119,8 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
       <div className="st-params">{Object.entries(kind?.defaults ?? {}).map(([p, dflt]) => <Field key={p} label={p.replace(/_/g, ' ')} hint={`default ${dflt}`}>
         <input aria-label={`Signal parameter ${p}`} inputMode="decimal" value={edit.parameters[p] ?? ''} onChange={e => setEdit({ ...edit, parameters: { ...edit.parameters, [p]: e.target.value === '' ? undefined : Number(e.target.value) } })} /></Field>)}
         <Field label="Threshold" hint="|score| that counts as a side"><input aria-label="Signal threshold" type="number" min={1} max={99} value={edit.threshold} onChange={e => setEdit({ ...edit, threshold: e.target.value })} /></Field>
+        <Field label="Exit threshold (optional)" hint="Keep a side until |score| falls below this — stops a score wobbling around the threshold from flipping every bar. Empty = same as the threshold">
+          <input aria-label="Signal exit threshold" type="number" min={0} max={98} placeholder="e.g. 10" value={edit.exit_threshold ?? ''} onChange={e => setEdit({ ...edit, exit_threshold: e.target.value })} /></Field>
         <Field label="Status"><select aria-label="Signal status" value={edit.status} onChange={e => setEdit({ ...edit, status: e.target.value })}><option>ACTIVE</option><option>PAUSED</option></select></Field></div>
       <Field label="Timeframes scored"><span className="sig-tfs">{TFS.map(t => <label key={t}><input type="checkbox" checked={edit.timeframes.includes(t)}
         onChange={e => setEdit({ ...edit, timeframes: e.target.checked ? [...edit.timeframes, t] : edit.timeframes.filter((x: string) => x !== t) })} /> {t}</label>)}</span></Field>
@@ -127,7 +131,7 @@ export function SignalLibrary({ ctx }: { ctx: Ctx }) {
     <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Signal</th><th>Family</th><th>Formula</th><th>Parameters</th><th>Threshold</th><th>Timeframes</th><th>Status</th><th /></tr></thead><tbody>
       {(defs?.items ?? []).map((d: Def) => <tr key={d.id}><td><b>{d.code}</b><br /><small>{d.name}</small>{d.builtin && <> {pill('built-in', 'demo')}</>}
         <br /><button className="linkish" onClick={() => showGraph(d.graph?.code ?? `SIG_${d.kind}`)} title="Open its calculation graph">{d.graph ? `graph ${d.graph.code} v${d.graph.version}` : 'graph ↗'}</button></td><td><small>{d.family}</small></td>
-        <td><code className="sig-eq">{d.equation}</code></td><td><small>{Object.entries(d.parameters ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ')}</small></td><td>±{num(d.threshold, 0)}</td>
+        <td><code className="sig-eq">{d.equation}</code></td><td><small>{Object.entries(d.parameters ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ')}</small></td><td>±{num(d.threshold, 0)}{d.exit_threshold != null && <small className="cfg-note" title="Exit threshold: a side is held until |score| falls below this"> · hold ±{num(d.exit_threshold, 0)}</small>}</td>
         <td><small>{(d.timeframes ?? []).join(' ')}</small></td><td>{pill(d.status, d.status === 'ACTIVE' ? 'ok' : 'off')}</td>
         <td>{ctx.canRisk && <span className="sig-acts"><button onClick={() => start(d)}>Edit</button><button onClick={() => void act(d, 'pause')}>{d.status === 'ACTIVE' ? 'Pause' : 'Resume'}</button>
           {!d.builtin && <button onClick={() => void act(d, 'delete')}>Delete</button>}</span>}</td></tr>)}
@@ -289,16 +293,19 @@ export function SignalDashboard() {
       <small className="cfg-note">Last scored {when(d.last_computed)} · instruments per timeframe: {Object.entries(d.instruments_by_timeframe ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}</small></div>
     <Msg error={error} />
     <Kpis items={[['Signals in the library', `${d.definitions_active ?? 0} active`, `${d.definitions_total ?? 0} in all; Signal library below`], ['Instruments scored', d.instruments ?? 0, `on ${tf}`],
-      ['Long', d.long ?? 0, 'Scores ≥ +threshold', 'up'], ['Short', d.short ?? 0, 'Scores ≤ −threshold', 'down'], ['Flat', d.flat ?? 0], ['Flips in 24 h', d.flips_24h ?? 0, 'Signals that changed side']]} />
+      ['Long', d.long ?? 0, 'Scores ≥ +threshold', 'up'], ['Short', d.short ?? 0, 'Scores ≤ −threshold', 'down'], ['Flat', d.flat ?? 0], ['Flips in 24 h', d.flips_24h ?? 0, 'Signals that changed side', (d.flips_24h ?? 0) > 20 * Math.max(1, d.instruments ?? 1) ? 'warn' : ''],
+      ['Late or stale scores', d.stale_scores ?? 0, 'Scores whose bar is late for its market (Market intelligence freshness): shown, but left out of the composite', d.stale_scores ? 'warn' : '']]} />
+    {(d.flips_24h ?? 0) > 20 * Math.max(1, d.instruments ?? 1) && <p className="mb-problem" role="status">{d.flips_24h} flips in 24 h on {tf} for {d.instruments} instruments: scores are wobbling around their thresholds.
+      Give the noisy signals an exit threshold (Signal library › Edit, e.g. 10 for a threshold of 20) so a side is held until the score really falls back.</p>}
     <div className="sig-split">
       <div><h4>Strongest scores now</h4>
         <table className="cfg-table compact intel-table"><tbody>{(d.strongest ?? []).map((r: Row, i: number) => <tr key={i} title={r.worked}><td><b>{r.code}</b><br /><small className="cfg-note">{r.account_code} · {r.broker_symbol}</small></td>
-          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td>{dirPill(r.direction)}</td></tr>)}
+          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td>{dirPill(r.direction)}{['LAGGING', 'STALE'].includes(r.freshness) && <> {pill('stale bar', 'warn')}</>}</td></tr>)}
           {data && !(d.strongest ?? []).length && <tr><td className="cfg-note">No scores on {tf} yet.</td></tr>}</tbody></table></div>
       <div><h4>Composite per instrument</h4>
         <table className="cfg-table compact intel-table"><tbody>{(d.consensus ?? []).slice(0, 12).map((r: Row) => <tr key={r.account_code + r.broker_symbol}>
           <td><button className="link" title="Focus this instrument in every Signals panel" onClick={() => setFocus({ src: `${r.account_id}|${r.broker_symbol}`, tf })}>{r.account_code} · {r.broker_symbol}</button></td>
-          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td><span className="sig-bar"><i style={{ width: `${r.agree_pct ?? 0}%` }} /></span> <small>{r.agree_pct ?? '–'}% agree of {r.n}</small></td></tr>)}</tbody></table></div>
+          <td className={`sig-cell ${scoreCls(r.score)}`}>{fmtScore(r.score)}</td><td><span className="sig-bar"><i style={{ width: `${r.agree_pct ?? 0}%` }} /></span> <small>{r.agree_pct ?? '–'}% agree of {r.n}{r.stale_scores ? ` · ${r.stale_scores} stale left out` : ''}</small></td></tr>)}</tbody></table></div>
       <div><h4>Latest flips</h4>
         <table className="cfg-table compact intel-table"><tbody>{(flips?.items ?? []).map((e: Row) => <tr key={e.id}><td><small>{new Date(e.bar_time).toISOString().slice(5, 16).replace('T', ' ')}</small></td>
           <td><b>{e.code}</b> <small>{e.broker_symbol}</small></td><td className="sig-flip"><small className={`sig-d ${e.from_direction}`}>{String(e.from_direction ?? '').toLowerCase()}</small>→<small className={`sig-d ${e.to_direction}`}>{String(e.to_direction).toLowerCase()}</small></td></tr>)}
@@ -324,26 +331,29 @@ export function ResearchAll() {
       <button className="primary" disabled={busy || !f.src} onClick={() => void run()}>{busy ? 'Researching…' : 'Rank every signal'}</button></FocusBar>
     <Msg error={err} />
     {!res && <p className="cfg-note">Every active signal researched on the same bars, ranked by the strength of its best horizon (|IC t-stat|). Use it to pick the components of a signal blend (Strategies).</p>}
-    {res && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>#</th><th>Signal</th><th>Verdict</th><th>Best horizon</th><th>IC</th><th>t</th><th>Hit rate</th><th>Edge / cost (bp)</th><th>Coverage</th><th>Turnover</th><th>IC by horizon</th></tr></thead><tbody>
+    {res && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>#</th><th>Signal</th><th>Verdict</th><th>Best horizon</th><th>IC</th><th>t</th><th>Hit rate</th><th title="Average return with the score, and the spread paid">Edge / cost (bp)</th><th title="Edge minus the spread">Net edge (bp)</th><th title="IC on the last 30% of bars (out of sample)">OOS IC</th><th>Coverage</th><th>Turnover</th><th>IC by horizon</th></tr></thead><tbody>
       {(res.items ?? []).map((r: Row, i: number) => <tr key={r.code}><td>{i + 1}</td><td><b>{r.code}</b><br /><small className="cfg-note">{r.family}</small></td><td>{r.error ? <small className="cfg-error-text">{r.error}</small> : pill(r.verdict ?? '–', vcls(r.verdict))}</td>
-        <td>{r.best_horizon ?? '–'}</td><td>{r.ic ?? '–'}</td><td>{r.ic_t ?? '–'}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td>{r.edge_bp ?? '–'} / {r.cost_bp ?? '–'}</td>
+        <td>{r.best_horizon ?? '–'}</td><td>{r.ic ?? '–'}</td><td>{r.ic_t ?? '–'}</td><td>{r.hit_rate_pct == null ? '–' : `${r.hit_rate_pct}%`}</td><td>{r.edge_bp ?? '–'} / {r.cost_bp ?? '–'}</td><td className={Number(r.net_edge_bp) > 0 ? 'up' : Number(r.net_edge_bp) < 0 ? 'down' : ''}>{r.net_edge_bp ?? '–'}</td>
+        <td title={r.verdict_note || ''}>{r.oos_ic ?? '–'}</td>
         <td>{r.coverage_pct == null ? '–' : `${r.coverage_pct}%`}</td><td>{r.turnover_per_bar ?? '–'}</td>
         <td><span className="sig-icbars">{Object.entries(r.ic_by_horizon ?? {}).map(([h, v]) => <span key={h} title={`h=${h}: IC ${v ?? '–'}`}><i className={Number(v) >= 0 ? 'up' : 'down'} style={{ height: `${Math.min(18, 2 + Math.abs(Number(v ?? 0)) * 180)}px` }} /><small>{h}</small></span>)}</span></td></tr>)}</tbody></table>
-      <p className="cfg-note">{res.bars} {res.timeframe} bars of {res.symbol}. IC = rank correlation of the score with the return h bars later; |t| ≥ 2 is unlikely by chance; the edge must beat the spread.</p></div>}
+      <p className="cfg-note">{res.bars} {res.timeframe} bars of {res.symbol}. IC = rank correlation of the score with the return h bars later; |t| ≥ 2 is unlikely by chance
+        (overlapping h-bar returns count as n ÷ h); PREDICTIVE also needs the same sign on the last 30% of bars (OOS IC) and an edge above the spread.</p>
+      {res.multiple_testing && <p className="mb-problem" role="status">{res.multiple_testing.note}</p>}</div>}
   </section>;
 }
 
 export function SignalResearch() {
   const [cat] = useData<Row>('trading/signal-library/catalogue', 0);
   const kinds: Row[] = cat?.items ?? [];
-  const [f, setF] = useState<Row>({ src: '', timeframe: 'H1', kind: 'EMA_TREND', parameters: {}, threshold: 20, days: 180, horizons: '1, 2, 5, 10, 20' });
+  const [f, setF] = useState<Row>({ src: '', timeframe: 'H1', kind: 'EMA_TREND', parameters: {}, threshold: 20, exit_threshold: '', days: 180, horizons: '1, 2, 5, 10, 20' });
   const [res, setRes] = useState<Row | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const kind = kinds.find(k => k.kind === f.kind);
   const run = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setErr('');
     const [account_id, symbol] = String(f.src).split('|');
     try { setRes(await api('trading/signal-library/research', 'POST', { account_id, symbol, timeframe: f.timeframe, kind: f.kind, parameters: f.parameters, threshold: Number(f.threshold),
-      days: Number(f.days), horizons: String(f.horizons).split(/[ ,]+/).filter(Boolean).map(Number) })); } catch (x) { setErr((x as Error).message); setRes(null); } finally { setBusy(false); }
+      exit_threshold: f.exit_threshold === '' ? null : Number(f.exit_threshold), days: Number(f.days), horizons: String(f.horizons).split(/[ ,]+/).filter(Boolean).map(Number) })); } catch (x) { setErr((x as Error).message); setRes(null); } finally { setBusy(false); }
   };
   const best = res?.horizons?.find((h: Row) => h.horizon === res.best_horizon);
   return <section className="intel">
@@ -356,24 +366,27 @@ export function SignalResearch() {
       <div className="st-params">{Object.entries(kind?.defaults ?? {}).map(([p, d]) => <Field key={p} label={p.replace(/_/g, ' ')} hint={`default ${d}`}>
         <input aria-label={`Research parameter ${p}`} inputMode="decimal" placeholder={String(d)} value={f.parameters[p] ?? ''} onChange={e => setF({ ...f, parameters: { ...f.parameters, [p]: e.target.value === '' ? undefined : Number(e.target.value) } })} /></Field>)}
         <Field label="Threshold"><input aria-label="Research threshold" type="number" min={1} max={99} value={f.threshold} onChange={e => setF({ ...f, threshold: e.target.value })} /></Field>
+        <Field label="Exit threshold" hint="Optional: hold a side until |score| falls below this (fewer flips)"><input aria-label="Research exit threshold" type="number" min={0} max={98} value={f.exit_threshold} onChange={e => setF({ ...f, exit_threshold: e.target.value })} /></Field>
         <Field label="Days of history"><input aria-label="Research days" type="number" min={1} max={3650} value={f.days} onChange={e => setF({ ...f, days: e.target.value })} /></Field>
         <Field label="Horizons (bars ahead)"><input aria-label="Research horizons" value={f.horizons} onChange={e => setF({ ...f, horizons: e.target.value })} /></Field></div>
       <div className="cfg-actions"><button className="primary" disabled={busy || !f.src}>{busy ? 'Researching…' : 'Research this signal'}</button></div>
     </form>
     <Msg error={err} />
     {res && <>
-      <Kpis items={[['Verdict', res.verdict ?? '–', 'PREDICTIVE: |IC| ≥ 0.03, |t| ≥ 2 and the edge beats the spread', res.verdict === 'PREDICTIVE' ? 'up' : res.verdict === 'NO_EDGE' ? 'down' : 'warn'],
+      <Kpis items={[['Verdict', res.verdict ?? '–', res.verdict_note || 'PREDICTIVE: |IC| ≥ 0.03, |t| ≥ 2 (overlap-adjusted), the same sign out of sample and the edge beats the spread', res.verdict === 'PREDICTIVE' ? 'up' : res.verdict === 'NO_EDGE' ? 'down' : 'warn'],
+        ['Out of sample IC', best?.oos_ic ?? '–', 'IC on the last 30% of bars, which the choice of horizon never saw'], ['Net edge', best?.net_edge_bp == null ? '–' : `${best.net_edge_bp} bp`, 'Average return with the score, minus the spread'],
         ['Best horizon', res.best_horizon ? `${res.best_horizon} bars` : '–'], ['IC (best)', best?.ic ?? '–', 'Spearman rank correlation of score and forward return'], ['IC t-stat', best?.ic_t ?? '–'],
         ['Hit rate', best?.hit_rate_pct == null ? '–' : `${best.hit_rate_pct}%`], ['Edge / spread', `${best?.avg_signed_return_bp ?? '–'} / ${res.avg_spread_bp ?? '–'} bp`],
         ['Coverage', res.coverage_pct == null ? '–' : `${res.coverage_pct}%`, '|score| ≥ threshold'], ['Turnover / bar', res.turnover_per_bar ?? '–'], ['Bars', `${res.scored_bars} / ${res.bars}`]]} />
+      {res.verdict_note && <p className="mb-problem" role="status">{res.verdict_note}.</p>}
       <h4>By horizon</h4>
-      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Bars ahead</th><th>n</th><th>IC</th><th>t</th><th>Hit rate</th><th>Active bars</th><th>Avg return with the score (bp)</th><th>Avg |move| (bp)</th><th>Quintiles: avg return (bp), low score → high</th></tr></thead><tbody>
-        {(res.horizons ?? []).map((h: Row) => <tr key={h.horizon} className={h.horizon === res.best_horizon ? 'sel' : ''}><td>{h.horizon}</td><td>{h.n}</td><td>{h.ic ?? h.note ?? '–'}</td><td>{h.ic_t ?? '–'}</td>
+      <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Bars ahead</th><th>n</th><th title="Independent observations: overlapping h-bar returns count as n ÷ h">n eff.</th><th>IC</th><th>t</th><th title="IC on the last 30% of bars">OOS IC</th><th>Hit rate</th><th>Active bars</th><th>Avg return with the score (bp)</th><th>Avg |move| (bp)</th><th>Quintiles: avg return (bp), low score → high</th></tr></thead><tbody>
+        {(res.horizons ?? []).map((h: Row) => <tr key={h.horizon} className={h.horizon === res.best_horizon ? 'sel' : ''}><td>{h.horizon}</td><td>{h.n}</td><td>{h.n_effective ?? '–'}</td><td>{h.ic ?? h.note ?? '–'}</td><td>{h.ic_t ?? '–'}</td><td>{h.oos_ic ?? '–'}</td>
           <td>{h.hit_rate_pct == null ? '–' : `${h.hit_rate_pct}%`}</td><td>{h.active_bars ?? '–'}</td><td>{h.avg_signed_return_bp ?? '–'}</td><td>{h.avg_abs_move_bp ?? '–'}</td>
           <td><Quintiles q={h.quintiles ?? []} /></td></tr>)}</tbody></table></div>
       <ScoreChart series={res.series ?? []} threshold={Number(res.threshold)} />
       <p className="cfg-note">{res.how_to_read}</p>
-      <p className="cfg-note">IC = ρ(rank(scoreₜ), rank(closeₜ₊ₕ ÷ closeₜ − 1)) · t = IC·√((n − 2) ÷ (1 − IC²)) · cost = average spread ÷ average close. Forward returns use later bars only here — never inside a score.</p>
+      <p className="cfg-note">IC = ρ(rank(scoreₜ), rank(closeₜ₊ₕ ÷ closeₜ − 1)) · t = IC·√((n÷h − 2) ÷ (1 − IC²)) · cost = average spread ÷ average close. Forward returns use later bars only here — never inside a score.</p>
     </>}
   </section>;
 }

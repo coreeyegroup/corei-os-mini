@@ -108,11 +108,12 @@ def run(actor: str, data: OptimiseIn) -> dict:
                           (str(data.account_id), data.broker_symbol)).fetchone()
         ins = instrument(db, plan['instrument_id']) if plan and plan['instrument_id'] else {}
         bars, source = backtest.load_bars(db, data.account_id, data.broker_symbol, tf, data.range_from, data.range_to)
+        market = engine.market_of(db, data.account_id, data.broker_symbol)
     need = max(algorithms.warmup(data.algorithm, c) for c in combos) + 3
     if len(bars) < need * (2 if data.walk_forward_folds else 1):
         raise HTTPException(422, f'Only {len(bars)} closed {tf} bars; at least {need * (2 if data.walk_forward_folds else 1)} are needed.')
     custom = [d for d in engine.custom_definitions() if tf in (d.get('timeframes') or engine.TIMEFRAMES)]
-    rows = engine.features(bars, tf, custom)
+    rows = engine.features(bars, tf, custom, market)
     walks = {json.dumps(c, sort_keys=True): algorithms.run(data.algorithm, c, bars, rows) for c in combos}
 
     def sim(c: dict, lo: int, hi: int) -> dict:

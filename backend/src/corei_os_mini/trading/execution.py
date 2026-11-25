@@ -76,6 +76,13 @@ def gate(db, o: dict) -> tuple[str | None, list[str]]:
                      (str(o['account_id']),)).fetchone()['environment']
     if not (store.execution_controls(db).get(env) or {}).get('trading_enabled'):
         reasons.append(f'ORDER_SENDING_OFF_{env}: order sending is off for {env} accounts')
+    elif env == 'LIVE':
+        # Checked again here, at the last moment: a switch turned on earlier, an exception that expired or a limit
+        # removed since cannot let new LIVE risk through. Orders that only reduce a position still go.
+        from . import readiness
+        policy = readiness.live_policy(db)
+        if not policy['ok'] and readiness.adds_risk(db, o):
+            reasons.append('LIVE_POLICY_UNMET: ' + '; '.join(u['detail'] for u in policy['unmet'])[:900])
     cap = brokers.capability(db, o['account_id'])
     reasons += cap['reasons']
     if not o.get('broker_symbol'):
@@ -126,6 +133,13 @@ def send_one(order_id) -> dict | None:
         if check.get('error') or bad:
             return _reject(order_id, [f"BROKER_CHECK: {check.get('error') or bad[0].get('text')} ({(bad[0] if bad else {}).get('retcode')})"],
                            sent=False, detail={'check': check.get('results')})
+    # The connection's order rate: when it is used up the order stays APPROVED (nothing sent) and the next dispatch
+    # checks it again from the gate.
+    try:
+        brokers.throttle(o['account_id'])
+    except brokers.Throttled:
+        STATUS['throttled'] = STATUS.get('throttled', 0) + 1
+        return None
     # SUBMITTED is committed before anything leaves COREI.
     with store.transaction('write') as db:
         locked = db.execute("SELECT * FROM oms_orders WHERE id=%s AND state='APPROVED' AND NOT hold_for_approval FOR UPDATE SKIP LOCKED",
@@ -356,6 +370,7 @@ def cancel_at_broker(actor: str, order_id) -> dict:
     with store.transaction('read') as db:
         o = dict(db.execute('SELECT * FROM oms_orders WHERE id=%s', (str(order_id),)).fetchone())
     try:
+        brokers.throttle(o['account_id'], wait_up_to=3.0)  # a cancel removes risk: it waits for a slot rather than failing
         if o['adapter'] == 'UPSTOX':
             brokers.Upstox(o['account_id'], actor, 'Cancel an order at Upstox').cancel(o['broker_order_id'])
         else:

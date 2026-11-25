@@ -25,8 +25,14 @@ type SourceWs = {
 const PREF = 'md.sources.v1';
 const planCol = (id: string, label: string, title: string, value: (r: Row) => any, cell: (r: Row) => React.ReactNode): Col => ({ id, label, title, value, cell: r => cell(r) });
 const PLAN_STATUS: Record<string, string> = { ACTIVE: 'collecting', PAUSED: 'paused', DRAFT: 'draft', ARCHIVED: 'removed' };
+// One health vocabulary everywhere (backend md/health.py): an active plan shows what it actually does, not "collecting".
+export const HEALTH: Record<string, string> = { LIVE: 'live', CLOSED: 'market closed', WAITING: 'waiting', STALE: 'delayed', DEGRADED: 'unreliable',
+  ERROR: 'error', INVALID_SYMBOL: 'wrong symbol', OFFLINE: 'source offline', PAUSED: 'paused' };
+export const HEALTH_PROBLEM = new Set(['ERROR', 'INVALID_SYMBOL', 'STALE']);
+const planWord = (r: Row) => r.plan_status === 'ACTIVE' && r.health ? HEALTH[r.health] ?? r.health : PLAN_STATUS[r.plan_status] ?? r.plan_status;
+const planClass = (r: Row) => r.plan_status === 'ACTIVE' && r.health ? `H-${r.health}` : r.plan_status;
 const EXTRA: Col[] = [
-  planCol('plan', 'Plan', 'Collection plan status', r => r.plan_status ?? 'NONE', r => r.plan_status ? <span className={`sb-plan ${r.plan_status}`}>{PLAN_STATUS[r.plan_status] ?? r.plan_status}{r.pending_changes > 0 ? ' · approval' : ''}</span> : <span className="mb-dim">no plan</span>),
+  planCol('plan', 'Plan', 'Collection plan status', r => r.plan_status ?? 'NONE', r => r.plan_status ? <span className={`sb-plan ${planClass(r)}`} title={r.health_detail || undefined}>{planWord(r)}{r.pending_changes > 0 ? ' · approval' : ''}</span> : <span className="mb-dim">no plan</span>),
   planCol('purpose', 'Purpose', 'Purpose and feed role', r => `${r.plan_purpose ?? ''}${r.feed_role ?? ''}`, r => r.plan_purpose ? <span className="mb-dim">{r.plan_purpose.replace('_', ' ').toLowerCase()}{r.plan_purpose === 'TRADING_FEED' ? ` · ${String(r.feed_role).toLowerCase()}${r.active_feed ? ' (used)' : ''}` : ''}</span> : '—'),
   planCol('stored', 'Stored', 'What is kept: quotes, bars (timeframes), depth', r => (r.data_types ?? []).join(), r => r.data_types ? <span className="mb-dim">{r.data_types.map((d: string) => d === 'BARS' ? `bars ${r.bar_timeframes?.join(',')}` : d === 'DEPTH' ? `depth ${r.depth_levels}` : 'quotes').join(' · ')}</span> : '—'),
   planCol('keep', 'Keep', 'Days kept in the database, then archive', r => r.hot_days ?? -1, r => r.hot_days ? <span className="mb-dim">{r.hot_days} d{r.archive ? ' → archive' : ''}</span> : '—'),
@@ -87,7 +93,8 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
       (out[p.account_id] ??= []).push({ ...(l ?? {}), account_id: p.account_id, broker_symbol: p.broker_symbol, noData: !l, plan: p, plan_id: p.id, plan_status: p.status,
         plan_purpose: p.purpose, feed_role: p.feed_role, active_feed: p.active_feed, instrument_id: p.instrument_id, instrument_symbol: p.instrument_symbol ?? l?.instrument_symbol,
         data_types: p.data_types, bar_timeframes: p.bar_timeframes, depth_levels: p.depth_levels, hot_days: p.hot_days, archive: p.archive, schedule: p.schedule,
-        stale_seconds: p.stale_seconds, pending_changes: p.pending_changes, digits: l?.digits ?? p.digits });
+        stale_seconds: p.stale_seconds, pending_changes: p.pending_changes, digits: l?.digits ?? p.digits,
+        health: p.health, health_detail: p.health_detail, health_suggestions: p.health_suggestions });
     }
     const planned = new Set(plans.filter(p => p.status !== 'ARCHIVED').map(keyOf));
     for (const r of priced) if (!planned.has(keyOf(r))) (out[r.account_id] ??= []).push(r);
@@ -208,7 +215,8 @@ export default function SourceBoard({ canEdit }: { canEdit: boolean }) {
       <Kpi label="Stale" value={String(allRows.filter(isStale).length)} tone={allRows.some(isStale) ? 'warn' : 'ok'} />
       <Kpi label="No price" value={String(allRows.filter(r => r.noData).length)} tone={allRows.some(r => r.noData) ? 'warn' : 'ok'} />
       <Kpi label="Paused" value={String(allRows.filter(r => r.plan_status === 'PAUSED').length + shown.filter(s => ctl[`account:${s.account_id}`]?.paused).length)} />
-      <Kpi label="Errors" value={String(shown.filter(s => coll[s.account_id]?.problem).length)} tone={shown.some(s => coll[s.account_id]?.problem) ? 'bad' : 'ok'} />
+      {(() => { const n = shown.filter(s => coll[s.account_id]?.problem).length + allRows.filter(r => r.plan_status === 'ACTIVE' && HEALTH_PROBLEM.has(r.health)).length;
+        return <Kpi label="Problems" value={String(n)} tone={n ? 'bad' : 'ok'} />; })()}
       <Kpi label="Avg quality" value={scores.length ? String(Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)) : '—'} />
       <Kpi label="Latency p95" value={lat.length ? `${Math.round([...lat].sort((a, b) => a - b)[Math.floor(lat.length * 0.95)] ?? lat[0])} ms` : '—'} />
       <Kpi label="Prices / min" value={String(visibleRows.reduce((n, r) => n + Number(r.ticks_last_minute || 0), 0))} />
@@ -308,11 +316,17 @@ function SourceSection({ s, c, paused, rows, total, collapsed, cols, ctx, ws, ca
                 : <button onClick={() => setConfirm(k)} aria-label={`Remove ${r.broker_symbol}`} title="Stop and remove this instrument (history is kept)">✕</button>)}
             </td></tr>
           {open && <tr className="sb-expand"><td colSpan={cols.length + 1}>
-            {r.noData ? <p className="mb-empty">No price received yet{r.plan_status !== 'ACTIVE' ? ` — the plan is ${PLAN_STATUS[r.plan_status] ?? 'not started'}` : c?.problem ? ` — ${c.problem.title}` : ''}.</p>
+            {r.health && HEALTH_PROBLEM.has(r.health) && <p className="mb-problem" role="alert"><b>{HEALTH[r.health]}:</b> {r.health_detail}
+              {r.health === 'INVALID_SYMBOL' && <> This plan can never receive a price; archive it and add the instrument again from the source's list
+                {r.health_suggestions?.length ? <> (<b>{r.health_suggestions[0]}</b>)</> : ''}.</>}</p>}
+            {r.noData ? <p className="mb-empty">No price received yet{r.plan_status !== 'ACTIVE' ? ` — the plan is ${PLAN_STATUS[r.plan_status] ?? 'not started'}` : r.health_detail ? ` — ${r.health_detail}` : c?.problem ? ` — ${c.problem.title}` : ''}.</p>
               : <div className="sb-drill"><div className="mb-panel"><Chart row={r} rows={allRows} pane={9} /></div><div className="mb-panel"><Tape row={r} /></div></div>}
           </td></tr>}
         </Fragment>; })}
-        {!rows.length && <tr><td colSpan={cols.length + 1} className="mb-empty">No instrument matches the filters.</td></tr>}
+        {!rows.length && <tr><td colSpan={cols.length + 1} className="mb-empty">{(() => {
+          const all = allRows.filter(r => r.account_id === s.account_id), closed = all.filter(r => r.health === 'CLOSED').length;
+          return ws.status === 'live' && closed ? `${closed} instrument${closed > 1 ? 's' : ''} hidden: market closed (the "Live" filter shows prices arriving now).`
+            : all.length ? `${all.length} instrument${all.length > 1 ? 's' : ''} hidden by the filters.` : 'No instrument matches the filters.'; })()}</td></tr>}
       </tbody></table></div>}
   </section>;
 }

@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import FloatingWindow from './FloatingWindow';
-import SourceBoard from './SourceBoard';
+import SourceBoard, { HEALTH } from './SourceBoard';
 import { SignIn } from './Infrastructure';
 import { digitsOf, goto, useSection } from './nav';
 import { StageBar, Workspace } from './StageShell';
@@ -151,13 +151,14 @@ function Plans({ canEdit }: { canEdit: boolean }) {
       <tbody>{usedInstruments.map(([key, label]) => <tr key={key}><td><strong>{label}</strong></td>{usedAccounts.map(([aid]) => {
         const p = items.find(x => x.account_id === aid && (x.instrument_id ?? `sym:${x.broker_symbol}`) === key);
         return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)} title={p ? `${p.code} · ${p.data_types.join(', ').toLowerCase()} · ${p.bar_timeframes.join(',')}${p.collector_error ? ' · ' + p.collector_error : ''}` : ''}>{p ? <span className="md-cell-line">
-          <span className={`sb-dot ${p.status === 'ACTIVE' ? (p.bid == null ? 'bad' : 'ok') : ''}`} />{p.status.toLowerCase()} · {p.feed_role.toLowerCase()}{p.active_feed ? '*' : ''}
+          <span className={`sb-dot ${p.status === 'ACTIVE' ? (['LIVE', 'CLOSED'].includes(p.health) ? 'ok' : p.bid == null || ['ERROR', 'INVALID_SYMBOL', 'STALE'].includes(p.health) ? 'bad' : 'ok') : ''}`} />{p.status === 'ACTIVE' && p.health ? HEALTH[p.health] ?? p.health : p.status.toLowerCase()} · {p.feed_role.toLowerCase()}{p.active_feed ? '*' : ''}
           {p.bid == null ? <span className="md-nodata">{p.status === 'ACTIVE' ? 'no data' : ''}</span> : p.score != null && <span className={`md-score ${scoreClass(p.score)}`}>{p.score}</span>}</span> : '—'}</td>; })}</tr>)}
         {!items.length && <tr><td className="infra-placeholder">No plans yet.</td></tr>}</tbody></table></div>
-      : <table className="cfg-table"><thead><tr><th>Plan</th><th>Account</th><th>Symbol</th><th>Instrument</th><th>Purpose</th><th>Role</th><th>Data</th><th>When</th><th>Keep</th><th>Status</th></tr></thead>
+      : <table className="cfg-table"><thead><tr><th>Plan</th><th>Account</th><th>Symbol</th><th>Instrument</th><th>Purpose</th><th>Role</th><th>Data</th><th>When</th><th>Keep</th><th>Status</th><th>Health</th></tr></thead>
         <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td>{p.code}</td><td title={p.account_code}>{p.account_name || p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
           <td>{p.purpose.replace('_', ' ').toLowerCase()}</td><td>{p.feed_role.toLowerCase()}</td><td>{p.data_types.join(', ').toLowerCase()}</td><td>{p.schedule.replace('_', ' ').toLowerCase()}</td>
-          <td>{p.hot_days} d{p.archive ? ' → archive' : ''}</td><td><span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span>{p.pending_changes > 0 && <small> · awaiting approval</small>}</td></tr>)}</tbody></table>}
+          <td>{p.hot_days} d{p.archive ? ' → archive' : ''}</td><td><span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span>{p.pending_changes > 0 && <small> · awaiting approval</small>}</td>
+          <td>{p.status === 'ACTIVE' && p.health ? <span className={`sb-plan H-${p.health}`} title={p.health_detail || undefined}>{HEALTH[p.health] ?? p.health}</span> : '—'}</td></tr>)}</tbody></table>}
     {open && <PlanWindow plan={open} canEdit={canEdit} accounts={accounts?.items ?? []} instruments={instruments?.items ?? []}
       close={() => setOpen(null)} saved={p => { setOpen(p); void reload(); }} />}
   </>;
@@ -295,6 +296,9 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
         <div><dt>Account symbols</dt><dd>{est.account_active_symbols} of {est.account_symbol_limit}</dd></div>
       </dl> : <p className="cfg-note">{estError || 'Fill in the code, account and symbol to see rows and storage per day.'}</p>}
       {est?.notes?.map((n: string) => <p key={n} className="cfg-note">{n}</p>)}</div>
+    {plan.status === 'ACTIVE' && plan.health && <p className={['ERROR', 'INVALID_SYMBOL', 'STALE'].includes(plan.health) ? 'mb-problem' : 'cfg-note'} role="status">
+      <b>Health: {HEALTH[plan.health] ?? plan.health}.</b> {plan.health_detail}{plan.health === 'INVALID_SYMBOL' && <> This plan can never receive a price: archive it and create one
+      with the source's spelling{plan.health_suggestions?.length ? <> (for example <b>{plan.health_suggestions[0]}</b>)</> : ''}, or add the instrument from Market data › the source › Available.</>}</p>}
     {plan.status_reason && <p className="cfg-note">Last status change: {plan.status_reason}</p>}
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {notice && <p role="status" className="cfg-ok">{notice}</p>}
@@ -344,11 +348,13 @@ export function eventSummary(e: Row): string {
   if (e.kind === 'STALE') return d.state === 'cleared' ? 'prices flowing again' : `no price for ${d.seconds_since_last_price ?? '?'} s`;
   if (e.kind === 'ARCHIVE') return `${d.tick_files ?? 0} tick files, ${d.bar_files ?? 0} bar files${d.errors?.length ? `, ${d.errors.length} errors` : ''}`;
   if (e.kind === 'VERIFY') return `${d.ok ?? 0} of ${d.checked ?? 0} files match`;
+  if (e.kind === 'SYMBOL_INVALID') return `not in the source's symbol list${d.suggestions?.length ? ` · did you mean ${d.suggestions.slice(0, 3).join(', ')}?` : ''}`;
+  if (e.kind === 'BACKFILL_HELD') return String(d.reason ?? 'automatic backfill held');
   if (e.kind === 'BACKFILL') return `${d.bars_saved ?? 0} bars · ${String(d.status ?? '').toLowerCase()}`;
   return typeof first === 'string' ? first : d.state ? String(d.state) : '';
 }
 
-const KINDS = ['', 'CONNECTED', 'DISCONNECTED', 'GAP', 'STALE', 'FROZEN', 'SPIKE', 'LATENCY', 'SPREAD', 'DEVIATION', 'FEED_SWITCH', 'FEED_RESTORED', 'BACKFILL', 'ARCHIVE', 'VERIFY', 'BACKUP', 'DISK', 'BACKLOG', 'ERROR'];
+const KINDS = ['', 'CONNECTED', 'DISCONNECTED', 'GAP', 'STALE', 'FROZEN', 'SPIKE', 'LATENCY', 'SPREAD', 'DEVIATION', 'FEED_SWITCH', 'FEED_RESTORED', 'BACKFILL', 'ARCHIVE', 'VERIFY', 'BACKUP', 'DISK', 'BACKLOG', 'ERROR', 'SYMBOL_INVALID', 'BACKFILL_HELD', 'CLOCK_MEASURED', 'CLOCK_SKEW', 'CONFIG_CHANGED'];
 
 function Events() {
   const [kind, setKind] = useState('');

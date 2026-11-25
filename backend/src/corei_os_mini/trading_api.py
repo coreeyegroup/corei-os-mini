@@ -7,7 +7,7 @@ research of one or all signals: IC, hit rate, quintiles); the strategy monitor; 
 execute / decline a waiting decision, execution policy per deployment); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
-dispatcher status); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
+dispatcher status); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
 attribution; VaR, stress scenarios, margin; optimisation and walk-forward, drift; post-trade reconciliation and breaks,
 broker book, TCA, trade journal, statements, order audit trail and CSV exports.
 Roles: signed-in operators read; Trading operations places tickets, manual signals, flattens, cancels and engages
@@ -28,9 +28,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import config_store as store
 from .config_api import parse
-from .operator_auth import Principal, require_operator, require_role
+from .operator_auth import Principal, current_user, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var, workspaces)
+                      signal_library, strategy_health, var, workspace_control as desks, workspaces)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -121,6 +121,166 @@ def workspace_scan_action(number: int, run_id: UUID, action: Literal['cancel', '
     _no_store(response)
     with store.transaction('write') as db:
         return _j(workspaces.scan_action(db, user, number, run_id, action))
+
+
+# ----- workspace control desks: shared Input → Processing → Output with Start / Pause / Stop -----
+
+@router.get('/desks')
+def desk_list(response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'items': desks.listing(db, user)})
+
+
+@router.get('/desks/catalogue')
+def desk_catalogue(response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(desks.catalogue(db))
+
+
+@router.post('/desks/plan')
+def desk_plan_preview(payload: desks.Config, response: Response, _: Principal = Depends(current_user)):
+    """What a config would run and every check, before saving it."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(desks.plan(db, payload))
+
+
+@router.post('/desks', status_code=201)
+def desk_create(payload: desks.DeskIn, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('create') as db:
+        return _j(desks.create(db, user, payload))
+
+
+@router.post('/desks/import/{number}', status_code=201)
+def desk_import(number: int, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('create') as db:
+        return _j(desks.import_layout(db, user, number))
+
+
+@router.get('/desks/{desk_id}')
+def desk_detail(desk_id: UUID, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(desks.detail(db, desk_id, user))
+
+
+@router.put('/desks/{desk_id}')
+def desk_update(desk_id: UUID, payload: desks.DeskUpdate, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('update') as db:
+        return _j(desks.update(db, user, desk_id, payload))
+
+
+@router.delete('/desks/{desk_id}', status_code=204)
+def desk_delete(desk_id: UUID, version: int = Query(ge=1), user: Principal = Depends(current_user)):
+    with store.transaction('delete') as db:
+        desks.delete(db, user, desk_id, version)
+    return Response(status_code=204, headers={'Cache-Control': 'no-store'})
+
+
+@router.post('/desks/{desk_id}/validate')
+def desk_validate(desk_id: UUID, response: Response, staged: bool = False, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.validate(db, user, desk_id, staged))
+
+
+@router.get('/desks/{desk_id}/review')
+def desk_review(desk_id: UUID, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(desks.review(db, user, desk_id))
+
+
+@router.post('/desks/{desk_id}/discard')
+def desk_discard(desk_id: UUID, payload: desks.ActIn, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.discard(db, user, desk_id, payload.version))
+
+
+@router.post('/desks/{desk_id}/apply')
+def desk_apply(desk_id: UUID, payload: desks.StartIn, response: Response, user: Principal = Depends(_risk)):
+    """Apply staged changes; activating runs needs the Risk approver role, as in Strategies."""
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.apply_staged(db, user, desk_id, payload))
+
+
+@router.post('/desks/{desk_id}/start')
+def desk_start(desk_id: UUID, payload: desks.StartIn, response: Response, user: Principal = Depends(_risk)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.start(db, user, desk_id, payload))
+
+
+@router.post('/desks/{desk_id}/pause')
+def desk_pause(desk_id: UUID, payload: desks.ActIn, response: Response, user: Principal = Depends(_ops_or_risk)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.pause(db, user, desk_id, payload))
+
+
+@router.post('/desks/{desk_id}/resume')
+def desk_resume(desk_id: UUID, payload: desks.ActIn, response: Response, user: Principal = Depends(_risk)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.resume(db, user, desk_id, payload))
+
+
+@router.post('/desks/{desk_id}/stop')
+def desk_stop(desk_id: UUID, payload: desks.StopIn, response: Response, user: Principal = Depends(_ops_or_risk)):
+    """Pause every run first (committed), then cancel or close as the stop policy says, through the OMS."""
+    _no_store(response)
+    with store.transaction('write') as db:
+        desk, follow = desks.stop(db, user, desk_id, payload)
+    return _j({**desk, 'result': desks.stop_follow_up(user.username, follow)})
+
+
+class DeskEmergency(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post('/desks/{desk_id}/emergency')
+def desk_emergency(desk_id: UUID, payload: DeskEmergency, response: Response, user: Principal = Depends(_ops_or_risk)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.emergency(db, user, desk_id, payload.reason))
+
+
+@router.delete('/desks/{desk_id}/runs/{deployment_id}')
+def desk_release_run(desk_id: UUID, deployment_id: UUID, response: Response, version: int = Query(ge=1),
+                     user: Principal = Depends(_ops_or_risk)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.release_run(db, user, desk_id, deployment_id, version))
+
+
+@router.post('/desks/{desk_id}/test', status_code=202)
+def desk_test(desk_id: UUID, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(desks.test_run(db, user, desk_id))
+
+
+@router.get('/desks/{desk_id}/test')
+def desk_test_status(desk_id: UUID, response: Response, user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(desks.test_status(db, user, desk_id))
+
+
+@router.get('/desks/{desk_id}/results/{tab}')
+def desk_results(desk_id: UUID, tab: Literal['runs', 'signals', 'decisions', 'orders', 'positions', 'log'], response: Response,
+                 limit: int = Query(100, ge=1, le=500), user: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'items': desks.results(db, user, desk_id, tab, limit)})
 
 
 # ----- overview: one line per stage for the system map and each stage's header -----
@@ -258,6 +418,7 @@ class ResearchIn(BaseModel):
     kind: str
     parameters: dict = Field(default_factory=dict)
     threshold: float = Field(20, ge=1, le=99)
+    exit_threshold: float | None = Field(None, ge=0, le=98)
     days: int = Field(180, ge=1, le=3650)
     horizons: list[int] = Field(default_factory=lambda: [1, 2, 5, 10, 20])
 
@@ -421,8 +582,13 @@ def signal_research_all(payload: dict, _: str = Depends(require_operator)):
         defs = signal_library.definitions(db, active_only=True)
     if len(bars) < 60:
         raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
-    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'horizons': hz,
-               'items': signal_library.research_all(defs, bars, hz)})
+    items = signal_library.research_all(defs, bars, hz)
+    tested = len(items) * len(hz)
+    return _j({'symbol': data.symbol, 'timeframe': data.timeframe, 'bars': len(bars), 'bar_source': source, 'horizons': hz, 'items': items,
+               # Many signals × horizons tested on the same bars: some look good by luck. |t| ≥ 2 happens by chance about 1 time in 20.
+               'multiple_testing': {'tests': tested, 'expected_by_chance': round(tested * 0.05, 1),
+                                    'note': f'{tested} signal × horizon tests on the same bars: about {round(tested * 0.05, 1)} would show |t| ≥ 2 by chance alone. '
+                                            'Trust a signal that is PREDICTIVE (it held out of sample) on more than one instrument.'}})
 
 
 @router.post('/signal-library/research')
@@ -436,7 +602,8 @@ def signal_research(payload: dict, _: str = Depends(require_operator)):
         bars, source = backtest.load_bars(db, data.account_id, data.symbol, data.timeframe, end - timedelta(days=data.days), end)
     if len(bars) < 60:
         raise HTTPException(409, f'Only {len(bars)} complete {data.timeframe} bars stored for {data.symbol} in that window — collect more or widen the days.')
-    out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold)
+    out = signal_library.research(data.kind, data.parameters, bars, hz, data.threshold, None,
+                                  data.exit_threshold if data.exit_threshold is not None and data.exit_threshold < data.threshold else None)
     out.update(symbol=data.symbol, timeframe=data.timeframe, bar_source=source)
     return _j(out)
 
@@ -758,7 +925,7 @@ def accounts(response: Response, _: str = Depends(require_operator)):
 def equity_curve(account_id: UUID, response: Response, days: int = Query(30, ge=1, le=400), _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        rows = db.execute('SELECT at, equity FROM pf_equity WHERE account_id=%s AND at > now() - make_interval(days => %s) ORDER BY at', (account_id, days)).fetchall()
+        rows = db.execute("SELECT at, equity FROM pf_equity WHERE account_id=%s AND book='ALL' AND at > now() - make_interval(days => %s) ORDER BY at", (account_id, days)).fetchall()
         step = max(1, len(rows) // 500)
         return {'items': _j([dict(r) for r in rows[::step]])}
 

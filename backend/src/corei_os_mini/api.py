@@ -187,6 +187,36 @@ def read_paper_run(run_id: UUID) -> dict[str, object]:
     return row
 
 
+def build_identity() -> dict[str, object]:
+    """What exactly is running: the release from the repository's VERSION file, the commit (from the environment
+    COREI_BUILD_COMMIT when deployed as a package, else from Git), and the newest applied migration. Unknown parts
+    say "unknown" — never a guess."""
+    import os
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[3]
+    try:
+        release = (root / "VERSION").read_text().strip() or "unknown"
+    except OSError:
+        release = "unknown"
+    commit = os.environ.get("COREI_BUILD_COMMIT", "").strip()
+    if not commit:
+        try:
+            commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True,
+                                    timeout=2, check=False).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            commit = ""
+    schema = "unknown"
+    try:
+        with config_store.transaction("read") as db:
+            if db.execute("SELECT to_regclass('corei_schema_migrations') AS t").fetchone()["t"]:
+                schema = db.execute("SELECT max(name) AS n FROM corei_schema_migrations").fetchone()["n"] or "unknown"
+    except Exception:  # noqa: BLE001 - identity must answer even when the database does not
+        pass
+    return {"release": release, "commit": commit or "unknown", "schema": schema}
+
+
+
 @app.get("/api/workstation")
 def workstation(response: Response) -> dict[str, object]:
     """Identity and actual capability availability for the workstation shell."""
@@ -195,7 +225,7 @@ def workstation(response: Response) -> dict[str, object]:
     return {
         "project_id": "corei-os-mini",
         "contract_version": 2,
-        "release": "0.40.0-intelligence-workspace",
+        **build_identity(),
         "database_connected": check_database(settings.database_url),
         "schema_ready": check_schema(settings.database_url),
         "configuration_ready": config_ready,

@@ -16,6 +16,14 @@ const num = (v: any, d = 2) => v == null || Number.isNaN(Number(v)) ? '–' : Nu
 const price = (v: any) => v == null ? '–' : Number(v) >= 100 ? Number(v).toFixed(2) : Number(v).toFixed(5);
 const when = (t?: string) => t ? new Date(t).toLocaleString() : '–';
 const pill = (r: string) => <span className={`cfg-pill ${r === 'TREND_UP' ? 'ok' : r === 'TREND_DOWN' ? 'live' : r === 'RANGE' ? 'demo' : r === 'WARMING_UP' ? 'off' : 'warn'}`}>{REGIME_NAME[r] ?? r}</span>;
+// Is this bar the latest the market can have closed? (backend intel/engine.freshness) Plus the Stage 1 feed health.
+const FRESH: Row = { FRESH: ['fresh', 'ok', 'The latest bar the market has closed'], CLOSED: ['market closed', 'demo', 'Older, but the market has been shut since it ended'],
+  LAGGING: ['late', 'warn', 'Up to three bars behind: the feed or the engine is late'], STALE: ['stale', 'live', 'More than three bars behind: do not rely on these features'] };
+const FEED: Row = { INVALID_SYMBOL: 'wrong symbol', ERROR: 'feed error', STALE: 'feed delayed', OFFLINE: 'source offline', DEGRADED: 'feed unreliable' };
+const freshPill = (r: Row) => { const f = FRESH[r.freshness]; const feed = FEED[r.feed_health];
+  return <>{f ? <span className={`cfg-pill ${f[1]}`} title={`${f[2]}. Bar ended ${when(r.bar_end)}.`}>{f[0]}</span> : <small className="cfg-note">–</small>}
+    {feed && <> <span className="cfg-pill live" title={r.feed_detail ?? ''}>{feed}</span></>}</>; };
+const SOURCE: Row = { BROKER: 'broker', M1: 'from M1', MIXED: 'broker, then M1' };
 const trend = (f: Row) => f.ema20 == null || f.ema50 == null ? '–'
   : `${f.ema20 > f.ema50 ? '▲' : '▼'} 20/50${f.ema200 != null ? ` · ${f.close > f.ema200 ? 'above' : 'below'} 200` : ''}`;
 
@@ -47,20 +55,23 @@ const COLS: Col[] = [
   F('tick_volume', 0, 'Tick vol.', 'Volume', 'Price changes in the bar (every broker has it)'), F('volume', 0, 'Volume', 'Volume', 'Real traded volume (exchange instruments; blank for OTC FX)'),
   F('rel_volume20', 2, 'Rel. vol.', 'Volume', 'Volume against its 20-bar average (2 = twice normal)'), F('vwap_dev_pct', 3, 'vs VWAP %', 'Volume', 'Close against the 20-bar VWAP'),
   F('obv', 0, 'OBV', 'Volume', 'On-balance volume over the window'),
+  F('vwap_session_dev_pct', 3, 'vs session VWAP %', 'Volume', 'Close against the VWAP since the session open (exchange markets: NSE, BSE, MCX)'),
   { id: 'attention', label: 'Attention', group: 'Ranking', title: 'Rank 0–100: quality × spread vs ATR × (movement + direction)', sort: r => r.attention,
     cell: r => <strong title={Object.entries(r.attention_parts ?? {}).map(([k, v]) => `${k} ${v}`).join(' · ')}>{num(r.attention, 0)}</strong> },
   { id: 'event', label: 'Event', group: 'Ranking', title: 'High-impact event or holiday for its currencies within the window',
     cell: r => r.event_risk?.length ? <span className="cfg-pill live" title={r.event_risk.map((e: Row) => `${e.currency} ${e.title} ${new Date(e.at).toLocaleTimeString()}`).join(' · ')}>event risk</span>
       : r.next_event ? <small className="cfg-note" title={r.next_event.title}>{r.next_event.currency} {new Date(r.next_event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small> : '–' },
-  { id: 'bars', label: 'Bars', group: 'Data', sort: r => r.bars, cell: r => <small>{r.bars} · {r.bars_source === 'BROKER' ? 'broker' : 'from M1'}</small> },
+  { id: 'fresh', label: 'Fresh', group: 'Data', title: 'Is the bar the latest the market has closed, and is its price feed healthy?', sort: r => r.freshness, cell: freshPill },
+  { id: 'bars', label: 'Bars', group: 'Data', title: 'Bars used and where from: the broker\'s own, built from M1, or the broker\'s history continued from M1',
+    sort: r => r.bars, cell: r => <small>{r.bars} · {SOURCE[r.bars_source] ?? r.bars_source}</small> },
   { id: 'bar', label: 'Bar (UTC)', group: 'Data', sort: r => r.bar_time, cell: r => <small>{new Date(r.bar_time).toISOString().slice(5, 16).replace('T', ' ')}</small> },
 ];
 const PRESETS: Record<string, string[]> = {
-  Standard: ['source', 'last', 'spread', 'quality', 'regime', 'vol', 'f:adx14', 'f:rsi14', 'f:atr_pct', 'trend', 'f:ret_20_pct', 'f:rel_volume20', 'attention', 'align', 'event', 'bars', 'bar'],
+  Standard: ['source', 'last', 'spread', 'quality', 'regime', 'vol', 'f:adx14', 'f:rsi14', 'f:atr_pct', 'trend', 'f:ret_20_pct', 'f:rel_volume20', 'attention', 'align', 'event', 'fresh', 'bars', 'bar'],
   Trend: ['source', 'last', 'regime', 'align', 'trend', 'f:adx14', 'f:plus_di', 'f:minus_di', 'f:er20', 'f:ret_20_pct', 'attention'],
   Momentum: ['source', 'last', 'regime', 'f:rsi14', 'f:macd_hist', 'f:stoch_k', 'f:zscore20', 'f:ret_1_pct', 'f:ret_20_pct', 'attention'],
   Volatility: ['source', 'last', 'spread', 'vol', 'f:atr_pct', 'f:atr_pct_rank100', 'f:bb_width_pct', 'f:rv20_pct', 'f:range_pos20', 'attention'],
-  Volume: ['source', 'last', 'f:tick_volume', 'f:volume', 'f:rel_volume20', 'f:vwap_dev_pct', 'f:obv', 'f:spread_bar', 'regime', 'attention'],
+  Volume: ['source', 'last', 'f:tick_volume', 'f:volume', 'f:rel_volume20', 'f:vwap_dev_pct', 'f:vwap_session_dev_pct', 'f:obv', 'f:spread_bar', 'regime', 'attention'],
   Cost: ['source', 'server', 'last', 'spread', 'f:spread_bar', 'quality', 'f:atr_pct', 'attention'],
 };
 const loadCols = () => { try { const v = JSON.parse(localStorage.getItem('corei.intel.cols') ?? 'null'); return Array.isArray(v) ? v as string[] : PRESETS.Standard; } catch { return PRESETS.Standard; } };
@@ -255,7 +266,7 @@ export function SessionsView() {
         <td>{m.next ? <small>{m.next.event} {new Date(m.next.at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</small> : '–'}</td>
         <td><small className="cfg-note">{m.note}</small></td></tr>)}</tbody></table>
     <p className="cfg-note">FX week: Sunday 17:00 to Friday 17:00 New York. Daylight-saving changes follow each centre's time zone. Exchange holidays come from the calendar
-      (Monitor › Calendar: a HOLIDAY event in INR closes NSE, BSE and MCX that day). Collection plans on <em>Market hours</em> follow these, and no stale-price alarm is raised while a market is closed.</p>
+      (Monitor › Calendar: a HOLIDAY event in INR closes NSE, BSE and MCX that day; an NSE, BSE or MCX event closes that exchange — import them from Upstox there). Collection plans on <em>Market hours</em> follow these, and no stale-price alarm is raised while a market is closed.</p>
   </section>;
 }
 
@@ -293,7 +304,7 @@ export function IntelDashboard({ openInstrument, canEdit, gotoScreener, gotoSett
       {kpi('High volatility', mix.volatility.HIGH ?? 0, 'ATR% in the top 20% of its last 100 bars')}
       {kpi('Engine', st.paused || s.enabled === false ? 'Paused' : age == null ? 'Not run yet' : `${age} s ago`, st.last_run_at ? `${st.instruments} instruments · ${st.duration_ms} ms` : '', st.errors?.length ? 'warn' : '')}
       {kpi('Feature history', Number(data.history_rows ?? 0).toLocaleString(), data.history_since ? `since ${when(data.history_since)}` : '')}
-      {kpi('Stale', data.stale, 'Snapshots not recomputed for 10 minutes', data.stale ? 'warn' : '')}
+      {kpi('Late or stale', data.stale, `Features whose bar is behind what the market has closed, or not looked at for 10 minutes${data.freshness ? ` · ${Object.entries(data.freshness).map(([k, n]) => `${String(k).toLowerCase()} ${n}`).join(', ')}` : ''}`, data.stale ? 'warn' : '')}
     </div>
     {st.errors?.length ? <p className="cfg-error">Engine errors: {st.errors.join(' · ')}</p> : null}
     <div className="intel-cols">

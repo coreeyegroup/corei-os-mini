@@ -10,7 +10,7 @@ Owns:
 Safety (the database role owns every table, so the rules live here):
   * Secret columns (passwords, hashes, ciphertext, tokens, any bytea) are never returned
     and never editable; queries in the SQL console that name them are refused.
-  * Logs, secrets, sessions and migration history are read-only, always.
+  * Logs, secrets, sessions, migration history and the trading ledger (db_policy.py) are read-only, always.
   * Configuration tables that have their own controlled screens (four-eyes, readiness)
     are read-only unless the policy infra_edit_controlled_tables is turned on.
   * Every change needs ADMIN, a re-entered password and a reason; it is checked against
@@ -41,36 +41,7 @@ from psycopg.types.json import Jsonb
 from . import config_store as store
 
 SECRET_COLUMN = re.compile(r'(password|passwd|secret|ciphertext|token|hash|nonce|private_key|api_key|totp)', re.I)
-READ_ONLY_TABLES = {
-    'cfg_audit_log': 'Audit history is append-only.',
-    'cfg_credential_use': 'The password-use log is append-only.',
-    'infra_data_edits': 'The table-edit log is append-only.',
-    'corei_schema_migrations': 'Migration history is maintained by the installer.',
-    'cfg_credentials': 'Passwords are changed on the account screen (write-only, encrypted).',
-    'cfg_sessions': 'Sign-in sessions are managed by the sign-in service.',
-    'cfg_session_tokens': 'Broker tokens are managed by the broker login.',
-    'cfg_oauth_states': 'Broker login state is managed by the broker login.',
-    'cfg_change_requests': 'Change requests are decided on the Approvals screen.',
-    'cfg_broker_reads': 'Broker reads are a record of what the broker said.',
-    'cfg_latency_checks': 'Latency history is measured, not typed.',
-    'cfg_alert_outbox': 'The alert outbox is managed by the alert service.',
-    'cfg_users': 'Users are managed on the Users screen (roles, password rules).',
-    'cfg_policies': 'Policies are changed on the Controls screen with a reason.',
-    'cfg_execution_controls': 'Order sending is switched on the Controls screen with a reason.',
-    'md_ticks': 'Prices as received are never edited.',
-    'md_bars': 'Bars are built from prices or read from the broker.',
-    'md_latest': 'Latest prices are written by the collector.',
-    'md_quality': 'Quality is measured, not typed.',
-    'md_events': 'Market-data events are a record of what happened.',
-    'md_collector_status': 'Collector status is written by the collector.',
-    'md_files': 'File fingerprints are written by the archive and checked nightly.',
-    'md_backups': 'Backup records are written by the backup job.',
-    'md_jobs': 'Backfill jobs are managed on the Market data screen.',
-}
-CONTROLLED_TABLES = {'cfg_providers', 'cfg_connections', 'cfg_accounts', 'cfg_symbol_mappings', 'cfg_instruments',
-                     'cfg_strategies', 'cfg_strategy_versions', 'cfg_deployments', 'cfg_account_groups',
-                     'cfg_account_group_members', 'cfg_alert_channels', 'cfg_connection_status', 'cfg_symbol_specs',
-                     'md_collection_plans', 'md_controls', 'md_feed_state'}
+from .db_policy import CONTROLLED_TABLES, READ_ONLY_TABLES  # noqa: E402,F401 - one policy for both editors
 MAX_PAGE = 500
 _STARTED = time.time()
 
@@ -256,13 +227,8 @@ def _controlled_allowed() -> bool:
 
 
 def _mode(table: str, has_key: bool, allow_controlled: bool) -> tuple[str, str]:
-    if table in READ_ONLY_TABLES:
-        return 'READ_ONLY', READ_ONLY_TABLES[table]
-    if not has_key:
-        return 'READ_ONLY', 'The table has no primary key, so a row cannot be addressed safely.'
-    if table in CONTROLLED_TABLES and not allow_controlled:
-        return 'READ_ONLY', 'Edited on its own screen with four-eyes and readiness checks. An administrator can allow direct edits with the policy infra_edit_controlled_tables.'
-    return 'EDIT', 'Administrators can edit with a reason; every change is logged.'
+    from . import db_policy
+    return db_policy.row_mode(table, has_key, allow_controlled)
 
 
 # ---------- one table ----------

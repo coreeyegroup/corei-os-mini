@@ -34,6 +34,8 @@ type Runtime = {
   project_id: string;
   contract_version: number;
   release: string;
+  commit?: string;
+  schema?: string;
   database_connected: boolean;
   schema_ready?: boolean;
   demo_enabled: boolean;
@@ -573,7 +575,7 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
   const problems = overview?.attention ?? [];
   return <div className="dense-page">
     <div className="dense-bar"><b>Overview</b>
-      <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}` : 'server ?'}` : 'Loading…'}</span>
+      <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}${runtime.commit ? ` · ${runtime.commit}` : ''}${runtime.schema ? ` · schema ${String(runtime.schema).slice(0, 3)}` : ''}` : 'server ?'}` : 'Loading…'}</span>
       <span className="push" /><button className="primary" onClick={() => goto('My Workspaces')}>Open My Workspaces</button><button onClick={refresh}>Refresh</button></div>
     {error && <div role="alert" className="dense-error">{error}</div>}
     {overview?.setup && overview.setup.next && <div className="dense-next" role="status">

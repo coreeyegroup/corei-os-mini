@@ -1212,6 +1212,51 @@ Steadier screens:
 - "Nothing is running yet" shows only on *All panels*, not above every item.
 - A link that opens a domain at an item now opens that item even while the domain is still loading.
 
+## Financial integrity and the pre-LIVE policy (Wave 0) — release 0.53.0
+
+Closes the safety and money defects found by the 23 Nov 2026 audits (Claude and ChatGPT, commit 673ccf3). Migration
+`044_wave0_financial_integrity.sql` (additive). Tests: `backend/tests/test_wave0.py` (13 cases, PostgreSQL).
+
+- **Paper never moves a broker decision.** Equity, daily P&L, exposure, margin, VaR and drawdown are taken from the
+  order's own book (PAPER or BROKER). Account-wide figures are labelled *ALL* and used only for reporting. Equity
+  snapshots are kept per book; older snapshots stay as the account-wide series. A paper loss stops paper
+  deployments, never the account's real trading.
+- **Unknown is not zero.** A holding with no live price has unknown unrealised P&L (it was counted as 0); one with no
+  FX conversion is listed instead of silently dropped from exposure. A risk-increasing order under a money or loss
+  limit is refused with `VALUATION_INCOMPLETE` and the holdings named; reducing orders still pass.
+- **Sizing states its capital.** A BROKER deployment sizes from the broker's equity only when it is present, positive
+  and recent; zero, missing, old or margin-only (Upstox) replies refuse with `CAPITAL_BASIS_UNAVAILABLE` instead of
+  falling back to the paper record. Fixed-quantity and fixed-notional sizing need no equity.
+- **Working orders are reserved.** Position, instrument and gross-exposure limits count every working order's unfilled
+  remainder in the same book (UNKNOWN and cancel-pending included), and the check per account book is serialised, so
+  two orders that each fit cannot together pass a limit.
+- **Reconciliation keeps its evidence.** Broker deals are read from the account's last verified point (not a fixed 3
+  days; MT5 up to 90 days) and every stored deal of a COREI order is checked for its fill, whatever its age. A break
+  closes only when a later run examined the same item and found it matched — never because it fell outside a window
+  or the broker could not be read. Fills with no position row are now a break. Each run records what it compared
+  (positions, deals, working orders, cash) and any history gap; the empty-breaks text no longer claims full agreement.
+- **Manual fills cannot exceed the order.** Resolving an UNKNOWN order is capped at what remains; a broker fill above
+  the order quantity is booked (the exposure is real) and kept as an open break with its evidence.
+- **One protected database editor policy.** Setup › Database and System › Tables share `db_policy.py`: the trading
+  ledger (orders, fills, positions, risk, reconciliation, strategy runtime), logs and secrets are never written, and
+  their structure never changed, from an editor; configuration tables follow `infra_edit_controlled_tables` in both;
+  a delete that would cascade into protected records is refused.
+- **Order rate per connection.** Every send, amend and cancel takes a slot of the connection's
+  `max_orders_per_second` (strict rolling second). Over the rate an order waits APPROVED for the next dispatch;
+  cancels wait for a slot. Upstox connections can carry an exchange-registered Algo Name, sent as `X-Algo-Name` on
+  place, modify and cancel (COREI's tag stays for correlation).
+- **Pre-LIVE policy.** LIVE order sending cannot be turned on until: every LIVE trading account is covered by
+  `MAX_ORDER_NOTIONAL`, `MAX_DAILY_LOSS` and `MAX_POSITION_QTY` or `MAX_GROSS_EXPOSURE`; the four-eyes rule holds every
+  LIVE order (`ALL`); two active risk approvers exist; an alert channel is active. The last three can be waived only
+  by a recorded exception of 1–30 days (Setup API `/api/config/live-readiness`). If LIVE is already on, the
+  dispatcher refuses every new LIVE order that adds risk while the policy is unmet (REJECTED, reason LIVE_POLICY_UNMET;
+  reducing orders still go), and
+  Home shows each unmet rule as CRITICAL. **Existing installs: LIVE stays as it is switched; new LIVE exposure waits
+  for the policy (they are refused until it is met).**
+- **Release identity.** One `VERSION` file; `/api/workstation` and the status bar show release, commit and schema.
+
+Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.
+
 ## Optional market research API
 
 Corei OS Mini can supply collected bars to Core AI or other authorized research
@@ -1227,6 +1272,34 @@ symbols already collected by the authorized account. The credential authorizes
 read-only requests to these two endpoints. Without an explicit token and account
 scope, the optional interface is unavailable.
 
+<<<<<<< HEAD
+## Market data means what it says (Stage 1) — release 0.54.0
+
+Closes the live defects of the 23 Nov 2026 Market Data audit. Migration `045_market_data_integrity.sql` (additive).
+Tests: `backend/tests/test_market_data_stage1.py`.
+
+- **Plan health in words.** Every active plan shows one state: live, market closed, waiting, delayed, unreliable,
+  error, wrong symbol, source offline or paused — with the reason and next step. "Collecting" no longer hides a plan
+  that receives nothing; the header and the dashboard count plan problems, and Home lists them.
+- **Wrong symbols are caught.** Every minute each plan's symbol is checked against its source's symbol list. A symbol
+  the list lacks (e.g. `Nifty 50` instead of `NSE_INDEX|Nifty 50`) is marked *wrong symbol* with suggestions, left out
+  of the subscription and of automatic backfill, and raised once as a CRITICAL event. On Upstox one rejected key no
+  longer stops the prices of the others.
+- **Bars match the exchange.** New bars use the exchange time of the price (when within 2 minutes of receipt), align
+  NSE/BSE/MCX bars to the session open (NSE H1 = 09:15, 10:15 … 15:15) and D1 to the IST day, use the last traded
+  price for exchange instruments and the increase of Upstox's day volume. FX/CFD bars are unchanged (bid, UTC). Each
+  bar records how it was made. Older bars are kept as they are.
+- **Quality reaches trading.** The risk check refuses a risk-increasing order when its feed is wrong-symbol, error,
+  offline or delayed, or scored below 40 in the last minute (Setup › Policies `md_block_states`,
+  `md_min_quality_score`). Reducing orders still pass.
+- **Calmer failures.** Automatic backfill waits after 3 failures in a row (15 min, doubling to 6 h); every event names
+  its symbol; latency is measured only on new trades (Upstox) and a negative value shows as *clock?*; an old quality
+  score is no longer shown as today's.
+- **Replay check.** `python -m corei_os_mini.md.replay --account CODE --day YYYY-MM-DD` rebuilds a day's bars from the
+  journal and lists any difference with the database (read-only).
+
+Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-database.sh`, `bash scripts/deploy-workstation.sh`.
+=======
 ## Upstox V3 order execution
 
 1. In Setup, use an Upstox REST/OAuth connection with base
@@ -1253,3 +1326,69 @@ scope, the optional interface is unavailable.
 - [Upstox Place Order V3](https://upstox.com/developer/api-documentation/v3/place-order/)
 - [Upstox Modify Order V3](https://upstox.com/developer/api-documentation/v3/modify-order/)
 - [Upstox Cancel Order V3](https://upstox.com/developer/api-documentation/v3/cancel-order/)
+>>>>>>> origin/main
+
+## Market intelligence describes the market it comes from (Stage 2) — release 0.55.0
+
+Closes the defects of the 23 Nov 2026 Market Intelligence audit. Migration `046_market_intelligence_integrity.sql`
+(additive). Tests: `backend/tests/test_intelligence_stage2.py`.
+
+- **No more week-old daily trends.** When the broker's own bars stop (a backfilled D1, say), their history is continued
+  with bars built from M1 on the broker's own grid (shown as *broker, then M1*); the screener, strategies and backtests
+  use the same bars.
+- **Fresh means fresh.** Every row says whether its bar is the latest the market can have closed: *fresh*, *market
+  closed*, *late* or *stale*, from the market's hours and holidays; the Dashboard counts late and stale features.
+- **Indian markets read like Indian charts.** NSE, BSE and MCX features use the Stage 1 session bars (H1 09:15 … 15:15,
+  the last ending 15:30) and the IST day; realised volatility uses each market's trading year; a session VWAP is added;
+  bars are labelled with their exchange session. Feature version 4 starts a new history; older versions are kept.
+- **Regime can guide strategies.** Each strategy has optional *allowed regimes* and *blocked volatility* (off by
+  default). Entries outside them wait; exits always pass; backtests apply the same filter.
+- **Exchange holidays and event risk for every market.** Intelligence › Calendar imports this year's NSE, BSE and MCX
+  trading holidays from Upstox; Stage 1 market hours and event risk use them. Events can name an exchange (NSE, BSE,
+  MCX) as well as a currency; signals use the event window from Engine settings.
+- **Rules you can trust.** *Preview (30 days)* shows how often a rule would have fired and warns when it never would,
+  or always would. Currency strength warns when it rests on fewer than 3 currencies.
+- **Steadier engine.** One run at a time (a manual refresh waits for the cycle); a timeframe with no newly closed bar
+  only refreshes its freshness; the screener shows each source's feed health from Stage 1.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Signals you can believe (Stage 3) — release 0.56.0
+
+Closes the defects of the 24 Nov 2026 Signal Intelligence audit. Migration `047_signal_intelligence_integrity.sql`
+(additive). Tests: `backend/tests/test_signal_stage3.py`.
+
+- **Fewer false flips.** Each library signal can have an *exit threshold*: a side, once taken, is held until the score
+  falls back below it (e.g. enter at ±20, hold until ±10). Empty keeps the old behaviour. The dashboard warns when a
+  timeframe flips too often and says what to do.
+- **Honest research.** The t-statistic counts overlapping h-bar returns as n ÷ h observations; *PREDICTIVE* now also needs
+  the edge to hold on the last 30% of bars (out of sample) and to beat the spread (*net edge*). Ranking every signal
+  states how many would look good by chance.
+- **Stale scores don't vote.** A score whose bar is late for its market (Market intelligence freshness) is shown with a
+  *stale bar* label and left out of the composite.
+- **Strategy signals net of cost.** Signal quality shows the spread paid, the net move and the hit rate after cost;
+  manual signals are measured too.
+- **Traceable flips.** Every flip records the definition version that produced it.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## My Workspace control desk — release 0.57.0
+
+A workspace now runs. Migration `048_workspace_control.sql` (additive). Tests: `backend/tests/test_workspace_control.py`.
+
+- **One desk, three columns.** Input (data sources, instruments, timeframes), Processing (approved strategies, sizing,
+  stop and target, decision expiry) and Output (Observe / Paper / Broker DEMO / LIVE, what happens to a decision,
+  accounts, order type, what Stop does). The readiness line checks unsaved settings as you change them.
+- **Validate, Test run, Start, Pause, Stop.** Validate shows every check with why and a fix. A test run is a read-only
+  scan. Start creates runs the workspace owns, and adopts existing deployments only when you tick them; the rest are
+  watched. Stop pauses first, then keeps, cancels working orders, or closes positions (asked again). An order with an
+  unknown outcome is never cancelled blind. Emergency stop puts a kill switch on each of the desk's runs.
+- **Shared, with an owner.** Every operator sees shared desks; one desk controls a run, so two desks can never send
+  duplicate orders. Changes to a running desk are staged, reviewed and applied.
+- **Nothing lost.** The saved layouts, their scan and the deployment mapping are under *Saved layouts*; a layout can be
+  imported into a control desk.
+- **Safety unchanged.** Every order passes the risk check. A desk reads the DEMO / LIVE order-sending switches and never
+  turns them on. Starting needs the Risk approver role; on LIVE, a second person starts.
+
+Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

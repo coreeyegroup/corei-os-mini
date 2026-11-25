@@ -27,7 +27,19 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    outcome:'PENDING',signal_side:'BUY',target:'LONG',created_at:now,bar_time:now};
  const calls=[];
  let savedWorkspaces=null;
+ const desks=[];
+ const deskCat={sources:[{id:'c1',code:'VTM_L3',environment:'DEMO',purpose:'BOTH',status:'ACTIVE'}],instruments:[{id:'i1',symbol:'EURUSD',status:'ACTIVE',asset_class:'FX'}],
+   strategies:[{id:'st1',code:'EMA_FAST',name:'EMA fast',status:'ACTIVE',approved_version_id:'v1',approved_version:1,timeframe:'M5',versions:[{id:'v1',number:1,state:'APPROVED',timeframe:'M5'}]}],
+   accounts:[{id:'a1',code:'VTM_A',environment:'DEMO',purpose:'BOTH',status:'ACTIVE',trading_permission:'TRADING'},{id:'a2',code:'LIVE_A',environment:'LIVE',purpose:'BOTH',status:'ACTIVE',trading_permission:'TRADING'}],
+   controls:{DEMO:{trading_enabled:false},LIVE:{trading_enabled:false}}};
+ const deskPlan=cfg=>{const ready=!!(cfg.input.sources.length&&cfg.input.instruments.length&&cfg.processing.strategies.length&&cfg.output.accounts.length);
+   return {ready,environment:cfg.output.environment,handoff:cfg.output.environment==='OBSERVE'?'SIGNAL_ONLY':cfg.output.handoff,
+     checks:ready?[{stage:'Input',status:'PASS',title:'Sources · VTM_L3',detail:'',fix:'',view:''},{stage:'Ownership',status:'WARN',title:'1 existing deployment(s) can be adopted',detail:'',fix:'',view:''}]
+       :[{stage:'Input',status:'FAIL',title:'Choose at least one data source',detail:'Without a data source no run has prices or bars.',fix:'Add a source under Input → Data sources.',view:'Market data'}],
+     runs:ready?[{action:'ADOPT',deployment_id:'dep-x',strategy_code:'EMA_FAST',version_number:1,symbol:'EURUSD',account_code:'VTM_A',status:'PAUSED'}]:[],
+     coverage:{instruments:[ready?1:0,cfg.input.instruments.length],strategies:[ready?1:0,cfg.processing.strategies.length],accounts:[ready?1:0,cfg.output.accounts.length],timeframes:ready?['M5']:[],create:0,keep:0,adopt:ready?1:0,watch:0,skip:0}};};
  let deskScan=null;
+ let mappedStatus='ACTIVE';
  let largeScanCatalog=false;
  let beyondRegistryLimit=false;
  let brokerSymbolCollected=false;
@@ -188,6 +200,25 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/quickstart'))return ok({active:calls.some(c=>c.url.endsWith('/trading/quickstart')&&c.method==='POST')?1:0,strategies:0,deployments:0,
      sources:[{account_id:'a1',account_code:'VTM_A',environment:'DEMO',broker_symbol:'EURUSD',instrument:'EURUSD',ready:true}],
      presets:[{id:'EMA_FAST',label:'Fast trend · EMA 3/8 cross',algorithm:'EMA_CROSSOVER',parameters:{fast:3,slow:8},why:'Many signals.'}]});
+   if(url.includes('/trading/desks')){
+     const DID='11111111-2222-3333-4444-555555555555';
+     const find=()=>desks.find(d=>url.includes('/desks/'+d.id));
+     if(url.endsWith('/trading/desks/catalogue'))return ok(deskCat);
+     if(url.endsWith('/trading/desks/plan'))return ok(deskPlan(body));
+     if(url.endsWith('/trading/desks')&&method==='POST'){const d={id:DID,name:body.name,owner:'alice',shared:true,template:body.template,config:body.config,staged:null,state:'STOPPED',state_reason:'',version:1,summary:{},attention:[],last_check:null};desks.push(d);return ok(d,201);}
+     if(url.endsWith('/trading/desks'))return ok({items:desks});
+     const d=find();
+     if(!d)return fail(404,'Workspace not found.');
+     if(method==='PUT'){Object.assign(d,{name:body.name,config:body.config,version:d.version+1});return ok(d);}
+     if(url.endsWith('/validate')){d.last_check=deskPlan(d.config);return ok(d.last_check);}
+     if(url.endsWith('/start')){Object.assign(d,{state:'RUNNING',state_reason:body.reason,state_by:'alice',version:d.version+1});return ok({...d,result:{activated:body.adopt,held:[],watched:[],created:[]}});}
+     if(url.endsWith('/pause')){Object.assign(d,{state:'PAUSED',state_reason:body.reason,version:d.version+1});return ok({...d,result:{paused:['dep-x']}});}
+     if(url.endsWith('/stop')){Object.assign(d,{state:'STOPPED',state_reason:body.reason,version:d.version+1});return ok({...d,result:{cancelled:[],cancel_failed:[],unknown:['o-unknown'],close_orders:[{order_id:'o9',state:'FILLED'}],close_failed:[]}});}
+     if(url.endsWith('/test'))return ok(null);
+     if(url.includes('/results/runs'))return ok({items:d.state==='STOPPED'&&!calls.some(c=>c.url.endsWith('/start'))?[]:[{deployment_id:'dep-x',role:'ADOPTED',status:d.state==='RUNNING'?'ACTIVE':'PAUSED',strategy_code:'EMA_FAST',version_number:1,timeframe:'M5',symbol:'EURUSD',account_code:'VTM_A',environment:'DEMO',handoff:'APPROVE'}]});
+     if(url.includes('/results/'))return ok({items:[]});
+     return ok(d);
+   }
    if(url.endsWith('/trading/workspaces')&&method==='PUT'){
      savedWorkspaces={...body,revision:body.revision+1};return ok(savedWorkspaces);
    }
@@ -204,7 +235,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
     if(url.endsWith('/scan/desk-scan/resume')){deskScan={...deskScan,status:'QUEUED'};return ok(deskScan);}
     if(url.includes('/scan-runs/desk-scan/results?'))return ok({items:[],has_more:false});
     if(url.endsWith('/trading/workspaces/catalogue'))return ok({
-     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
+     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO',connection_code:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE',connection_code:'LIVE'}],
      instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
    if(url.includes('/trading/workspaces/snapshot')){
      const q=new URL(url,w.location.origin).searchParams;
@@ -288,7 +319,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/config/strategies'))return ok({items:[...registeredStrategies,
      ...(largeScanCatalog?Array.from({length:100},(_,i)=>({id:'batch-strategy-'+i,code:'BATCH_STRAT_'+i,status:'ACTIVE'})):[])
    ]});
-   if(url.includes('/config/deployments'))return ok({items:[]});
+   if(url.endsWith('/config/deployments/mapped-eur/pause')&&method==='POST'){mappedStatus='PAUSED';return ok({id:'mapped-eur',status:mappedStatus});}
+    if(url.includes('/config/deployments'))return ok({items:[{id:'mapped-eur',strategy_code:'EMA_EXISTING',instrument_symbol:'EURUSD',instrument_id:'i1',account_id:'a1',account_code:'VTM_A',environment:'DEMO',mode:'PAPER',status:mappedStatus,version:3,version_number:1,data_symbol:'EURUSD',data_connection_code:'DEMO',trading_symbol:'EURUSD',blockers:[],sizing:{method:'FIXED_QTY',quantity:'0.1'},execution:{handoff:'APPROVE',order_type:'MARKET'}}]});
    if(url.includes('/intel/overview'))return ok({covered:3});
    if(url.endsWith('/config/overview'))return ok({user:{username:'risk-ops',roles:['ADMIN']},feeds:{active_plans:2,collectors:1,live:1,problems:0,paused:false},order_sending:[{environment:'DEMO',enabled:false}],
      approvals:0,attention:[],setup:{done:3,total:6,next:null,steps:[]}});
@@ -509,6 +541,59 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(calls.findLast(c=>c.url.endsWith('/portfolio/flatten')).body.mode,'PAPER');
  console.log('PASS: portfolio account scope, position mark, exact fills and paper-only flatten.');
 
+ // Workspace control desk: input → processing → output, validate, start with confirmed adoption, pause, stop with a policy.
+ await go('My Workspaces');
+ assert.match($('.my-workspaces').textContent,/No workspaces yet/);
+ const deskStart=calls.length;
+ promptAnswer='Gold desk';button('Create a workspace').click();await settle(8);
+ assert.deepEqual([calls.findLast(c=>c.url.endsWith('/trading/desks')&&c.method==='POST').body.name,calls.findLast(c=>c.url.endsWith('/trading/desks')&&c.method==='POST').body.template],['Gold desk','CUSTOM']);
+ assert.match($('.dk-ready').textContent,/not checked yet/);
+ const pick=(col,text)=>{const l=$$('.dk-col')[col].querySelectorAll('.dk-radio');const hit=[...l].find(x=>x.textContent.includes(text));assert.ok(hit,text);hit.querySelector('input').click();};
+ pick(0,'VTM_L3');await settle(2);pick(0,'EURUSD');await settle(2);
+ assert.match($$('.dk-col')[0].textContent,/VTM_L3 · demo · primary/);
+ pick(1,'EMA_FAST');await settle(2);
+ assert.ok($('[aria-label="EMA_FAST version"]'),'a picked strategy can pin a version');
+ pick(2,'Broker DEMO');await settle(2);
+ assert.ok(!$$('.dk-col')[2].textContent.includes('LIVE_A · live'),'Broker DEMO offers DEMO accounts only');
+ assert.match($$('.dk-col')[2].textContent,/DEMO order sending is off/,'order sending is shown, never switched here');
+ pick(2,'Paper');await settle(2);
+ assert.match($$('.dk-col')[2].textContent,/LIVE_A · live/,'a paper book can sit on any account');
+ pick(2,'VTM_A');await settle(2);pick(2,'Ask me to approve');await settle(16);
+ assert.ok(calls.some(c=>c.url.endsWith('/trading/desks/plan')),'unsaved settings are checked live');
+ assert.match($('.dk-ready').textContent,/1\/1 instruments × 1\/1 strategies × 1\/1 accounts · M5/);
+ button('Save').click();await settle(8);
+ const saved=calls.findLast(c=>c.method==='PUT'&&c.url.includes('/trading/desks/'));
+ assert.deepEqual([saved.body.config.input.sources,saved.body.config.output.environment,saved.body.config.output.handoff,saved.body.config.processing.sizing.quantity],[['c1'],'PAPER','APPROVE','1']);
+ assert.equal(typeof saved.body.config.processing.sizing.quantity,'string','sizes stay exact text, never a float');
+ button('Start…').click();await settle(8);
+ assert.match($('[aria-label="Start workspace"]').textContent,/Existing deployments outside any workspace.*Adopt EMA_FAST v1 × EURUSD × VTM_A/);
+ assert.match($('[aria-label="Start workspace"]').textContent,/Watch 1 run\(s\) without controlling them/);
+ $$('[aria-label="Start workspace"] .dk-radio').find(l=>l.textContent.includes('Adopt EMA_FAST')).querySelector('input').click();await settle(3);
+ assert.match($('[aria-label="Start workspace"]').textContent,/Adopt and activate 1 existing deployment/);
+ $$('[aria-label="Start workspace"] button').find(b=>b.textContent==='Start').click();await settle(8);
+ assert.deepEqual(calls.findLast(c=>c.url.endsWith('/start')).body.adopt,['dep-x']);
+ assert.match($('.dk-desk').textContent,/Started: 1 run\(s\) active/);
+ assert.match($('.dk-head').textContent,/running/);
+ promptAnswer='lunch break';button('Pause').click();await settle(8);
+ assert.equal(calls.findLast(c=>c.url.endsWith('/pause')).body.reason,'lunch break');
+ button('Stop…').click();await settle(4);
+ $$('[aria-label="Stop workspace"] .dk-radio').find(l=>l.textContent.includes('close this workspace')).querySelector('input').click();await settle(3);
+ const stopBtn=()=>$$('[aria-label="Stop workspace"] button').find(b=>b.textContent==='Stop');
+ assert.ok(stopBtn().disabled,'closing positions needs an explicit confirmation');
+ $$('[aria-label="Stop workspace"] .dk-radio').find(l=>l.textContent.includes('I confirm')).querySelector('input').click();await settle(3);
+ promptAnswer='end of day';stopBtn().click();await settle(8);
+ assert.deepEqual([calls.findLast(c=>c.url.endsWith('/stop')).body.policy,calls.findLast(c=>c.url.endsWith('/stop')).body.confirm_close],['CLOSE_POSITIONS',true]);
+ assert.match($('.dk-desk').textContent,/1 order\(s\) with an unknown outcome need resolving in Execution/);
+ button('Log').click();await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('/results/log')));
+ assert.equal(new URL(w.location.href).searchParams.get('section'),'d-11111111222233334444555555555555');
+ const deskWritesAll=calls.slice(deskStart).filter(c=>c.method!=='GET');
+ assert.ok(deskWritesAll.every(c=>c.url.includes('/trading/desks')),'the desk writes only through its own endpoints');
+ button('All workspaces').click();await settle(4);
+ assert.match($('.dk-all').textContent,/Gold desk.*stopped.*Paper · approve · 1 account/);
+ console.log('PASS: control desk: three columns, live readiness, start with confirmed adoption, pause, stop policy with confirmation, results.');
+ button('Saved layouts').click();await settle(6);
+
  // Saved workspace scope and numbered layouts, including a LIVE ticket handoff without submitting it.
  await go('My Workspaces');
  assert.ok(button('My Workspace 1'));
@@ -594,7 +679,15 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
   pickers[0].querySelector('input[type=checkbox]').click();await settle(3);
   pickers[1].querySelector('input[type=checkbox]').click();await settle(3);
   assert.ok(button('Start scan').disabled,'unsaved scan settings cannot run');
-  button('Save control settings').click();await settle(6);
+  assert.ok($('.mw-mapping'),'workspace has a mapped deployment roster');
+  assert.match($('.mw-mapping').textContent,/EMA_EXISTING.*EURUSD.*VTM_A/,'matching existing deployment is shown inside the desk');
+  assert.match($('.mw-mapping').textContent,/APPROVE/,'actual execution handoff is shown');
+  assert.ok(button('Inspect mapped deployment'),'exact deployment evidence can be opened in the same workspace');
+  const beforeInspect=calls.filter(c=>c.method!=='GET').length;
+  button('Inspect mapped deployment').click();await settle(4);
+  assert.ok(calls.some(c=>c.url.includes('workspaces/snapshot?')&&c.url.includes('deployment=mapped-eur')&&c.url.includes('account=a1')&&c.url.includes('source=a1')&&c.url.includes('mode=PAPER')));
+  assert.equal(calls.filter(c=>c.method!=='GET').length,beforeInspect,'inspection does not change existing deployment or runtime');
+  button('Save workspaces').click();await settle(6);
   assert.ok(!button('Start scan').disabled,'saved valid scan is available');
   button('Start scan').click();await settle(6);
   assert.match($('.mw-control').textContent,/QUEUED/);
@@ -607,6 +700,27 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
   assert.ok(deskWrites.some(c=>c.url.includes('/workspaces/')&&c.url.endsWith('/scan')));
   assert.ok(deskWrites.every(c=>c.url.includes('/trading/workspaces')),'desk scan must not write other settings or runtime');
   console.log('PASS: saved desk scan start, stop and resume only touch workspace endpoints.');
+  const mappedFilter=$$('.mw-account-choice input');
+  assert.equal(mappedFilter.length,2);
+  mappedFilter[1].click();await settle(4);
+  assert.match($('.mw-mapping').textContent,/No existing deployment matches/);
+  mappedFilter[1].click();await settle(4);
+  assert.ok(button('Inspect mapped deployment'));
+  mappedFilter[0].click();await settle(4);
+  button('Save workspaces').click();await settle(6);
+  assert.deepEqual(savedWorkspaces.items.find(d=>d.number===savedWorkspaces.active).mapping_accounts,['a1']);
+  const actionStart=calls.length;
+  promptAnswer='review this mapped deployment';w.confirm=()=>false;
+  button('Pause existing deployment').click();await settle(4);
+  assert.equal(calls.slice(actionStart).filter(c=>c.method!=='GET').length,0,'declining shared action must not write');
+  w.confirm=()=>true;
+  button('Pause existing deployment').click();await settle(8);
+  const actionWrites=calls.slice(actionStart).filter(c=>c.method!=='GET');
+  assert.equal(actionWrites.length,1);
+  assert.ok(actionWrites[0].url.endsWith('/config/deployments/mapped-eur/pause'));
+  assert.deepEqual(actionWrites[0].body,{version:3,reason:'review this mapped deployment'});
+  assert.match($('.mw-mapping').textContent,/PAUSED/);
+  console.log('PASS: account filter persists in the desk; explicit shared deployment action targets only its ID.');
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');

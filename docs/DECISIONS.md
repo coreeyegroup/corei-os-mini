@@ -96,3 +96,95 @@ handling, signals from live data, risk limits, and reconciliation — built in 0
 by tests against a scripted broker. Still to be shown on a demo account before LIVE: a run of real demo orders
 through each bridge node (send, partial, cancel, a lost answer resolved by look-up, reconciliation matched), and
 the go-live evidence in docs/GAP_REGISTER.md. Roles and four-eyes activation are in place (DEC-23, DEC-24).
+
+## DEC-97 · Pre-LIVE policy, book isolation and ledger protection (release 0.53.0, 23 Nov 2026)
+
+Context: two independent audits of commit 673ccf3 found LIVE order sending on with no risk limits, paper results in
+broker risk inputs, reconciliation clearing breaks that aged out of a 3-day window, and an editor able to change the
+trading ledger. Decision (engineering, within the existing guardrails; numeric limit values remain owner decision 5):
+1. Every risk figure used for a decision is taken from one book (PAPER or BROKER); consolidated figures are reporting only.
+2. Unknown values (no mark, no FX, no broker equity) refuse risk-increasing orders; they are never read as zero.
+3. LIVE order sending needs the pre-LIVE policy (limits; four-eyes ALL; two risk approvers; an alert channel). The last
+   three may be waived only by a recorded exception of at most 30 days. The policy is enforced again at dispatch for
+   orders that add risk. COREI never turns order sending off by itself.
+4. The trading ledger is written only by domain code; both editors enforce one policy (db_policy.py).
+5. Order rate limiting is in-process (one API process owns dispatch). A second sending process requires a shared
+   limiter first. Status: accepted.
+
+## DEC-98 · Market data means what it says (release 0.54.0, 23 Nov 2026)
+
+Context: the Stage 1 audit found a trading feed collecting nothing for days while shown green, bars bucketed by
+receipt time and UTC-aligned for Indian markets, Upstox day volume summed per quote, and feed quality unused by risk.
+Decision (engineering; owner decisions on price storage and history rebuild remain open):
+1. Every active plan has one health state (md_plan_health), shown in words everywhere; screens and the header count
+   plan problems, not only collectors. A symbol missing from its source's list is never subscribed or backfilled.
+2. New bars state how they were made (price basis, volume kind, anchor, time basis, derivation). Session markets align
+   to the exchange open; exchange instruments use the last trade and the day-volume increase; FX keeps bid and UTC.
+   Bars stored before 0.54.0 are not rewritten (labels NULL) — rebuilding history is an owner decision.
+3. A risk-increasing order is refused when its feed is INVALID_SYMBOL, ERROR, OFFLINE or STALE, or scored below 40
+   in the last minute (policies md_block_states, md_min_quality_score; 0 turns the score rule off). Reducing orders
+   pass. Instruments without a plan keep the price-age check only.
+4. Automatic backfill backs off after repeated failures; manual backfill is unchanged.
+5. The journal replay check is read-only; it never repairs. Status: accepted.
+
+## DEC-99 · Features describe the market they come from (release 0.55.0, 23 Nov 2026)
+
+Context: the Stage 2 audit found week-old broker D1 bars shown as current, UTC-cut Indian hours, an FX trading year
+for every market, an empty calendar and a regime no trading decision read.
+Decision (engineering defaults chosen by the owner's request to proceed; reversible):
+1. One bucket function for Stage 1 and Stage 2; feature version 4 starts its own history (versions 1–3 kept).
+2. Bar-source policy shared by the engine, the runtime and the backtest: broker bars when as recent and as many;
+   otherwise their history continued with M1-built bars on the broker's own grid (MIXED); never a series that stopped.
+3. Freshness is judged by the market's hours and holidays, not by when the engine last ran.
+4. Regime and volatility filters are strategy parameters, empty (off) by default, applied inside the algorithm walk
+   so backtest and live agree; exits are never blocked.
+5. Exchange holidays come from Upstox on request; the economic calendar stays manual/CSV until a provider is chosen.
+6. The engine stays in the API process with a run lock and incremental compute; a separate service is deferred.
+Status: accepted.
+
+## DEC-100 · A signal is believed only after it survives an honest test (release 0.56.0, 24 Nov 2026)
+
+Context: the Stage 3 audit found research that counted overlapping returns as independent, called a signal PREDICTIVE
+on in-sample evidence alone, showed edges before cost, and ~900 side flips a day on M5 from scores wobbling around
+their thresholds; strategy-signal quality ignored the spread.
+Decision:
+1. Research: t-statistic with n ÷ h observations; PREDICTIVE needs the IC to keep its sign (≥ half its size) on the last
+   30% of bars; net edge = edge − spread; ranking many signals shows the expected count of chance winners.
+2. Hysteresis is a definition setting (exit threshold), empty by default (the behaviour before); sides are walked
+   from the window start, so the same bars give the same sides.
+3. Scores whose bar is late or stale (Stage 2 freshness) are shown but do not vote in a composite.
+4. Strategy-signal quality is reported net of the spread paid at the decision, and manual signals are measured from
+   the bar they fell in.
+Status: accepted.
+
+
+## DEC-101 · A workspace runs its own runs, and only its own (release 0.57.0, 25 Nov 2026)
+
+Context: My Workspace saved a per-user layout and could launch a read-only scan, but could not run anything. Starting
+real work meant visiting Strategies, Execution and Risk separately, and nothing stopped two desks from driving the
+same strategy on the same account (duplicate orders). The owner asked for one simplified, customisable control desk:
+Input, Processing and Output, then Start, Pause and Stop, then Results. It had to be shared with an owner; Start had to
+offer both "create runs" and "adopt existing deployments"; and nothing already built could be lost.
+Decision:
+1. A control desk (`ws_workspaces`) is shared by default and held by an owner (it can be made private). It stores
+   input (data connections, the first one primary; instruments; timeframes), processing (strategies on approved versions,
+   sizing, protection, decision expiry) and output (environment Observe / Paper / Broker DEMO / LIVE, hand-off,
+   accounts, order type, approval window, stop policy).
+2. A run is a deployment, one per strategy × instrument × account (the existing unique key). The workspace links it as
+   OWNED (it created the run), ADOPTED (an existing deployment, adopted only with explicit confirmation) or WATCH
+   (shown, never controlled). A partial unique index allows one controller per deployment.
+3. Validate lists every check by stage with why and a fix. Start, Resume and Apply follow the Strategies rules: the
+   Risk approver role; structural blockers hold a run; on LIVE the person who starts must differ from the person who
+   last changed the settings. A workspace reads the DEMO and LIVE order-sending controls and never switches them.
+4. Stop first pauses every controlled run (committed), then applies the policy through the OMS: keep everything, cancel
+   working orders, or close positions (closing must be confirmed). An order with an UNKNOWN outcome is never cancelled;
+   it is listed for resolution. Emergency stop engages a deployment-scoped kill switch on each controlled run; the
+   switches are released in Risk.
+5. Changes to a running or paused desk are staged. Review shows running → staged and validates again; Apply converges
+   the runs: it creates new ones, updates the ones it owns, and pauses and releases runs no longer in the settings.
+6. The timeframe stays a property of the strategy version (the deployment key has no timeframe). The desk's timeframes
+   filter which strategies run and show why one is left out. One strategy cannot run on two timeframes on the same
+   account and instrument without a second strategy version.
+7. Saved per-user layouts, their research scan and the deployment mapping remain under "Saved layouts". A layout can
+   be imported into a control desk on request.
+Status: accepted.

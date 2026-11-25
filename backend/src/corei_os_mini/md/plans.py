@@ -113,16 +113,18 @@ class BackfillIn(BaseModel):
 SELECT = '''SELECT p.*, a.code AS account_code, a.name AS account_name, a.external_account_id, c.code AS connection_code,
         c.environment, c.platform, i.symbol AS instrument_symbol,
         l.bid, l.ask, l.received_at AS last_price_at,
-        (SELECT q.score FROM md_quality q WHERE q.account_id=p.account_id AND q.broker_symbol=p.broker_symbol AND q.ticks > 0 ORDER BY q.minute DESC LIMIT 1) AS score,
+        (SELECT q.score FROM md_quality q WHERE q.account_id=p.account_id AND q.broker_symbol=p.broker_symbol AND q.ticks > 0 AND q.minute > now() - interval '15 minutes' ORDER BY q.minute DESC LIMIT 1) AS score,
         s.last_error AS collector_error,
         s.state AS collector_state, s.heartbeat_at AS collector_heartbeat_at,
         f.active_plan_id = p.id AS active_feed,
+        h.state AS health, h.detail AS health_detail, h.since AS health_since, h.suggestions AS health_suggestions,
         (SELECT count(*) FROM cfg_change_requests r WHERE r.entity='md_plans' AND r.entity_id=p.id AND r.status='PENDING') AS pending_changes
     FROM md_collection_plans p JOIN cfg_accounts a ON a.id=p.account_id JOIN cfg_connections c ON c.id=a.connection_id
     LEFT JOIN cfg_instruments i ON i.id=p.instrument_id
     LEFT JOIN md_latest l ON l.account_id=p.account_id AND l.broker_symbol=p.broker_symbol
     LEFT JOIN md_collector_status s ON s.account_id=p.account_id
-    LEFT JOIN md_feed_state f ON f.instrument_id=p.instrument_id'''
+    LEFT JOIN md_feed_state f ON f.instrument_id=p.instrument_id
+    LEFT JOIN md_plan_health h ON h.plan_id=p.id'''
 
 
 def _row(r: dict) -> dict:

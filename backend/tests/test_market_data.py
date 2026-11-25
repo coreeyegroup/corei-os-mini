@@ -48,8 +48,9 @@ class Pure(unittest.TestCase):
                          ('M1', 1.1, 1.101, 1.099, 1.099, 3, True))
         self.assertAlmostEqual(m1['spread_avg'], 0.0002, places=6)
         self.assertEqual(b.add(T0 + timedelta(seconds=1), 9.9, 9.91), [])   # late tick ignored for bars
-        due = b.due(T0 + timedelta(minutes=5, seconds=1))
-        self.assertEqual(sorted(x['timeframe'] for x in due), ['M1', 'M5'])
+        self.assertEqual([x['timeframe'] for x in b.due(T0 + timedelta(minutes=5, seconds=1))], ['M1'])  # M5 waits LATE_GRACE (2 s)
+        due = b.due(T0 + timedelta(minutes=5, seconds=2))
+        self.assertEqual(sorted(x['timeframe'] for x in due), ['M5'])
         self.assertEqual(b.partial(), [])
 
     def test_quality_measures_and_flags_once(self):

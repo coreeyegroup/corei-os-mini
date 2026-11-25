@@ -5,7 +5,8 @@ with the reason for every refusal visible, before anything is sized or sent.
 Purpose: create a signal (from the runtime on a closed bar, or by hand), validate it (deployment active, live and
 fresh price, spread against ATR, market open, event risk, duplicate, minimum strength), decide the deployment's
 target (latest signal, or N agreeing signals), compare with the position held, and pass the order needed to risk and
-execution; expire and cancel signals; measure each signal's forward return (signal quality).
+execution; expire and cancel signals; measure each signal's forward return (signal quality), from the bar the signal
+fell in, and the same net of the spread paid at the decision.
 Responsibilities: tr_signals, tr_signal_events, tr_intents. Signal states: NEW → VALID → ACTED, or REJECTED / EXPIRED
 / CANCELLED.
 Must never: size or send an order itself (risk sizes, execution sends), or skip validation for a manual signal.
@@ -92,11 +93,11 @@ def validate(db, sig: dict, dep: dict, now: datetime, cfg: dict, q: dict | None)
     if not markets.is_open(market, now):
         reasons.append(f'MARKET_CLOSED: {market} is closed')
     if cfg.get('block_on_event'):
-        from ..intel import workspace
+        from ..intel import engine as intel_engine, workspace
         try:
-            window = 30
+            window = int(intel_engine.settings().get('event_window_minutes') or 30)   # Market intelligence › Engine settings
             near = workspace.event_risk(dep['instrument_symbol'], dep.get('base_currency'), dep.get('quote_currency'), now, window,
-                                        workspace.events(now - timedelta(minutes=window), now + timedelta(minutes=window)))
+                                        workspace.events(now - timedelta(minutes=window), now + timedelta(minutes=window)), market)
         except Exception:  # noqa: BLE001 - no calendar yet
             near = []
         if near:
@@ -271,7 +272,9 @@ def evaluate_quality(db, now: datetime, closes: dict) -> int:
         series = closes.get(str(r['deployment_id']))
         if not series:
             continue
-        idx = next((i for i, (t, _) in enumerate(series) if t == r['bar_time']), None)
+        # The bar the signal was decided on: its own bar (runtime), or the last bar closed before it (a manual signal
+        # is stamped with the time it was raised, which falls inside a bar).
+        idx = next((i for i in range(len(series) - 1, -1, -1) if series[i][0] <= r['bar_time']), None)
         if idx is None or idx + r['horizon_bars'] >= len(series):
             continue
         start, end = series[idx][1], series[idx + r['horizon_bars']][1]
@@ -284,17 +287,29 @@ def evaluate_quality(db, now: datetime, closes: dict) -> int:
 
 
 def quality(db) -> list[dict]:
+    """Were the signals right? Per strategy, instrument and timeframe: the move over the horizon signed by side, and
+    the same net of the spread paid at the decision (half-spread in, half-spread out = one spread, from the intent's
+    bid and ask): a strategy can be right more often than not and still lose to cost."""
     rows = db.execute("""SELECT s.strategy_id, st.code AS strategy, i.symbol, s.timeframe, count(*) AS signals,
                                 count(*) FILTER (WHERE s.forward_return_pct IS NOT NULL) AS measured,
                                 count(*) FILTER (WHERE s.forward_return_pct > 0) AS right,
                                 avg(s.forward_return_pct) AS avg_return_pct,
+                                avg(c.cost_pct) FILTER (WHERE s.forward_return_pct IS NOT NULL) AS avg_cost_pct,
+                                count(*) FILTER (WHERE s.forward_return_pct IS NOT NULL AND c.cost_pct IS NOT NULL
+                                                 AND s.forward_return_pct > c.cost_pct) AS right_after_cost,
+                                count(*) FILTER (WHERE s.forward_return_pct IS NOT NULL AND c.cost_pct IS NOT NULL) AS measured_with_cost,
                                 count(*) FILTER (WHERE s.state='REJECTED') AS rejected, count(*) FILTER (WHERE s.state='ACTED') AS acted
                          FROM tr_signals s JOIN cfg_strategies st ON st.id=s.strategy_id JOIN cfg_instruments i ON i.id=s.instrument_id
+                         LEFT JOIN LATERAL (SELECT 100 * (t.decision_ask - t.decision_bid) / NULLIF((t.decision_ask + t.decision_bid) / 2, 0) AS cost_pct
+                                            FROM tr_intents t WHERE t.signal_id = s.id AND t.decision_bid IS NOT NULL ORDER BY t.created_at DESC LIMIT 1) c ON true
                          GROUP BY 1, 2, 3, 4 ORDER BY 2, 3""").fetchall()
     out = []
     for r in rows:
         r = store.clean(r)
         r['hit_rate_pct'] = round(100 * r['right'] / r['measured'], 1) if r['measured'] else None
+        r['hit_rate_after_cost_pct'] = round(100 * r['right_after_cost'] / r['measured_with_cost'], 1) if r['measured_with_cost'] else None
+        ret, cost = r.get('avg_return_pct'), r.get('avg_cost_pct')
+        r['net_return_pct'] = None if ret is None or cost is None else float(ret) - float(cost)
         out.append(r)
     return out
 

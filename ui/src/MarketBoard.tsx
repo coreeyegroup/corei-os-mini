@@ -74,6 +74,10 @@ export type Ctx = { flash: Record<string, string>; hist: Map<string, number[]>; 
 export const mid = (r: Row) => r.bid != null && r.ask != null ? (Number(r.bid) + Number(r.ask)) / 2 : r.last != null ? Number(r.last) : NaN;
 export const spreadPts = (r: Row) => r.bid != null && r.ask != null ? Math.round((Number(r.ask) - Number(r.bid)) * 10 ** digitsOf(r)) : null;
 export const chgPct = (r: Row) => r.day_open && Number.isFinite(mid(r)) ? (mid(r) / Number(r.day_open) - 1) * 100 : null;
+// A negative latency means a clock is off (the source's or COREI's), not a price from the future: say so.
+export const latencyCell = (ms: any) => ms == null ? '—' : Number(ms) < -20
+  ? <span className="mb-q warn" title={`${Math.round(Number(ms))} ms: the price is stamped after it arrived, so a clock is off. Synchronise the reader machine's clock (Windows: w32tm /resync; Linux: chrony).`}>clock?</span>
+  : Math.round(Number(ms));
 export const isStale = (r: Row) => !r.noData && Number(r.age_seconds) > (r.stale_seconds ?? 10);
 export const COLS: Col[] = [
   { id: 'symbol', label: 'Symbol', title: 'Broker symbol', value: r => r.broker_symbol, cell: r => <><b>{r.broker_symbol}</b>{r.feed_role && <small className={`mb-role ${r.active_feed ? 'on' : ''}`}>{r.feed_role === 'PRIMARY' ? 'P' : r.feed_role === 'BACKUP' ? 'B' : ''}</small>}</> },
@@ -97,7 +101,7 @@ export const COLS: Col[] = [
   { id: 'low', label: 'Low', title: 'Day low', num: true, value: r => Number(r.day_low), cell: r => fmt(r.day_low, digitsOf(r)) },
   { id: 'range', label: 'Day range', title: 'Where the price sits in the day range', value: r => r.day_high > r.day_low ? (mid(r) - r.day_low) / (r.day_high - r.day_low) : null, cell: r => <Range low={r.day_low} high={r.day_high} value={mid(r)} /> },
   { id: 'age', label: 'Age', title: 'Seconds since the last price', num: true, value: r => r.noData ? Infinity : Number(r.age_seconds), cell: r => r.noData ? <span className="mb-dim">no price</span> : <span className={isStale(r) ? 'neg' : ''}>{ago(r.age_seconds)}</span> },
-  { id: 'latency', label: 'Lat', title: 'Broker time to COREI, ms (last price)', num: true, value: r => Number(r.latency_ms), cell: r => r.latency_ms == null ? '—' : Math.round(Number(r.latency_ms)) },
+  { id: 'latency', label: 'Lat', title: 'Broker time to COREI, ms (last price)', num: true, value: r => Number(r.latency_ms), cell: r => latencyCell(r.latency_ms) },
   { id: 'latency50', label: 'Lat p50', title: 'Median latency last minute, ms', num: true, value: r => Number(r.latency_p50_ms), cell: r => r.latency_p50_ms == null ? '—' : Math.round(Number(r.latency_p50_ms)) },
   { id: 'ticks', label: 'Ticks/m', title: 'Prices received in the last minute', num: true, value: r => Number(r.ticks_last_minute), cell: r => r.ticks_last_minute ?? '—' },
   { id: 'quality', label: 'Q', title: 'Quality score (0–100)', num: true, value: r => r.score == null ? -1 : Number(r.score), cell: r => <span className={`mb-q ${Number(r.score) >= 80 ? 'ok' : Number(r.score) >= 50 ? 'warn' : r.score == null ? '' : 'bad'}`}>{r.score ?? '—'}</span> },
@@ -453,7 +457,7 @@ export function SourcesPanel({ row, rows, sources }: { row: Row; rows: Row[]; so
           <td>{r.feed_role ? <span className={`mb-role ${r.active_feed ? 'on' : ''}`}>{r.feed_role.toLowerCase()}{r.active_feed ? ' · used' : ''}</span> : <span className="mb-dim">{(r.plan_purpose ?? r.purpose ?? '').toLowerCase().replace('_', ' ') || '—'}</span>}</td>
           <td className="num mono">{fmt(r.bid, d)}</td><td className="num mono">{fmt(r.ask, d)}</td><td className="num mono">{spreadPts(r) ?? '—'}</td>
           <td className="num mono">{r === ref || !Number.isFinite(mid(r) - refMid) ? '—' : Math.round((mid(r) - refMid) * 10 ** d)}</td>
-          <td className="num mono">{r.latency_ms == null ? '—' : Math.round(Number(r.latency_ms))}</td>
+          <td className="num mono">{latencyCell(r.latency_ms)}</td>
           <td className="num mono">{r.noData ? 'none' : ago(r.age_seconds)}</td><td className="num">{r.score ?? '—'}</td></tr>)}</tbody></table>
       {same.length < 2 && <p className="mb-empty">One source only. Add a backup plan for this instrument on another source to compare and switch.</p>}</div></>;
 }

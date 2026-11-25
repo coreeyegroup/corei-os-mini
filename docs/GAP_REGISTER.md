@@ -167,3 +167,120 @@ Full report: Claude Doc "COREI-OS-MINI — Full Audit and Completion Plan". Stat
 4. First adapter once decision 1 is made, behind the adapter contract (G-P1-02).
 5. One real feed through to a reconciled order on DEMO accounts; then the LIVE switch can be considered.
 6. Trading screens on real data.
+
+## E. Wave 0 — 23 Nov 2026 audits (release 0.53.0)
+
+Source: Claude end-to-end audit and build specification, ChatGPT lifecycle audit, commit 673ccf3. Evidence: `backend/tests/test_wave0.py`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| C-01 / L-1 | LIVE order sending possible with no limit policy | DONE 0.53.0 (switch refused; dispatch refuses new LIVE risk) | test_live_policy_gates_switch_dispatch_and_home |
+| C-03 / C-21 | Reconciliation read 3 days by wall clock; aged-out breaks closed as matched | DONE 0.53.0 | test_old_deal_is_still_checked_and_aged_break_stays_open, test_verified_interval_drives_history_read, test_broker_read_failure_clears_nothing |
+| C-04 | Setup › Database could edit the trading ledger | DONE 0.53.0 | test_db_admin.test_trading_ledger_is_never_edited_here |
+| C-12 | Working orders not reserved against limits | DONE 0.53.0 | test_working_orders_count_against_position_limit, test_concurrent_checks_cannot_both_pass |
+| C-14 | Home did not flag unsafe LIVE state | DONE 0.53.0 | test_live_policy_gates_switch_dispatch_and_home |
+| C-16 | Release identity inconsistent | DONE 0.53.0 | test_workstation_reports_release_commit_and_schema |
+| C-17 | Paper book mixed into broker risk | DONE 0.53.0 | test_paper_results_never_reach_the_broker_book; test_trading.test_broker_mode_refused_and_loss_limit_stops |
+| C-18 | Unvalued holding counted as zero / dropped | DONE 0.53.0 | test_unvalued_holding_refuses_risk_increase_but_allows_reduction |
+| C-19 | Broker sizing fell back to internal equity | DONE 0.53.0 | test_broker_sizing_never_falls_back_to_paper_equity |
+| C-20 | Fill with no position row invisible | DONE 0.53.0 | test_fill_without_position_row_is_a_break |
+| C-23 | Manual resolution could overfill | DONE 0.53.0 | test_manual_resolution_capped_and_overfill_recorded |
+| C-28 / C-13 | Order rate limiter never called; no Upstox Algo Name | DONE 0.53.0 (single-process limiter) | test_dispatch_respects_the_connection_order_rate, test_upstox_algo_name_header_on_sending_calls |
+| C-22 | "Brokers agree" without working orders or cash compared | PARTIAL 0.53.0 (coverage recorded, text corrected; UI per-account coverage in W1-3) | run coverage in test_old_deal… |
+| C-25 | Daily loss adds all current unrealised P&L (UTC day) | OPEN — W1-6 (owner to define the trading day) | — |
+| C-05 | No pending-replace state for amendments | OPEN — W1-1 | — |
+| C-02 | No paper-to-live promotion gate | OPEN — W1-2 | — |
+| C-06 | Approved risk/sizing graphs not executed | OPEN — W1-4 | — |
+| C-24 | No account entitlements | OPEN — W1-7 (owner decision 7) | — |
+
+Waves 1–3 and their acceptance criteria: COREI-OS-MINI Final Build Specification (claude.ai artifact LcgAGcpqD6fTsWWgEW9Har).
+
+## F. Stage 1 · Market data — 23 Nov 2026 audit (release 0.54.0)
+
+Source: COREI-OS-MINI Stage 1 Market Data: Deep Audit and Polish Plan (claude.ai doc Py38xF5fdsmfxqodMzh1Ab). Evidence:
+`backend/tests/test_market_data_stage1.py`. Migration `045_market_data_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| MD-C1 / LM-1 | Plan symbol never re-checked against the source's list (NIFTY50 "Nifty 50") | DONE 0.54.0 (INVALID_SYMBOL, unsubscribed, suggestions, CRITICAL event) | test_unlisted_symbol_is_caught_left_out_and_explained |
+| MD-C2 / LM-3 | Broken plan shown green "collecting"; header counted collectors | DONE 0.54.0 (md_plan_health; header and KPI count plan problems) | same |
+| MD-C3 | Bars by receipt time | DONE 0.54.0 (exchange time when within 2 min of receipt; basis stored) | test_bars_use_exchange_time_when_plausible |
+| MD-C4 | Bars UTC-aligned for NSE/BSE/MCX | DONE 0.54.0 for new bars (session-anchored; old bars kept, labels NULL) | test_nse_bars_align_to_the_session_open |
+| MD-C5 / MD-C6 | Upstox day volume summed; exchange bars from bid | DONE 0.54.0 | test_exchange_instruments_use_last_price_and_day_volume_increase |
+| MD-C7 | Feed quality never reached trading | DONE 0.54.0 (risk check gate: md_block_states, md_min_quality_score) | test_feed_gate |
+| MD-C8 / LM-2 | Failed automatic backfill re-queued forever | DONE 0.54.0 (backoff after md_backfill_max_failures) | test_failed_automatic_backfills_wait_and_events_name_the_symbol |
+| MD-C9 / LM-5 | Clock offset fixed by the first tick | DONE 0.54.0 (median, re-measured every 15 min; Upstox stated) | collector code; covered by end-to-end tests |
+| MD-C10 | Journal replay never existed | DONE 0.54.0 (read-only check `python -m corei_os_mini.md.replay`) | test_journal_replay_rebuilds_the_stored_bars |
+| MD-C14 | Events without symbol | DONE 0.54.0 | test_failed_automatic_backfills_wait_and_events_name_the_symbol |
+| MD-C15 / LM-6 | Old score shown as today's quality | DONE 0.54.0 (score only from the last 5 min on the dashboard) | store.latest |
+| — | One Upstox key rejected failed every key's quotes; old trade time read as latency | DONE 0.54.0 | test_bad_key_is_set_aside_and_others_keep_flowing |
+| D-MD-7 / D-MD-8 / D-MD-9 | Misleading words; negative latency; silent "Live" filter | DONE 0.54.0 (health words, "clock?", hidden-row message) | UI scenarios |
+| MD-C17 | Float price storage | OPEN — MD-6 (owner decision: NUMERIC now or scaled int64) | — |
+| MD-C11 / MD-C12 | Exchange holiday feed; F&O roll; corporate actions | OPEN — MD-9 | — |
+| MD-C13 / C4 / C6 | Depth; Upstox WebSocket; standby collector | OPEN — MD-12 | — |
+| D-MD-1..5 | Instrument discovery in four places; explorer/tab duplication | OPEN — MD-11 (screen consolidation) | — |
+| F3 | Nightly gap scan of stored history | OPEN — MD-10 part 2 | — |
+
+## G. Stage 2 · Market intelligence — 23 Nov 2026 audit (release 0.55.0)
+
+Source: COREI-OS-MINI Stage 2 Market Intelligence: Deep Audit and Polish Plan (claude.ai doc JZc1YUzEQq66yzMJhX8cJe).
+Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `046_market_intelligence_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| MI-C1 / LI-3 | Stage 2 re-bucketed session markets at UTC | DONE 0.55.0 (shared Stage 1 buckets; bar ends at the session close; feature version 4) | test_nse_hours_follow_the_session_and_end_at_the_close |
+| MI-C2 / MI-C3 / LI-1 | Stale broker bars preferred by count; same rule in runtime and backtest | DONE 0.55.0 (bar-source policy: BROKER, M1, MIXED; broker grid followed) | test_broker_grid_is_followed_and_a_stopped_broker_series_is_continued; runtime parity test |
+| MI-C4 / LI-2 | Freshness by recompute time | DONE 0.55.0 (FRESH, LAGGING, STALE, CLOSED by market hours and holidays) | test_fresh_lagging_stale_and_closed |
+| MI-C5 | Regime unused by trading | DONE 0.55.0 (allowed_regimes, blocked_volatility per strategy; off by default; backtest and live alike) | test_entries_only_in_allowed_states_and_exits_always |
+| MI-C6 | Wrong-symbol plans screened; no feed health | DONE 0.55.0 | screener feed_health |
+| MI-C7 / LI-4 / LI-5 | FX year, FX sessions for every market | DONE 0.55.0 (trading year per market, exchange session label, session VWAP) | test_trading_year_session_vwap_and_label |
+| MI-C8 / LI-6 | No exchange holidays | DONE 0.55.0 (Upstox import; Stage 1 and event risk use them) | test_upstox_holidays_import |
+| MI-C9 / MI-C10 | Event window hard-coded; no event risk for NSE | DONE 0.55.0 | test_exchange_markets_have_event_risk |
+| MI-C12 | Signals not traceable to features | DONE 0.55.0 (feature_version, bars_source on the signal's feature row) | runtime parity test |
+| MI-C13 | Overlapping runs | DONE 0.55.0 (one run at a time; incremental: unchanged bars only refresh freshness) | test_one_run_at_a_time |
+| LI-7 | Rules that never fire | DONE 0.55.0 (preview on 30 days; warnings) | test_rule_preview_and_strength_warning |
+| MI-C16 / LI-8 | Strength from one pair | DONE 0.55.0 (warning under 3 currencies) | same |
+| MI-C11 | Rule fires cannot drive a strategy | OPEN — MI-8 part 2 (the RULES algorithm already takes the same conditions) | — |
+| MI-C14 / H2 | Feature loop and trading cycle share one loop; engine in the API process | OPEN — MI-10 part 2 (owner decision: separate service) | — |
+| MI-C15 / LI-9 | One screener row per source | OPEN — MI-9 (instrument roll-up) | — |
+| — | Economic-calendar provider | OPEN — owner decision (CSV until chosen) | — |
+| — | Volatility risk-limit multiplier | OPEN — MI-4 part 2 | — |
+
+## H. Stage 3 · Signal intelligence — 24 Nov 2026 audit (release 0.56.0)
+
+Source: COREI-OS-MINI Stage 3 Signal Intelligence: Deep Audit and Build (claude.ai doc 3fyTWBacW6JJF8fM7ZurtN).
+Evidence: `backend/tests/test_signal_stage3.py`. Migration `047_signal_intelligence_integrity.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| SI-C1 / LS-1 | ~900 M5 flips a day: scores wobble around the threshold | DONE 0.56.0 (exit threshold per definition = hysteresis; off by default; dashboard warns) | test_exit_threshold_holds_a_side_and_cuts_flips; test_exit_threshold_definition_and_fewer_flips |
+| SI-C2 | Research t-stat overstated by overlapping returns | DONE 0.56.0 (n ÷ h) | test_overlap_adjusted_t_and_out_of_sample |
+| SI-C3 | PREDICTIVE with no out-of-sample check; many signals tested on the same bars | DONE 0.56.0 (last 30% must agree; multiple-testing note) | same; research-all API test |
+| SI-C4 | Edge shown gross of cost | DONE 0.56.0 (net edge per horizon) | same |
+| SI-C5 | Scores on stale bars counted in the composite | DONE 0.56.0 (Stage 2 freshness; stale scores shown, left out) | test_stale_scores_leave_the_consensus |
+| SI-C6 | Strategy signal quality gross of spread; manual signals never measured | DONE 0.56.0 (cost, net, hit after cost; bar the signal fell in) | test_quality_net_of_the_spread_and_manual_signals_measured |
+| SI-C7 | Flips not traceable to a definition version | DONE 0.56.0 (definition_version on sig_events) | same |
+| SI-C8 | SIGNAL_BLEND references formula kinds, not library definitions (a tuned or graph-bound definition cannot be blended) | OPEN — pin definition code + version into the strategy version | — |
+| SI-C9 | Signal horizon fixed at 10 bars for strategy-signal quality | OPEN — per-deployment horizon | — |
+| SI-C10 | Library signals and strategy signals both called "signals" in different stages | OPEN — naming: "Library scores" (Stage 3) vs "Strategy signals" (Stage 4) | — |
+
+
+## I. My Workspace control desk — 25 Nov 2026 (release 0.57.0)
+
+Source: owner request and the approved design (Input / Processing / Output, Start / Pause / Stop, Results; shared with an owner;
+create and adopt). Evidence: `backend/tests/test_workspace_control.py`, `ui/tests/trading.cjs` (control desk scenario). Migration `048_workspace_control.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| WS-1 | A workspace could not run anything (scan only) | DONE 0.57.0 (Start creates owned runs; Observe / Paper / DEMO / LIVE) | test_plan_checks_explain_and_start_creates_owned_runs |
+| WS-2 | Two desks could drive the same strategy × account (duplicate orders) | DONE 0.57.0 (one controller per deployment, database-enforced; others watch) | test_one_controller_per_run_and_adoption_needs_confirmation |
+| WS-3 | Existing deployments could not be brought under a desk | DONE 0.57.0 (adopt with confirmation; unconfirmed are watched, unchanged) | same |
+| WS-4 | No Start / Pause / Stop for a desk; no stop policy | DONE 0.57.0 (keep / cancel orders / close positions with confirmation; UNKNOWN never cancelled) | test_pause_resume_stop_policies_never_touch_unknown |
+| WS-5 | Editing a running desk changed it at once | DONE 0.57.0 (staged → review → apply) | test_staged_changes_apply_only_after_review |
+| WS-6 | No readiness before running | DONE 0.57.0 (Validate: sources, plan health, approved versions, timeframes, accounts, order sending, risk, ownership; live check of unsaved settings) | plan tests; UI scenario |
+| WS-7 | No one-click emergency for a desk | DONE 0.57.0 (deployment-scoped kill switches, audited) | test_emergency_stop_engages_scoped_kill_switches |
+| WS-8 | Layouts were private per user only | DONE 0.57.0 (control desks shared with an owner; optionally private; layouts kept and importable) | test_private_desks_roles_and_results; test_import_saved_layout |
+| WS-9 | Data-source backup does not switch automatically when the primary feed fails | OPEN — the deployment holds one data mapping; failover needs a runtime change (proposal) | — |
+| WS-10 | One strategy on several timeframes for the same account and instrument | OPEN — the deployment key has no timeframe; use a second strategy version (DEC-101 §6) | — |
+| WS-11 | Workspace-level notifications (Telegram, e-mail) | OPEN — alerts are firm-wide today (proposal) | — |
+| WS-12 | Per-desk P&L and schedule (start / stop at session times) | OPEN — proposal | — |

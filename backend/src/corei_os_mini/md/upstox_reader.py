@@ -5,11 +5,16 @@ stdin, first line: {"token": "...", "api_base": "https://api.upstox.com", "symbo
                     "heartbeat_seconds": 5, "poll_ms": 1000}
 then commands: {"cmd": "subscribe"|"unsubscribe", "symbols": [...]}, {"cmd": "history", "id", "symbol",
                "timeframe", "from", "to"}, {"cmd": "stop"}.
-stdout, one JSON object per line: connected, q (quote), subscribed, hb, bars, history_error, failed, stopped.
+stdout, one JSON object per line: connected, q (quote), subscribed, hb, bars, history_error, symbol_error, failed,
+stopped.
 
 Quotes come from GET /v2/market-quote/quotes (best bid/ask from depth, last price, volume), polled once a
 second for up to 500 instrument keys per call (Upstox allows 50 requests/s). A quote is emitted only when
-it changed. Bars come from /v3/historical-candle (and its intraday form for today). Times are UTC; the
+it changed. The source time (`st`) is the exchange's last-trade time and is sent only when a new trade happened
+(last price or day volume changed): a quote whose bid/ask moved without a trade still carries the old trade time,
+and measuring latency from it reported minutes of false delay. A key Upstox rejects (HTTP 400, e.g. a misspelt
+index) is found by asking for each key alone, reported once as `symbol_error`, and left out of the poll until it is
+subscribed again, so one bad key no longer stops the prices of every other instrument. Bars come from /v3/historical-candle (and its intraday form for today). Times are UTC; the
 token arrives on stdin only and is never printed. Run: python -m corei_os_mini.md.upstox_reader
 """
 from __future__ import annotations
@@ -43,6 +48,10 @@ class Refused(Exception):
     """The broker answered with an error that retrying now cannot fix (expired login, bad key)."""
 
 
+class BadRequest(OSError):
+    """HTTP 400: the request itself is wrong (typically an instrument key Upstox does not know)."""
+
+
 class Client:
     def __init__(self, api_base: str, token: str):
         self.base = api_base.rstrip('/').removesuffix('/v2')
@@ -63,6 +72,8 @@ class Client:
             if exc.code in (401, 403):
                 raise Refused(f'Upstox refused the session ({exc.code}{": " + detail if detail else ""}). '
                               'The daily login expired or was revoked: log in at the broker again.') from None
+            if exc.code == 400:
+                raise BadRequest(f'Upstox HTTP 400{": " + detail if detail else ""}') from None
             raise OSError(f'Upstox HTTP {exc.code}{": " + detail if detail else ""}') from None
 
 
@@ -95,6 +106,8 @@ class Reader:
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.last: dict[str, tuple] = {}
+        self.traded: dict[str, tuple] = {}
+        self.rejected: dict[str, str] = {}   # key -> Upstox's reason; skipped until subscribed again
         self.seq = 0
 
     # ----- commands -----
@@ -111,6 +124,8 @@ class Reader:
             if cmd in ('subscribe', 'unsubscribe'):
                 with self.lock:
                     (self.symbols.update if cmd == 'subscribe' else self.symbols.difference_update)(m.get('symbols') or [])
+                    for key in m.get('symbols') or []:
+                        self.rejected.pop(key, None)   # subscribing again (or dropping) clears the rejection
                     emit({'t': 'subscribed', 'symbols': sorted(self.symbols)})
             elif cmd == 'history':
                 threading.Thread(target=self.history, args=(m,), daemon=True).start()
@@ -141,10 +156,30 @@ class Reader:
             emit({'t': 'history_error', 'id': m.get('id'), 'msg': f'{type(exc).__name__}: {exc}'[:300]})
 
     # ----- quotes -----
+    def isolate(self, keys: list[str]) -> list[str]:
+        """After a 400 on a batch: ask for each key alone; report and set aside the ones Upstox rejects.
+        Returns the keys still good."""
+        good = []
+        for key in keys:
+            try:
+                self.client.get('/v2/market-quote/quotes', {'instrument_key': key})
+                good.append(key)
+            except BadRequest as exc:
+                self.rejected[key] = str(exc)
+                emit({'t': 'symbol_error', 's': key, 'msg': f'{exc} (instrument key {key!r} rejected; left out until it is fixed)'[:300]})
+        return good
+
     def fetch(self, keys: list[str]) -> dict:
         found: dict[str, dict] = {}
         for i in range(0, len(keys), 500):
-            data = self.client.get('/v2/market-quote/quotes', {'instrument_key': ','.join(keys[i:i + 500])}).get('data') or {}
+            chunk = keys[i:i + 500]
+            try:
+                data = self.client.get('/v2/market-quote/quotes', {'instrument_key': ','.join(chunk)}).get('data') or {}
+            except BadRequest:
+                chunk = self.isolate(chunk)
+                if not chunk:
+                    continue
+                data = self.client.get('/v2/market-quote/quotes', {'instrument_key': ','.join(chunk)}).get('data') or {}
             for item in data.values():
                 key = item.get('instrument_token') or ''
                 q = parse_quote(item)
@@ -156,7 +191,7 @@ class Reader:
         try:
             with self.lock:
                 keys = sorted(self.symbols)
-            self.fetch(keys[:1]) if keys else self.client.get('/v2/user/profile')
+            self.fetch(keys[:1]) if keys else self.client.get('/v2/user/profile')   # a bad key is set aside, not a failed login
         except Refused as exc:
             emit({'t': 'failed', 'attempts': [{'host': 'api.upstox.com', 'port': 443, 'ok': False, 'error': str(exc), 'refused': True}]})
             return 3
@@ -172,7 +207,7 @@ class Reader:
         while not self.stop.is_set():
             started = time.monotonic()
             with self.lock:
-                keys = sorted(self.symbols)
+                keys = sorted(k for k in self.symbols if k not in self.rejected)
             if keys:
                 try:
                     quotes = self.fetch(keys)
@@ -195,6 +230,10 @@ class Reader:
                     if self.last.get(key) == sig:
                         continue
                     self.last[key] = sig
+                    trade = (q['l'], q['v'])
+                    if self.traded.get(key) in (None, trade):
+                        q = {**q, 'st': None}   # first sight or no new trade: the trade time may be old
+                    self.traded[key] = trade
                     self.seq += 1
                     emit({'t': 'q', 's': key, **q, 'rx': rx, 'n': self.seq})
             if time.monotonic() - beat >= self.heartbeat:

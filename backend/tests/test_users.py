@@ -94,12 +94,17 @@ class UsersAndRolesTests(unittest.TestCase):
         live = {c['environment']: c for c in trader.get('/api/config/execution-controls').json()['items']}['LIVE']
         on = {'trading_enabled': True, 'reason': 'Go live', 'version': live['version'], 'confirm_environment': 'LIVE'}
         self.assertEqual(trader.put('/api/config/execution-controls/LIVE', json=on).status_code, 403)
-        # Risk approver (the owner here) can.
-        self.assertEqual(owner.put('/api/config/execution-controls/LIVE', json=on).status_code, 200)
+        # Risk approver (the owner here) has the right, but LIVE also needs the pre-LIVE policy (limits, four-eyes on
+        # every LIVE order, a second approver, an alert channel): refused with what is missing.
+        refused = owner.put('/api/config/execution-controls/LIVE', json=on)
+        self.assertEqual(refused.status_code, 409, refused.text)
+        self.assertTrue(refused.json()['detail']['unmet'])
+        demo = {c['environment']: c for c in trader.get('/api/config/execution-controls').json()['items']}['DEMO']
+        self.assertEqual(owner.put('/api/config/execution-controls/DEMO', json={**on, 'version': demo['version'], 'confirm_environment': 'DEMO'}).status_code, 200)
         # Trading operations may turn it off as a safety action.
-        off = {'trading_enabled': False, 'reason': 'Halt trading', 'version': live['version'] + 1}
-        self.assertEqual(trader.put('/api/config/execution-controls/LIVE', json=off).status_code, 200)
-        self.assertEqual(observer.put('/api/config/execution-controls/LIVE', json={**off, 'version': live['version'] + 2}).status_code, 403)
+        off = {'trading_enabled': False, 'reason': 'Halt trading', 'version': demo['version'] + 1}
+        self.assertEqual(trader.put('/api/config/execution-controls/DEMO', json=off).status_code, 200)
+        self.assertEqual(observer.put('/api/config/execution-controls/DEMO', json={**off, 'version': demo['version'] + 2}).status_code, 403)
 
         # Admin cannot change own roles, and the last admin cannot be removed.
         me = next(u for u in owner.get('/api/admin/users').json()['items'] if u['username'] == 'owner')

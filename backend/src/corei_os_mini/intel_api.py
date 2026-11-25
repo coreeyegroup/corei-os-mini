@@ -2,8 +2,8 @@
 
 Why it exists: the screener, the instrument view and the sessions panel read the feature store through one place.
 Purpose: list the screened universe for a timeframe (features, regime, attention score with its parts, live price,
-spread and feed quality), one instrument across every timeframe with its feature history, the session map, the
-engine's status, and a manual refresh.
+spread, feed quality and health, freshness), one instrument across every timeframe with its feature history, the
+session map, the engine's status, a manual refresh, rule preview and the Upstox exchange-holiday import.
 Must never: change market data or orders; a refresh only recomputes intel_* rows.
 Dependencies: intel.engine, intel.regime, intel.sessions, config_store, operator_auth.
 Consumers: ui/src/Intelligence.tsx (Screener, Instrument, Sessions tabs).
@@ -41,7 +41,7 @@ def screener(response: Response, timeframe: str = 'H1', _: str = Depends(require
         rows = db.execute("""
             SELECT s.*, a.code AS account_code, a.name AS account_name, pr.name AS provider_name, c.settings->>'server_name' AS server_name,
                    i.symbol AS instrument, i.asset_class, i.base_currency, i.quote_currency, p.instrument_id, p.plan_id, l.bid, l.ask, l.received_at AS price_at,
-                   q.score AS quality, q.latency_p95_ms, q.spread_avg
+                   q.score AS quality, q.latency_p95_ms, q.spread_avg, h.state AS feed_health, h.detail AS feed_detail
             FROM intel_snapshot s
             JOIN cfg_accounts a ON a.id = s.account_id
             JOIN cfg_connections c ON c.id = a.connection_id
@@ -53,6 +53,7 @@ def screener(response: Response, timeframe: str = 'H1', _: str = Depends(require
             LEFT JOIN LATERAL (SELECT avg(score) AS score, max(latency_p95_ms) AS latency_p95_ms, avg(spread_avg) AS spread_avg
                                FROM md_quality WHERE account_id = s.account_id AND broker_symbol = s.broker_symbol
                                  AND minute > now() - interval '60 minutes') q ON true
+            LEFT JOIN md_plan_health h ON h.plan_id = p.plan_id
             WHERE s.timeframe = %s""", (timeframe,)).fetchall()
         everything = db.execute('SELECT account_id, broker_symbol, timeframe, regime FROM intel_snapshot').fetchall()
         window = (engine.settings().get('event_window_minutes') or 30)
@@ -67,10 +68,9 @@ def screener(response: Response, timeframe: str = 'H1', _: str = Depends(require
         f = r['features'] or {}
         spread = (r['ask'] - r['bid']) if r['ask'] is not None and r['bid'] is not None else r['spread_avg']
         att = regime.attention(f, r['quality'], spread)
-        risk = workspace.event_risk(r['broker_symbol'], r['base_currency'], r['quote_currency'], now, window, upcoming)
-        nxt = sorted((e for e in upcoming if analytics.currencies_of(r['broker_symbol'], r['base_currency'], r['quote_currency'])
-                      and (e['currency'] in analytics.currencies_of(r['broker_symbol'], r['base_currency'], r['quote_currency']) or e['currency'] == 'ALL')
-                      and e['at'] >= now), key=lambda e: e['at'])
+        risk = workspace.event_risk(r['broker_symbol'], r['base_currency'], r['quote_currency'], now, window, upcoming, r.get('market'))
+        codes = workspace.event_codes(r['broker_symbol'], r['base_currency'], r['quote_currency'], r.get('market'))
+        nxt = sorted((e for e in upcoming if codes and (e['currency'] in codes or e['currency'] == 'ALL') and e['at'] >= now), key=lambda e: e['at'])
         items.append({**store.clean({k: v for k, v in r.items() if k != 'features'}), 'features': f, 'spread': spread,
                       'alignment': analytics.alignment(by_pair.get((r['account_id'], r['broker_symbol']), [])),
                       'event_risk': [{'at': e['at'], 'currency': e['currency'], 'title': e['title'], 'impact': e['impact']} for e in risk],
@@ -133,7 +133,11 @@ def overview(response: Response, timeframe: str = 'H1', _: str = Depends(require
         mix = db.execute('SELECT timeframe, regime, volatility, count(*) AS n FROM intel_snapshot GROUP BY 1, 2, 3').fetchall()
         collected = db.execute("SELECT count(DISTINCT (account_id, broker_symbol)) AS n FROM md_collection_plans WHERE status <> 'ARCHIVED'").fetchone()['n']
         covered = db.execute('SELECT count(DISTINCT (account_id, broker_symbol)) AS n FROM intel_snapshot').fetchone()['n']
-        stale = db.execute("SELECT count(*) AS n FROM intel_snapshot WHERE computed_at < now() - interval '10 minutes'").fetchone()['n']
+        # Stale = the bar is late for its market (freshness), or the engine has not looked at it for 10 minutes.
+        stale = db.execute("""SELECT count(*) AS n FROM intel_snapshot WHERE freshness IN ('LAGGING', 'STALE')
+                              OR computed_at < now() - interval '10 minutes'""").fetchone()['n']
+        freshness = {r['freshness'] or 'UNKNOWN': r['n'] for r in db.execute(
+            'SELECT freshness, count(*) AS n FROM intel_snapshot GROUP BY 1').fetchall()}
         history = db.execute('SELECT count(*) AS n, min(bar_time) AS since FROM intel_features').fetchone()
     by_tf: dict = {}
     for r in mix:
@@ -150,7 +154,7 @@ def overview(response: Response, timeframe: str = 'H1', _: str = Depends(require
     slim = lambda x: {k: x.get(k) for k in ('account_id', 'broker_symbol', 'instrument', 'account_code', 'provider_name', 'regime', 'volatility',
                                             'confidence', 'attention', 'attention_parts', 'reasons')} | {'ret_20_pct': x['features'].get('ret_20_pct'),
                                                                                                          'adx14': x['features'].get('adx14'), 'rsi14': x['features'].get('rsi14')}
-    return {'timeframe': timeframe, 'collected': collected, 'covered': covered, 'stale': stale, 'history_rows': history['n'],
+    return {'timeframe': timeframe, 'collected': collected, 'covered': covered, 'stale': stale, 'freshness': freshness, 'history_rows': history['n'],
             'history_since': history['since'], 'by_timeframe': by_tf, 'warming_up': warming, 'top': [slim(x) for x in ranked[:8]],
             'movers': [slim(x) for x in movers[:8]], 'engine': engine.STATUS, 'settings': store.clean(engine.settings()),
             'session': sessions.sessions_at(datetime.now(timezone.utc)),
@@ -287,7 +291,12 @@ def strength(response: Response, timeframe: str = 'H1', bars: int = 20, _: str =
     _no_store(response)
     if timeframe not in engine.HISTORY_TIMEFRAMES:
         raise HTTPException(422, f"Timeframe must be one of {', '.join(engine.HISTORY_TIMEFRAMES)}.")
-    return analytics.currency_strength(timeframe, min(max(bars, 2), 500))
+    out = analytics.currency_strength(timeframe, min(max(bars, 2), 500))
+    n = len(out.get('currencies') or out.get('items') or [])
+    if n < 3:
+        out['warning'] = (f'Only {n} currencies from the collected FX pairs: strength compares each currency with the others, so it needs '
+                          'at least 3 currencies (2 or more pairs sharing currencies). Collect more FX pairs (Market data › Plans).')
+    return out
 
 
 # ----- Watchlists -----
@@ -343,6 +352,17 @@ def remove_rule(rid: UUID, user: Principal = Depends(_ops)):
     workspace.delete_rule(user.username, rid)
 
 
+@router.post('/rules/preview')
+def preview_rule(payload: dict, response: Response, _: str = Depends(require_operator)):
+    """What a rule would have done on the stored feature history (last `days`, default 30) before it is saved:
+    fires per instrument with the last few, and a warning when it would never fire or fire on almost every bar."""
+    from .config_api import parse
+    _no_store(response)
+    days = min(max(int(payload.pop('days', 30) or 30), 1), 365)
+    payload.setdefault('name', 'preview')
+    return workspace.preview_rule(parse(workspace.RuleIn, payload), days)
+
+
 @router.get('/fires')
 def rule_fires(response: Response, limit: int = 100, _: str = Depends(require_operator)):
     _no_store(response)
@@ -368,6 +388,15 @@ def add_event(payload: dict, user: Principal = Depends(_ops)):
 def import_events(payload: dict, user: Principal = Depends(_ops)):
     """CSV text (datetime_utc,currency,impact,title[,forecast,previous,actual]); all rows valid or nothing imported."""
     return {'added': workspace.add_events(user.username, workspace.parse_csv(str(payload.get('csv') or '')), 'CSV')}
+
+
+@router.post('/events/import-holidays')
+def import_holidays(payload: dict, user: Principal = Depends(_ops)):
+    """Exchange trading holidays of the current year from Upstox (NSE, BSE, MCX) into the calendar as HOLIDAY
+    events; Stage 1 uses them for market hours and Stage 2 for event risk. Uses the Upstox account's login of the
+    day when one is given."""
+    account_id = payload.get('account_id')
+    return workspace.import_upstox_holidays(user.username, UUID(str(account_id)) if account_id else None)
 
 
 @router.delete('/events/{eid}', status_code=204)

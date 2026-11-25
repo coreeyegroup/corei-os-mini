@@ -94,6 +94,36 @@ def set_policy(key: str, payload: dict, response: Response, user: Principal = De
     return controls.set_policy(user.username, key, data.value, data.version, data.reason)
 
 
+# ---------- LIVE readiness (pre-LIVE policy) ----------
+
+@router.get('/live-readiness')
+def live_readiness(response: Response, _: str = Depends(require_operator)):
+    """The pre-LIVE policy: each unmet rule with where to fix it, waived rules with their exception, and the
+    recorded exceptions."""
+    _no_store(response)
+    from .trading import readiness
+    with store.transaction('read') as db:
+        status = readiness.live_policy(db)
+        items = [store.clean(r) for r in db.execute('SELECT * FROM cfg_policy_exceptions ORDER BY created_at DESC LIMIT 100').fetchall()]
+    return {**status, 'exceptions': items}
+
+
+@router.post('/live-readiness/exceptions', status_code=201)
+def add_policy_exception(payload: dict, response: Response, user: Principal = Depends(_risk), _: Principal = Depends(require_reauth)):
+    """An owner's recorded, expiring waiver of one waivable pre-LIVE rule (not risk limits)."""
+    _no_store(response)
+    from .trading import readiness
+    return readiness.add_exception(user.username, str(payload.get('code') or ''), str(payload.get('reason') or ''), int(payload.get('days') or 0))
+
+
+@router.post('/live-readiness/exceptions/{exception_id}/revoke')
+def revoke_policy_exception(exception_id: UUID, payload: dict, response: Response, user: Principal = Depends(_risk),
+                            _: Principal = Depends(require_reauth)):
+    _no_store(response)
+    from .trading import readiness
+    return readiness.revoke_exception(user.username, exception_id, str(payload.get('reason') or ''))
+
+
 # ---------- alerts ----------
 
 @router.get('/alerts/channels')
@@ -289,7 +319,20 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         backup = db.execute("SELECT ok, error, started_at FROM md_backups WHERE kind='DATABASE' ORDER BY id DESC LIMIT 1").fetchone()
         verify = db.execute("SELECT severity, detail FROM md_events WHERE kind='VERIFY' ORDER BY id DESC LIMIT 1").fetchone()
         archive = db.execute("SELECT severity, detail FROM md_events WHERE kind='ARCHIVE' ORDER BY id DESC LIMIT 1").fetchone()
+        plan_health = [dict(r) for r in db.execute("""SELECT h.state, h.detail, h.broker_symbol, p.code, p.purpose, a.code AS account_code
+            FROM md_plan_health h JOIN md_collection_plans p ON p.id=h.plan_id JOIN cfg_accounts a ON a.id=p.account_id
+            WHERE p.status='ACTIVE'""").fetchall()]
     live = sum(1 for c in collectors if c['state'] == 'CONNECTED')
+    from .md.health import PROBLEMS, WORDS
+    plan_states: dict[str, int] = {}
+    for h in plan_health:
+        plan_states[h['state']] = plan_states.get(h['state'], 0) + 1
+        if h['state'] in PROBLEMS:
+            # A plan that collects nothing is a problem even while its source is connected.
+            attention.append({'severity': 'CRITICAL' if h['purpose'] == 'TRADING_FEED' and h['state'] in ('INVALID_SYMBOL', 'ERROR') else 'WARNING',
+                              'area': 'Market data', 'title': f"{h['code']} ({h['broker_symbol']}): {WORDS[h['state']][0].lower()}",
+                              'detail': f"{h['detail'] or WORDS[h['state']][1]} {WORDS[h['state']][2]}".strip(),
+                              'goto': {'view': 'Market data', 'section': 'plans'}})
     for c in collectors:
         if c.get('problem'):
             p = c['problem']
@@ -328,6 +371,17 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         'step': nxt['step'], 'goto': {'view': 'Market data', 'section': 'plans'} if nxt['section'] == 'plans' else {'view': 'Configuration', 'section': nxt['section']}},
         'steps': [{'step': c['step'], 'done': c['done'], 'section': c['section']} for c in checklist]}
     order = store.list_execution_controls()
+    from .trading import readiness
+    with store.transaction('read') as db:
+        live_policy = readiness.live_policy(db)
+    live_on = any(o['trading_enabled'] for o in order if o['environment'] == 'LIVE')
+    for u in live_policy['unmet']:
+        attention.append({'severity': 'CRITICAL' if live_on else 'WARNING', 'area': 'LIVE readiness',
+                          'title': ('LIVE order sending is ON but ' if live_on else 'Before LIVE: ') + {
+                              'LIVE_LIMITS_MISSING': 'risk limits are missing', 'LIVE_FOUR_EYES_NOT_ALL': 'automated LIVE orders are not held for a second person',
+                              'LIVE_NO_SECOND_APPROVER': 'there is no second risk approver', 'LIVE_NO_ALERT_CHANNEL': 'no alert channel is set up'}.get(u['code'], u['code']),
+                          'detail': u['detail'] + (' New LIVE orders that add risk are refused until this is fixed.' if live_on else ''),
+                          'goto': u['goto']})
     if any(o['trading_enabled'] for o in order) and not store.ORDER_ADAPTERS:
         on = ', '.join(o['environment'] for o in order if o['trading_enabled'])
         attention.append({'severity': 'WARNING', 'area': 'Order sending',
@@ -336,9 +390,11 @@ def overview(response: Response, user: Principal = Depends(current_user)):
                           'goto': {'view': 'Configuration', 'section': 'controls'}})
     return {'user': {'username': user.username, 'roles': sorted(user.roles)},
             'feeds': {'active_plans': active_plans, 'collectors': len(collectors), 'live': live,
-                      'problems': sum(1 for c in collectors if c.get('problem')), 'paused': paused_all},
+                      'problems': sum(1 for c in collectors if c.get('problem')) + sum(n for k, n in plan_states.items() if k in PROBLEMS),
+                      'paused': paused_all, 'plans': plan_states},
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
+            'live_policy': live_policy,
             'setup': setup,
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}

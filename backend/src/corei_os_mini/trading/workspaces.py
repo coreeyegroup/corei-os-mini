@@ -44,6 +44,7 @@ class Workspace(WorkspaceModel):
     symbol: str = Field(default='', max_length=200)
     panels: Annotated[list[Panel], Field(min_length=8, max_length=8)]
     scan: WorkspaceScan | None = None
+    mapping_accounts: list[UUID] = Field(default_factory=list)
 
 
 class Layouts(WorkspaceModel):
@@ -168,7 +169,7 @@ def scan_action(db, username, number, run_id, action):
 
 def catalogue(db):
     return {
-        'accounts': db.execute("""SELECT a.id,a.code,c.environment FROM cfg_accounts a
+        'accounts': db.execute("""SELECT a.id,a.code,c.environment,c.code AS connection_code FROM cfg_accounts a
                                    JOIN cfg_connections c ON c.id=a.connection_id ORDER BY a.code""").fetchall(),
         'instruments': db.execute('SELECT id,symbol,name FROM cfg_instruments ORDER BY symbol').fetchall(),
     }

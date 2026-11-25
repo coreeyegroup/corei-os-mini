@@ -438,8 +438,9 @@ function Breaks({ ctx }: { ctx: Ctx }) {
         {['NOT_IN_COREI', 'POSITION_MISMATCH'].includes(b.kind) && <button disabled={!!busy} onClick={() => void act(b, 'ADOPT_POSITION', 'Record the broker position in COREI without sending an order')}>Adopt position</button>}
         <button disabled={!!busy} onClick={() => void act(b, 'ACCEPT', 'Accept as a known discrepancy')}>Accept as known</button>
         <button disabled={!!busy} onClick={() => void act(b, 'RESOLVE', 'Close this break with an operator note')}>Mark resolved</button></>]]}
-      rows={data?.items ?? []} empty={error ? 'Breaks could not be loaded.' : !data ? 'Loading breaks…' : state === 'OPEN' ? 'No open breaks in this view. See run history for comparison coverage.' : 'No breaks match this view.'} />
-    <p className="cfg-note">Review the broker deal or position before applying a correction. Accepting a known discrepancy records your decision and suppresses repeat alerts for the same values.</p></section>;
+      rows={data?.items ?? []} empty={error ? 'Breaks could not be loaded.' : !data ? 'Loading breaks…' : state === 'OPEN' ? 'No open breaks in what was compared (COREI\'s own records, and broker positions and deals where the broker was read). Working orders and cash are not compared yet; each account\'s last run shows what it covered.' : 'No breaks match this view.'} />
+    <p className="cfg-note"><b>Position mismatch / missing at broker / not in COREI</b>: net positions differ (COREI's magic number on MT5). <b>Fill missing</b>: the broker has a deal for a COREI order that COREI has not applied.
+      <b> External trade</b>: a deal or position placed outside COREI. <b>Internal</b>: a COREI position differs from its own fills. Review the broker deal or position before applying a correction. Accepting a known discrepancy records your decision and suppresses repeat alerts for the same values.</p></section>;
 }
 
 function Runs() {

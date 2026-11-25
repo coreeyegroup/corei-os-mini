@@ -1,8 +1,12 @@
 """Database reads and writes for the collector and the market-data screens.
 
 The collector writes in one transaction per second: ticks (COPY into the day's
-partition), latest prices, bars, quality minutes, events and its status. Events of
+partition), latest prices, bars, quality minutes, events, plan health and its status. Events of
 WARNING/CRITICAL severity also queue alerts (MARKET_DATA or DATA_INTEGRITY).
+
+Automatic backfill after an outage remembers failures: a plan whose last N automatic jobs for a timeframe failed
+(policy md_backfill_max_failures, default 3) waits before the next try, doubling from 15 minutes up to 6 hours, and
+a plan whose symbol the source does not list is never backfilled automatically. Manual backfill is unchanged.
 """
 from __future__ import annotations
 
@@ -15,7 +19,8 @@ from psycopg.types.json import Jsonb
 
 from .. import config_store as store
 
-ALERT_KINDS = {'DISCONNECTED', 'FEED_SWITCH', 'FEED_RESTORED', 'STALE', 'GAP', 'DEVIATION', 'BACKLOG', 'ERROR', 'CLOCK_SKEW'}
+ALERT_KINDS = {'DISCONNECTED', 'FEED_SWITCH', 'FEED_RESTORED', 'STALE', 'GAP', 'DEVIATION', 'BACKLOG', 'ERROR', 'CLOCK_SKEW', 'SYMBOL_INVALID',
+               'BACKFILL_HELD'}
 INTEGRITY_KINDS = {'VERIFY', 'BACKUP', 'DISK', 'ARCHIVE'}
 
 
@@ -32,11 +37,12 @@ def active_plans() -> list[dict]:
 
 
 def holidays() -> dict[str, frozenset]:
-    """Exchange holidays by currency, from the calendar's HOLIDAY events (Intelligence › Calendar), as local dates
-    (India: IST). Used for market hours: an NSE holiday is an INR HOLIDAY event."""
+    """Exchange holidays by calendar code, from the calendar's HOLIDAY events (Intelligence › Calendar), as local dates
+    (India: IST). Used for market hours: an INR HOLIDAY event closes every Indian market; an NSE, BSE or MCX event
+    (imported from Upstox) closes that exchange."""
     try:
         with store.transaction('read') as db:
-            rows = db.execute("""SELECT currency, (at AT TIME ZONE CASE currency WHEN 'INR' THEN 'Asia/Kolkata' ELSE 'UTC' END)::date AS day
+            rows = db.execute("""SELECT currency, (at AT TIME ZONE CASE WHEN currency IN ('INR', 'NSE', 'BSE', 'MCX') THEN 'Asia/Kolkata' ELSE 'UTC' END)::date AS day
                                   FROM intel_events WHERE impact='HOLIDAY' AND at > now() - interval '2 days' AND at < now() + interval '400 days'""").fetchall()
     except Exception:  # noqa: BLE001 - calendar not migrated yet
         return {}
@@ -44,6 +50,26 @@ def holidays() -> dict[str, frozenset]:
     for r in rows:
         out.setdefault(r['currency'], set()).add(r['day'])
     return {k: frozenset(v) for k, v in out.items()}
+
+
+def unknown_symbols() -> dict[str, dict[str, list[str]]]:
+    """Active plans whose symbol is not in their source's symbol list (only sources that have a list), with up to
+    five close matches each: {account_id: {broker_symbol: [suggestions]}}."""
+    with store.transaction('read') as db:
+        rows = db.execute("""SELECT p.account_id, p.broker_symbol,
+                COALESCE((SELECT array_agg(k.broker_symbol ORDER BY length(k.broker_symbol), k.broker_symbol) FROM (
+                    SELECT c.broker_symbol FROM md_symbol_catalog c WHERE c.account_id=p.account_id
+                    AND (lower(c.broker_symbol) LIKE '%%' || lower(split_part(p.broker_symbol, '|', -1)) || '%%'
+                         OR lower(c.display_symbol) = lower(split_part(p.broker_symbol, '|', -1)))
+                    ORDER BY length(c.broker_symbol) LIMIT 5) k), '{}') AS suggestions
+            FROM md_collection_plans p
+            WHERE p.status='ACTIVE'
+              AND EXISTS (SELECT 1 FROM md_symbol_catalog c WHERE c.account_id=p.account_id)
+              AND NOT EXISTS (SELECT 1 FROM md_symbol_catalog c WHERE c.account_id=p.account_id AND c.broker_symbol=p.broker_symbol)""").fetchall()
+    out: dict[str, dict[str, list[str]]] = {}
+    for r in rows:
+        out.setdefault(str(r['account_id']), {})[r['broker_symbol']] = list(r['suggestions'] or [])
+    return out
 
 
 def paused_scopes() -> set[str]:
@@ -65,8 +91,8 @@ def ensure_partitions(db, days: Iterable[date]) -> None:
 
 def write(batch: dict) -> None:
     """batch: ticks [tuple], latest {key: tuple}, bars [dict], quality [dict], events [dict], status {account_id: dict}."""
-    ticks, latest, bars, quality, events, status = (batch.get(k) for k in ('ticks', 'latest', 'bars', 'quality', 'events', 'status'))
-    if not any((ticks, latest, bars, quality, events, status)):
+    ticks, latest, bars, quality, events, status, health = (batch.get(k) for k in ('ticks', 'latest', 'bars', 'quality', 'events', 'status', 'health'))
+    if not any((ticks, latest, bars, quality, events, status, health)):
         return
     with store.transaction('write') as db:
         if ticks:
@@ -93,6 +119,8 @@ def write(batch: dict) -> None:
                         latency_p95_ms=GREATEST(md_quality.latency_p95_ms, EXCLUDED.latency_p95_ms), score=LEAST(md_quality.score, EXCLUDED.score)''', quality)
         for e in events or []:
             record_event(db, **e)
+        if health:
+            save_health(db, list(health.values()))
         for account_id, s in (status or {}).items():
             db.execute('''INSERT INTO md_collector_status(account_id, state, host, port, pid, subscribed, ticks_total, lag_ms, backlog,
                     server_offset_minutes, started_at, heartbeat_at, last_error, route, clock_skew_ms)
@@ -105,18 +133,41 @@ def write(batch: dict) -> None:
                        {'account_id': account_id, 'route': None, 'clock_skew_ms': None, **s})
 
 
+def save_health(db, rows: list[dict]) -> None:
+    """Upsert plan health; `since` moves only when the state changes; a row without a price time keeps the last one."""
+    sql = """INSERT INTO md_plan_health(plan_id, account_id, broker_symbol, state, detail, suggestions, last_price_at,
+                consecutive_errors, last_error, since, updated_at)
+            SELECT %(plan_id)s, %(account_id)s, %(broker_symbol)s, %(state)s, %(detail)s, %(suggestions)s, %(last_price_at)s,
+                %(consecutive_errors)s, %(last_error)s, now(), now()
+            WHERE EXISTS (SELECT 1 FROM md_collection_plans WHERE id=%(plan_id)s)
+            ON CONFLICT (plan_id) DO UPDATE SET state=EXCLUDED.state, detail=EXCLUDED.detail, suggestions=EXCLUDED.suggestions,
+                last_price_at=COALESCE(EXCLUDED.last_price_at, md_plan_health.last_price_at), consecutive_errors=EXCLUDED.consecutive_errors,
+                last_error=EXCLUDED.last_error, updated_at=now(),
+                since=CASE WHEN md_plan_health.state=EXCLUDED.state THEN md_plan_health.since ELSE now() END"""
+    with db.cursor() as cur:
+        cur.executemany(sql, [{**r, 'suggestions': Jsonb(r.get('suggestions') or [])} for r in rows])
+
+
+BAR_LABELS = ('price_basis', 'volume_kind', 'anchor', 'time_basis', 'derivation')
+
+
 def save_bars(db, bars: list[dict]) -> None:
+    """Bars carry how they were made (BAR_LABELS); a bar without labels stores NULLs (made before 0.54.0)."""
+    bars = [{**{k: None for k in BAR_LABELS}, **b} for b in bars]
     built = [b for b in bars if b.get('source', 'BUILT') == 'BUILT']
     broker = [b for b in bars if b.get('source') == 'BROKER']
-    columns = 'account_id, broker_symbol, timeframe, bar_time, open, high, low, close, ticks, spread_avg, volume, source, complete'
+    columns = ('account_id, broker_symbol, timeframe, bar_time, open, high, low, close, ticks, spread_avg, volume, source, complete, '
+               + ', '.join(BAR_LABELS))
     values = ('%(account_id)s,%(broker_symbol)s,%(timeframe)s,%(bar_time)s,%(open)s,%(high)s,%(low)s,%(close)s,%(ticks)s,'
-              '%(spread_avg)s,%(volume)s,%(source)s,%(complete)s')
+              '%(spread_avg)s,%(volume)s,%(source)s,%(complete)s,' + ','.join(f'%({k})s' for k in BAR_LABELS))
     with db.cursor() as cur:
         if built:
             # Our own bars replace our own partial bars, never a broker bar already there.
             cur.executemany(f'''INSERT INTO md_bars({columns}) VALUES ({values}) ON CONFLICT (account_id, broker_symbol, timeframe, bar_time)
                 DO UPDATE SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close, ticks=EXCLUDED.ticks,
-                spread_avg=EXCLUDED.spread_avg, volume=EXCLUDED.volume, complete=EXCLUDED.complete WHERE md_bars.source='BUILT' ''',
+                spread_avg=EXCLUDED.spread_avg, volume=EXCLUDED.volume, complete=EXCLUDED.complete, price_basis=EXCLUDED.price_basis,
+                volume_kind=EXCLUDED.volume_kind, anchor=EXCLUDED.anchor, time_basis=EXCLUDED.time_basis, derivation=EXCLUDED.derivation
+                WHERE md_bars.source='BUILT' ''',
                             [{'source': 'BUILT', **b} for b in built])
         if broker:
             # Broker history fills gaps only; bars we built from live prices are kept.
@@ -125,6 +176,11 @@ def save_bars(db, bars: list[dict]) -> None:
 
 def record_event(db, kind: str, severity: str = 'INFO', detail: dict | None = None, account_id: Any = None,
                  broker_symbol: str | None = None, plan_id: Any = None, at: datetime | None = None) -> None:
+    if plan_id is not None and (broker_symbol is None or account_id is None):
+        # Every event names its symbol and account (backfill failures used to show neither).
+        p = db.execute('SELECT account_id, broker_symbol FROM md_collection_plans WHERE id=%s', (plan_id,)).fetchone()
+        if p:
+            account_id, broker_symbol = account_id or p['account_id'], broker_symbol or p['broker_symbol']
     db.execute('INSERT INTO md_events(at, account_id, broker_symbol, plan_id, kind, severity, detail) VALUES (COALESCE(%s, now()),%s,%s,%s,%s,%s,%s)',
                (at, account_id, broker_symbol, plan_id, kind, severity, Jsonb(detail or {})))
     if severity in ('WARNING', 'CRITICAL') and (kind in ALERT_KINDS or kind in INTEGRITY_KINDS):
@@ -197,10 +253,40 @@ def job_progress(job_id: Any, status: str, done_until: datetime | None = None, b
                           **({'error': error} if error else {})}, plan_id=row['plan_id'])
 
 
+def backfill_hold(db, plan_id: Any, timeframe: str, now: datetime | None = None) -> str | None:
+    """Why an automatic backfill should wait, or None. When the last automatic jobs for this plan × timeframe (since
+    the last success) all failed, md_backfill_max_failures or more of them: wait 15 min × 2^(extra failures), ≤ 6 h."""
+    from datetime import timedelta
+    limit = int(store.policy(db, 'md_backfill_max_failures', 3) or 0)
+    if limit <= 0:
+        return None
+    rows = db.execute("""SELECT status, error, updated_at FROM md_jobs WHERE plan_id=%s AND timeframe=%s AND requested_by='collector'
+                         AND status IN ('DONE','FAILED') ORDER BY updated_at DESC LIMIT 20""", (plan_id, timeframe)).fetchall()
+    failed = 0
+    for r in rows:
+        if r['status'] != 'FAILED':
+            break
+        failed += 1
+    if failed < limit:
+        return None
+    wait = min(timedelta(hours=6), timedelta(minutes=15) * 2 ** (failed - limit))
+    if (now or utcnow()) - rows[0]['updated_at'] < wait:
+        return (f"{failed} automatic backfills failed in a row (last: {(rows[0]['error'] or '')[:120]}); "
+                f"next try after {int(wait.total_seconds() // 60)} min")
+    return None
+
+
 def queue_gap_backfill(plan_id: Any, timeframe: str, start: datetime, end: datetime) -> None:
-    """After an outage, fetch the missing bars from the broker (marked BROKER)."""
+    """After an outage, fetch the missing bars from the broker (marked BROKER), unless repeated failures say wait."""
     from uuid import uuid4
     with store.transaction('write') as db:
+        hold = backfill_hold(db, plan_id, timeframe)
+        if hold:
+            if not db.execute("SELECT 1 FROM md_events WHERE plan_id=%s AND kind='BACKFILL_HELD' AND at > now() - interval '6 hours'",
+                              (plan_id,)).fetchone():
+                record_event(db, 'BACKFILL_HELD', 'WARNING', {'timeframe': timeframe, 'reason': hold,
+                             'next_step': 'Fix the cause (often the symbol), then run Market data › Backfill by hand.'}, plan_id=plan_id)
+            return
         if not db.execute("SELECT 1 FROM md_jobs WHERE plan_id=%s AND timeframe=%s AND status IN ('QUEUED','RUNNING')", (plan_id, timeframe)).fetchone():
             db.execute('INSERT INTO md_jobs(id, plan_id, timeframe, range_from, range_to, reason, requested_by) VALUES (%s,%s,%s,%s,%s,%s,%s)',
                        (uuid4(), plan_id, timeframe, start, end, 'Fill the outage from broker history', 'collector'))
@@ -221,15 +307,17 @@ def latest(account_id: UUID | None = None) -> list[dict]:
                 q.score, q.ticks AS ticks_last_minute, q.latency_p50_ms, q.spread_avg AS spread_avg_points,
                 d.day_open, d.day_high, d.day_low, d.day_time,
                 pl.code AS plan_code, pl.purpose AS plan_purpose, pl.feed_role, pl.stale_seconds, pl.instrument_id,
-                i.symbol AS instrument_symbol, i.asset_class
+                i.symbol AS instrument_symbol, i.asset_class, h.state AS health, h.detail AS health_detail, h.since AS health_since
             FROM md_latest l JOIN cfg_accounts a ON a.id=l.account_id JOIN cfg_connections c ON c.id=a.connection_id
             JOIN cfg_providers p ON p.id=c.provider_id
             LEFT JOIN LATERAL (SELECT q.score, q.ticks, q.latency_p50_ms, q.spread_avg FROM md_quality q
-                WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol ORDER BY q.minute DESC LIMIT 1) q ON true
+                WHERE q.account_id=l.account_id AND q.broker_symbol=l.broker_symbol AND q.minute > now() - interval '5 minutes'
+                ORDER BY q.minute DESC LIMIT 1) q ON true   -- an old score is not today's quality (no price for days showed Q 100)
             LEFT JOIN LATERAL (SELECT b.open AS day_open, b.high AS day_high, b.low AS day_low, b.bar_time AS day_time FROM md_bars b
                 WHERE b.account_id=l.account_id AND b.broker_symbol=l.broker_symbol AND b.timeframe='D1' ORDER BY b.bar_time DESC LIMIT 1) d ON true
             LEFT JOIN md_collection_plans pl ON pl.account_id=l.account_id AND pl.broker_symbol=l.broker_symbol AND pl.status <> 'ARCHIVED'
-            LEFT JOIN cfg_instruments i ON i.id=pl.instrument_id''' + (' WHERE l.account_id=%s' if account_id else '') +
+            LEFT JOIN cfg_instruments i ON i.id=pl.instrument_id
+            LEFT JOIN md_plan_health h ON h.plan_id=pl.id''' + (' WHERE l.account_id=%s' if account_id else '') +
                           ' ORDER BY l.broker_symbol, a.code', (account_id,) if account_id else ()).fetchall()
     return [store.clean(r) for r in rows]
 
@@ -318,7 +406,9 @@ def events(limit: int = 200, kind: str | None = None) -> list[dict]:
 def collectors() -> list[dict]:
     with store.transaction('read') as db:
         rows = db.execute('''SELECT s.*, a.code AS account_code, a.name AS account_name, extract(epoch FROM now() - s.heartbeat_at)::float8 AS heartbeat_age_seconds,
-                (SELECT count(*) FROM md_collection_plans p WHERE p.account_id=s.account_id AND p.status='ACTIVE') AS active_plans
+                (SELECT count(*) FROM md_collection_plans p WHERE p.account_id=s.account_id AND p.status='ACTIVE') AS active_plans,
+                (SELECT count(*) FROM md_plan_health h JOIN md_collection_plans p ON p.id=h.plan_id
+                 WHERE h.account_id=s.account_id AND p.status='ACTIVE' AND h.state IN ('ERROR','INVALID_SYMBOL','STALE')) AS plans_with_problems
             FROM md_collector_status s JOIN cfg_accounts a ON a.id=s.account_id
             WHERE a.status <> 'ARCHIVED' AND (s.state <> 'STOPPED' OR s.heartbeat_at > now() - interval '1 day')
             ORDER BY a.code''').fetchall()
@@ -364,6 +454,8 @@ def price_check(account_id: UUID, broker_symbol: str) -> dict:
                             (account_id, broker_symbol)).fetchone()
         feed = db.execute('SELECT f.active_plan_id, p.code FROM md_feed_state f JOIN md_collection_plans p ON p.id=f.active_plan_id '
                           'WHERE f.instrument_id=%s', (plan['instrument_id'],)).fetchone() if plan and plan['instrument_id'] else None
+        from .health import gate
+        unfit = gate(db, account_id, broker_symbol, utcnow(), store.policy)
     problems, warnings = [], []
     if not plan or plan['status'] != 'ACTIVE':
         warnings.append('No active collection plan for this symbol on this account, so the live price is not checked.')
@@ -379,6 +471,8 @@ def price_check(account_id: UUID, broker_symbol: str) -> dict:
         problems.append(f"The spread is {spread:.1f} points (limit {float(plan['max_spread_points']):g}).")
     if plan and plan['status'] == 'ACTIVE' and (not collector or collector['state'] != 'CONNECTED'):
         problems.append(f"The market-data feed is {collector['state'] if collector else 'not running'}.")
+    if unfit:
+        problems.append(unfit.split(': ', 1)[1][0].upper() + unfit.split(': ', 1)[1][1:] + '.')
     if feed and plan and feed['active_plan_id'] != plan['id']:
         warnings.append(f"This instrument is currently fed by {feed['code']}, not this plan.")
     return {'price': {'bid': last['bid'], 'ask': last['ask'], 'spread_points': round(spread, 1) if spread is not None else None,

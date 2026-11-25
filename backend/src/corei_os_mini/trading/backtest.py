@@ -70,8 +70,9 @@ def load_bars(db, account_id, symbol: str, tf: str, start: datetime, end: dateti
     m1 = [dict(r) for r in db.execute('SELECT bar_time, open, high, low, close, ticks, volume, spread_avg FROM md_bars WHERE account_id=%s AND '
                                       "broker_symbol=%s AND timeframe='M1' AND complete AND bar_time BETWEEN %s AND %s ORDER BY bar_time LIMIT %s",
                                       (str(account_id), symbol, start, end, MAX_BARS)).fetchall()]
-    built = engine.resample(m1, tf)
-    return (native, 'BROKER') if len(native) >= len(built) else (built, 'BUILT_FROM_M1')
+    market = engine.market_of(db, account_id, symbol)
+    bars, used = engine.choose(m1, native, tf, market, window=None)   # the same bar-source policy as the runtime
+    return bars, {'BROKER': 'BROKER', 'M1': 'BUILT_FROM_M1', 'MIXED': 'BROKER_THEN_M1'}[used]
 
 
 def simulate(bars: list[dict], walk: list[dict], ins: dict, qty: Decimal, spread_ticks: int, commission: Decimal, capital: Decimal,
@@ -158,12 +159,13 @@ def run(actor: str, data: BacktestIn) -> dict:
                           (str(data.account_id), data.broker_symbol)).fetchone()
         ins = instrument(db, plan['instrument_id']) if plan and plan['instrument_id'] else {}
         bars, source = load_bars(db, data.account_id, data.broker_symbol, tf, data.range_from, data.range_to)
+        market = engine.market_of(db, data.account_id, data.broker_symbol)
     need = algorithms.warmup(algo, params) + 3
     if len(bars) < need:
         raise HTTPException(422, f'Only {len(bars)} closed {tf} bars of {data.broker_symbol} in that period; at least {need} are needed. '
                                  'Collect or backfill more history (Market data › Backfill, or Market intelligence › Get history).')
     custom = [d for d in engine.custom_definitions() if tf in (d.get('timeframes') or engine.TIMEFRAMES)]
-    rows = engine.features(bars, tf, custom)
+    rows = engine.features(bars, tf, custom, market)
     walk = algorithms.run(algo, params, bars, rows)
     result = simulate(bars, walk, ins, data.quantity, data.spread_ticks, data.commission_per_lot, data.starting_capital, tf)
     result['metrics']['bars_source'] = source

@@ -33,16 +33,18 @@ STATUS: dict[str, Any] = {'last_run_at': None, 'duration_ms': None, 'deployments
 
 
 def series(db, source: tuple, timeframe: str) -> tuple[list[dict], list[dict]]:
-    """Closed bars of the timeframe (the broker's own when it has enough, else built from M1) and their features."""
+    """Closed bars of the timeframe by the Stage 2 bar-source policy (engine.bars_for: the broker's own bars, or their
+    history continued with M1-built bars, on the market's session grid) and their features; the same bars and
+    features Market intelligence shows. The last feature row carries feature_version and bars_source."""
     account_id, symbol = source
-    m1 = engine._load(db, account_id, symbol, 'M1')
-    native = engine._load(db, account_id, symbol, timeframe) if timeframe != 'M1' else []
-    built = engine.resample(m1, timeframe)
-    bars = (native if native and len(native) >= len(built) else built)[-engine.WINDOW:]
+    market = engine.market_of(db, account_id, symbol)
+    bars, used = engine.bars_for(db, account_id, symbol, timeframe, market)
     if not bars:
         return [], []
     custom = [d for d in engine.custom_definitions() if timeframe in (d.get('timeframes') or engine.TIMEFRAMES)]
-    return bars, engine.features(bars, timeframe, custom)
+    rows = engine.features(bars, timeframe, custom, market)
+    rows[-1] = {**rows[-1], 'feature_version': engine.ind.FEATURE_VERSION, 'bars_source': used}
+    return bars, rows
 
 
 def evaluate(db, dep: dict, now: datetime) -> dict:
