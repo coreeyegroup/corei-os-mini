@@ -284,3 +284,25 @@ create and adopt). Evidence: `backend/tests/test_workspace_control.py`, `ui/test
 | WS-10 | One strategy on several timeframes for the same account and instrument | OPEN — the deployment key has no timeframe; use a second strategy version (DEC-101 §6) | — |
 | WS-11 | Workspace-level notifications (Telegram, e-mail) | OPEN — alerts are firm-wide today (proposal) | — |
 | WS-12 | Per-desk P&L and schedule (start / stop at session times) | OPEN — proposal | — |
+
+## J. Stage 4 Strategy and Stage 5 Risk · governance — 25 Nov 2026 (release 0.58.0)
+
+Source: the live-site check of 25 Nov (8 of 9 strategies draft, no backtest, 0 risk limits with DEMO and LIVE sending on) and the owner's decisions.
+Evidence: `backend/tests/test_governance.py`, `ui/tests/trading.cjs` (risk profiles, strategy evidence). Migration `049_strategy_risk_governance.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| S1 | Approval needed no evidence | DONE 0.58.0 (profile gate on the exact backtest; exception recorded where allowed) | test_approval_needs_evidence_or_a_recorded_exception |
+| S2 | No lifecycle from draft to live | DONE 0.58.0 (Draft → Backtested → Paper-proven → Approved, shown per version; LIVE needs the paper record) | test_live_activation_needs_the_paper_record |
+| S2b | Edited draft kept old results | DONE 0.58.0 (evidence only from a backtest of the exact parameters) | test_editing_a_draft_voids_its_backtest |
+| S4 | One strategy, one timeframe | DONE 0.58.0 (copy to timeframe as a new draft with its own evidence) | test_timeframe_copy_is_a_new_draft |
+| R1 | Orders on with no limits | DONE 0.58.0 (DEMO switch and desk Start need the profile minimum; LIVE pre-LIVE policy now checked in desk plans too) | test_demo_switch_needs_minimum_limits_and_presets_never_loosen |
+| R2 | Limits only as absolute numbers | DONE 0.58.0 (presets as % of equity, previewed, never loosen) | same |
+| R3 | Loss stop only per account | DONE 0.58.0 (strategy and run daily-loss limits stop only those runs) | test_run_scope_loss_stops_only_that_run |
+| R4 | Sizing not checked against limits before Start | DONE 0.58.0 (desk plan: order value and order quantity vs limits) | test_desk_says_before_start_when_limits_are_missing_or_size_is_refused |
+| S3 | Backtest costs: no swap, no slippage model, no partial fills | OPEN — proposal | — |
+| S5 | Side-by-side comparison of versions | OPEN — proposal | — |
+| S7 | Live vs backtest drift alert and auto-pause | OPEN — drift exists; alert rule is a proposal | — |
+| R5 | Net exposure and correlation across workspaces | OPEN — proposal | — |
+| R6 | Second approver for LIVE limit changes | OPEN — proposal (four-eyes exists for LIVE configuration) | — |
+| R2b | Workspace-scope limits | OPEN — proposal (strategy and run scopes exist) | — |

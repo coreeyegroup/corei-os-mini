@@ -188,3 +188,32 @@ Decision:
 7. Saved per-user layouts, their research scan and the deployment mapping remain under "Saved layouts". A layout can
    be imported into a control desk on request.
 Status: accepted.
+
+## DEC-102 · Evidence before approval, limits before orders, chosen by profile (release 0.58.0, 25 Nov 2026)
+
+Context: on 25 Nov 2026 the server had 9 strategies: 8 draft, none ever backtested. Any version could be approved with
+no evidence, and DEMO and LIVE order sending were on with zero risk limits. The owner asked for strategy and risk to be
+built together, at best fit for retail, professional and institutional users, with every option kept open.
+Decision:
+1. Two governance policies, each a profile (None, Retail, Professional, Institutional) plus optional single-value
+   overrides, changed by a risk approver with a reason (audited). The default is Professional. None is a sandbox: no
+   gate. The test suites use it, apart from the governance tests.
+2. Approval of a version needs a backtest of its exact algorithm, parameters and timeframe, and that backtest must
+   meet the profile: minimum trades and history; costs charged; net after costs > 0; the last 30% of trades net ≥ 0
+   (out of sample); a drawdown cap. Editing a draft voids its backtest. Where the profile allows it, a risk approver
+   may approve by a recorded exception (reason stored on the version and audited); Institutional allows none. The
+   evidence is stored on the version at approval.
+3. Running a version on LIVE needs its paper record (days and closed trades of its paper runs). This is checked when a
+   LIVE broker deployment is activated, in a workspace plan and at a workspace's activation.
+4. DEMO trading accounts need the risk-minimum limits of the profile before DEMO order sending can be switched on and
+   before a workspace starts on DEMO. Institutional also enforces this at the dispatcher. The LIVE rules (pre-LIVE
+   policy) are unchanged.
+5. Limit presets are sized from an account's equity (the broker's reported equity, else COREI's book, else a figure
+   entered by hand). They are previewed first and only create or tighten limits; a tighter existing limit is kept.
+6. A daily-loss limit set on a strategy or a run is compared with those runs' own loss (not the account's). When it is
+   breached, a kill switch stops only those runs. Account-level limits work as before.
+7. Timeframes: a version is copied to another timeframe as a new draft strategy with its own evidence (a result on one
+   timeframe says nothing about another). The deployment key is unchanged.
+8. A workspace plan refuses a fixed size that every order would breach (order quantity or order value against the
+   limits) and shows the order value it would send.
+Status: accepted.

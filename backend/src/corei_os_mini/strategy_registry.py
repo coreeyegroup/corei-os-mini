@@ -247,15 +247,25 @@ def update_version(version_id: UUID, payload: dict, response: Response, user: Pr
 @router.post('/strategy-versions/{version_id}/approve')
 def approve_version(version_id: UUID, payload: dict, response: Response, user: Principal = Depends(_approver)):
     _no_store(response)
+    payload = dict(payload or {})
+    exception = str(payload.pop('exception', '') or '').strip() or None
     version = _parse(Versioned, payload).version
+    if exception is not None and not 5 <= len(exception) <= 500:
+        raise HTTPException(422, 'An approval exception needs a reason of 5 to 500 characters.')
+    from .trading import governance
     with store.transaction('update') as db:
         before = _locked(db, 'cfg_strategy_versions', version_id, version, 'strategy version')
         if before['state'] != 'DRAFT':
             raise HTTPException(422, 'Only draft versions can be approved.')
         validate_parameters(before['algorithm'], before['parameters'])
-        after = db.execute("UPDATE cfg_strategy_versions SET state='APPROVED', approved_by=%s, approved_at=now(), version=version+1, "
-                           'updated_at=now() WHERE id=%s RETURNING *', (user.username, version_id)).fetchone()
-        store.audit(db, user.username, 'APPROVE', 'strategy version', version_id, before, after)
+        # The evidence policy (Stage 4): a backtest of these exact parameters with enough trades, history, costs and an
+        # out-of-sample check — or a recorded exception where the profile allows one.
+        evidence, used_exception = governance.approval_evidence(db, version_id, user.username, exception)
+        after = db.execute("UPDATE cfg_strategy_versions SET state='APPROVED', approved_by=%s, approved_at=now(), evidence=%s, "
+                           'approval_exception=%s, version=version+1, updated_at=now() WHERE id=%s RETURNING *',
+                           (user.username, Jsonb(evidence), used_exception, version_id)).fetchone()
+        store.audit(db, user.username, 'APPROVE', 'strategy version', version_id, before, after,
+                    f'Approved by exception: {used_exception}' if used_exception else 'Approved on evidence')
         return store.clean(after)
 
 
@@ -453,6 +463,11 @@ def transition(deployment_id: UUID, action: Literal['activate', 'pause', 'end'],
                 raise HTTPException(422, 'Resolve these before activating: ' + ', '.join(b.replace('_', ' ').lower() for b in structural) + '.')
             if current['environment'] == 'LIVE' and before['proposed_by'] == user.username:
                 raise HTTPException(422, 'On LIVE accounts a different person must activate the deployment than the one who proposed it.')
+            if current['environment'] == 'LIVE' and before['mode'] == 'BROKER':
+                from .trading import governance
+                gap = governance.live_evidence_gap(db, before['strategy_version_id'])
+                if gap:
+                    raise HTTPException(422, gap + '. Run it on Paper first.')
         after = db.execute('UPDATE cfg_deployments SET status=%s, version=version+1, updated_at=now()'
                            + (', activated_by=%s, activated_at=now()' if action == 'activate' else '') + ' WHERE id=%s RETURNING *',
                            (target, user.username, deployment_id) if action == 'activate' else (target, deployment_id)).fetchone()

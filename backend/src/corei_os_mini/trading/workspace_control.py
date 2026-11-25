@@ -381,7 +381,23 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
         check('Output', 'FAIL', f'{env} order sending is off',
               'LIVE order sending is an owner control; a workspace never turns it on.' if env == 'LIVE' else 'DEMO order sending is off in Controls.',
               'An authorised owner switches it on in Setup → Controls, or choose Observe or Paper.', 'Configuration')
+    if env == 'DEMO' and usable_acc:
+        from . import governance
+        unmet = governance.demo_unmet(db, usable_acc)
+        if unmet:
+            check('Risk', 'FAIL', 'Minimum risk limits are missing', '; '.join(u['detail'] for u in unmet),
+                  'Risk › Limits › Apply a profile (Retail, Professional or Institutional), or add the limits by hand.', 'Risk')
     if env == 'LIVE':
+        from . import readiness
+        live = readiness.live_policy(db)
+        if not live['ok']:
+            check('Risk', 'FAIL', 'The pre-LIVE policy is not met', '; '.join(u['detail'] for u in live['unmet']),
+                  'Meet each rule (Risk › Limits, Execution, Setup › Users and Alerts) or record an exception where allowed.', 'Risk')
+        from . import governance
+        gaps = [g for g in (governance.live_evidence_gap(db, v['id']) for v in chosen.values()) if g]
+        if gaps:
+            check('Processing', 'FAIL', 'Strategies without LIVE evidence', '; '.join(gaps),
+                  'Run them on Paper until the paper record is met (Strategies › Evidence).', 'Strategies')
         check('Output', 'WARN', 'LIVE needs a second person',
               'A different person must start this workspace than the one who last changed its settings; every LIVE order also follows the LIVE four-eyes policy.')
 
@@ -451,6 +467,7 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
             check('Output', 'WARN', 'Some instruments cannot be traded on some accounts',
                   'No trading symbol on the account connection: ' + ', '.join(no_trade[:12]) + (' …' if len(no_trade) > 12 else ''),
                   'Map the trading symbol in Setup → Symbols.', 'Configuration')
+        _size_check(db, cfg, runs, instruments, accounts, check)
         watched = [r for r in runs if r['action'] == 'WATCH' and r.get('controlled_by')]
         if watched:
             check('Ownership', 'WARN', f'{len(watched)} run(s) are controlled by another workspace',
@@ -484,6 +501,40 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                      'skip': sum(r['action'] == 'SKIP' for r in runs)},
         'checked_at': datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _size_check(db, cfg: Config, runs: list[dict], instruments: dict, accounts: dict, check) -> None:
+    """A fixed size that every order would breach is a configuration error, not a market event: say so before Start."""
+    from .common import D, fx_rate, quote
+    from .risk import applicable
+    sz = cfg.processing.sizing
+    if sz.method != 'FIXED_QTY' or not sz.quantity:
+        return
+    qty = D(sz.quantity)
+    seen, refused, notes = set(), [], []
+    for r in runs:
+        if r['action'] not in ('CREATE', 'KEEP', 'ADOPT') or (r['instrument_id'], r['account_id']) in seen:
+            continue
+        seen.add((r['instrument_id'], r['account_id']))
+        lim = applicable(db, {'ACCOUNT': r['account_id'], 'INSTRUMENT': r['instrument_id'], 'STRATEGY': r['strategy_id']})
+        ins = db.execute('SELECT symbol, contract_size, quote_currency FROM cfg_instruments WHERE id=%s', (r['instrument_id'],)).fetchone()
+        if 'MAX_ORDER_QTY' in lim and qty > D(lim['MAX_ORDER_QTY']['value']):
+            refused.append(f"{ins['symbol']} on {r['account_code']}: {qty.normalize()} lots > order limit {D(lim['MAX_ORDER_QTY']['value']).normalize()}")
+        q = quote(db, r['account_id'], r['instrument_id'])
+        if q and q.get('mid'):
+            ccy = db.execute('SELECT base_currency FROM cfg_accounts WHERE id=%s', (r['account_id'],)).fetchone()['base_currency'] or 'USD'
+            rate = fx_rate(db, ins['quote_currency'], ccy)
+            if rate is not None:
+                value = (qty * (D(ins['contract_size']) or 1) * q['mid'] * rate).quantize(D('0.01'))
+                notes.append(f"{ins['symbol']}: {qty.normalize()} lots ≈ {value.normalize()} {ccy}")
+                if 'MAX_ORDER_NOTIONAL' in lim and value > D(lim['MAX_ORDER_NOTIONAL']['value']):
+                    refused.append(f"{ins['symbol']} on {r['account_code']}: order value {value.normalize()} {ccy} > limit "
+                                   f"{D(lim['MAX_ORDER_NOTIONAL']['value']).normalize()} {ccy}")
+    if refused:
+        check('Risk', 'FAIL', 'Every order would be refused by a risk limit', '; '.join(refused),
+              'Reduce the quantity under Processing → Sizing, or use Risk % of equity sizing.')
+    elif notes:
+        check('Risk', 'PASS', 'Order size fits the limits', '; '.join(notes[:6]))
 
 
 # ---------- writing ----------
@@ -582,6 +633,11 @@ def _activate(db, dep_id, actor: str, reason: str, env: str) -> str | None:
         return ', '.join(b.replace('_', ' ').lower() for b in structural)
     if env == 'LIVE' and current['proposed_by'] == actor:
         return 'on LIVE a different person must activate than the one who proposed it'
+    if env == 'LIVE':
+        from . import governance
+        gap = governance.live_evidence_gap(db, current['strategy_version_id'])
+        if gap:
+            return gap
     _set_status(db, dep_id, 'ACTIVE', actor, reason)
     return None
 

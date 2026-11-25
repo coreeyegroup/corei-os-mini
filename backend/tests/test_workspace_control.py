@@ -174,6 +174,8 @@ class WorkspaceControl(te.Execution):
         desk, _cfg, (_c, a, *_rest) = self.setup_desk('LIVE', 'LIVE', handoff='APPROVE')
         plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
         self.assertIn('LIVE order sending is off', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
+        self.assertIn('The pre-LIVE policy is not met', [c['title'] for c in plan['checks'] if c['status'] == 'FAIL'])
+        self.live_ready(a)
         self.sending('LIVE')
         plan = self.ok(self.alice.post(f"/api/trading/desks/{desk['id']}/validate"))
         self.assertTrue(plan['ready'], plan['checks'])

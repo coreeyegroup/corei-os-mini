@@ -5,6 +5,7 @@
  * reason for every refusal on screen.
  * Purpose: each stage's Overview / Work / Monitor / Configure sections over /api/trading.
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
+import { RiskProfiles } from './Governance';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { useViewVisible } from './visibility';
@@ -421,6 +422,7 @@ function Limits({ ctx }: { ctx: Ctx }) {
     const body = { scope: f.scope, target_id: f.scope === 'FIRM' ? null : f.target_id, kind: f.kind, value: String(f.value), enabled: !!f.enabled, note: f.note ?? '', reason: f.reason };
     try { if (f.id) await api(`trading/risk/limits/${f.id}`, 'PUT', { ...body, version: f.version }); else await api('trading/risk/limits', 'POST', body); setF(null); setMsg('Saved.'); reload(); } catch (x) { setErr((x as Error).message); } };
   return <section className="intel">
+    <RiskProfiles canRisk={!!ctx.canRisk} onApplied={reload} />
     {ctx.canRisk && <div className="intel-bar"><button className="primary" onClick={() => setF({ scope: 'ACCOUNT', target_id: '', kind: 'MAX_DAILY_LOSS', value: '', enabled: true, note: '', reason: '' })}>Add a limit</button></div>}
     <Msg error={error || err} notice={msg} />
     {f && <form className="cfg-form intel-edit" onSubmit={save}>
@@ -438,7 +440,7 @@ function Limits({ ctx }: { ctx: Ctx }) {
         <td>{l.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(l.updated_at)} · {l.updated_by}</small></td>
         <td>{ctx.canRisk && <><button onClick={() => setF({ ...l, reason: '' })}>Edit</button> <button onClick={() => { const r = window.prompt('Reason for deleting this limit'); if (r) void api(`trading/risk/limits/${l.id}?reason=${encodeURIComponent(r)}`, 'DELETE').then(() => reload()).catch(e => setErr((e as Error).message)); }}>Delete</button></>}</td></tr>)}
       {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No limits yet. Start with a daily loss and a position limit per account.</td></tr>}</tbody></table>
-    <p className="cfg-note">The tightest limit of each kind applies. Orders that reduce a position skip the position, exposure and loss limits. Breaching a daily-loss or drawdown limit engages the account's kill switch automatically.</p>
+    <p className="cfg-note">The tightest limit of each kind applies. Orders that reduce a position skip the position, exposure and loss limits. Breaching an account's daily-loss or drawdown limit engages the account's kill switch automatically; a daily-loss limit set on a strategy or a run stops only those runs.</p>
   </section>;
 }
 

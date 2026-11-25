@@ -110,6 +110,7 @@ class Mt5SetupAndRouting(unittest.TestCase):
         with self.connect() as db:
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
+            db.execute("UPDATE cfg_policies SET value='{\"profile\": \"NONE\", \"overrides\": {}}' WHERE key IN ('strategy_evidence', 'risk_minimum')")  # tests before 0.58: no gate; governance tests choose a profile
         self.folder = tempfile.TemporaryDirectory()
         key = Path(self.folder.name) / 'key'; key.write_bytes(os.urandom(32)); key.chmod(0o600)
         self.patches = [patch.dict(os.environ, {'COREI_BROKER_KEY_FILE': str(key)}),

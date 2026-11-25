@@ -148,3 +148,18 @@ button.link { background: none; border: none; padding: 0; text-decoration: under
 .dk-next { flex-basis: 100%; margin: 0; }
 .dk-next.fail b { color: var(--bad, #c0392b); }
 .dk-next.pass b { color: var(--ok, #2e8b57); }
+
+/* Governance panels (Governance.tsx) */
+.gv-panel { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line, #788290); border-radius: 4px; }
+.gv-stages { display: flex; gap: 4px; list-style: none; padding: 0; margin: 0; flex-wrap: wrap; }
+.gv-stages li { padding: 1px 8px; border: 1px solid var(--line, #788290); border-radius: 10px; opacity: .6; }
+.gv-stages li.done { opacity: 1; }
+.gv-stages li.now { opacity: 1; font-weight: 600; outline: 1px solid currentColor; }
+.gv-checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+.gv-checks li.pass b { color: var(--ok, #2e8b57); }
+.gv-checks li.fail b { color: var(--bad, #c0392b); }
+.gv-checks li.na { opacity: .65; }
+.gv-panel .cfg-actions input { min-width: 260px; flex: 1; }
+.gv-risk { display: grid; gap: 8px; margin-bottom: 8px; }
+.gv-policies, .gv-preset { display: flex; gap: 8px 12px; align-items: end; flex-wrap: wrap; }
+.gv-policies label, .gv-preset label { display: grid; gap: 2px; }
