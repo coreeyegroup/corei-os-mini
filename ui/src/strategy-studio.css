@@ -343,9 +343,11 @@
   margin: 0;
 }
 .studio-scope-card h4 small { font-weight: normal; }
+.studio-scope-note { margin: 0; }
 .studio-scope-card select { max-width: 100%; }
 .studio-scope-card .studio-picker-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
-.studio-scope-card .studio-picker-options label { min-width: 0; overflow-wrap: anywhere; }
+.studio-scope-card .studio-picker-options label { min-width: 0; overflow-wrap: anywhere; align-items: start; }
+.studio-scope-card .studio-picker-options input { flex: none; }
 .studio-scan-options {
   display: grid;
   gap: 6px;

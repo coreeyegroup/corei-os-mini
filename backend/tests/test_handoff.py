@@ -56,6 +56,10 @@ class Handoff(tt.Trading):
         self.assertEqual((it['outcome'], it['side'], Decimal(it['quantity']), it['order_type'], it['handoff']), ('PENDING', 'BUY', Decimal('0.1'), 'LIMIT', 'APPROVE'))
         self.assertEqual(Decimal(it['limit_price']), Decimal('1.08012'), 'ask + 2 ticks: a price cap')
         self.assertEqual(flow['summary']['pending'], 1)
+        scoped_url = '/api/trading/execution/flow?outcome=PENDING&limit=1&deployment_id='
+        self.assertEqual(self.ok(self.alice.get(scoped_url + str(dep['id'])))['items'], [it])
+        self.assertEqual(self.ok(self.alice.get(scoped_url + '00000000-0000-0000-0000-000000000000'))['items'], [])
+
         self.assertEqual(it['signal_state'], 'VALID')
         self.assertEqual(it['strategy_code'], 'EMA_FAST')
         mon = self.ok(self.alice.get('/api/trading/strategies/monitor'))

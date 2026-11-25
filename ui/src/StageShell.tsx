@@ -66,13 +66,13 @@ export function StageBar({ view, title, hint }: { view: View; title: string; hin
   </header>;
 }
 
-export default function StageShell({ view, sections, title, allPanels = true }: { view: View; sections: Section[]; title?: string; allPanels?: boolean }) {
+export default function StageShell({ view, sections, title, allPanels = true, defaultSection, initialTabs }: { view: View; sections: Section[]; title?: string; allPanels?: boolean; defaultSection?: string; initialTabs?: string[] }) {
   const isStage = Boolean(stageOf(view));
   const all = [...(allPanels ? [{ id: 'workspace', label: 'All panels', group: 'Overview' as const, hint: 'Every item of this stage on one page — dashboards, work, monitors and settings — each opens and closes.', render: () => null }] : []),
     ...sections, ...(isStage ? [{ id: 'stage', label: 'Stage map', group: 'Configure' as const, hint: 'What this stage does, its components and how far each is built.', render: () => null }] : [])];
   // One order everywhere: by group (Overview, Work, Monitor, Configure), as the side bar shows them.
   all.sort((a, b) => GROUPS.indexOf(a.group as typeof GROUPS[number]) - GROUPS.indexOf(b.group as typeof GROUPS[number]));
-  const [tab, setTab] = useSection<string>(view, all[0].id, all.map(s => s.id));
+  const [tab, setTab] = useSection<string>(view, defaultSection ?? all[0].id, all.map(s => s.id));
   useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
@@ -96,7 +96,7 @@ export default function StageShell({ view, sections, title, allPanels = true }: 
     <section className="cfg-main">
       <StageBar view={view} title={current.label} hint={current.hint} />
       {isStage && tab === 'workspace' && <StartHere ctx={ctx} />}
-      <SubWorkspace view={view} label={stage.title} tab={tab} setTab={setTab} initial={all.map(x => x.id)}
+      <SubWorkspace view={view} label={stage.title} tab={tab} setTab={setTab} initial={initialTabs ?? all.map(x => x.id)}
         items={all.map(x => ({ id: x.id, label: x.label, group: x.group, hint: x.hint }))}
         render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view={view} sections={sections.map(x => ({ ...x, render: () => x.render(ctx) }))} alone={setTab} />
           : id === 'stage' ? <Stage view={view} open={v => goto(v)} /> : (all.find(x => x.id === id) ?? all[0]).render(ctx)}</div>} />
@@ -107,19 +107,27 @@ export default function StageShell({ view, sections, title, allPanels = true }: 
 
 /* Small shared pieces for the stage views. */
 export function useData<T = Row>(path: string | null, every = 15_000, deps: unknown[] = []): [T | null, string, () => void] {
-  const [data, setData] = useState<T | null>(null), [error, setError] = useState(''), [n, setN] = useState(0);
+  const [result, setResult] = useState<{ path: string; data: T | null; error: string } | null>(null);
+  const [n, setN] = useState(0);
   const visible = useViewVisible(), loaded = useRef(false);
   useEffect(() => {
     if (!path) return;
     if (!visible && loaded.current) return; // a background workspace keeps what it has and polls again when shown
     loaded.current = true;
     let live = true;
-    const load = () => void api(path).then(d => { if (live) { setData(d); setError(''); } }).catch(e => { if (live) setError((e as Error).message); });
+    const load = () => void api(path).then(d => { if (live) setResult({ path, data: d, error: '' }); }).catch(e => {
+      if (live) setResult(previous => ({ path, data: previous?.path === path ? previous.data : null, error: (e as Error).message }));
+    });
     load();
     const t = every ? window.setInterval(load, every) : 0;
     return () => { live = false; if (t) window.clearInterval(t); };
   }, [path, n, visible, ...deps]);
-  return [data, error, () => setN(x => x + 1)];
+  return [result?.path === path ? result.data : null, result?.path === path ? result.error : '', () => setN(x => x + 1)];
+}
+
+export function DeploymentFilter({ label, clear }: { label: string; clear: () => void }) {
+  return <div className="intel-bar"><span>Deployment <strong>{label}</strong></span>
+    <button onClick={clear}>Show all deployments</button></div>;
 }
 
 export const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';

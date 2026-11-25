@@ -166,7 +166,7 @@ export default function StudioDrafts({ draft, opened, onOpen, section, onBusy, o
             void withRequest('Loading versions…', () => listVersions(id));
           }}>
             <option value="">{drafts?.length === 0 ? 'No saved drafts' : 'Select a draft'}</option>
-            {drafts?.map(item => <option key={item.id} value={item.id}>{item.name} · v{item.version}</option>)}
+            {drafts?.map(item => <option key={item.id} value={item.id}>{item.name} · v{item.version} · {item.id.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ''}</option>)}
           </select>
         </label>
         <label>Version

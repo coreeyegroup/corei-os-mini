@@ -8,17 +8,30 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './Configuration';
 import { Kpis, Msg, num, pill, useData, when, type Ctx, type Row } from './StageShell';
-import { goto } from './nav';
+import { goto, openDeployment } from './nav';
 
 const HAND: Record<string, string> = { AUTO: 'automatic', APPROVE: 'trader approves', SIGNAL_ONLY: 'signal only' };
+const book = (row: Row) => row.mode === 'PAPER' ? 'Paper' : row.environment ? `Broker ${row.environment}` : 'Broker';
+const PAGE_SIZE = 24;
 const fmt = (v: any, d = 2) => v == null ? '–' : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const signed = (v: any) => <b className={Number(v) > 0 ? 'up' : Number(v) < 0 ? 'down' : ''}>{Number(v) > 0 ? '+' : ''}{fmt(v)}</b>;
 
 export function StrategyDashboard({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/strategies/monitor', 15_000);
-  const [q, setQ] = useState(''), [show, setShow] = useState('ACTIVE'), [msg, setMsg] = useState(''), [err, setErr] = useState('');
+  const [q, setQ] = useState(''), [show, setShow] = useState('ALL'), [msg, setMsg] = useState(''), [err, setErr] = useState('');
   const s = data?.summary ?? {};
-  const rows: Row[] = (data?.items ?? []).filter((r: Row) => (show === 'ALL' || r.status === show) && (!q || `${r.strategy_code} ${r.symbol} ${r.account_code} ${r.algorithm}`.toLowerCase().includes(q.toLowerCase())));
+  const [mode, setMode] = useState(''), [page, setPage] = useState(0);
+  const query = q.trim().toLowerCase();
+  const items: Row[] = data?.items ?? [];
+  const rows = items.filter(r => (show === 'ALL' || (show === 'ATTENTION'
+    ? r.last_error || r.pending > 0 || r.drift?.status === 'DRIFT' : r.status === show))
+    && (!mode || book(r) === mode)
+    && (!query || `${r.strategy_code} ${r.symbol} ${r.account_code} ${r.algorithm}`.toLowerCase().includes(query)));
+  const modes = [...new Set(items.map(book))].sort();
+  const lastPage = Math.max(0, Math.ceil(rows.length / PAGE_SIZE) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const visibleRows = rows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const scope = (r: Row) => ({ id: String(r.id), label: `${r.strategy_code} · ${r.symbol} · ${r.account_code} · ${book(r)}` });
   const transition = async (r: Row, action: 'pause' | 'activate') => {
     const reason = window.prompt(`${action === 'pause' ? 'Pause' : 'Resume'} ${r.strategy_code} on ${r.symbol}: reason (kept in the audit log)`) ?? '';
     if (reason.trim().length < 5) return;
@@ -34,46 +47,64 @@ export function StrategyDashboard({ ctx }: { ctx: Ctx }) {
   };
   const pnl = Object.entries(s.pnl_by_currency ?? {}) as [string, Row][];
   return <section className="intel">
-    <Kpis items={[['Running', s.active ?? 0, 'Active deployments evaluated on every closed bar', 'up'], ['Paused', s.paused ?? 0], ['Proposed', s.proposed ?? 0, 'Waiting for activation (Setup › Deployments)'],
-      ['Paper · real', `${s.paper ?? 0} · ${s.real ?? 0}`], ['Long · short', `${s.long ?? 0} · ${s.short ?? 0}`, 'Running strategies holding a position'],
+    <nav className="sd-journey" aria-label="Strategy workflow">
+      <button onClick={() => goto('Strategy Studio', 'templates')}>Build in Studio</button>
+      <button onClick={() => ctx.open('backtest')}>Backtest</button>
+      <button onClick={() => goto('Configuration', 'strategies')}>Approve a version</button>
+      <button onClick={() => goto('Configuration', 'deployments')}>Manage deployments</button>
+      <button onClick={() => ctx.open('performance')}>Review performance</button>
+    </nav>
+    {data && <Kpis items={[['Running', s.active ?? 0, 'Active deployments evaluated on every closed bar', 'up'], ['Paused', s.paused ?? 0], ['Proposed', s.proposed ?? 0, 'Waiting for activation (Setup › Deployments)'],
+      ['Paper · broker', `${s.paper ?? 0} · ${s.real ?? 0}`], ['Long · short', `${s.long ?? 0} · ${s.short ?? 0}`, 'Running strategies holding a position'],
       ['Signals · orders today', `${s.signals_today ?? 0} · ${s.orders_today ?? 0}`], ['Waiting for execution', s.pending ?? 0, 'Decisions of "trader approves" strategies (Execution › Decision queue)', s.pending ? 'warn' : ''],
       ['Drifting', s.drifting ?? 0, 'Live results worse than the backtest', s.drifting ? 'warn' : ''], ['Need attention', s.errors ?? 0, 'Last run ended with a problem', s.errors ? 'warn' : ''],
-      ...pnl.map(([c, v]) => [`Open · closed P&L ${c}`, <span className="sd-pnl">{signed(v.unrealised)} · {signed(v.realised)}</span>, 'Unrealised at the live price · realised from fills, in the account currency'] as [string, ReactNode, string])]} />
+      ...pnl.map(([c, v]) => [`Open · closed P&L ${c}`, <span className="sd-pnl">{signed(v.unrealised)} · {signed(v.realised)}</span>, 'Unrealised at the live price · realised from fills, in the account currency'] as [string, ReactNode, string])]} />}
     <div className="intel-bar">
-      <select aria-label="Strategy status" value={show} onChange={e => setShow(e.target.value)}><option value="ACTIVE">Running</option><option value="PAUSED">Paused</option><option value="PROPOSED">Proposed</option><option value="ALL">All</option></select>
-      <input aria-label="Find a strategy" placeholder="Strategy, instrument, account, algorithm…" value={q} onChange={e => setQ(e.target.value)} />
+      <select aria-label="Strategy status" value={show} onChange={e => { setShow(e.target.value); setPage(0); }}><option value="ALL">All statuses</option><option value="ATTENTION">Needs attention</option><option value="ACTIVE">Running</option><option value="PAUSED">Paused</option><option value="PROPOSED">Proposed</option></select>
+      <select aria-label="Execution mode" value={mode} onChange={e => { setMode(e.target.value); setPage(0); }}>
+        <option value="">All execution modes</option>{modes.map(m => <option key={m}>{m}</option>)}
+      </select>
+      <input aria-label="Find a strategy" placeholder="Strategy, instrument, account, algorithm…" value={q} onChange={e => { setQ(e.target.value); setPage(0); }} />
       <button onClick={() => goto('Configuration', 'deployments')}>+ Deploy a strategy (Setup)</button>
       <button onClick={reload}>Reload</button>
     </div>
     <Msg error={error || err} notice={msg} />
-    {data && !rows.length && <p className="cfg-note ex-empty">No {show === 'ALL' ? '' : show.toLowerCase() + ' '}strategies. Quick start (Home) deploys one in a click; Setup › Strategies and Deployments give every option.</p>}
-    <div className="sd-cards">{rows.map(r => { const pos = r.position ?? {}, qty = Number(pos.quantity ?? 0), d = r.drift?.status, ls = r.last_signal, ld = r.last_decision;
+    {!data && !error && <p role="status">Loading deployments…</p>}
+    {data && !items.length && <p className="cfg-note ex-empty">No deployments yet. Approve a strategy version, then choose an instrument, account and execution mode in Setup.</p>}
+    {data && !!items.length && !rows.length && <p className="cfg-note ex-empty">No deployments match these filters.</p>}
+    {rows.length > 0 && <div className="intel-bar sd-pagination" aria-label="Deployment results">
+      <span>{currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, rows.length)} of {rows.length} deployments</span>
+      {lastPage > 0 && <><button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+        <button disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>Next</button></>}
+    </div>}
+    <div className="sd-cards">{visibleRows.map(r => { const pos = r.position ?? {}, qty = Number(pos.quantity ?? 0), d = r.drift?.status, ls = r.last_signal, ld = r.last_decision;
       return <article key={r.id} className={`sd-card ${r.status !== 'ACTIVE' ? 'sd-off' : ''} ${r.last_error ? 'sd-err' : ''}`}>
         <header><b>{r.strategy_code}</b><small> v{r.version_number}</small>
-          <span className="sd-tags">{pill(r.status === 'ACTIVE' ? 'running' : r.status, r.status === 'ACTIVE' ? 'ok' : 'off')}{r.mode === 'BROKER' ? pill('real', 'live') : pill('paper', 'demo')}
+          <span className="sd-tags">{pill(r.status === 'ACTIVE' ? 'running' : r.status, r.status === 'ACTIVE' ? 'ok' : 'off')}{pill(book(r), r.mode === 'PAPER' || r.environment === 'DEMO' ? 'demo' : 'live')}
             <span className={`cfg-pill ${r.handoff === 'APPROVE' ? 'warn' : r.handoff === 'SIGNAL_ONLY' ? 'demo' : ''}`}>{HAND[r.handoff]}</span></span></header>
         <p className="sd-sub">{r.symbol} · {r.account_code} · <code>{r.algorithm}</code> · {r.timeframe ?? r.parameters?.timeframe ?? '—'}</p>
         <div className="sd-grid">
           <span><small>Position</small><b className={qty > 0 ? 'up' : qty < 0 ? 'down' : ''}>{qty > 0 ? 'long' : qty < 0 ? 'short' : 'flat'} {qty ? fmt(Math.abs(qty)) : ''}</b></span>
-          <span><small>Open P&L</small>{signed(pos.unrealised ?? 0)}</span>
-          <span><small>Closed P&L</small>{signed(pos.realised ?? 0)}</span>
+          <span><small>Open P&L {pos.currency}</small>{signed(pos.unrealised ?? 0)}</span>
+          <span><small>Closed P&L {pos.currency}</small>{signed(pos.realised ?? 0)}</span>
           <span><small>Target</small><b>{r.last_target?.toLowerCase() ?? '—'}</b></span>
           <span><small>Trades · win</small><b>{r.live?.trades ?? 0} · {r.live?.win_rate_pct == null ? '–' : `${r.live.win_rate_pct}%`}</b></span>
-          <span><small>Profit f.</small><b>{r.live?.profit_factor ?? '–'}</b></span>
+          <span><small>Profit factor</small><b>{r.live?.profit_factor ?? '–'}</b></span>
           <span><small>Drift</small><b className={d === 'DRIFT' ? 'down' : d === 'OK' ? 'up' : ''}>{(d ?? 'not checked').toLowerCase().replace(/_/g, ' ')}</b></span>
           <span><small>Today</small><b>{r.signals_today} sig · {r.orders_today} ord</b></span>
         </div>
         <p className="sd-line"><small className="sd-k">Last signal</small>{ls ? <>{<b className={ls.side === 'BUY' ? 'up' : ls.side === 'SELL' ? 'down' : ''}>{ls.side}</b>} {ls.strength} · {ls.state.toLowerCase()} · {new Date(ls.bar_time).toISOString().slice(5, 16).replace('T', ' ')} <small className="cfg-note">{ls.why}</small></> : <small className="cfg-note">none yet</small>}</p>
         <p className="sd-line"><small className="sd-k">Last decision</small>{ld ? <>{ld.outcome.toLowerCase().replace(/_/g, ' ')}{ld.side ? ` · ${ld.side.toLowerCase()} ${fmt(ld.quantity)}` : ''} · {when(ld.created_at)}</> : <small className="cfg-note">none yet</small>}
-          {r.pending > 0 && <button className="link" onClick={() => goto('Execution', 'queue')}> {r.pending} waiting →</button>}</p>
+          {r.pending > 0 && <button className="link" onClick={() => openDeployment('queue', scope(r))}> {r.pending} waiting →</button>}</p>
         {r.last_error && <p className="cfg-error-text"><small>{r.last_error}</small></p>}
         <footer>
           {(ctx.canOps || ctx.canRisk) && r.status === 'ACTIVE' && <button onClick={() => void transition(r, 'pause')}>Pause</button>}
           {ctx.canRisk && ['PAUSED', 'PROPOSED'].includes(r.status) && <button className="primary" onClick={() => void transition(r, 'activate')}>{r.status === 'PAUSED' ? 'Resume' : 'Activate'}</button>}
           {ctx.canRisk && <select aria-label={`Handoff ${r.strategy_code} ${r.symbol}`} value={r.handoff} onChange={e => void handoff(r, e.target.value)}>
             {Object.entries(HAND).map(([k, l]) => <option key={k} value={k}>→ execution: {l}</option>)}</select>}
-          <button className="link" onClick={() => goto('Strategies', 'signals')}>signals</button>
-          <button className="link" onClick={() => goto('Execution', 'flow')}>decisions →</button>
+          <button className="link" onClick={() => openDeployment('runtime', scope(r))}>Runtime</button>
+          <button className="link" onClick={() => openDeployment('signals', scope(r))}>Strategy signals</button>
+          <button className="link" onClick={() => openDeployment('intents', scope(r))}>Trade decisions</button>
         </footer>
       </article>; })}</div>
   </section>;
@@ -83,15 +114,20 @@ export function BacktestCompare() {
   const [list] = useData<Row>('trading/backtests', 60_000);
   const [pick, setPick] = useState<string[]>([]), [runs, setRuns] = useState<Row[]>([]), [err, setErr] = useState('');
   useEffect(() => {
-    if (!pick.length) { setRuns([]); return; }
-    void Promise.all(pick.map(id => api(`trading/backtests/${id}`))).then(r => { setRuns(r); setErr(''); }).catch(e => setErr((e as Error).message));
-  }, [pick.join()]);
+    let current = true;
+    setRuns([]);
+    setErr('');
+    if (pick.length) void Promise.all(pick.map(id => api(`trading/backtests/${id}`)))
+      .then(r => { if (current) setRuns(r); })
+      .catch(e => { if (current) setErr((e as Error).message); });
+    return () => { current = false; };
+  }, [pick]);
   const items: Row[] = list?.items ?? [];
   const label = (b: Row) => `${b.strategy_code ? `${b.strategy_code} v${b.version_number}` : b.algorithm} · ${b.broker_symbol} ${b.timeframe} · ${new Date(b.created_at).toISOString().slice(0, 10)}`;
   const M: [string, string, (v: any) => string][] = [['Net P&L', 'net_pnl', v => fmt(v)], ['Return %', 'return_pct', v => fmt(v)], ['Trades', 'trades', v => String(v ?? '–')],
     ['Win rate %', 'win_rate_pct', v => v == null ? '–' : String(v)], ['Profit factor', 'profit_factor', v => v == null ? '–' : String(v)], ['Average trade', 'avg_trade', v => fmt(v)],
     ['Max drawdown %', 'max_drawdown_pct', v => fmt(v)], ['Sharpe', 'sharpe', v => v == null ? '–' : String(v)], ['Time in market %', 'exposure_pct', v => v == null ? '–' : String(v)], ['Bars', 'bars', v => String(v ?? '–')]];
-  const best = (k: string) => { const vs = runs.map(r => Number(r.metrics?.[k])); if (vs.some(isNaN)) return -1; const want = k === 'max_drawdown_pct' ? Math.min(...vs) : Math.max(...vs); return vs.indexOf(want); };
+  const best = (k: string) => { const vs = runs.map(r => Number(r.metrics?.[k])); if (runs.some(r => r.metrics?.[k] == null) || vs.some(isNaN)) return -1; const want = k === 'max_drawdown_pct' ? Math.min(...vs) : Math.max(...vs); return vs.indexOf(want); };
   const colors = ['var(--accent)', 'var(--ready)', 'var(--warn, #c80)', 'var(--danger)'];
   return <section className="intel">
     <div className="intel-bar"><select aria-label="Add a backtest to compare" value="" onChange={e => e.target.value && pick.length < 4 && !pick.includes(e.target.value) && setPick([...pick, e.target.value])}>

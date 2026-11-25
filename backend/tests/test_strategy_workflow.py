@@ -259,6 +259,9 @@ class SignalScanTests(unittest.TestCase):
                              [('XAUUSD', 'SIGNAL'), ('EURUSD', 'SIGNAL'), ('XAGUSD', 'WAIT')])
             self.assertGreater(result[0]['strength'], result[1]['strength'])
             self.assertEqual(result[0]['account_code'], 'METALS')
+            self.assertEqual(result[0]['series'], 'NATIVE')
+            self.assertGreaterEqual(result[0]['available_bars'], result[0]['required_bars'])
+            self.assertIsNotNone(result[0]['bar_time'])
             self.assertEqual(result[2]['reason'], 'No mapped market-data source')
             result = signal_scan(SignalScanIn(instrument_symbol='EURUSD'), Response(), 'operator')['items']
             self.assertEqual([r['strategy_code'] for r in result], ['BREAKOUT', 'UNAPPROVED'])

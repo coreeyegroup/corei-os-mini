@@ -4,6 +4,7 @@
  * screen mounting after the request. */
 import { useEffect, useState } from 'react';
 import type { View } from './layout';
+import { launchContext, usePublishRoute } from './workspaceLinks';
 
 const pending: Partial<Record<View, string>> = {};
 const pendingAt: Partial<Record<View, number>> = {};
@@ -21,6 +22,98 @@ export function publishSections(view: View, list: StageSection[]) {
 export function goto(view: View, section?: string) {
   if (section) { pending[view] = section; pendingAt[view] = Date.now(); }
   window.dispatchEvent(new CustomEvent('corei-goto', { detail: { view, section } }));
+}
+
+type AccountDestination = 'positions' | 'broker' | 'breaks';
+const accountContext: Partial<Record<AccountDestination, string>> = {};
+
+export function openAccountView(destination: AccountDestination, accountId: string) {
+  accountContext[destination] = accountId;
+  window.dispatchEvent(new CustomEvent('corei-account-context', { detail: destination }));
+  goto(destination === 'breaks' ? 'Post-trade' : 'Portfolio', destination);
+}
+
+export function useAccountView(destination: AccountDestination) {
+  const [account, setAccount] = useState(() => accountContext[destination] ?? '');
+  useEffect(() => {
+    const update = (event: Event) => {
+      if ((event as CustomEvent).detail === destination) setAccount(accountContext[destination] ?? '');
+    };
+    window.addEventListener('corei-account-context', update);
+    return () => window.removeEventListener('corei-account-context', update);
+  }, [destination]);
+  return [account, setAccount] as const;
+}
+
+type DeploymentDestination = 'runtime' | 'signals' | 'intents' | 'queue';
+type DeploymentFocus = { id: string; label: string; intentId?: string };
+const deploymentFocus: Partial<Record<DeploymentDestination, DeploymentFocus>> = {};
+
+export function openDeployment(destination: DeploymentDestination, focus: DeploymentFocus) {
+  deploymentFocus[destination] = focus;
+  window.dispatchEvent(new Event('corei-deployment-focus'));
+  goto(destination === 'queue' ? 'Execution' : 'Strategies', destination);
+}
+
+export function useDeploymentFocus(destination: DeploymentDestination, enabled = true) {
+  const [focus, setFocus] = useState(() => deploymentFocus[destination]);
+  useEffect(() => {
+    const update = () => setFocus(deploymentFocus[destination]);
+    update();
+    window.addEventListener('corei-deployment-focus', update);
+    return () => window.removeEventListener('corei-deployment-focus', update);
+  }, [destination]);
+  const clear = () => {
+    delete deploymentFocus[destination];
+    window.dispatchEvent(new Event('corei-deployment-focus'));
+  };
+  return [enabled ? focus : undefined, clear] as const;
+}
+
+let pendingRiskOrder: { id: string; label: string } | null = null;
+
+export function openOrderRisk(id: string, label: string) {
+  pendingRiskOrder = { id, label };
+  goto('Risk', 'decisions');
+  window.dispatchEvent(new Event('corei-risk-order'));
+}
+
+export function readRiskOrder() {
+  return pendingRiskOrder;
+}
+
+export function clearRiskOrder() {
+  pendingRiskOrder = null;
+  window.dispatchEvent(new Event('corei-risk-order'));
+}
+
+let pendingOrder: string | null = null;
+
+export function openOrder(id: string) {
+  pendingOrder = id;
+  goto('Execution', 'orders');
+  window.dispatchEvent(new Event('corei-order-focus'));
+}
+
+export function takeOrder() {
+  const id = pendingOrder;
+  pendingOrder = null;
+  return id;
+}
+
+type TicketScope = { account_id: string; instrument_id: string; mode: 'PAPER' | 'BROKER' };
+let pendingTicket: TicketScope | null = null;
+
+export function openScopedTicket(scope: TicketScope) {
+  pendingTicket = scope;
+  goto('Execution', 'ticket');
+  window.dispatchEvent(new Event('corei-ticket-scope'));
+}
+
+export function takeTicketScope() {
+  const scope = pendingTicket;
+  pendingTicket = null;
+  return scope;
 }
 
 export type StrategyRule = { code: string; version: number; name: string };
@@ -41,6 +134,7 @@ export function takeStrategyRule(): StrategyRule | null {
 export type ScanEvidence = {
   instrument_symbol: string; strategy_code: string; strategy_version_id?: string;
   account_id: string; broker_symbol: string; timeframe: string;
+  account_code?: string; bar_time?: string;
 };
 type EvidenceTarget = 'chart' | 'backtest';
 const pendingEvidence: Partial<Record<EvidenceTarget, ScanEvidence>> = {};
@@ -71,8 +165,12 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
   // A requested section stays available for a few seconds, so a screen that mounts twice while it opens (sign-in check,
   // layout change) still opens at it; the event below consumes it for a screen that is already open.
   const peek = () => { const s = pending[view] as T | undefined; return s && valid.includes(s) && Date.now() - (pendingAt[view] ?? 0) < 4000 ? s : undefined; };
-  const take = () => { const s = peek(); delete pending[view]; return s; };
-  const [section, setSection] = useState<T>(() => peek() ?? initial);
+  const [section, setSection] = useState<T>(() => {
+    const address = launchContext(window.location.search);
+    const linked = address.view === view ? address.section as T | undefined : undefined;
+    return peek() ?? (linked && valid.includes(linked) ? linked : initial);
+  });
+  usePublishRoute(view, section);
   useEffect(() => {
     current[view] = section;
     window.dispatchEvent(new CustomEvent('corei-section', { detail: { view, section } }));
@@ -81,8 +179,8 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
     const on = (e: Event) => {
       const d = (e as CustomEvent).detail as { view: View; section?: string };
       if (d.view !== view || !d.section) return;
-      const s = take();
-      if (s) setSection(s);
+      const s = d.section as T;
+      if (valid.includes(s)) setSection(s);
     };
     window.addEventListener('corei-goto', on);
     return () => window.removeEventListener('corei-goto', on);
@@ -92,6 +190,7 @@ export function useSection<T extends string>(view: View, initial: T, valid: read
 
 /* Every destination, for the search, the navigator and links. */
 export const DESTINATIONS: { view: View; section?: string; label: string; group: string; keywords?: string }[] = [
+  { view: 'My Workspaces', label: 'My Workspaces', group: 'Home', keywords: 'saved custom desk layout market trade lifecycle' },
   { view: 'Overview', label: 'Home', group: 'Home', keywords: 'today attention dashboard' },
   { view: 'Market data', section: 'live', label: 'Live prices', group: 'Market data', keywords: 'quotes bid ask feeds collectors' },
   { view: 'Market data', section: 'plans', label: 'Collection plans', group: 'Market data', keywords: 'collect subscribe symbols' },

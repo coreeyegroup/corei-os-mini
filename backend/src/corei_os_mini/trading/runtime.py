@@ -21,6 +21,8 @@ import time as _time
 from datetime import datetime, timezone
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from .. import config_store as store
 from ..intel import engine
 from . import algorithms, handoff, oms, portfolio, risk, signals
@@ -72,14 +74,18 @@ def evaluate(db, dep: dict, now: datetime) -> dict:
     if not first and not last['change']:
         realign = realign_reason(db, dep, last['target'])
     if first or (not last['change'] and not realign):
+        _evaluation(db, dep, src, tf, bars[-1], last, 'BASELINE' if first else 'TARGET_UNCHANGED')
         return {'evaluated': bar_time, 'signal': None, 'first': first, 'closes': closes}
     side = {'LONG': 'BUY', 'SHORT': 'SELL', 'FLAT': 'FLAT'}[last['target']]
     sig = signals.create(db, dep, side=side, strength=last['strength'], bar_time=bar_time, timeframe=tf, features=rows[-1],
+                         bar_evidence=_bar_evidence(src, tf, bars[-1]),
                          explanation=[realign] if realign else [last['reason']], source='RUNTIME', actor='runtime', price=D(bars[-1]['close']))
     if not sig:
+        _evaluation(db, dep, src, tf, bars[-1], last, 'SIGNAL_ALREADY_RECORDED')
         return {'evaluated': bar_time, 'signal': None}
     sig['realign'] = bool(realign)
     result = signals.process(db, sig, dep, now)
+    _evaluation(db, dep, src, tf, bars[-1], last, 'SIGNAL_CREATED', sig['id'], result.get('note'))
     return {'evaluated': bar_time, 'signal': sig['id'], 'result': result.get('state'), 'closes': closes}
 
 
@@ -116,6 +122,24 @@ def realign_reason(db, dep: dict, target: str) -> str | None:
         return None
     return (f"REALIGN: the {target.lower()} decision of an earlier bar was not executed ({(last['order_state'] or last['outcome'] or last['state']).lower()}); "
             f"position {qty.normalize()} — attempt {streak + 1} of {limit}")
+
+
+def _bar_evidence(source, timeframe, bar):
+    return {
+        'source_account': str(source[0]), 'source_symbol': source[1], 'timeframe': timeframe,
+        'bar_time': bar['bar_time'].isoformat(),
+        'ohlc': {key: str(bar[key]) for key in ('open', 'high', 'low', 'close') if bar.get(key) is not None},
+    }
+
+
+def _evaluation(db, dep, source, timeframe, bar, rule, outcome, signal_id=None, note=None):
+    evidence = {
+        **_bar_evidence(source, timeframe, bar), 'strategy_version_id': str(dep['strategy_version_id']),
+        'target': rule['target'], 'reason': rule.get('reason'), 'outcome': outcome, 'note': note,
+        'signal_id': str(signal_id) if signal_id else None,
+    }
+    db.execute('UPDATE tr_runtime_state SET last_evaluation=%s WHERE deployment_id=%s',
+               (Jsonb(evidence), str(dep['id'])))
 
 
 def _state(db, dep, tf, src, bar_time, target, error):

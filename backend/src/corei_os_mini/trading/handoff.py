@@ -248,10 +248,18 @@ FLOW_SELECT = """SELECT t.*, s.code AS strategy_code, v.number AS version_number
     LEFT JOIN tr_signals sg ON sg.id=t.signal_id LEFT JOIN oms_orders o ON o.id=t.order_id"""
 
 
-def flow(db, outcome: str | None = None, limit: int = 200) -> list[dict]:
-    where, args = '', []
+def flow(db, outcome: str | None = None, limit: int = 200, deployment_id: UUID | None = None, intent_id: UUID | None = None) -> list[dict]:
+    filters, args = [], []
     if outcome:
-        where, args = ' WHERE t.outcome = ANY(%s)', [outcome.split(',')]
+        filters.append('t.outcome = ANY(%s)')
+        args.append(outcome.split(','))
+    if deployment_id is not None:
+        filters.append('t.deployment_id = %s')
+        args.append(deployment_id)
+    if intent_id is not None:
+        filters.append('t.id = %s')
+        args.append(intent_id)
+    where = ' WHERE ' + ' AND '.join(filters) if filters else ''
     rows = db.execute(FLOW_SELECT + where + ' ORDER BY (t.outcome=%s) DESC, t.created_at DESC LIMIT %s', [*args, 'PENDING', limit]).fetchall()
     return [store.clean(r) for r in rows]
 

@@ -114,6 +114,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const first=sqa('[role="option"]')[0];assert.ok(first.textContent.includes('Market data › Collection plans'));first.click();for(let i=0;i<6;i++)await tick();
  assert.equal(sq('nav.activity [aria-current="page"]').getAttribute('aria-label'),'Market data');
  assert.equal(sq('.cfg-nav [aria-current="page"]').textContent,'Collection plans');
+ assert.equal(new URL(sw.location.href).searchParams.get('view'),'Market data');
+ assert.equal(new URL(sw.location.href).searchParams.get('section'),'plans');
+ const copied=sw.location.href;
+ const linked=new JSDOM('<div id="root"></div>',{url:copied,runScripts:'outside-only',pretendToBeVisual:true});
+ linked.window.fetch=sw.fetch; linked.window.HTMLElement.prototype.scrollIntoView=function(){};
+ linked.window.eval(js);for(let i=0;i<6;i++)await tick();
+ assert.equal(linked.window.document.querySelector('.cfg-nav [aria-current="page"]').textContent,'Collection plans');
+ assert.equal(new URL(linked.window.location.href).searchParams.get('detached'),null);
+ linked.window.close();
+
  assert.ok(sqa('.sb-row.selected').some(r=>r.textContent==='Collection plans'),'side bar highlights the open section');
  assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Market watch')),'Market watch in the side bar');
  // The trading flow: eight stages on the rail, each a screen with its components and build state.
@@ -121,7 +131,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  stages.forEach((v,i)=>assert.equal(sq(`nav.activity [aria-label="${v}"] .rail-n`).textContent,String(i+1)));
  sq('nav.activity [aria-label="Risk"]').click();for(let i=0;i<4;i++)await tick();
  const riskNav=[...sqa('.cfg-nav button')].map(b=>b.textContent);
- ['Dashboard','Kill switches','Limits','Decisions','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
+ ['Dashboard','Kill switches','Limits','Risk checks','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
  assert.deepEqual([...sqa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['Overview','Work','Monitor','Configure'],'every stage: the same four groups');
  // With the side bar open (which hides the section bar) the side bar lists the stage's sections.
  assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Risk intelligence')),'the stage\'s own pane in the side bar');
@@ -133,6 +143,15 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(sqa('.pl-table tbody tr').some(r=>r.textContent.includes('Constraint engine')&&r.textContent.includes('built')));
  assert.ok(sqa('.sb-row.selected').some(r=>r.textContent==='Stage map'),'the side bar lists the stage\'s own items, the open one selected');
  assert.ok(!sqa('.sb-title').some(x=>/Trading flow/i.test(x.textContent)),'the main workspaces are not repeated in a stage\'s side bar');
+ assert.equal(new URL(sw.location.href).searchParams.get('section'),'stage');
+ const historySize=sw.history.length;
+ sw.history.back();for(let i=0;i<5;i++)await tick();
+ assert.equal(sq('.cfg-nav [aria-current="page"]').textContent,'Kill switches');
+ sw.history.forward();for(let i=0;i<5;i++)await tick();
+ assert.equal(sq('.cfg-nav [aria-current="page"]').textContent,'Stage map');
+ assert.equal(sw.history.length,historySize);
+ console.log('PASS: address bar records main pages and sections, a pasted page URL restores its section, and Back/Forward restore navigation.');
+
  // Market data: its side bar lists its own items with the same names and order as its sub-tabs.
  sq('nav.activity [aria-label="Market data"]').click();for(let i=0;i<8;i++)await tick();
  const mdSide=[...sw.document.querySelectorAll('.sb-pane')].find(p=>p.querySelector('.sb-title')?.textContent==='Market data');
@@ -143,6 +162,14 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  for(const v of ['Signals','Strategies','Risk','Portfolio','Execution','Post-trade']){
    sq(`nav.activity [aria-label="${v}"]`).click();for(let i=0;i<8;i++)await tick();
    const side=[...sw.document.querySelectorAll('.sb-pane')][0];
+   if(v==='Strategies'){
+     assert.deepEqual([...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),
+       ['Dashboard','Runtime','Strategy signals','Trade decisions','All panels']);
+     for(const name of ['Backtest','Optimise','Calculation graphs','Stage map']){
+       assert.ok([...side.querySelectorAll('.sb-row')].some(b=>b.textContent.trim()===name));
+     }
+     continue;
+   }
    assert.deepEqual([...side.querySelectorAll('.sb-row')].map(b=>b.textContent.trim()),
      [...sw.document.querySelectorAll('.view > div:not([hidden]) .sw-tab button[role=tab]')].map(b=>b.textContent),`${v}: side bar = sub-tabs`);
  }

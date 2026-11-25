@@ -65,6 +65,40 @@ class Trading(tmd.MarketData):
         dep = self.ok(self.bob.post(f"/api/config/deployments/{dep['id']}/activate", json={'version': dep['version'], 'reason': 'paper test run'}))
         return strat, ver, dep
 
+    def test_workspace_scan_is_scoped_and_read_only(self):
+        connection, (a, _b, _c), instrument = self.setup_accounts()
+        self.start(self.plan(a, instrument, 'EU_M5'))
+        self.deploy(connection, a, instrument, sizing={'method': 'FIXED_QTY', 'quantity': '0.10'})
+        panels = [{'id': key} for key in ('market','intelligence','signals','strategy','risk','execution','portfolio','posttrade')]
+        scan = {'instrument_symbols': ['EURUSD'], 'strategy_codes': ['EMA_FAST']}
+        layout = {'revision': 0, 'next_number': 3, 'active': 1, 'items': [
+            {'number': n, 'name': f'Desk {n}', 'mode': 'PAPER', 'timeframe': 'M5', 'panels': panels, 'scan': scan}
+            for n in (1, 2)]}
+        saved = self.ok(self.alice.put('/api/trading/workspaces', json=layout))
+        before = self.ok(self.alice.get('/api/trading/settings'))
+        path, second = '/api/trading/workspaces/1/scan', '/api/trading/workspaces/2/scan'
+        job = self.ok(self.alice.post(path, json={'revision': saved['revision']}), 202)
+        self.assertEqual(self.ok(self.alice.get(path))['id'], job['id'])
+        self.assertEqual(self.alice.post(path, json={'revision': saved['revision']}).status_code, 409)
+        other = self.ok(self.alice.post(second, json={'revision': saved['revision']}), 202)
+        self.assertNotEqual(job['id'], other['id'])
+        self.assertEqual(self.alice.post(f"{second}/{job['id']}/cancel").status_code, 409)
+        self.assertEqual(self.bob.get(path).status_code, 404)
+        self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/cancel"))['status'], 'CANCELLED')
+        self.assertEqual(self.ok(self.alice.get(second))['status'], 'QUEUED')
+        self.assertEqual(self.ok(self.alice.post(f"{path}/{job['id']}/resume"))['status'], 'QUEUED')
+        from corei_os_mini import strategy_scan_runs
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertTrue(strategy_scan_runs.step())
+        self.assertEqual(self.ok(self.alice.get(path))['status'], 'COMPLETED')
+        self.assertEqual(self.ok(self.alice.get(second))['status'], 'COMPLETED')
+        results = self.ok(self.alice.get(f"/api/trading/studio/scan-runs/{job['id']}/results"))
+        self.assertEqual(len(results['items']), 1)
+        self.assertEqual(results['items'][0]['instrument_symbol'], 'EURUSD')
+        self.assertEqual(self.ok(self.alice.get('/api/trading/settings')), before)
+        self.assertEqual(self.ok(self.alice.get('/api/trading/orders'))['items'], [])
+        self.assertEqual(self.ok(self.alice.get('/api/trading/signals'))['items'], [])
+
     def test_paper_trade_end_to_end(self):
         connection, (a, _b, _c), instrument = self.setup_accounts()
         self.start(self.plan(a, instrument, 'EU_M5'))
@@ -73,12 +107,22 @@ class Trading(tmd.MarketData):
         self.bars(a['id'], series(40, False), start)
         self.quote(a['id'], 1.08000, 1.08010)
         first = runtime.cycle(NOW)
+        scope = f"/api/trading/workspaces/snapshot?account={a['id']}&deployment={dep['id']}&mode=PAPER&timeframe=M5"
+        snapshot = self.ok(self.alice.get(scope))
+        self.assertEqual(snapshot['deployments'][0]['last_evaluation']['outcome'], 'BASELINE')
+        self.assertNotIn('signal', snapshot)
         self.assertEqual((first['deployments'], first['signals']), (1, 0), first)
         # The next bar closes with a jump: the fast EMA crosses above the slow one → BUY.
         self.bars(a['id'], series(41, True)[40:], start + timedelta(minutes=5 * 40))
         second = runtime.cycle(NOW)
         self.assertEqual((second['signals'], second['orders']), (1, 1), second)
         self.assertEqual(runtime.cycle(NOW)['signals'], 0, 'a bar is evaluated once')
+        snapshot = self.ok(self.alice.get(scope))
+        decision_id = snapshot['evaluation_decision']['id']
+        evidence = self.ok(self.alice.get(f"/api/trading/workspaces/decision/{decision_id}?account={a['id']}&mode=PAPER"))
+        self.assertEqual(evidence['decision']['evaluated_bar']['timeframe'], 'M5')
+        self.assertEqual(evidence['decision']['signal_id'], snapshot['signal']['id'])
+        self.assertTrue(evidence['items'])
         sigs = self.ok(self.alice.get('/api/trading/signals'))['items']
         self.assertEqual((sigs[0]['side'], sigs[0]['state'], sigs[0]['source']), ('BUY', 'ACTED', 'RUNTIME'))
         self.assertIn('EMA 3/5', sigs[0]['explanation'][0])
@@ -97,6 +141,14 @@ class Trading(tmd.MarketData):
         self.assertEqual(Decimal(pos[0]['unrealised_pnl']), (Decimal('1.08105') - Decimal('1.08011')) * Decimal('0.1') * 100000)
         perf = self.ok(self.alice.get('/api/trading/performance'))['items']
         self.assertEqual((perf[0]['strategy'], perf[0]['fills']), ('EMA_FAST', 1))
+        self.assertEqual(perf[0]['mode'], 'PAPER')
+        history = self.ok(self.alice.get(f"/api/trading/fills?position_id={pos[0]['id']}"))['items']
+        self.assertEqual([fill['order_id'] for fill in history], [o['id']])
+        self.assertEqual(self.ok(self.alice.get('/api/trading/fills?position_id=00000000-0000-0000-0000-000000000000'))['items'], [])
+        other_book = self.alice.post('/api/trading/portfolio/flatten', json={
+            'account_id': a['id'], 'instrument_id': instrument['id'], 'mode': 'BROKER',
+            'reason': 'test book isolation', 'key': 'flatten-other-book'})
+        self.assertEqual(other_book.status_code, 409)
         ov = self.ok(self.alice.get('/api/trading/overview'))
         self.assertEqual((ov['signals_today'].get('ACTED'), ov['positions']), (1, 1))
 
@@ -137,6 +189,17 @@ class Trading(tmd.MarketData):
         r = self.ok(self.alice.post('/api/trading/orders', json={**body, 'ticket_key': 'ticket-0003'}), 201)
         self.assertEqual(r['state'], 'REJECTED')
         self.assertTrue(r['reasons'][0].startswith('MAX_POSITION_QTY: position 0.1 > limit 0.08'), r['reasons'])
+        path = f"/api/trading/risk/decisions?approved=false&order_id={r['id']}&account_id={a['id']}&limit=1"
+        checks = self.ok(self.alice.get(path))['items']
+        self.assertEqual([x['order_id'] for x in checks], [r['id']])
+        snapshot = checks[0]['inputs']
+        self.assertEqual(snapshot['mode'], 'PAPER')
+        measured = snapshot['evaluated_limits']['MAX_POSITION_QTY']
+        self.assertEqual((Decimal(measured['value']), Decimal(measured['threshold']), measured['breached']),
+                         (Decimal('0.1'), Decimal('0.08'), True))
+        self.assertEqual((measured['scope'], measured['limit_id']), ('ACCOUNT', lim['id']))
+        self.assertEqual(self.ok(self.alice.get(f"/api/trading/risk/decisions?approved=true&order_id={r['id']}"))['items'], [])
+
         sell = self.ok(self.alice.post('/api/trading/orders', json={**body, 'side': 'SELL', 'quantity': '0.05', 'ticket_key': 'ticket-0004'}), 201)
         self.assertEqual(sell['state'], 'FILLED', 'reducing a position is not blocked by the position limit')
         # Limit order: rests, then cancel.
@@ -150,6 +213,9 @@ class Trading(tmd.MarketData):
         with self.connect() as db:
             db.execute("UPDATE oms_orders SET state='UNKNOWN' WHERE id=%s", (UUID(lo['id']),))
         self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={'outcome': 'FILLED', 'reason': 'no broker answer: filled per statement'}), 422)
+        self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={
+            'outcome': 'FILLED', 'price': '1.07', 'quantity': '0.06', 'reason': 'mistyped broker quantity'}), 422)
+        self.assertEqual(self.ok(self.alice.get(f"/api/trading/orders/{lo['id']}"))['state'], 'UNKNOWN')
         res = self.ok(self.alice.post(f"/api/trading/orders/{lo['id']}/resolve", json={'outcome': 'FILLED', 'price': '1.07000', 'reason': 'filled per broker statement'}))
         self.assertEqual(res['state'], 'FILLED')
         with self.connect() as db:

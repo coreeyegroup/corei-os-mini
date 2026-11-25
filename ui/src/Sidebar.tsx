@@ -146,6 +146,7 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
   const problems = overview?.attention.length ?? 0;
   // A domain's side bar lists that domain's own items — the same names and order as its sub-tabs — then its own tools.
   // The main workspaces (stages, Setup, System) are in the rail and the main tabs, not repeated here.
+  if (view === 'My Workspaces') return <Pane title="My Workspaces"><button className="sb-row" onClick={() => goto('Overview')}>Platform overview</button></Pane>;
   if (view === 'Market data') return <>
     <Pane title="Market data"><StageTree view="Market data" /></Pane>
     <Pane title="Market watch"><MarketWatch /></Pane>

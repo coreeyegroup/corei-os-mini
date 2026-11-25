@@ -30,7 +30,7 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var)
+                      signal_library, strategy_health, var, workspaces)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -57,6 +57,70 @@ def _j(v):
     if isinstance(v, UUID):
         return str(v)
     return v
+
+
+@router.get('/workspaces')
+def workspace_layouts(response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return workspaces.layouts(db, user)
+
+
+@router.put('/workspaces')
+def save_workspace_layouts(payload: workspaces.Layouts, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('update') as db:
+        return workspaces.save_layouts(db, user, payload)
+
+
+@router.get('/workspaces/catalogue')
+def workspace_catalogue(response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.catalogue(db))
+
+
+@router.get('/workspaces/snapshot')
+def workspace_snapshot(response: Response, mode: workspaces.Mode, timeframe: workspaces.Timeframe,
+                       account: UUID | None = None, instrument: UUID | None = None, deployment: UUID | None = None,
+                       source: UUID | None = None, symbol: str = Query('', max_length=200), _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.snapshot(db, mode, timeframe, account, instrument, deployment, source, symbol))
+
+
+@router.get('/workspaces/decision/{decision}')
+def workspace_decision(decision: UUID, account: UUID, mode: workspaces.Mode, response: Response, _: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.decision_orders(db, decision, account, mode))
+
+
+class WorkspaceScanStart(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int = Field(ge=0)
+
+
+@router.get('/workspaces/{number}/scan')
+def workspace_scan_status(number: int, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j(workspaces.scan_status(db, user, number))
+
+
+@router.post('/workspaces/{number}/scan', status_code=202)
+def workspace_scan_start(number: int, payload: WorkspaceScanStart, response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(workspaces.start_scan(db, user, number, payload.revision))
+
+
+@router.post('/workspaces/{number}/scan/{run_id}/{action}')
+def workspace_scan_action(number: int, run_id: UUID, action: Literal['cancel', 'resume'],
+                          response: Response, user: str = Depends(require_operator)):
+    _no_store(response)
+    with store.transaction('write') as db:
+        return _j(workspaces.scan_action(db, user, number, run_id, action))
 
 
 # ----- overview: one line per stage for the system map and each stage's header -----
@@ -395,10 +459,11 @@ def strategy_monitor(response: Response, _: str = Depends(require_operator)):
 
 @router.get('/execution/flow')
 def execution_flow(response: Response, outcome: str | None = Query(None, max_length=120, pattern=r'^[A-Z_,]+$'), limit: int = Query(200, ge=1, le=2000),
-                   _: str = Depends(require_operator)):
+                   deployment_id: UUID | None = None, intent_id: UUID | None = None, _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        return {'items': _j(handoff.flow(db, outcome, limit)), 'summary': _j(handoff.summary(db))}
+        return {'items': _j(handoff.flow(db, outcome, limit, deployment_id, intent_id)),
+                'summary': _j(handoff.summary(db)) if deployment_id is None and intent_id is None else {}}
 
 
 @router.post('/execution/decisions/{intent_id}/execute')
@@ -604,10 +669,11 @@ def release(switch_id: UUID, payload: dict, user: Principal = Depends(_risk)):
 
 
 @router.get('/risk/decisions')
-def decision_list(response: Response, approved: bool | None = None, limit: int = Query(200, ge=1, le=2000), _: str = Depends(require_operator)):
+def decision_list(response: Response, approved: bool | None = None, limit: int = Query(200, ge=1, le=2000),
+                  account_id: UUID | None = None, order_id: UUID | None = None, _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
-        return {'items': _j(risk.decisions(db, limit, approved))}
+        return {'items': _j(risk.decisions(db, limit, approved, account_id=account_id, order_id=order_id))}
 
 
 @router.get('/risk/exposure')
@@ -658,12 +724,19 @@ def resolve_order(order_id: UUID, payload: dict, user: Principal = Depends(_risk
 
 
 @router.get('/fills')
-def fills(response: Response, limit: int = Query(300, ge=1, le=2000), _: str = Depends(require_operator)):
+def fills(response: Response, limit: int = Query(300, ge=1, le=2000), position_id: UUID | None = None,
+          _: str = Depends(require_operator)):
     _no_store(response)
     with store.transaction('read') as db:
+        scope = '' if position_id is None else """ WHERE EXISTS (
+            SELECT 1 FROM pf_positions p WHERE p.id=%s AND p.account_id=f.account_id
+            AND p.instrument_id=f.instrument_id AND p.mode=f.mode
+            AND p.deployment_id IS NOT DISTINCT FROM f.deployment_id)"""
+        args = (limit,) if position_id is None else (position_id, limit)
         rows = db.execute("""SELECT f.*, a.code AS account_code, i.symbol, s.code AS strategy_code FROM oms_fills f JOIN cfg_accounts a ON a.id=f.account_id
                              JOIN cfg_instruments i ON i.id=f.instrument_id LEFT JOIN cfg_deployments d ON d.id=f.deployment_id
-                             LEFT JOIN cfg_strategies s ON s.id=d.strategy_id ORDER BY f.at DESC LIMIT %s""", (limit,)).fetchall()
+                             LEFT JOIN cfg_strategies s ON s.id=d.strategy_id"""
+                          + scope + ' ORDER BY f.at DESC, f.id DESC LIMIT %s', args).fetchall()
         return {'items': _j([store.clean(r) for r in rows])}
 
 
@@ -713,6 +786,7 @@ class FlattenIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     account_id: UUID
     instrument_id: UUID
+    mode: Literal['PAPER', 'BROKER'] | None = None
     reason: str = Field(min_length=5, max_length=500)
     key: str = Field(min_length=8, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
 
@@ -720,7 +794,7 @@ class FlattenIn(BaseModel):
 @router.post('/portfolio/flatten')
 def flatten(payload: dict, user: Principal = Depends(_ops_or_risk)):
     data = parse(FlattenIn, payload)
-    return _j(oms.flatten(user.username, data.account_id, data.instrument_id, data.reason, data.key))
+    return _j(oms.flatten(user.username, data.account_id, data.instrument_id, data.reason, data.key, data.mode))
 
 
 # ----- Stage 7: real execution -----
@@ -1004,6 +1078,8 @@ EXPORTS = ('fills', 'orders', 'trades', 'events', 'breaks', 'tca', 'statement', 
 @router.get('/posttrade/export/{kind}.csv')
 def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650), account_id: UUID | None = None, by: str = Query('account', max_length=20),
               day_from: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'), day_to: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$'),
+              mode: Literal['PAPER', 'BROKER'] | None = None, state: str | None = Query(None, max_length=20),
+              actor: str | None = Query(None, max_length=80), search: str | None = Query(None, max_length=80),
               _: str = Depends(require_operator)):
     """CSV of a post-trade report (exact decimals, ISO times)."""
     if kind not in EXPORTS:
@@ -1021,11 +1097,11 @@ def pt_export(kind: str, response: Response, days: int = Query(30, ge=1, le=3650
         elif kind == 'trades':
             rows = posttrade.journal(db, since, until, account_id, excursions=False, limit=20000)['trips']
         elif kind == 'events':
-            rows = posttrade.order_events(db, since, until, account_id, limit=20000)
+            rows = posttrade.order_events(db, since, until, account_id, state, actor, search, limit=20000)
         elif kind == 'breaks':
-            rows = posttrade.breaks(db, None, account_id, 20000)
+            rows = posttrade.breaks(db, state or None, account_id, 20000)
         elif kind == 'tca':
-            rows = posttrade.tca(db, by, since, until)['rows']
+            rows = posttrade.tca(db, by, since, until, mode)['rows']
         elif kind == 'attribution':
             rows = strategy_health.attribution(db, by if by in strategy_health.DIMENSIONS else 'strategy', since, until)['rows']
         else:

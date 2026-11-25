@@ -1,5 +1,6 @@
 export const views = [
   "Overview",
+  "My Workspaces",
   "Market data",
   "Intelligence",
   "Signals",

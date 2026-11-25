@@ -132,6 +132,27 @@ class Execution(tt.Trading):
     def order(self, oid):
         return self.ok(self.alice.get(f'/api/trading/orders/{oid}'))
 
+    def test_sending_disabled_during_precheck(self):
+        _connection, account, _other, instrument = self.real_account()
+        self.sending()
+        with self.connect() as db:
+            db.execute("UPDATE tr_settings SET pre_check_orders=true WHERE id")
+        order = self.place(account, instrument, 'late-disabled')
+        self.assertEqual(order['state'], 'APPROVED')
+
+        def stop_during_check(*args, **kwargs):
+            self.assertEqual(args[3]['action'], 'check')
+            self.sending(on=False)
+            return {'results': [{'ok': True}]}
+
+        with patch.object(brokers, 'mt5_call', side_effect=stop_during_check) as call:
+            execution.send_one(order['id'])
+        call.assert_called_once()
+        result = self.order(order['id'])
+        self.assertEqual(result['state'], 'REJECTED')
+        self.assertIn('ORDER_SENDING_OFF_DEMO', result['reasons'][0])
+        self.assertNotIn('SUBMITTED', [event['state_to'] for event in result['events']])
+
     def test_real_orders_on_demo_every_path(self):
         connection, a, _b, ins = self.real_account()
         # Order sending off: refused by risk, nothing sent.
@@ -217,13 +238,24 @@ class Execution(tt.Trading):
         self.broker.external.append({'ticket': 99, 'symbol': 'GBPUSD', 'side': 'SELL', 'volume': '0.3', 'price_open': '1.27', 'magic': 0})
         work = self.place(a, ins, 'lim-2', order_type='LIMIT', limit_price=Decimal('1.07500'))
         execution.dispatch()
-        self.broker._deal({'symbol': 'EURUSD', 'side': 'BUY', 'tag': work['broker_tag']}, '0.1', '1.07500')
+        missed = self.broker._deal({'symbol': 'EURUSD', 'side': 'BUY', 'tag': work['broker_tag']}, '0.1', '1.07500')
+        missed['time'] = (datetime.now(UTC) - timedelta(days=8)).isoformat()
         run = self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
         self.assertEqual(run['status'], 'BREAKS')
         kinds = {b['kind']: b for b in self.ok(self.alice.get('/api/trading/posttrade/breaks'))['items']}
         self.assertEqual(set(kinds), {'EXTERNAL_TRADE', 'FILL_MISSING', 'POSITION_MISMATCH'})
         self.assertEqual((kinds['POSITION_MISMATCH']['corei_value'], kinds['POSITION_MISMATCH']['broker_value']), ('0.3', '0.4'))
-        applied = self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['FILL_MISSING']['id']}", json={'action': 'APPLY_FILL', 'note': 'deal seen at broker'}))
+        self.assertEqual(run['detail']['broker_read'], 'COMPARED')
+        # The deal rolled out of the broker's reply, but the cached ticket remains actionable.
+        latest_book = self.broker.call(a['id'], 'test', 'book', {}, 'test')
+        latest_book['deals'] = [d for d in latest_book['deals'] if d['ticket'] != missed['ticket']]
+        with patch.object(brokers, 'mt5_call', return_value=latest_book):
+            self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
+        missing = next(b for b in self.ok(self.alice.get('/api/trading/posttrade/breaks'))['items'] if b['kind'] == 'FILL_MISSING')
+        self.assertEqual(missing['id'], kinds['FILL_MISSING']['id'])
+        with patch('corei_os_mini.trading.copytrade.on_fill') as follower:
+            applied = self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['FILL_MISSING']['id']}", json={'action': 'APPLY_FILL', 'note': 'deal seen at broker'}))
+        follower.assert_not_called()
         self.assertEqual(applied['result']['state'], 'FILLED')
         self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['EXTERNAL_TRADE']['id']}", json={'action': 'ACCEPT', 'note': 'desk hedge by hand'}))
         self.ok(self.alice.post(f"/api/trading/posttrade/breaks/{kinds['EXTERNAL_TRADE']['id']}", json={'action': 'ACCEPT', 'note': 'again'}), 409)
@@ -542,6 +574,52 @@ class EndToEnd(Execution):
             src = db.execute("SELECT source, state FROM oms_orders ORDER BY created_at DESC LIMIT 1").fetchone()
         self.assertEqual((src['source'], src['state']), ('PROTECT', 'FILLED'))
 
+    def test_saved_workspaces_are_per_user_and_reject_stale_saves(self):
+        url = '/api/trading/workspaces'
+        panels = [{'id': name} for name in ('market', 'intelligence', 'signals', 'strategy', 'risk', 'execution', 'portfolio', 'posttrade')]
+        layouts = {'revision': 0, 'next_number': 4, 'active': 3,
+                   'items': [{'number': number, 'name': '', 'mode': mode, 'timeframe': 'H1', 'panels': panels}
+                             for number, mode in [(1, 'PAPER'), (2, 'DEMO'), (3, 'LIVE')]]}
+        self.assertIsNone(self.ok(self.alice.get(url)))
+        saved = self.ok(self.alice.put(url, json=layouts))
+        self.assertEqual(saved['revision'], 1)
+        self.assertEqual(self.ok(self.alice.get(url)), saved)
+        self.assertIsNone(self.ok(self.bob.get(url)))
+        self.ok(self.alice.put(url, json=layouts), 409)
+        self.ok(self.alice.put(url, json={**saved, 'active': 7}), 422)
+        saved = self.ok(self.alice.put(url, json={**saved, 'active': 2}))
+        self.assertEqual((saved['revision'], saved['active']), (2, 2))
+
+    def test_workspace_snapshot_keeps_paper_and_broker_demo_books_separate(self):
+        _, a, _, ins = self.real_account()
+        self.sending()
+        paper = self.place(a, ins, 'workspaces-paper', mode='PAPER')
+        demo = self.place(a, ins, 'workspaces-demo')
+        execution.dispatch()
+        root = f"/api/trading/workspaces/snapshot?account={a['id']}&instrument={ins['id']}&timeframe=H1&mode="
+        paper_scope = self.ok(self.alice.get(root + 'PAPER'))
+        demo_scope = self.ok(self.alice.get(root + 'DEMO'))
+        self.assertEqual([order['id'] for order in paper_scope['orders']], [paper['id']])
+        self.assertEqual([order['id'] for order in demo_scope['orders']], [demo['id']])
+        self.assertIn('scope_error', self.ok(self.alice.get(root + 'LIVE')))
+        self.assertEqual(paper_scope['decisions'], [])
+        self.assertEqual(demo_scope['decisions'], [])
+
+    def test_internal_reconciliation_finds_fill_without_position(self):
+        _, a, _, ins = self.real_account()
+        self.sending()
+        order = self.place(a, ins, 'orphan-fill')
+        execution.dispatch()
+        self.assertEqual(self.order(order['id'])['state'], 'FILLED')
+        with self.connect() as db:
+            db.execute('DELETE FROM pf_positions WHERE account_id=%s', (a['id'],))
+        run = posttrade.reconcile(a['id'], broker=False)
+        self.assertEqual(run['status'], 'BREAKS')
+        self.assertEqual(run['detail']['broker_read'], 'NOT_REQUESTED')
+        items = self.ok(self.alice.get(f"/api/trading/posttrade/breaks?account_id={a['id']}"))['items']
+        self.assertEqual([(b['kind'], b['corei_value'], b['broker_value']) for b in items],
+                         [('INTERNAL_POSITION', '0', '0.1')])
+
     def test_working_order_blocks_and_broker_stop_is_booked(self):
         connection, a, _b, ins = self.real_account()
         self.sending()
@@ -552,7 +630,7 @@ class EndToEnd(Execution):
         # The broker closes the position on its stop-loss: a deal with COREI's magic, no COREI tag.
         self.broker.ticket += 1
         self.broker.deals.append({'ticket': self.broker.ticket, 'order': 1, 'symbol': 'EURUSD', 'side': 'SELL', 'entry': 'OUT', 'volume': '0.1', 'price': '1.07500',
-                                  'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '-50.2', 'time': '2026-11-18T11:00:00.000', 'comment': '[sl 1.07500]',
+                                  'commission': '-0.7', 'swap': '0', 'fee': '0', 'profit': '-50.2', 'time': datetime.now(UTC).isoformat(), 'comment': '[sl 1.07500]',
                                   'magic': MAGIC, 'position_id': 777, 'reason': 'SL'})
         run = self.ok(self.alice.post(f"/api/trading/posttrade/reconcile/{a['id']}"))
         self.assertEqual(run['status'], 'MATCHED', run)

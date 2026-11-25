@@ -22,7 +22,12 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const ok=(body,status=200)=>({ok:true,status,json:async()=>body});
  const fail=(status,detail)=>({ok:false,status,json:async()=>({detail})});
  const now=new Date().toISOString();
+ const pendingWorkspaceDecision='8fda0b19-a858-4b3c-810a-3513a5f92d2f';
+ const workspacePending={id:pendingWorkspaceDecision,deployment_id:'dep-2',symbol:'EURUSD',strategy_code:'TREND',
+   outcome:'PENDING',signal_side:'BUY',target:'LONG',created_at:now,bar_time:now};
  const calls=[];
+ let savedWorkspaces=null;
+ let deskScan=null;
  let largeScanCatalog=false;
  let beyondRegistryLimit=false;
  let brokerSymbolCollected=false;
@@ -128,9 +133,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    }],has_more:false});
    if(/\/studio\/scan-runs\/batch-\d+$/.test(url))return ok(savedRuns.find(run=>url.endsWith('/'+run.id)));
    if(url.includes('/intel/instrument/a1/EURUSD?'))return ok({snapshots:[],history:[],timeframe:'H1'});
-   if(url.endsWith('/intel/watchlists'))return ok({items:[]});
+   if(url.endsWith('/intel/watchlists'))return ok({items:[{id:'test-watchlist',name:'Research FX',items:[{account_id:'a1',broker_symbol:'EURUSD'},{account_id:'a1',broker_symbol:'UNCOLLECTED'}]}]});
    if(url.endsWith('/studio/signal-scan')&&method==='POST'){
-     const candidate={strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
+     const candidate={bar_time:now,strategy_code:'EMA_EXISTING',version:2,account_code:'VTM_A',broker_symbol:'EURUSD',
        timeframe:'H1',status:'SIGNAL',side:'BUY',strength:85,entry:'1.0860',stop_loss:'1.0840',take_profit:'1.0900'};
      if(body.instrument_symbols.length===1 || body.strategy_codes.length===1)return ok({scanned_at:now,items:body.instrument_symbols.flatMap(symbol=>[
        {...candidate,instrument_symbol:symbol},
@@ -157,13 +162,25 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.includes('/trading/orders'))return ok({items:[order]});
    if(url.includes('/trading/risk/kill-switches')&&method==='POST'){const k={id:'k'+kills.length,...body,engaged:true,target_name:'VTM_A',engaged_by:'risk-ops',engaged_at:now,automatic:false};kills.push(k);return ok(k,201);}
    if(url.includes('/trading/risk/kill-switches'))return ok({items:kills});
+   if(url.includes('/trading/risk/decisions'))return ok({items:[{
+     id:'r1',order_id:'o1',at:now,account_code:'VTM_A',symbol:'EURUSD',side:'BUY',requested_qty:'0.001',approved_qty:'0.001',
+     approved:true,reasons:[],inputs:{mode:'PAPER',position_before:'0',position_after:'0.001',limits:{MAX_ORDER_QTY:'0.01'},
+       evaluated_limits:{MAX_ORDER_QTY:{value:'0.001',threshold:'0.01',scope:'ACCOUNT',breached:false}}}
+   }]});
+   if(url.includes('/trading/portfolio/accounts'))return ok({items:[{account_id:'a1',account_code:'VTM_A',currency:'USD',equity:'10002',day_pnl:'2',drawdown_pct:'0'}]});
+   if(url.includes('/trading/portfolio/positions'))return ok({items:[
+     {id:'p1',account_id:'a1',account_code:'VTM_A',symbol:'EURUSD',instrument_id:'i1',mode:'PAPER',quantity:'0.1',mark:null,unrealised_pnl:'0',quote_currency:'USD',account_currency:'USD'},
+     {id:'p2',account_id:'a1',account_code:'VTM_A',symbol:'EURUSD',instrument_id:'i1',mode:'BROKER',quantity:'0.2',mark:'1.1',quote_currency:'USD',account_currency:'USD'}
+   ]});
+   if(url.endsWith('/trading/portfolio/flatten')&&method==='POST')return ok({orders:[{state:'FILLED'}]});
+   if(url.includes('/trading/fills?position_id=p1'))return ok({items:[{id:'f1',order_id:'o1',side:'BUY',quantity:'0.1',price:'1.08011',at:now,currency:'USD',realised_pnl:'0'}]});
    if(url.includes('/trading/risk/exposure'))return ok({instruments:[],accounts:[]});
    if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
    if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}},
      {id:'SIGNAL_BLEND',label:'Signal blend',description:'Weighted Stage 3 signals',equation:'combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ|',strength_equation:'strength = clamp(|combined|, 10, 100)',
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},components:{type:'array'},entry:{type:'number',default:40},exit:{type:'number',default:10}}}}]});
-   if(url.includes('/trading/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',first_bar:now,last_bar:now}]});
+   if(url.includes('/trading/sources'))return ok({items:[{account_id:'a1',account_code:'VTM_A',broker_symbol:'EURUSD',instrument:'EURUSD',first_bar:now,last_bar:now}]});
    if(url.endsWith('/trading/backtests')&&method==='POST')return ok({id:'b1',metrics:{net_pnl:'812.40',return_pct:'0.81',trades:14,win_rate_pct:57.1,profit_factor:1.6,max_drawdown_pct:'0.42',sharpe:1.3,exposure_pct:48,currency:'USD'},
      equity:[{t:now,equity:'100000'},{t:now,equity:'100812.4'}],trades:[{side:'LONG',entry_time:now,entry:'1.08',exit_time:now,exit:'1.081',pnl:'100.00',reason:'EMA cross'}]},201);
    if(url.includes('/trading/backtests'))return ok({items:[]});
@@ -171,10 +188,50 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(url.endsWith('/trading/quickstart'))return ok({active:calls.some(c=>c.url.endsWith('/trading/quickstart')&&c.method==='POST')?1:0,strategies:0,deployments:0,
      sources:[{account_id:'a1',account_code:'VTM_A',environment:'DEMO',broker_symbol:'EURUSD',instrument:'EURUSD',ready:true}],
      presets:[{id:'EMA_FAST',label:'Fast trend · EMA 3/8 cross',algorithm:'EMA_CROSSOVER',parameters:{fast:3,slow:8},why:'Many signals.'}]});
+   if(url.endsWith('/trading/workspaces')&&method==='PUT'){
+     savedWorkspaces={...body,revision:body.revision+1};return ok(savedWorkspaces);
+   }
+   if(url.endsWith('/trading/workspaces'))return ok(savedWorkspaces);
+   if(/\/trading\/workspaces\/\d+\/scan$/.test(url)){
+      if(method==='POST'){
+        const desk=savedWorkspaces.items.find(d=>url.endsWith('/'+d.number+'/scan'));
+        deskScan={id:'desk-scan',status:'QUEUED',total:desk.scan.instrument_symbols.length*desk.scan.strategy_codes.length,
+          instruments:desk.scan.instrument_symbols,strategies:desk.scan.strategy_codes,created_at:now,updated_at:now};
+      }
+      return ok(deskScan);
+    }
+    if(url.endsWith('/scan/desk-scan/cancel')){deskScan={...deskScan,status:'CANCELLED'};return ok(deskScan);}
+    if(url.endsWith('/scan/desk-scan/resume')){deskScan={...deskScan,status:'QUEUED'};return ok(deskScan);}
+    if(url.includes('/scan-runs/desk-scan/results?'))return ok({items:[],has_more:false});
+    if(url.endsWith('/trading/workspaces/catalogue'))return ok({
+     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
+     instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
+   if(url.includes('/trading/workspaces/snapshot')){
+     const q=new URL(url,w.location.origin).searchParams;
+     const live=q.get('account')==='a2'&&q.get('mode')==='LIVE';
+     const waiting=q.get('deployment')==='dep-2';
+     return ok({sources:q.has('instrument')?[{account_id:'a1',code:'VTM_A',broker_symbol:'EURUSD'}]:[],
+       deployments:live?[{id:'dep-1',code:'EMA_FAST',status:'ACTIVE',symbol:'EURUSD',timeframe:'H1',last_evaluation:{
+         outcome:'TARGET_UNCHANGED',bar_time:now,timeframe:'H1',source_account:'a1',source_symbol:'EURUSD',target:'LONG',reason:'Rule unchanged'}},
+         {id:'dep-2',code:'TREND',status:'ACTIVE',symbol:'EURUSD',timeframe:'H1'}]:[],
+       evaluation_decision:waiting?{id:pendingWorkspaceDecision}:null,positions:[],
+       orders:live?[{id:'unrelated',symbol:'OTHER',state:'FILLED',side:'SELL',quantity:'1',created_at:now}]:[],
+       decisions:live?[waiting?workspacePending:{id:'d9',symbol:'EURUSD',strategy_code:'EMA_FAST',
+         outcome:'ORDERED',signal_side:'BUY',side:'BUY',target:'LONG',order_id:'o1',created_at:now,bar_time:now}]:[]});
+   }
+   if(url.includes('/trading/workspaces/decision/'+pendingWorkspaceDecision))return ok({decision:workspacePending,items:[],checks:[]});
+   if(url.includes('/trading/workspaces/decision/d9'))return ok({items:[{id:'o1',client_order_id:'LIVE-TEST',
+     state:'PARTIALLY_FILLED',side:'BUY',quantity:'1',filled_qty:'0.1',risk:{approved:true},
+     fills:[{id:'f1',at:now,quantity:'0.1',price:'1.10'}]}]});
+   if(url.includes('/trading/execution/flow')&&url.includes('intent_id='+pendingWorkspaceDecision))return ok({items:[{
+     ...workspacePending,mode:'BROKER',account_code:'LIVE_A',quantity:'1',side:'BUY',reasons:[],timeframe:'H1',
+   }]});
    if(url.includes('/trading/posttrade/overview'))return ok({open_total:1,open_breaks:{POSITION_MISMATCH:1},unknown_orders:0,fills_today:3,avg_latency_today_ms:142,
-     accounts:[{account_id:'a1',code:'VTM_A',at:now,status:'BREAKS',breaks:1,kind:'BROKER'}]});
+     accounts:[{account_id:'a1',code:'VTM_A',at:now,kind:'BROKER',status:'BREAKS',environment:'DEMO',breaks:1,
+       detail:{broker_read:'COMPARED',internal_books:2,broker_positions:1,cached_deals_checked:3}},
+       {account_id:'a2',code:'NEW_ACCOUNT',environment:'LIVE',breaks:0}]});
    if(url.includes('/trading/posttrade/breaks/b1')&&method==='POST')return ok({break:{id:'b1',state:'ACCEPTED'},result:null});
-   if(url.includes('/trading/posttrade/breaks'))return ok({items:[{id:'b1',account_code:'VTM_A',kind:'POSITION_MISMATCH',broker_symbol:'EURUSD',corei_value:'0.3',broker_value:'0.4',difference:'-0.1',
+   if(url.includes('/trading/posttrade/breaks'))return ok({items:[{id:'b1',account_id:'a1',account_code:'VTM_A',kind:'POSITION_MISMATCH',broker_symbol:'EURUSD',corei_value:'0.3',broker_value:'0.4',difference:'-0.1',
      first_seen:now,last_seen:now,state:'OPEN'}]});
    if(url.includes('/trading/posttrade/tca'))return ok({by:'account',currency:'USD',slippage_cost_total:'12.5',commission_total:'-2.1',rows:[{label:'VTM_A',orders:4,fill_rate_pct:'100',reject_rate_pct:0,fills:4,
      avg_slippage_bps:'0.19',slippage_cost:'12.5',price_improved:1,worse_than_arrival:3,latency_avg_ms:140,latency_p95_ms:210,latency_max_ms:230,commission:'-2.1'}],note:'Slippage = fill vs arrival.'});
@@ -328,7 +385,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  // Stage 4 owns what a strategy decides: its signals, their checks and the decisions; the desk shows every strategy at once.
  await go('Strategies');
  assert.match($('.st-head').textContent,/Stage 4 · Strategy intelligence/);
- assert.deepEqual($$('.ws-panel .ws-head b').map(b=>b.textContent).slice(0,4),['Dashboard','Runtime','Strategy signals','Decisions']);
+ assert.match($('.st-head').textContent,/›Dashboard/);
+ assert.deepEqual(subTabs(),[['Dashboard','Runtime','Strategy signals','Trade decisions','All panels']]);
  assert.match($('.sd-card').textContent,/EMA_FAST.*running.*paper.*automatic.*long 0\.10.*\+12\.50.*BUY.*70.*acted/);
  promptAnswer='review the levels';$('.sd-card footer button').click();await settle(4);
  assert.deepEqual(calls.find(c=>c.url.endsWith('/config/deployments/d1/pause')).body,{version:4,reason:'review the levels'});
@@ -336,8 +394,16 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const hand=calls.find(c=>c.url.endsWith('/trading/execution/policies/d1')&&c.method==='PUT').body;
  assert.equal(hand.handoff,'APPROVE');assert.equal(hand.version,4);assert.equal(hand.reason,'review the levels');assert.equal(hand.order_type,'MARKET');
  console.log('PASS: strategies: the desk shows each strategy with position, P&L, last signal and decision; pause and handoff change from the card.');
- assert.match(globalThis.panel2('Strategy signals').textContent,/STALE_PRICE: the last price is 95 s old/);
- nav('Strategy signals').click();await settle(6);
+ $('.sd-card footer button:nth-last-child(1)').click();await settle(6);
+ assert.match($('.st-head').textContent,/Trade decisions/);
+ assert.ok(calls.some(c=>c.url.includes('/execution/flow?limit=30&deployment_id=d1')));
+ button('Show all deployments').click();await settle(4);
+ assert.ok(calls.some(c=>c.url.endsWith('/execution/flow?limit=30')));
+ nav('Dashboard').click();await settle(4);
+ $('.sd-card footer button:nth-last-child(2)').click();await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('/trading/signals?limit=500&deployment_id=d1')));
+ assert.match($('.intel-table').textContent,/STALE_PRICE: the last price is 95 s old/);
+ button('Show all deployments').click();await settle(4);
  $$('.intel-table tbody tr')[0].click();await settle(6);
  assert.match($('.fw').textContent,/Why it was refused:STALE_PRICE/);
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
@@ -345,6 +411,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Execution receives every decision from the strategies: the chain, what waits for a trader, execute or decline.
  await go('Execution');
+ assert.match($('.st-head').textContent,/›Dashboard/);
+ assert.ok(button('Review decisions'));
+ nav('All panels').click();await settle(6);
  const ep=name=>$$('.ws-panel').find(p=>p.querySelector('.ws-head b').textContent===name);
  assert.match(ep('From strategies').textContent,/Waiting for execution1.*Ordered today3/);
  assert.match(ep('From strategies').querySelector('.ex-flow').textContent,/EMA_FAST.*SignalSELL.*66.*Decisionshort.*Riskat execution.*waiting for execution/);
@@ -378,8 +447,17 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const second=calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST');
  assert.notEqual(second[1].body.ticket_key,first[0].body.ticket_key,'after a placed order the next ticket is a new order');
  nav('Orders').click();await settle(6);
- $$('.intel-table tbody tr')[0].click();await settle(8);
+ fill($('[aria-label="Find an order"]'),'missing-symbol');await settle(2);
+ assert.match($('.intel-table').textContent,/No orders/);
+ fill($('[aria-label="Find an order"]'),'EURUSD');await settle(2);
+ button('EURUSD').click();await settle(8);
  assert.deepEqual($$('.st-timeline li b').map(b=>b.textContent),['new','approved','submitted','acknowledged','filled']);
+ button('Inspect risk checks').click();await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('/trading/risk/decisions?limit=200&order_id=o1')));
+ button('Inspect check').click();await settle(3);
+ assert.match($('.fw').textContent,/MAX_ORDER_QTY0\.0010\.01ACCOUNTWithin limit/);
+ button('Inspect order').click();await settle(6);
+ assert.match($('.fw').textContent,/Order · EURUSD/);
  $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
  console.log('PASS: orders: the ticket sends one order per ticket; each order shows every step, the risk check and its fills.');
 
@@ -413,17 +491,141 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
 
+ await go('Portfolio');
+ assert.match($('.st-head').textContent,/›Accounts/);
+ assert.match($('.st-card').textContent,/COREI equity estimate/);
+ button('Positions').click();await settle(6);
+ assert.equal($('[aria-label="Position account"]').value,'a1');
+ fill($('[aria-label="Position mode"]'),'PAPER');await settle(2);
+ assert.match($('.intel-table').textContent,/Awaiting mark/);
+ assert.equal(button('Flatten broker'),undefined);
+ button('Inspect position').click();await settle(4);
+ assert.match($('.fw').textContent,/Latest 50 fills.*1\.08011/);
+ button('Inspect order').click();await settle(6);
+ assert.match($('.fw').textContent,/Order · EURUSD/);
+ $$('.fw button').find(b=>b.textContent==='Close').click();await settle();
+ await go('Portfolio');
+ promptAnswer='close paper book';button('Flatten paper').click();await settle(4);
+ assert.equal(calls.findLast(c=>c.url.endsWith('/portfolio/flatten')).body.mode,'PAPER');
+ console.log('PASS: portfolio account scope, position mark, exact fills and paper-only flatten.');
+
+ // Saved workspace scope and numbered layouts, including a LIVE ticket handoff without submitting it.
+ await go('My Workspaces');
+ assert.ok(button('My Workspace 1'));
+  assert.ok($('.mw-control-grid'));
+  assert.ok(button('Start scan').disabled,'empty workspace must not start an evaluation');
+  assert.match($('.mw-control').textContent,/Read-only opportunities/);
+ fill($('.mw-scope label:nth-of-type(1) select'),'LIVE');await settle(4);
+ assert.deepEqual([...$('.mw-scope label:nth-of-type(2) select').options].map(o=>o.value),['','a2']);
+ fill($('.mw-scope label:nth-of-type(2) select'),'a2');fill($('.mw-scope input'),'EURUSD');await settle(6);
+ fill($('.mw-scope label:nth-of-type(4) select'),'0');await settle(6);
+ assert.ok(calls.some(c=>c.url.includes('mode=LIVE')&&c.url.includes('source=a1')&&c.url.includes('account=a2')));
+ assert.match($('.mw-summary').textContent,/EURUSD · LIVE_A · LIVE.*Order created/);
+ $$('.mw-panel-heading').find(b=>b.textContent.startsWith('Execution')).click();await settle(5);
+ assert.match($('.mw-panel-body').textContent,/LIVE-TEST.*partially filled.*0\.1 @ 1\.10/);
+ const workspacePanel=(name)=>$$('.mw-panel-heading').find(b=>b.querySelector('strong').textContent===name);
+ workspacePanel('Market data').click();await settle(3);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'true');
+ assert.equal(new URL(w.location.href).searchParams.get('section'),'workspace-1');
+ assert.equal(new URL(w.location.href).searchParams.get('panels'),'market,execution');
+ workspacePanel('Market data').click();await settle(3);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'false');
+ w.history.back();await settle(5);
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'true');
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ w.history.forward();await settle(5);
+ assert.equal(workspacePanel('Market data').getAttribute('aria-expanded'),'false');
+
+ const beforeTicket=calls.filter(c=>c.method==='POST'&&c.url.endsWith('/trading/orders')).length;
+ button('Open order ticket').click();await settle(8);
+ assert.equal($('[aria-label="Ticket mode"]').value,'BROKER');
+ assert.equal($('[aria-label="Ticket account"]').value,'a2');
+ assert.equal($('[aria-label="Ticket instrument"]').value,'i1');
+ assert.equal(calls.filter(c=>c.method==='POST'&&c.url.endsWith('/trading/orders')).length,beforeTicket);
+ await go('My Workspaces');
+ button('+ New workspace').click();await settle(3);
+ assert.ok(button('My Workspace 2'));
+ fill($('.mw-scope label:nth-of-type(1) select'),'DEMO');await settle(4);
+ assert.deepEqual([...$('.mw-scope label:nth-of-type(2) select').options].map(o=>o.value),['','a1']);
+ button('Customize').click();await settle(3);
+ fill($('.mw-custom input[maxlength]'),'Desk');
+ button('Duplicate workspace').click();await settle(4);
+ assert.ok(button('My Workspace 3 · Desk'));
+ button('Remove workspace').click();await settle(4);
+ button('+ New workspace').click();await settle(4);
+ assert.ok(button('My Workspace 4'));
+ button('Save workspaces').click();await settle(5);
+ assert.deepEqual(savedWorkspaces.items.map(x=>[x.number,x.mode]),[[1,'LIVE'],[2,'DEMO'],[4,'PAPER']]);
+ assert.equal(savedWorkspaces.items[0].source,'a1');
+ assert.equal(savedWorkspaces.active,4);
+ assert.equal(new URL(w.location.href).searchParams.get('section'),'workspace-4');
+ button('My Workspace 1').click();await settle(4);
+ assert.equal(workspacePanel('Execution').getAttribute('aria-expanded'),'true');
+ const workspaceLink=w.location.href;
+ const linked=new JSDOM('<div id="root"></div>',{url:workspaceLink,runScripts:'outside-only',pretendToBeVisual:true});
+ linked.window.HTMLElement.prototype.scrollIntoView=function(){};
+ linked.window.fetch=w.fetch;
+ linked.window.eval(js);await settle(10);
+ assert.equal(linked.window.document.querySelector('.mw-tabs [aria-current]').textContent,'My Workspace 1');
+ assert.equal(linked.window.document.querySelector('.mw-panel-heading[aria-expanded="true"] strong').textContent,'Execution');
+ linked.window.close();
+ const deploymentPicker=$$('.mw-scope select').at(-1);
+ fill(deploymentPicker,'dep-1');await settle(6);
+ assert.match($('.mw-summary').textContent,/Bar evaluated · target unchanged/);
+ assert.match(workspacePanel('Execution').textContent,/No order linked to this evaluation/);
+ fill(deploymentPicker,'dep-2');await settle(6);
+ assert.match($('.mw-summary').textContent,/Waiting for approval/);
+ assert.match(workspacePanel('Execution').textContent,/No order for this decision/);
+ fill($('.mw-summary select'),pendingWorkspaceDecision);await settle(4);
+ assert.equal(new URL(w.location.href).searchParams.get('decision'),pendingWorkspaceDecision);
+ button('Review selected decision').click();await settle(8);
+ assert.ok(calls.some(c=>c.url.includes('intent_id='+pendingWorkspaceDecision)));
+ await go('My Workspaces');
+ console.log('PASS: unchanged evaluation stays separate from account activity and pending decisions open the exact existing approval queue.');
+ console.log('PASS: workspace panels expand independently and copied workspace URLs restore the selected workspace and panels.');
+
+ console.log('PASS: numbered workspace layouts, separate market and execution accounts, LIVE order evidence and scoped ticket handoff.');
+  const scanStart=calls.length;
+  await settle(4);
+  $$('.mw-picker').forEach(p=>{p.open=true;});
+  const pickers=$$('.mw-picker');
+  pickers[0].querySelector('input[type=checkbox]').click();await settle(3);
+  pickers[1].querySelector('input[type=checkbox]').click();await settle(3);
+  assert.ok(button('Start scan').disabled,'unsaved scan settings cannot run');
+  button('Save control settings').click();await settle(6);
+  assert.ok(!button('Start scan').disabled,'saved valid scan is available');
+  button('Start scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/QUEUED/);
+  button('Stop scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/CANCELLED/);
+  button('Resume saved scan').click();await settle(6);
+  assert.match($('.mw-control').textContent,/QUEUED/);
+  button('Stop scan').click();await settle(6);
+  const deskWrites=calls.slice(scanStart).filter(c=>c.method!=='GET');
+  assert.ok(deskWrites.some(c=>c.url.includes('/workspaces/')&&c.url.endsWith('/scan')));
+  assert.ok(deskWrites.every(c=>c.url.includes('/trading/workspaces')),'desk scan must not write other settings or runtime');
+  console.log('PASS: saved desk scan start, stop and resume only touch workspace endpoints.');
+
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');
  assert.match($('.st-head').textContent,/Stage 8 · Post-trade/);
  assert.match($('.intel-kpis').textContent,/Open breaks1/);
- nav('Breaks').click();await settle(6);
- assert.match($('.intel-table').textContent,/position mismatch.*EURUSD.*0\.3.*0\.4/i);
- promptAnswer='known difference, broker fixing';button('Accept').click();await settle(4);
+ assert.match($('.intel-table').textContent,/3 cached deals checked/);
+ assert.match($('.intel-table').textContent,/NEW_ACCOUNT.*never checked/i);
+ button('1 · Review').click();await settle(6);
+ assert.equal($('[aria-label="Break account"]').value,'a1');
+ assert.match($('.intel-table').textContent,/position quantity differs.*EURUSD.*0\.3.*0\.4/i);
+ assert.ok(calls.some(c=>c.url.includes('/posttrade/breaks?state=OPEN&account_id=a1')));
+ assert.match($('.intel a').getAttribute('href'),/state=OPEN&account_id=a1/);
+ promptAnswer='known difference, broker fixing';button('Accept as known').click();await settle(4);
  assert.deepEqual(calls.filter(c=>c.url.endsWith('/posttrade/breaks/b1')&&c.method==='POST')[0].body,{action:'ACCEPT',note:'known difference, broker fixing'});
  nav('Execution quality').click();await settle(6);
  assert.match($('.intel-table').textContent,/0\.19 bp.*140 · 210 · 230 ms/);
- console.log('PASS: post-trade: breaks are accepted or resolved with a note; TCA shows slippage, latency and costs.');
+ fill($('[aria-label="TCA mode"]'),'BROKER');await settle(4);
+ assert.match($('.intel a').getAttribute('href'),/mode=BROKER/);
+ console.log('PASS: post-trade: per-account comparison coverage, scoped breaks, audited decisions and mode-aware TCA export.');
 
  // Strategies: a backtest of an idea, with metrics and an equity curve.
  await go('Strategies');
@@ -584,6 +786,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.match(studio.querySelector('[aria-label="Market context"]').textContent,/TREND_UP/);
  assert.equal(studioField('Instrument').value,'EURUSD');
  assert.equal(calls.filter(c=>c.url.endsWith('/studio/signal-scan')).length,0);
+ await clickStudio('Open chart');await settle(4);
+ assert.ok(calls.some(c=>c.url.includes('/intel/instrument/a1/EURUSD?timeframe=H1')));
+ await go('Strategy Studio');
  await openStage('Runs & results');
  assert.match(studio.textContent,/Run a new scan or choose a saved run/);
  await openStage('Inspect instrument');
@@ -593,6 +798,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  const actSelection=async control=>{control.click();await tick();};
  const checks=label=>[...studio.querySelectorAll('fieldset.studio-strategy-filter')].find(field=>field.querySelector('legend').textContent.startsWith(label)).querySelectorAll('input[type=checkbox]');
  assert.ok(checks('Instruments')[0].checked);
+ fill(studioField('Use instrument watchlist'),'test-watchlist');await tick();
+ assert.match(studio.textContent,/Research FX applied · 1 instruments selected · 1 members excluded/);
+ assert.match(studio.querySelector('[aria-label="Watchlist exclusions"]').textContent,/UNCOLLECTED.*Source is not in the collected universe/);
  await clickStudio('Check readiness');
  const quickReadinessScope=calls.findLast(call=>call.url.endsWith('/studio/scan-readiness')).body;
  await clickStudio('Run scan');

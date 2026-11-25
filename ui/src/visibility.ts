@@ -3,3 +3,7 @@
 import { createContext, useContext } from 'react';
 export const ViewVisible = createContext(true);
 export const useViewVisible = () => useContext(ViewVisible);
+
+/* Only the active view in the focused group owns the browser address. */
+export const ViewFocused = createContext(true);
+export const useViewFocused = () => useContext(ViewFocused);

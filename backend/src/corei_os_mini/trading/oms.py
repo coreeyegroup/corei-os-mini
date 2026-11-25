@@ -62,7 +62,7 @@ def _move(db, order: dict, to: str, actor: str, detail: dict | None = None, **fi
 
 
 def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: str, at: datetime, deal_id: str | None = None,
-          detail: dict | None = None) -> dict:
+          detail: dict | None = None, *, copy_to_followers: bool = True) -> dict:
     """One fill: the position in the same transaction, then the order's state. A broker deal is applied once (its ticket)."""
     ins = instrument(db, order['instrument_id'])
     if deal_id is not None and db.execute('SELECT 1 FROM oms_fills WHERE account_id=%s AND broker_deal_id=%s',
@@ -97,6 +97,8 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
     out = _move(db, order, to, actor, {'fill_qty': str(qty), 'price': str(price), 'slippage': str(slip) if slip is not None else None,
                                        'realised_pnl': str(realised), 'deal': deal_id, **(detail or {})}, filled_qty=filled,
                 avg_fill_price=quantize(avg, D(ins.get('tick_size')) / 1000), **({'completed_at': at} if to == 'FILLED' else {}))
+    if not copy_to_followers:
+        return out
     try:
         from . import copytrade
         copytrade.on_fill(db, out, fill)
@@ -455,7 +457,9 @@ def resolve(actor: str, order_id: UUID, data: ResolveIn) -> dict:
         if not data.price:
             raise HTTPException(422, 'A filled outcome needs the fill price the broker reports.')
         remaining = D(o['quantity']) - D(o['filled_qty'])
-        qty = data.quantity or remaining
+        qty = data.quantity if data.quantity is not None else remaining
+        if qty <= 0:
+            raise HTTPException(422, f'Resolution quantity must be positive and at most the remaining {remaining.normalize()}.')
         if qty > remaining:
             raise HTTPException(422, f'The stated fill ({qty}) is more than the order has left ({remaining}). '
                                      'If the broker really filled more, record what remains here and raise the excess as a break.')
@@ -515,13 +519,17 @@ def ticket(actor: str, data: TicketIn) -> dict:
     return out[0] if len(out) == 1 else {**out[0], 'legs': out}
 
 
-def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key: str) -> dict:
-    """Close every open position of the account in one instrument (each deployment's and the manual one) with market
-    orders attributed to their owner, so each book closes; allowed through a kill switch (it removes risk)."""
+def flatten(actor: str, account_id: UUID, instrument_id: UUID, reason: str, key: str,
+            mode: Literal['PAPER', 'BROKER'] | None = None) -> dict:
+    """Request closes for an account and instrument, optionally limited to one execution mode."""
+    mode_filter = ' AND p.mode=%s' if mode else ''
+    args = [str(account_id), str(instrument_id)]
+    if mode:
+        args.append(mode)
     with store.transaction('write') as db:
         rows = db.execute('SELECT p.*, d.strategy_id FROM pf_positions p LEFT JOIN cfg_deployments d ON d.id=p.deployment_id '
-                          'WHERE p.account_id=%s AND p.instrument_id=%s AND p.quantity <> 0 ORDER BY p.deployment_id NULLS FIRST',
-                          (str(account_id), str(instrument_id))).fetchall()
+                          'WHERE p.account_id=%s AND p.instrument_id=%s AND p.quantity <> 0' + mode_filter
+                          + ' ORDER BY p.deployment_id NULLS FIRST', args).fetchall()
         if not rows:
             raise HTTPException(409, 'There is no open position to close.')
         out = []

@@ -6,6 +6,7 @@
  * Must never: show a figure without saying where it comes from (timeframe, bar time, bars source). */
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './Configuration';
+import { useData } from './StageShell';
 
 type Row = Record<string, any>;
 const TFS = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
@@ -160,18 +161,14 @@ export function Screener({ openInstrument, canRefresh }: { openInstrument: (r: R
 }
 
 export function InstrumentView({ pick, items, setPick }: { pick: Row | null; items: Row[]; setPick: (r: Row) => void }) {
-  const [tf, setTf] = useState<string>(pick?.scanTimeframe ?? 'H1'), [data, setData] = useState<Row | null>(null), [error, setError] = useState('');
+  const [tf, setTf] = useState<string>(pick?.scanTimeframe ?? 'H1');
   const scanTimeframe = pick?.scanTimeframe;
   useEffect(() => { if (scanTimeframe) setTf(scanTimeframe); }, [pick, scanTimeframe]);
   const choices = pick && !items.some(row => row.account_id === pick.account_id && row.broker_symbol === pick.broker_symbol)
     ? [pick, ...items] : items;
-  useEffect(() => {
-    if (!pick) return;
-    let stop = false;
-    const load = () => api(`intel/instrument/${pick.account_id}/${encodeURIComponent(pick.broker_symbol)}?timeframe=${tf}&limit=200`)
-      .then(d => { if (!stop) { setData(d); setError(''); } }).catch(e => { if (!stop) setError((e as Error).message); });
-    void load(); const t = window.setInterval(load, 30_000); return () => { stop = true; window.clearInterval(t); };
-  }, [pick?.account_id, pick?.broker_symbol, tf]);
+  const [data, error] = useData<Row>(pick
+    ? `intel/instrument/${pick.account_id}/${encodeURIComponent(pick.broker_symbol)}?timeframe=${tf}&limit=200`
+    : null, 30_000);
   const latest = data?.history?.length ? data.history[data.history.length - 1].features : (data?.snapshots ?? []).find((x: Row) => x.timeframe === tf)?.features;
   const csv = () => {
     const keys = Array.from(new Set((data?.history ?? []).flatMap((h: Row) => Object.keys(h.features)))).sort() as string[];
@@ -188,6 +185,7 @@ export function InstrumentView({ pick, items, setPick }: { pick: Row | null; ite
       <span className="intel-tfs" role="group" aria-label="Chart timeframe">{TFS.filter(t => t !== 'M1' || scanTimeframe === 'M1').map(t => <button key={t} aria-pressed={t === tf} onClick={() => setTf(t)}>{t}</button>)}</span>
       {data?.history?.length ? <button onClick={csv}>Export CSV</button> : null}
     </div>
+    {pick?.bar_time && <p className="cfg-note">Scan evaluated {pick.bar_time} (UTC). This chart shows current stored history.</p>}
     {error && <p role="alert" className="cfg-error">{error}</p>}
     {!pick && <p className="cfg-note">Pick an instrument here or click a row in the Screener.</p>}
     {data && <>

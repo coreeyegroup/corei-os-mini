@@ -163,6 +163,18 @@ class TerminalBridge(unittest.TestCase):
         self.assertEqual(len(book['orders']), 1)
         self.assertNotIn('secret', json.dumps(book))
 
+    def test_book_distinguishes_unavailable_positions_from_empty_book(self):
+        mt5 = self.bridge.mt5
+        original = mt5.positions_get
+        try:
+            mt5.positions_get = lambda: None
+            failed = self.ask({'mode': 'book'})
+            self.assertEqual((failed['t'], failed['error']), ('failed', 'BROKER_BOOK_DATA_UNAVAILABLE'))
+            mt5.positions_get = lambda: []
+            self.assertEqual(self.ask({'mode': 'book'})['positions'], [])
+        finally:
+            mt5.positions_get = original
+
     def test_wrong_password_is_a_broker_refusal(self):
         t = self.transport()
         t.send({'token': self.token, 'mode': 'session', 'login': 1, 'password': 'bad', 'server': 'X'})

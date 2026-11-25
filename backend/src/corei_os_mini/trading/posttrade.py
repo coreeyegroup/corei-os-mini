@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
@@ -67,26 +68,41 @@ def _now() -> datetime:
 
 # ---------- the broker's book ----------
 
+def _deal_time(value, source: str) -> datetime:
+    if not value:
+        return _now()
+    try:
+        at = datetime.fromisoformat(str(value))
+    except ValueError:
+        return _now()
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=ZoneInfo('Asia/Kolkata') if source == 'UPSTOX' else timezone.utc)
+    return at.astimezone(timezone.utc)
+
+
 def store_book(account_id, reply: dict, source: str = 'MT5_BRIDGE') -> int:
     """Keep a book reply: one snapshot row, and each deal once (matched to the COREI order by its tag)."""
     with store.transaction('write') as db:
         db.execute('INSERT INTO pt_broker_snapshots(account_id, ok, money, positions, orders, source) VALUES (%s,true,%s,%s,%s,%s)',
                    (str(account_id), Jsonb(reply.get('money') or {}), Jsonb(reply.get('positions') or []), Jsonb(reply.get('orders') or []), source))
-        tags = {r['broker_tag']: r['id'] for r in db.execute('SELECT id, broker_tag FROM oms_orders WHERE account_id=%s AND broker_tag IS NOT NULL '
-                                                             "AND created_at > now() - interval '120 days'", (str(account_id),)).fetchall()}
+        orders = db.execute("""SELECT id, broker_tag, broker_order_id FROM oms_orders
+                              WHERE account_id=%s AND mode='BROKER' AND created_at > now() - interval '120 days'""",
+                            (str(account_id),)).fetchall()
+        tags = {r['broker_tag']: r['id'] for r in orders if r['broker_tag']}
+        broker_ids = {r['broker_order_id']: r['id'] for r in orders if r['broker_order_id']}
         n = 0
         deals = list(reply.get('deals') or []) + list((reply.get('tagged') or {}).get('deals') or [])
         for d in deals:
+            if d.get('ticket') in (None, '', 0, '0'):
+                continue
             comment = str(d.get('comment') or '')
-            oid = next((tags[t] for t in tags if comment.startswith(t)), None)
-            try:
-                at = datetime.fromisoformat(str(d.get('time'))).replace(tzinfo=timezone.utc) if d.get('time') else _now()
-            except ValueError:
-                at = _now()
+            broker_order = str(d.get('order') or '')
+            oid = broker_ids.get(broker_order) or next((tags[t] for t in tags if comment.startswith(t)), None)
+            at = _deal_time(d.get('time'), source)
             cur = db.execute("""INSERT INTO pt_broker_deals(account_id, ticket, order_ticket, position_id, symbol, side, entry, volume, price, commission, swap, fee,
                                 profit, at, comment, magic, order_id, reason) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                 ON CONFLICT (account_id, ticket) DO UPDATE SET order_id=COALESCE(pt_broker_deals.order_id, EXCLUDED.order_id)""",
-                             (str(account_id), str(d.get('ticket')), str(d.get('order') or ''), str(d.get('position_id') or ''), str(d.get('symbol') or ''),
+                             (str(account_id), str(d.get('ticket')), broker_order, str(d.get('position_id') or ''), str(d.get('symbol') or ''),
                               d.get('side') or '?', d.get('entry'), _dec(d.get('volume')), _dec(d.get('price')), _dec(d.get('commission')),
                               _dec(d.get('swap')), _dec(d.get('fee')), _dec(d.get('profit')), at, comment[:64], d.get('magic'), oid, d.get('reason')))
             n += cur.rowcount
@@ -134,7 +150,7 @@ def _book_fill(db, actor: str, account_id, instrument_id, deployment_id, side: s
     db.execute("INSERT INTO oms_order_events(order_id, state_from, state_to, detail, actor) VALUES (%s,NULL,'NEW',%s,%s)", (str(o['id']), json.dumps(detail), actor))
     for to in ('APPROVED', 'SUBMITTED', 'ACKNOWLEDGED'):
         o = oms._move(db, o, to, actor, detail)
-    return store.clean(oms._fill(db, o, qty, price, None, actor, _now(), deal_id=str(deal_id) if deal_id else None, detail=detail))
+    return store.clean(oms._fill(db, o, qty, price, None, actor, _now(), deal_id=str(deal_id) if deal_id else None, detail=detail, copy_to_followers=source != 'RECONCILE'))
 
 
 BOOK_DAYS_MIN, BOOK_DAYS_FIRST, BOOK_DAYS_MAX = 3, 7, 90   # the MT5 bridge serves up to 90 days of deals
@@ -164,6 +180,8 @@ def fetch_book(account_id, actor: str, days: int = BOOK_DAYS_MIN) -> dict:
                                              for t in up.day_trades()]}
         else:
             raise HTTPException(409, 'This account has no broker connection for orders: ' + '; '.join(cap['reasons']))
+        if not isinstance(reply, dict) or not all(isinstance(reply.get(k), list) for k in ('positions', 'deals')):
+            raise brokers.Refused('Incomplete broker book: positions or deals were unavailable.')
     except (brokers.NotSent, brokers.Lost, brokers.Refused) as exc:
         with store.transaction('write') as db:
             db.execute('INSERT INTO pt_broker_snapshots(account_id, ok, error, source) VALUES (%s,false,%s,%s)', (str(account_id), str(exc)[:500], adapter))
@@ -248,8 +266,9 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
         with store.transaction('read') as db:
             real = db.execute("""SELECT EXISTS (SELECT 1 FROM oms_orders WHERE account_id=%s AND mode='BROKER' AND created_at > now() - interval '30 days')
                                      OR EXISTS (SELECT 1 FROM pf_positions WHERE account_id=%s AND mode='BROKER' AND quantity <> 0)
-                                     OR EXISTS (SELECT 1 FROM cfg_deployments WHERE account_id=%s AND mode='BROKER' AND status='ACTIVE') AS r""",
-                              (str(account_id),) * 3).fetchone()['r']
+                                     OR EXISTS (SELECT 1 FROM cfg_deployments WHERE account_id=%s AND mode='BROKER' AND status='ACTIVE')
+                                     OR EXISTS (SELECT 1 FROM pt_breaks WHERE account_id=%s AND state='OPEN' AND kind <> 'INTERNAL_POSITION') AS r""",
+                              (str(account_id),) * 4).fetchone()['r']
         broker = real
     use_broker = bool(cap.get('wanted')) and broker
     book, error = None, None
@@ -257,6 +276,8 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
     with store.transaction('read') as db:
         last_verified = verified_to(db, account_id)
     days = book_days(last_verified, started)
+    if broker and not use_broker:
+        error = 'Broker comparison requested, but no order broker is configured for this account.'
     if use_broker:
         try:
             book = fetch_book(account_id, actor, days)
@@ -278,7 +299,8 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
         c, n = _internal(db, account_id, seen, examined)
         checked += c
         new += n
-        detail: dict = {'adapter': cap.get('wanted')}
+        detail: dict = {'adapter': cap.get('wanted'), 'internal_books': c,
+                        'broker_read': 'COMPARED' if book is not None else 'UNAVAILABLE' if error else 'NOT_REQUESTED'}
         if book is not None:
             magic = int(cfg.get('broker_magic') or 0)
             ours: dict = {}
@@ -291,7 +313,8 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
             for r in db.execute("SELECT instrument_id, sum(quantity) AS q FROM pf_positions WHERE account_id=%s AND mode='BROKER' GROUP BY 1",
                                 (str(account_id),)).fetchall():
                 sym = trading_symbol(db, account_id, r['instrument_id']) or f"instrument {r['instrument_id']}"
-                corei[sym] = (r['instrument_id'], D(r['q']))
+                iid, qty = corei.get(sym, (r['instrument_id'], ZERO))
+                corei[sym] = (iid, qty + D(r['q']))
             for sym in sorted(set(ours) | set(corei)):
                 checked += 1
                 examined.update((k, sym) for k in POSITION_KINDS)
@@ -309,32 +332,50 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
                 if q != 0 and _raise(db, account_id, 'EXTERNAL_TRADE', f'position:{sym}', seen, broker_symbol=sym, broker_value=q,
                                      detail={'note': 'position opened outside COREI (another magic number or by hand)'}):
                     new.append(f'EXTERNAL_TRADE position {sym}')
-            # Every stored deal of a COREI order is checked for its fill, whatever its age (tags map 120 days of
-            # orders); deals placed outside COREI are raised for the days this run read.
+            # Every stored deal of a COREI order is checked for its fill (on that same order), whatever its age (tags
+            # map 120 days of orders); deals placed outside COREI are raised for the days this run read.
             ext_since = started - timedelta(days=days)
-            for d in db.execute("""SELECT bd.*, f.id AS fill_id FROM pt_broker_deals bd LEFT JOIN oms_fills f ON f.account_id=bd.account_id AND f.broker_deal_id=bd.ticket
-                                   WHERE bd.account_id=%s AND (bd.order_id IS NOT NULL OR bd.at > %s)""", (str(account_id), ext_since)).fetchall():
+            deals = db.execute("""SELECT bd.*, f.id AS fill_id, f.order_id AS fill_order_id
+                                   FROM pt_broker_deals bd LEFT JOIN oms_fills f
+                                     ON f.account_id=bd.account_id AND f.broker_deal_id=bd.ticket
+                                   WHERE bd.account_id=%s AND (bd.order_id IS NOT NULL OR bd.at > %s)""",
+                               (str(account_id), ext_since)).fetchall()
+            for d in deals:
                 checked += 1
                 key = f"deal:{d['ticket']}"
                 if d['order_id']:
                     examined.add(('FILL_MISSING', key))
-                    if not d['fill_id'] and _raise(db, account_id, 'FILL_MISSING', key, seen, broker_symbol=d['symbol'],
-                                                   broker_value=f"{d['side']} {d['volume']} @ {d['price']}",
-                                                   detail={'order_id': str(d['order_id']), 'ticket': d['ticket']}):
+                    if d['fill_order_id'] != d['order_id'] and _raise(
+                            db, account_id, 'FILL_MISSING', key, seen, broker_symbol=d['symbol'], broker_value=f"{d['side']} {d['volume']} @ {d['price']}",
+                            detail={'order_id': str(d['order_id']), 'ticket': d['ticket'], 'at': d['at'].isoformat()}):
                         new.append(f"FILL_MISSING deal {d['ticket']}")
-                elif d['magic'] is None or int(d['magic'] or 0) != magic:
+                elif not d['fill_id'] and (d['magic'] is None or int(d['magic'] or 0) != magic):
                     examined.add(('EXTERNAL_TRADE', key))
                     if _raise(db, account_id, 'EXTERNAL_TRADE', key, seen, broker_symbol=d['symbol'],
-                              broker_value=f"{d['side']} {d['volume']} @ {d['price']}", detail={'ticket': d['ticket'], 'magic': d['magic']}):
+                              broker_value=f"{d['side']} {d['volume']} @ {d['price']}", detail={'ticket': d['ticket'], 'magic': d['magic'], 'at': d['at'].isoformat()}):
                         new.append(f"EXTERNAL_TRADE deal {d['ticket']}")
-            detail['broker_positions'] = len(book.get('positions') or [])
-            detail['money'] = book.get('money')
-        # A break is cleared only when this run examined the same item and found it matched; an item outside what
-        # the run read stays open (aging out of a window is not evidence).
-        for b in db.execute("SELECT id, kind, key FROM pt_breaks WHERE account_id=%s AND state='OPEN'", (str(account_id),)).fetchall():
-            if (b['kind'], b['key']) in examined and (b['kind'], b['key']) not in seen:
-                db.execute("UPDATE pt_breaks SET state='RESOLVED', resolved_by=%s, resolved_at=now(), resolution='cleared: matched at the next run' WHERE id=%s",
-                           (actor, b['id']))
+            detail.update(broker_positions=len(book.get('positions') or []), cached_deals_checked=len(deals), money=book.get('money'))
+        # A break is cleared only on evidence: a deal break when its fill is now found on the right order; any other
+        # break when this run examined the same item and found it matched. An item outside what the run read stays
+        # open (aging out of a window is not evidence).
+        for b in db.execute("""SELECT b.id, b.kind, b.key, EXISTS (
+                                   SELECT 1 FROM pt_broker_deals d JOIN oms_fills f ON f.account_id=d.account_id AND f.broker_deal_id=d.ticket
+                                   WHERE d.account_id=b.account_id AND d.ticket=substring(b.key from 6)
+                                     AND (d.order_id=f.order_id OR (b.kind='EXTERNAL_TRADE' AND d.order_id IS NULL))
+                               ) AS fill_found
+                               FROM pt_breaks b WHERE b.account_id=%s AND b.state='OPEN' FOR UPDATE""", (str(account_id),)).fetchall():
+            if (b['kind'], b['key']) in seen:
+                continue
+            if b['key'].startswith('deal:'):
+                if not b['fill_found']:
+                    continue
+                resolution = 'cleared: matching fill found'
+            elif (b['kind'], b['key']) in examined:
+                resolution = 'cleared: matched at the next run'
+            else:
+                continue
+            db.execute("UPDATE pt_breaks SET state='RESOLVED', resolved_by=%s, resolved_at=now(), resolution=%s WHERE id=%s",
+                       (actor, resolution, b['id']))
         interval_from = interval_to = None
         if book is not None:
             interval_from, interval_to = started - timedelta(days=days), started
@@ -354,7 +395,7 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
         run_id = uuid4()
         db.execute('INSERT INTO pt_recon_runs(id, account_id, kind, status, checked, breaks, detail, actor, coverage, interval_from, interval_to) '
                    'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-                   (run_id, str(account_id), 'BROKER' if use_broker else 'INTERNAL', status, checked, open_n,
+                   (run_id, str(account_id), 'BROKER' if broker else 'INTERNAL', status, checked, open_n,
                     Jsonb({**detail, 'error': error, 'new': new}), actor, Jsonb(coverage), interval_from, interval_to))
         if new:
             code = db.execute('SELECT code FROM cfg_accounts WHERE id=%s', (str(account_id),)).fetchone()['code']
@@ -363,14 +404,15 @@ def reconcile(account_id, actor: str = 'reconcile', broker: bool | None = None) 
             if cfg.get('recon_kill_on_break') and any(k.split()[0] in POSITION_KINDS for k in new):
                 risk.engage('reconcile', risk.KillIn(scope='ACCOUNT', target_id=UUID(str(account_id)),
                                                      reason=f'Reconciliation break: {new[0]}'[:500]), automatic=True, db=db)
-    return {'id': str(run_id), 'status': status, 'checked': checked, 'open_breaks': open_n, 'new': new, 'error': error, 'coverage': coverage}
+    return {'id': str(run_id), 'status': status, 'checked': checked, 'open_breaks': open_n, 'new': new, 'error': error, 'detail': detail, 'coverage': coverage}
 
 
 def _active_accounts(db) -> list[str]:
     rows = db.execute("""SELECT DISTINCT account_id FROM (
                             SELECT account_id FROM oms_orders WHERE mode='BROKER' AND created_at > now() - interval '30 days'
                             UNION SELECT account_id FROM cfg_deployments WHERE mode='BROKER' AND status='ACTIVE'
-                            UNION SELECT account_id FROM pf_positions WHERE quantity <> 0) x""").fetchall()
+                            UNION SELECT account_id FROM pf_positions WHERE quantity <> 0
+                            UNION SELECT account_id FROM pt_breaks WHERE state='OPEN') x""").fetchall()
     return [str(r['account_id']) for r in rows]
 
 
@@ -416,12 +458,21 @@ def act_on_break(actor: str, break_id: UUID, data: BreakAction) -> dict:
             if not d or not o:
                 raise HTTPException(409, 'The deal or the order is no longer there.')
             o = dict(o)
-            if o['state'] in ('SUBMITTED',):
+            qty, price = D(d['volume']), D(d['price'])
+            if d['order_id'] != o['id'] or d['account_id'] != o['account_id'] or o['mode'] != 'BROKER' or d['side'] != o['side']:
+                raise HTTPException(409, 'This broker deal does not match the order account, mode or side.')
+            existing = db.execute('SELECT order_id FROM oms_fills WHERE account_id=%s AND broker_deal_id=%s',
+                                  (str(o['account_id']), d['ticket'])).fetchone()
+            if existing:
+                raise HTTPException(409, 'This broker deal is already recorded. Rerun reconciliation to check the linkage.')
+            if not 0 < qty <= D(o['quantity']) - D(o['filled_qty']) or price <= 0:
+                raise HTTPException(409, 'The deal price or quantity is invalid for the remaining order. Review the broker evidence.')
+            if o['state'] == 'SUBMITTED':
                 o = oms._move(db, o, 'UNKNOWN', actor, {'reason': 'a broker deal exists for this order'})
             if o['state'] not in ('UNKNOWN', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'CANCEL_PENDING'):
                 raise HTTPException(409, f"The order is {o['state'].lower()}: the deal cannot be applied to it; resolve the break by hand.")
-            result = store.clean(oms._fill(db, o, min(D(d['volume']), D(o['quantity']) - D(o['filled_qty'])), D(d['price']), None, actor, _now(),
-                                           deal_id=d['ticket'], detail={'applied_from_reconciliation': True}))
+            result = store.clean(oms._fill(db, o, qty, price, None, actor, _now(),
+                                           deal_id=d['ticket'], detail={'applied_from_reconciliation': True, 'broker_at': d['at'].isoformat()}, copy_to_followers=False))
         elif data.action == 'ADOPT_POSITION':
             if b['kind'] not in ('NOT_IN_COREI', 'POSITION_MISMATCH') or not b['instrument_id'] and not b['broker_symbol']:
                 raise HTTPException(409, 'Only a broker position COREI does not hold can be adopted.')
@@ -639,6 +690,8 @@ def _excursion(db, t: dict, entry: Decimal) -> dict:
 # ---------- statements ----------
 
 def statement(db, account_id, day_from: date, day_to: date) -> dict:
+    if day_from > day_to:
+        raise HTTPException(422, 'The start date must be on or before the end date.')
     if (day_to - day_from).days > 400:
         raise HTTPException(422, 'At most 400 days per statement.')
     acc = db.execute('SELECT code, base_currency FROM cfg_accounts WHERE id=%s', (str(account_id),)).fetchone()
@@ -662,22 +715,26 @@ def statement(db, account_id, day_from: date, day_to: date) -> dict:
     missing = set()
     for r in rows:
         d = days.setdefault(r['day'], {'day': r['day'].isoformat(), 'fills': 0, 'quantity': ZERO, 'turnover': ZERO, 'realised': ZERO, 'commission': ZERO,
-                                       'swap': ZERO, 'modes': set()})
+                                       'swap': ZERO, 'modes': set(), 'missing_fx': set()})
         rate = fx_rate(db, r['currency'], acc['base_currency'])
         if rate is None:
-            missing.add(r['currency']); rate = Decimal(1)
-        d['fills'] += r['fills']; d['quantity'] += D(r['quantity']); d['turnover'] += D(r['turnover']) * rate
-        d['realised'] += D(r['realised']) * rate; d['commission'] += D(r['commission']); d['swap'] += D(r['swap'])
+            missing.add(r['currency'])
+            d['missing_fx'].add(r['currency'])
+        else:
+            d['turnover'] += D(r['turnover']) * rate
+            d['realised'] += D(r['realised']) * rate
+        d['fills'] += r['fills']; d['quantity'] += D(r['quantity'])
+        d['commission'] += D(r['commission']); d['swap'] += D(r['swap'])
         d['modes'].add(r['mode'])
     for day in sorted(set(days) | set(eq) | set(bk)):
         d = days.setdefault(day, {'day': day.isoformat(), 'fills': 0, 'quantity': ZERO, 'turnover': ZERO, 'realised': ZERO, 'commission': ZERO,
-                                  'swap': ZERO, 'modes': set()})
+                                  'swap': ZERO, 'modes': set(), 'missing_fx': set()})
         if day in eq:
             d.update({'corei_equity': D(eq[day]['equity']), 'unrealised': D(eq[day]['unrealised'])})
         if day in bk:
             m = bk[day]['money'] or {}
             d.update({'broker_balance': m.get('balance'), 'broker_equity': m.get('equity')})
-    out = [{**d, 'modes': sorted(d['modes']), 'net': d['realised'] + d['commission'] + d['swap']} for _, d in sorted(days.items())]
+    out = [{**d, 'modes': sorted(d['modes']), 'missing_fx': sorted(d['missing_fx']), 'net': d['realised'] + d['commission'] + d['swap']} for _, d in sorted(days.items())]
     return {'account': acc['code'], 'currency': acc['base_currency'], 'from': day_from.isoformat(), 'to': day_to.isoformat(), 'days': out,
             'totals': {k: sum((x[k] for x in out), ZERO) for k in ('fills', 'quantity', 'turnover', 'realised', 'commission', 'swap', 'net')},
             'missing_fx': sorted(missing), 'note': 'Commission and swap come from the broker\'s deals (MT5); paper fills have none.'}
@@ -718,8 +775,15 @@ def to_csv(rows: list[dict], columns: list[str] | None = None) -> str:
 
 def overview(db) -> dict:
     open_breaks = db.execute("SELECT kind, count(*) AS n FROM pt_breaks WHERE state='OPEN' GROUP BY 1").fetchall()
-    last = db.execute("""SELECT DISTINCT ON (r.account_id) r.account_id, a.code, r.at, r.status, r.breaks, r.kind FROM pt_recon_runs r
-                         JOIN cfg_accounts a ON a.id=r.account_id ORDER BY r.account_id, r.at DESC""").fetchall()
+    last = db.execute("""SELECT a.id AS account_id, a.code, c.environment, r.at, r.status, r.kind, r.detail,
+                                COALESCE(b.n, 0) AS breaks
+                         FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id
+                         LEFT JOIN LATERAL (SELECT at, status, kind, detail FROM pt_recon_runs
+                                            WHERE account_id=a.id ORDER BY at DESC, id DESC LIMIT 1) r ON true
+                         LEFT JOIN (SELECT account_id, count(*) AS n FROM pt_breaks WHERE state='OPEN' GROUP BY account_id) b
+                           ON b.account_id=a.id
+                         WHERE a.status <> 'ARCHIVED' OR b.n > 0
+                         ORDER BY breaks DESC, a.code""").fetchall()
     today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     fills = db.execute('SELECT count(*) AS n, avg(latency_ms) AS lat FROM oms_fills WHERE at >= %s', (today,)).fetchone()
     return {'open_breaks': {r['kind']: r['n'] for r in open_breaks}, 'open_total': sum(r['n'] for r in open_breaks),

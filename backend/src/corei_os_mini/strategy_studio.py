@@ -294,7 +294,9 @@ def evaluate_scan_pairs(db, instruments, strategies, payload, now, *, freeze_bar
                             rows = features_for(source['account_id'], source['broker_symbol'], tf, window, index)
                             result = _plan_signal(strategy, instrument, bars, rows, payload, now)
                         result.update(account_id=source['account_id'], account_code=source['account_code'],
-                                      broker_symbol=source['broker_symbol'])
+                                      broker_symbol=source['broker_symbol'], bar_time=bars[-1]['bar_time'],
+                                      series='RESAMPLED_M1' if index else 'NATIVE', available_bars=len(bars),
+                                      required_bars=needed)
             except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
                 result = {'status': 'ERROR', 'reason': f'Cannot evaluate: {type(exc).__name__}'}
             out.append({**base, **result})

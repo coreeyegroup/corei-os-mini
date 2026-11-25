@@ -7,6 +7,7 @@ import { OrdersView, PortfolioView, RiskView, SignalsView, StrategiesView } from
 import { PostTradeView } from "./TradingExtras";
 import FlowView from "./FlowView";
 import StrategyStudio from "./StrategyStudio";
+import MyWorkspaces from "./MyWorkspaces";
 import WorkbenchIcon from "./WorkbenchIcon";
 import ErrorBoundary from "./ErrorBoundary";
 import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
@@ -15,9 +16,9 @@ import Stage from "./Pipeline";
 import { PIPELINE, stageOf } from "./flow";
 import { api } from "./Configuration";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
-import { initialLayout, launchContext, openWorkspace } from "./workspaceLinks";
+import { initialLayout, launchContext, openWorkspace, useAddressBar } from "./workspaceLinks";
 import "./workspaces.css";
-import { ViewVisible } from "./visibility";
+import { ViewFocused, ViewVisible } from "./visibility";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
@@ -47,6 +48,7 @@ type Runtime = {
 };
 const descriptions: Record<View, string> = {
   Overview: "Workspace readiness and capability map",
+  "My Workspaces": "Saved trading layouts from market data to post-trade",
   "Market data": "1 · Market data: workspaces › sources › instruments, collection plans, feed quality, backfill, archive and backups",
   Configuration: "Providers, connections, accounts, instruments, symbol mappings and order-sending controls",
   Intelligence: "2 · Market intelligence: select and compare collected data across sources, charts; features, sessions, regimes, screening",
@@ -62,21 +64,20 @@ const descriptions: Record<View, string> = {
   Settings: "Workspace layout and navigation preferences",
   Flow: "Calculation flow: every calculation, formula and equation as nodes and wires (n8n-style), with live values",
 };
-const activityLabels:Record<View,string>={Overview:'Home','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy','Strategy Studio':'Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
+const activityLabels:Record<View,string>={Overview:'Home','My Workspaces':'My desks','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy','Strategy Studio':'Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
 /* The rail: home, then the trading flow in order (1 market data → 8 post-trade), watching, setting up. */
-const RAIL:(View|'-')[]=['Overview','-','Market data','Intelligence','Signals','Strategies','Strategy Studio','Risk','Portfolio','Execution','Post-trade','Flow','-','Operations','-','Configuration','Infrastructure'];
-const viewTitle:Record<View,string>={Overview:'Home','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies','Strategy Studio':'Strategy Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
-const iconIndex:Record<View,number>={Overview:0,'Market data':1,Intelligence:11,Signals:12,Strategies:5,'Strategy Studio':5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9,Flow:3};
+const RAIL:(View|'-')[]=['Overview','My Workspaces','-','Market data','Intelligence','Signals','Strategies','Strategy Studio','Risk','Portfolio','Execution','Post-trade','Flow','-','Operations','-','Configuration','Infrastructure'];
+const viewTitle:Record<View,string>={Overview:'Home','My Workspaces':'My desks','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies','Strategy Studio':'Strategy Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
+const iconIndex:Record<View,number>={Overview:0,'My Workspaces':5,'Market data':1,Intelligence:11,Signals:12,Strategies:5,'Strategy Studio':5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9,Flow:3};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
   } catch {
-    return defaults();
+    return initialLayout(null);
   }
 }
 export default function App() {
-  const launch = launchContext(window.location.search);
-  useEffect(() => { if (launch.detached && launch.view && launch.section) goto(launch.view, launch.section); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [launch] = useState(() => launchContext(window.location.search));
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
   const [closed,setClosed]=useState<View[]>([]);
@@ -314,6 +315,7 @@ export default function App() {
     });
   }
   const active = layout.active[layout.focus];
+  useAddressBar(active, launch.detached, (view, section) => goto(view, section));
   function allowLayoutChange(){return window.dispatchEvent(new Event('corei-before-layout-change',{cancelable:true}));}
   function switchWorkspace(name:string){
     if(!allowLayoutChange())return;
@@ -392,6 +394,8 @@ export default function App() {
         </div>
       );
     if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
+    if (view === "My Workspaces") return <MyWorkspaces username={overview?.user.username} signedOut={signedOut} loadError={error}
+      refreshSession={() => window.dispatchEvent(new Event('corei-session'))} />;
     if (view === "Operations") return <Monitor overview={overview} signedOut={signedOut}/>;
     if (view === "Intelligence") return <Intelligence open={v=>goto(v)}/>;
     if (view === "Signals") return <SignalsView/>;
@@ -517,7 +521,7 @@ export default function App() {
                   </span>
                 </div>}
                 <div className="view" role="tabpanel" aria-label={layout.active[i]}>
-                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ViewVisible.Provider value={layout.active[i]===v&&!(layout.maximized&&layout.focus!==i)}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></ViewVisible.Provider></div>)}
+                  {group.map(v=><div key={v} hidden={layout.active[i]!==v}><ViewVisible.Provider value={layout.active[i]===v&&!(layout.maximized&&layout.focus!==i)}><ViewFocused.Provider value={layout.focus === i && layout.active[i] === v}><ErrorBoundary name={viewTitle[v]}>{body(v)}</ErrorBoundary></ViewFocused.Provider></ViewVisible.Provider></div>)}
                 </div>
               </section>
             ))}
@@ -572,7 +576,7 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
   return <div className="dense-page">
     <div className="dense-bar"><b>Overview</b>
       <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}${runtime.commit ? ` · ${runtime.commit}` : ''}${runtime.schema ? ` · schema ${String(runtime.schema).slice(0, 3)}` : ''}` : 'server ?'}` : 'Loading…'}</span>
-      <span className="push" /><button onClick={refresh}>Refresh</button></div>
+      <span className="push" /><button className="primary" onClick={() => goto('My Workspaces')}>Open My Workspaces</button><button onClick={refresh}>Refresh</button></div>
     {error && <div role="alert" className="dense-error">{error}</div>}
     {overview?.setup && overview.setup.next && <div className="dense-next" role="status">
       <span className="muted">Set-up {overview.setup.done}/{overview.setup.total}</span>
