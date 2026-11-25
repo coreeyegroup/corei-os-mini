@@ -405,11 +405,13 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                AND instrument_id = ANY(%s)""", (list(data),)).fetchall()}
         existing = {(str(r['strategy_id']), str(r['instrument_id']), str(r['account_id'])): dict(r) for r in db.execute(
             """SELECT d.id, d.strategy_id, d.instrument_id, d.account_id, d.status, d.mode, d.strategy_version_id,
-                      w.id AS desk_id, w.name AS desk_name, r.role
+                      w.id AS desk_id, w.name AS desk_name, r.role,
+                      EXISTS (SELECT 1 FROM pf_positions p WHERE p.deployment_id=d.id AND p.mode='BROKER' AND p.quantity <> 0) AS broker_open,
+                      EXISTS (SELECT 1 FROM oms_orders o WHERE o.deployment_id=d.id AND o.mode='BROKER' AND o.state = ANY(%s)) AS broker_orders
                FROM cfg_deployments d LEFT JOIN ws_runs r ON r.deployment_id=d.id AND r.role IN ('OWNED','ADOPTED')
                LEFT JOIN ws_workspaces w ON w.id=r.workspace_id
                WHERE d.strategy_id = ANY(%s) AND d.instrument_id = ANY(%s) AND d.account_id = ANY(%s)""",
-            (list(chosen), list(data), usable_acc)).fetchall()}
+            (list(oms.OPEN), list(chosen), list(data), usable_acc)).fetchall()}
         no_trade = []
         for sid, v in chosen.items():
             for i, m in data.items():
@@ -432,9 +434,16 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                     elif e['desk_id']:
                         runs.append({**base, 'action': 'WATCH', 'deployment_id': str(e['id']), 'controlled_by': e['desk_name'],
                                      'reason': f"Runs in “{e['desk_name']}”: only one workspace may control it; watched here"})
-                    elif e['mode'] != mode:
+                    elif e['mode'] != mode and e['mode'] == 'BROKER' and (e['broker_open'] or e['broker_orders']):
                         runs.append({**base, 'action': 'WATCH', 'deployment_id': str(e['id']),
-                                     'reason': f"An existing {e['mode'].lower()} deployment, not {mode.lower()}: watched here, not adopted"})
+                                     'reason': 'An existing broker deployment with an open broker position or working order: close them '
+                                               'before it can move to paper; watched here'})
+                    elif e['mode'] != mode:
+                        target = {'PAPER': 'paper', 'BROKER': f"broker {env}"}[mode]
+                        runs.append({**base, 'action': 'ADOPT', 'deployment_id': str(e['id']), 'status': e['status'],
+                                     'switch_mode': True, 'from_mode': e['mode'],
+                                     'reason': f"An existing {e['mode'].lower()} deployment outside any workspace: adopt it and move it to "
+                                               f"{target} to run it here (asked at Start), or leave it watched"})
                     else:
                         runs.append({**base, 'action': 'ADOPT', 'deployment_id': str(e['id']), 'status': e['status'],
                                      'reason': f"An existing {e['status'].lower()} deployment outside any workspace: adopt it to control it here, or watch it"})
@@ -449,13 +458,20 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
                   'They are watched here. Stop them there, or remove them from that workspace, to run them here.')
         adoptable = [r for r in runs if r['action'] == 'ADOPT']
         if adoptable:
+            moving = [r for r in adoptable if r.get('switch_mode')]
             check('Ownership', 'WARN', f'{len(adoptable)} existing deployment(s) can be adopted',
-                  'Start asks you to confirm each one; unconfirmed ones are watched, not changed.')
+                  'Start asks you to confirm each one; unconfirmed ones are watched, not changed.'
+                  + (f" {len(moving)} of them run in another mode ({', '.join(sorted({r['from_mode'].lower() for r in moving}))}); adopting moves "
+                     f"them to {'paper' if mode == 'PAPER' else 'broker ' + env}." if moving else ''),
+                  'Tick them in the Start window to run them from this workspace.')
         if not watched and not adoptable:
             check('Ownership', 'PASS', 'No other workspace controls these runs')
     controllable = [r for r in runs if r['action'] in ('CREATE', 'KEEP', 'ADOPT')]
     if chosen and data and usable_acc and not controllable:
-        check('Ownership', 'FAIL', 'Nothing to run', 'Every combination is controlled elsewhere, ended, or cannot be traded on these accounts.')
+        why = '; '.join(f"{r['strategy_code']} × {r['symbol']} × {r['account_code']}: {r['reason']}" for r in runs[:6]) \
+            or 'No instrument can be traded on these accounts (no trading symbol).'
+        check('Ownership', 'FAIL', 'Nothing to run', why,
+              'Stop it in the workspace that controls it, delete an ended deployment in Strategies, or map the trading symbol.', 'Strategies')
     order = {'FAIL': 0, 'WARN': 1, 'PASS': 2}
     checks.sort(key=lambda c: (['Input', 'Market data', 'Processing', 'Risk', 'Output', 'Ownership'].index(c['stage']), order[c['status']]))
     return {
@@ -613,6 +629,13 @@ def _converge(db, desk: dict, cfg: Config, result: dict, actor: str, adopt: set[
                        (str(desk['id']), dep_id, r['status'], actor))
             store.audit(db, actor, 'ADOPT', 'deployment', dep_id, None, {'workspace': str(desk['id']), 'prior_status': r['status']},
                         f"Adopted by workspace {desk['name']} with confirmation")
+            if r.get('switch_mode'):
+                before = dict(db.execute('SELECT * FROM cfg_deployments WHERE id=%s FOR UPDATE', (dep_id,)).fetchone())
+                after = dict(db.execute('UPDATE cfg_deployments SET mode=%s, version=version+1, updated_at=now() WHERE id=%s RETURNING *',
+                                        (mode, dep_id)).fetchone())
+                store.audit(db, actor, 'UPDATE', 'deployment', dep_id, before, after,
+                            f"Moved from {before['mode'].lower()} to {mode.lower()} on adoption by workspace {desk['name']} (confirmed)")
+                out['updated'].append(dep_id)
             out['adopted'].append(dep_id)
             wanted.add(dep_id)
         elif r['action'] in ('ADOPT', 'WATCH'):
@@ -662,6 +685,9 @@ def start(db, user, desk_id: UUID, data: StartIn) -> dict:
     unknown = adopt - {r['deployment_id'] for r in result['runs'] if r['action'] == 'ADOPT'}
     if unknown:
         raise HTTPException(409, 'A deployment to adopt is no longer adoptable. Validate again.')
+    if not any(r['action'] in ('CREATE', 'KEEP') for r in result['runs']) and not adopt:
+        raise HTTPException(422, 'Nothing would run: every run here already exists outside this workspace. '
+                                 'Tick the deployments to adopt in the Start window.')
     done = _converge(db, desk, cfg, result, user.username, adopt, True, data.reason)
     after = dict(db.execute("""UPDATE ws_workspaces SET state='RUNNING', state_reason=%s, state_by=%s, state_at=now(), last_check=%s,
                                version=version+1, updated_at=now() WHERE id=%s RETURNING *""",

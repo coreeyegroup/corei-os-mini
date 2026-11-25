@@ -36,7 +36,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    return {ready,environment:cfg.output.environment,handoff:cfg.output.environment==='OBSERVE'?'SIGNAL_ONLY':cfg.output.handoff,
      checks:ready?[{stage:'Input',status:'PASS',title:'Sources · VTM_L3',detail:'',fix:'',view:''},{stage:'Ownership',status:'WARN',title:'1 existing deployment(s) can be adopted',detail:'',fix:'',view:''}]
        :[{stage:'Input',status:'FAIL',title:'Choose at least one data source',detail:'Without a data source no run has prices or bars.',fix:'Add a source under Input → Data sources.',view:'Market data'}],
-     runs:ready?[{action:'ADOPT',deployment_id:'dep-x',strategy_code:'EMA_FAST',version_number:1,symbol:'EURUSD',account_code:'VTM_A',status:'PAUSED'}]:[],
+     runs:ready?[{action:'ADOPT',deployment_id:'dep-x',strategy_code:'EMA_FAST',version_number:1,symbol:'EURUSD',account_code:'VTM_A',status:'PAUSED',switch_mode:cfg.output.environment!=='PAPER',from_mode:'PAPER'}]:[],mode:cfg.output.environment==='PAPER'||cfg.output.environment==='OBSERVE'?'PAPER':'BROKER',
      coverage:{instruments:[ready?1:0,cfg.input.instruments.length],strategies:[ready?1:0,cfg.processing.strategies.length],accounts:[ready?1:0,cfg.output.accounts.length],timeframes:ready?['M5']:[],create:0,keep:0,adopt:ready?1:0,watch:0,skip:0}};};
  let deskScan=null;
  let mappedStatus='ACTIVE';
@@ -572,6 +572,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(typeof saved.body.config.processing.sizing.quantity,'string','sizes stay exact text, never a float');
  assert.match($('[aria-label="Start workspace"]').textContent,/Existing deployments outside any workspace.*Adopt EMA_FAST v1 × EURUSD × VTM_A/);
  assert.match($('[aria-label="Start workspace"]').textContent,/Watch 1 run\(s\) without controlling them/);
+ assert.match($('[aria-label="Start workspace"]').textContent,/Tick at least one to adopt/,'nothing ticked: says Start would have nothing to run');
  $$('[aria-label="Start workspace"] .dk-radio').find(l=>l.textContent.includes('Adopt EMA_FAST')).querySelector('input').click();await settle(3);
  assert.match($('[aria-label="Start workspace"]').textContent,/Adopt and activate 1 existing deployment/);
  $$('[aria-label="Start workspace"] button').find(b=>b.textContent==='Start').click();await settle(8);

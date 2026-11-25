@@ -279,7 +279,10 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
       {adoptable.length > 0 && <fieldset><legend>Existing deployments outside any workspace</legend>
         <p className="cfg-note">Tick the ones this workspace should control. Unticked ones are only watched here and are not changed.</p>
         {adoptable.map((r: Row) => <label key={r.deployment_id} className="dk-radio"><input type="checkbox" checked={adopt.includes(r.deployment_id)}
-          onChange={() => setAdopt(a => toggle(a, r.deployment_id))} /> Adopt {r.strategy_code} v{r.version_number} × {r.symbol} × {r.account_code} ({plain(r.status)})</label>)}</fieldset>}
+          onChange={() => setAdopt(a => toggle(a, r.deployment_id))} /> Adopt {r.strategy_code} v{r.version_number} × {r.symbol} × {r.account_code} ({plain(r.status)})
+          {r.switch_mode && <b className="dk-warn"> · moves it from {plain(r.from_mode)} to {check?.mode === 'PAPER' ? 'paper' : `broker ${plain(check?.environment)}${check?.environment === 'DEMO' ? ' (real demo orders)' : ' (real money)'}`}</b>}</label>)}</fieldset>}
+      {check && check.ready && adoptable.length > 0 && !adopt.length && !(check.coverage.create + check.coverage.keep) &&
+        <p role="alert" className="cfg-error">Every run here already exists outside this workspace. Tick at least one to adopt, or Start has nothing to run.</p>}
       {check && <div className="dk-will"><b>What Start will do</b><ul>
         {check.coverage.create > 0 && <li>Create and activate {check.coverage.create} run(s) owned by this workspace.</li>}
         {check.coverage.keep > 0 && <li>Activate {check.coverage.keep} run(s) it already owns.</li>}

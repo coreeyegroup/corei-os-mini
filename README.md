@@ -1400,5 +1400,9 @@ Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/de
   waiting for Validate.
 - A too-short reason for Pause, Stop or Emergency stop now says so; before, nothing happened.
 - Draft strategies are listed after approved ones and say they cannot run until a version is approved in Strategies.
-- After a save, Start always sends the current workspace version, so there are no spurious "changed by someone else" errors.
+- After a save, Start always sends the current workspace version, so there are no spurious "changed by someone else" errors.- **Adopt across modes.** An existing deployment in another mode, such as Paper while the desk is Broker DEMO, can now be
+  adopted. You tick it in the Start window, which says it will move (for example "moves it from paper to broker demo (real
+  demo orders)"). A broker run with an open broker position or working order is never moved to paper.
+- **No empty start.** "Nothing to run" names each combination and its exact reason. Start refuses when nothing would run;
+  before, the desk could start while controlling nothing.
 
