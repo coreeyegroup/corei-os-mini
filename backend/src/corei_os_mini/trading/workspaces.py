@@ -1,6 +1,6 @@
 """Saved operator layouts and a scoped read model for the trading lifecycle."""
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
@@ -23,6 +23,15 @@ class Panel(WorkspaceModel):
     wide: bool = False
 
 
+class WorkspaceScan(WorkspaceModel):
+    instrument_symbols: list[str] = Field(default_factory=list)
+    strategy_codes: list[str] = Field(default_factory=list)
+    grouping: Literal['instrument', 'strategy'] = 'instrument'
+    entry_lookback: int = Field(1, ge=1, le=20)
+    stop_atr: str = '1.5'
+    reward_risk: str = '2'
+
+
 class Workspace(WorkspaceModel):
     number: int = Field(ge=1)
     name: str = Field(max_length=80)
@@ -34,6 +43,7 @@ class Workspace(WorkspaceModel):
     source: UUID | None = None
     symbol: str = Field(default='', max_length=200)
     panels: Annotated[list[Panel], Field(min_length=8, max_length=8)]
+    scan: WorkspaceScan | None = None
 
 
 class Layouts(WorkspaceModel):
@@ -68,6 +78,92 @@ def save_layouts(db, username, data: Layouts):
     if not row:
         raise HTTPException(409, 'This workspace was updated elsewhere. Reload your saved layouts before editing again.')
     return row['value']
+
+
+def _scan_key(number):
+    return f'trading-workspace-scan.v1:{number}'
+
+
+def _saved_workspace(db, username, number, lock=False):
+    row = db.execute(
+        'SELECT value FROM cfg_user_prefs WHERE username=%s AND key=%s' + (' FOR UPDATE' if lock else ''),
+        (username, PREF_KEY)).fetchone()
+    if row:
+        layout = Layouts.model_validate(row['value'])
+        selected = next((item for item in layout.items if item.number == number), None)
+        if selected:
+            return layout, selected
+    raise HTTPException(404, 'Save this workspace first.')
+
+
+def _scan_row(db, username, number):
+    return db.execute("""
+        SELECT r.* FROM cfg_user_prefs p JOIN studio_scan_runs r
+        ON r.id::text=p.value->>'run_id' AND r.operator=p.username
+        WHERE p.username=%s AND p.key=%s
+    """, (username, _scan_key(number))).fetchone()
+
+
+def scan_status(db, username, number):
+    from ..strategy_scan_runs import _public
+    _saved_workspace(db, username, number)
+    row = _scan_row(db, username, number)
+    return _public(row) if row else None
+
+
+def start_scan(db, username, number, revision):
+    """Enqueue exactly one read-only research job per saved desk, not a deployment."""
+    from ..strategy_studio import SignalScanIn, resolve_scan_scope
+    from ..strategy_scan_runs import _json, _public
+    from pydantic import ValidationError
+
+    layout, desk = _saved_workspace(db, username, number, True)
+    if layout.revision != revision:
+        raise HTTPException(409, 'Workspace changed. Reload before starting.')
+    prior = _scan_row(db, username, number)
+    if prior and prior['status'] in ('QUEUED', 'RUNNING'):
+        raise HTTPException(409, 'This workspace already has an active scan.')
+    if not desk.scan or not desk.scan.instrument_symbols or not desk.scan.strategy_codes:
+        raise HTTPException(422, 'Select and save instruments and strategies.')
+    try:
+        request = SignalScanIn.model_validate(desk.scan.model_dump(exclude={'grouping'}))
+    except ValidationError:
+        raise HTTPException(422, 'Invalid scan selections or protection settings.') from None
+    instruments, strategies = resolve_scan_scope(db, request)
+    if not instruments or not strategies:
+        raise HTTPException(422, 'No active instruments or strategies.')
+    row = db.execute("""
+        INSERT INTO studio_scan_runs (id,operator,mode,request,instruments,strategies,name)
+        VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *
+    """, (uuid4(), username, desk.scan.grouping, _json(request.model_dump(mode='json')),
+          _json(instruments), _json(strategies), f'Desk {number}: {desk.name}'[:80])).fetchone()
+    db.execute("""
+        INSERT INTO cfg_user_prefs (username,key,value) VALUES (%s,%s,%s)
+        ON CONFLICT(username,key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()
+    """, (username, _scan_key(number), Jsonb({'run_id': str(row['id'])})))
+    return _public(row)
+
+
+def scan_action(db, username, number, run_id, action):
+    """Operate on the exact workspace-owned run only."""
+    from ..strategy_scan_runs import _public
+    _saved_workspace(db, username, number, True)
+    row = _scan_row(db, username, number)
+    if not row or row['id'] != run_id:
+        raise HTTPException(409, 'Workspace scan changed. Refresh before acting.')
+    if action == 'cancel':
+        changed = db.execute("""
+            UPDATE studio_scan_runs SET status='CANCELLED',updated_at=now()
+            WHERE id=%s AND operator=%s AND status IN ('QUEUED','RUNNING') RETURNING *
+        """, (run_id, username)).fetchone()
+    else:
+        changed = db.execute("""
+            UPDATE studio_scan_runs SET status='QUEUED',failure=NULL,updated_at=now()
+            WHERE id=%s AND operator=%s AND status IN ('FAILED','CANCELLED') RETURNING *
+        """, (run_id, username)).fetchone()
+    if not changed:
+        raise HTTPException(409, 'This scan cannot perform that action.')
+    return _public(changed)
 
 
 def catalogue(db):

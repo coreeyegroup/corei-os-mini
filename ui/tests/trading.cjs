@@ -191,7 +191,8 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      savedWorkspaces={...body,revision:body.revision+1};return ok(savedWorkspaces);
    }
    if(url.endsWith('/trading/workspaces'))return ok(savedWorkspaces);
-   if(url.endsWith('/trading/workspaces/catalogue'))return ok({
+   if(/\/trading\/workspaces\/\d+\/scan$/.test(url))return ok(null);
+    if(url.endsWith('/trading/workspaces/catalogue'))return ok({
      accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
      instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
    if(url.includes('/trading/workspaces/snapshot')){
@@ -500,6 +501,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  // Saved workspace scope and numbered layouts, including a LIVE ticket handoff without submitting it.
  await go('My Workspaces');
  assert.ok(button('My Workspace 1'));
+  assert.ok($('.mw-control-grid'));
+  assert.ok(button('Start scan').disabled,'empty workspace must not start an evaluation');
+  assert.match($('.mw-control').textContent,/Read-only opportunities/);
  fill($('.mw-scope label:nth-of-type(1) select'),'LIVE');await settle(4);
  assert.deepEqual([...$('.mw-scope label:nth-of-type(2) select').options].map(o=>o.value),['','a2']);
  fill($('.mw-scope label:nth-of-type(2) select'),'a2');fill($('.mw-scope input'),'EURUSD');await settle(6);

@@ -62,3 +62,23 @@ button.mw-panel-heading {
 @media (max-width: 760px) {
   .mw-panels { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Isolated My Workspaces control desk. */
+.my-workspaces .mw-control { border:1px solid var(--line,#788290); border-radius:4px; padding:8px; display:grid; gap:8px; min-width:0; }
+.my-workspaces .mw-control-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; align-items:start; }
+.my-workspaces .mw-control-grid fieldset { border:1px solid var(--line,#788290); min-width:0; margin:0; padding:8px; display:grid; gap:6px; }
+.my-workspaces .mw-control-grid legend { font-weight:600; }
+.my-workspaces .mw-control-grid label { display:flex; gap:6px; justify-content:space-between; align-items:center; }
+.my-workspaces .mw-control-grid label strong { text-align:end; font-weight:500; }
+.my-workspaces .mw-picker { min-width:0; }
+.my-workspaces .mw-picker summary { cursor:pointer; padding:4px 0; }
+.my-workspaces .mw-picker > input { width:100%; margin:4px 0; }
+.my-workspaces .mw-picker-list { max-height:168px; overflow:auto; display:grid; gap:3px; margin:5px 0; }
+.my-workspaces .mw-picker-list label { justify-content:start; overflow-wrap:anywhere; }
+.my-workspaces .mw-control-grid input[type=number] { width:85px; }
+.my-workspaces .mw-readiness { padding:6px; border:1px solid var(--line,#788290); }
+.my-workspaces .mw-scan-results { display:grid; gap:6px; min-width:0; }
+.my-workspaces .mw-results-scroll { overflow:auto; max-height:300px; }
+.my-workspaces .mw-results-scroll table { width:100%; border-collapse:collapse; white-space:nowrap; font-size:inherit; }
+.my-workspaces .mw-results-scroll th,.my-workspaces .mw-results-scroll td { padding:4px 6px; border-bottom:1px solid var(--line,#788290); text-align:start; }
+@media(max-width:900px){.my-workspaces .mw-control-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));}}
