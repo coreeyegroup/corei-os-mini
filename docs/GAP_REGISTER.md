@@ -198,7 +198,7 @@ Waves 1–3 and their acceptance criteria: COREI-OS-MINI Final Build Specificati
 ## F. Stage 1 · Market data — 23 Nov 2026 audit (release 0.54.0)
 
 Source: COREI-OS-MINI Stage 1 Market Data: Deep Audit and Polish Plan (claude.ai doc Py38xF5fdsmfxqodMzh1Ab). Evidence:
-`backend/tests/test_market_data_stage1.py`. Migration `044_market_data_integrity.sql`.
+`backend/tests/test_market_data_stage1.py`. Migration `045_market_data_integrity.sql`.
 
 | ID | Gap | Status | Evidence |
 |---|---|---|---|
@@ -224,7 +224,7 @@ Source: COREI-OS-MINI Stage 1 Market Data: Deep Audit and Polish Plan (claude.ai
 ## G. Stage 2 · Market intelligence — 23 Nov 2026 audit (release 0.55.0)
 
 Source: COREI-OS-MINI Stage 2 Market Intelligence: Deep Audit and Polish Plan (claude.ai doc JZc1YUzEQq66yzMJhX8cJe).
-Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `045_market_intelligence_integrity.sql`.
+Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `046_market_intelligence_integrity.sql`.
 
 | ID | Gap | Status | Evidence |
 |---|---|---|---|
@@ -249,7 +249,7 @@ Evidence: `backend/tests/test_intelligence_stage2.py`. Migration `045_market_int
 ## H. Stage 3 · Signal intelligence — 24 Nov 2026 audit (release 0.56.0)
 
 Source: COREI-OS-MINI Stage 3 Signal Intelligence: Deep Audit and Build (claude.ai doc 3fyTWBacW6JJF8fM7ZurtN).
-Evidence: `backend/tests/test_signal_stage3.py`. Migration `046_signal_intelligence_integrity.sql`.
+Evidence: `backend/tests/test_signal_stage3.py`. Migration `047_signal_intelligence_integrity.sql`.
 
 | ID | Gap | Status | Evidence |
 |---|---|---|---|

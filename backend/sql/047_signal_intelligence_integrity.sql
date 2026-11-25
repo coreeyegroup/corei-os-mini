@@ -1,4 +1,4 @@
--- 046 · Stage 3 Signal intelligence integrity (release 0.56.0).
+-- 047 · Stage 3 Signal intelligence integrity (release 0.56.0).
 -- Why: the 24 Nov 2026 Signal Intelligence audit found ~900 side flips a day on M5 for four instruments (scores wobbling
 -- around the threshold) and flips that could not be traced to the definition version that produced them.
 -- Additive: no exit threshold = the behaviour before (one threshold for entering and leaving a side).

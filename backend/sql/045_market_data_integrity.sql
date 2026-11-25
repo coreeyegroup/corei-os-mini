@@ -1,4 +1,4 @@
--- 044 · Stage 1 Market data integrity (release 0.54.0).
+-- 045 · Stage 1 Market data integrity (release 0.54.0).
 -- Why: the 23 Nov 2026 Market Data audit found plans that collect nothing still shown as "collecting" (a symbol the
 -- broker does not know), bars bucketed by receipt time and aligned to UTC instead of the exchange session, Upstox's
 -- day-volume summed per quote, and feed quality never reaching trading decisions.

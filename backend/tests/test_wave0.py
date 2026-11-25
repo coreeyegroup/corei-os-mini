@@ -413,5 +413,6 @@ class Wave0(te.Execution):
         from pathlib import Path
         ws = self.alice.get('/api/workstation').json()
         self.assertEqual(ws['release'], (Path(__file__).resolve().parents[2] / 'VERSION').read_text().strip())
-        self.assertTrue(ws['schema'].startswith('043_') or ws['schema'] == 'unknown', ws['schema'])
+        latest = sorted((Path(__file__).resolve().parents[1] / 'sql').glob('*.sql'))[-1].name
+        self.assertIn(ws['schema'], (latest, 'unknown'), ws['schema'])
         self.assertTrue(ws['commit'])

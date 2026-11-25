@@ -1,4 +1,4 @@
--- 043 · Wave 0 financial integrity (release 0.53.0).
+-- 044 · Wave 0 financial integrity (release 0.53.0).
 -- Why: reconciliation needs a verified interval per account (a deal older than a fixed window must still be checked,
 -- and a break may close only on positive evidence); each run records which datasets it actually compared; risk
 -- decisions keep the book, valuation and capital basis they used; LIVE policy exceptions are explicit and expire;

@@ -1,4 +1,4 @@
-"""Stage 2 · Market intelligence integrity (release 0.55.0, migration 045): session-aligned resampling shared with
+"""Stage 2 · Market intelligence integrity (release 0.55.0, migration 046): session-aligned resampling shared with
 Stage 1, the bar-source policy (a broker series that stopped is continued, not preferred), freshness by the market's
 hours, market-aware volatility and session VWAP, the regime filter (entries only; exits always pass), event risk for
 exchange markets, rule preview, Upstox holiday import and the one-run-at-a-time lock. PostgreSQL tests need

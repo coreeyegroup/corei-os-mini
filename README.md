@@ -1215,7 +1215,7 @@ Steadier screens:
 ## Financial integrity and the pre-LIVE policy (Wave 0) — release 0.53.0
 
 Closes the safety and money defects found by the 23 Nov 2026 audits (Claude and ChatGPT, commit 673ccf3). Migration
-`043_wave0_financial_integrity.sql` (additive). Tests: `backend/tests/test_wave0.py` (13 cases, PostgreSQL).
+`044_wave0_financial_integrity.sql` (additive). Tests: `backend/tests/test_wave0.py` (13 cases, PostgreSQL).
 
 - **Paper never moves a broker decision.** Equity, daily P&L, exposure, margin, VaR and drawdown are taken from the
   order's own book (PAPER or BROKER). Account-wide figures are labelled *ALL* and used only for reporting. Equity
@@ -1275,7 +1275,7 @@ scope, the optional interface is unavailable.
 <<<<<<< HEAD
 ## Market data means what it says (Stage 1) — release 0.54.0
 
-Closes the live defects of the 23 Nov 2026 Market Data audit. Migration `044_market_data_integrity.sql` (additive).
+Closes the live defects of the 23 Nov 2026 Market Data audit. Migration `045_market_data_integrity.sql` (additive).
 Tests: `backend/tests/test_market_data_stage1.py`.
 
 - **Plan health in words.** Every active plan shows one state: live, market closed, waiting, delayed, unreliable,
@@ -1330,7 +1330,7 @@ Update: `git pull --ff-only origin main`, `bash scripts/configure-workstation-da
 
 ## Market intelligence describes the market it comes from (Stage 2) — release 0.55.0
 
-Closes the defects of the 23 Nov 2026 Market Intelligence audit. Migration `045_market_intelligence_integrity.sql`
+Closes the defects of the 23 Nov 2026 Market Intelligence audit. Migration `046_market_intelligence_integrity.sql`
 (additive). Tests: `backend/tests/test_intelligence_stage2.py`.
 
 - **No more week-old daily trends.** When the broker's own bars stop (a backfilled D1, say), their history is continued
@@ -1355,7 +1355,7 @@ Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/de
 
 ## Signals you can believe (Stage 3) — release 0.56.0
 
-Closes the defects of the 24 Nov 2026 Signal Intelligence audit. Migration `046_signal_intelligence_integrity.sql`
+Closes the defects of the 24 Nov 2026 Signal Intelligence audit. Migration `047_signal_intelligence_integrity.sql`
 (additive). Tests: `backend/tests/test_signal_stage3.py`.
 
 - **Fewer false flips.** Each library signal can have an *exit threshold*: a side, once taken, is held until the score

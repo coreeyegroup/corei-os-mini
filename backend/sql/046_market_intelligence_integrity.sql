@@ -1,4 +1,4 @@
--- 045 · Stage 2 Market intelligence integrity (release 0.55.0).
+-- 046 · Stage 2 Market intelligence integrity (release 0.55.0).
 -- Why: the 23 Nov 2026 Market Intelligence audit found week-old broker D1 bars shown as current, freshness measured by
 -- recompute time, UTC-cut Indian hours, and no exchange holidays in the calendar.
 -- Additive: feature version 4 starts its own history (older versions are kept and still readable).

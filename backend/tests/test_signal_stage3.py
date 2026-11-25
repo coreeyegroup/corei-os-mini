@@ -1,4 +1,4 @@
-"""Stage 3 · Signal intelligence integrity (release 0.56.0, migration 046): hysteresis (an exit threshold keeps a side
+"""Stage 3 · Signal intelligence integrity (release 0.56.0, migration 047): hysteresis (an exit threshold keeps a side
 until the score falls back, cutting flips), honest research (overlapping returns counted as n ÷ h, an out-of-sample
 check before PREDICTIVE, edge net of the spread, multiple-testing note), stale scores left out of the consensus, and
 strategy-signal quality net of the spread paid. PostgreSQL tests need COREI_TEST_DATABASE_URL."""

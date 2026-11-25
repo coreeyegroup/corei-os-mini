@@ -1,4 +1,4 @@
-"""Stage 1 · Market data integrity (release 0.54.0, migration 044): session-anchored bars on exchange time, last-price
+"""Stage 1 · Market data integrity (release 0.54.0, migration 045): session-anchored bars on exchange time, last-price
 bars and exchange volume for exchange instruments, plan health (a symbol the source does not list is caught, left
 out and explained), backfill failure memory, symbols on every event, the feed gate in the risk check, and the
 Upstox reader setting aside a rejected key. PostgreSQL tests need COREI_TEST_DATABASE_URL."""
