@@ -837,9 +837,9 @@ def set_execution_control(actor: str, environment: str, enabled: bool, reason: s
         if enabled and environment == 'LIVE':
             from .trading import readiness
             readiness.require_live_policy(db)  # limits, four-eyes, a second approver, an alert channel (or a recorded exception)
-        if enabled and environment == 'DEMO':
-            from .trading import governance
-            governance.require_demo_minimum(db)  # the risk-minimum profile's limits on every DEMO trading account
+        if enabled and environment in ('DEMO', 'LIVE'):
+            from .trading import setup_gates
+            setup_gates.enforce(db, 'switching order sending on', environment)  # Setup gates 1–7 at their chosen levels
         after = db.execute('UPDATE cfg_execution_controls SET trading_enabled=%s, reason=%s, updated_by=%s, '
                            'updated_at=now(), version=version+1 WHERE environment=%s RETURNING *',
                            (enabled, reason, actor, environment)).fetchone()

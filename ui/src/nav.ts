@@ -278,13 +278,23 @@ export const ago = (v?: number | string | null) => { const s = v == null || v ==
 
 /* Setup, in the order a firm sets itself up. One tree, used by the side bar and the Setup screen;
  * the three record lists behind "Connectivity" are views of that one screen. */
+/** Setup in the order the work is done: set up, connect, markets, risk, strategies, run, settings, admin. An id
+ * "@View:section" opens that stage's own page (one home per object; Setup links to it rather than copying it). */
 export const SETUP_GROUPS: [string, [string, string][]][] = [
-  ['1 · Connect', [['brokers', 'Connectivity'], ['bridges', 'Bridge nodes'], ['groups', 'Account groups']]],
-  ['2 · Instruments', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings']]],
-  ['3 · Strategies', [['strategies', 'Strategies'], ['deployments', 'Deployments']]],
-  ['4 · Controls', [['controls', 'Order sending'], ['approvals', 'Approvals'], ['alerts', 'Alerts']]],
-  ['5 · Administration', [['users', 'Users'], ['audit', 'Audit log'], ['database', 'Database']]],
+  ['1 · Setup', [['guide', 'Setup path'], ['health', 'Readiness per account'], ['gates', 'Gates & overrides']]],
+  ['2 · Connect', [['brokers', 'Connectivity map'], ['providers', 'Providers'], ['connections', 'Servers'], ['accounts', 'Accounts'], ['bridges', 'Bridge nodes'], ['groups', 'Account groups']]],
+  ['3 · Markets', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings'], ['@Market data:plans', 'Market data plans ↗']]],
+  ['4 · Risk', [['@Risk:limits', 'Profiles & limits ↗'], ['@Risk:kill', 'Kill switches ↗']]],
+  ['5 · Strategies', [['strategies', 'Strategies & evidence'], ['deployments', 'Deployments']]],
+  ['6 · Run', [['@My Workspaces:desks', 'Workspaces ↗'], ['controls', 'Order sending']]],
+  ['7 · Settings', [['approvals', 'Approvals (four-eyes)'], ['alerts', 'Alerts'], ['users', 'Users & roles']]],
+  ['8 · Admin', [['audit', 'Audit log'], ['database', 'Database']]],
 ];
+/** Open a Setup menu item: a Setup section, or another stage's page for "@View:section". */
+export function openSetupItem(id: string, local: (id: string) => void) {
+  if (id.startsWith('@')) { const [view, section] = id.slice(1).split(':'); goto(view as View, section); return; }
+  local(id);
+}
 /** Market intelligence, in the order an analyst works: look, analyse, watch, configure. */
 export const INTEL_GROUPS: [string, [string, string][]][] = [
   ['Overview', [['workspace', 'All panels'], ['dashboard', 'Dashboard'], ['screener', 'Screener'], ['instrument', 'Instrument']]],
@@ -294,4 +304,4 @@ export const INTEL_GROUPS: [string, [string, string][]][] = [
 ];
 export const BROKER_VIEWS = ['brokers', 'providers', 'connections', 'accounts'] as const;
 /** The side-bar row a Setup section belongs to (the record lists highlight "Connectivity"). */
-export const setupRowOf = (section: string) => (BROKER_VIEWS as readonly string[]).includes(section) ? 'brokers' : section;
+export const setupRowOf = (section: string) => section;

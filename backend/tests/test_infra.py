@@ -34,6 +34,7 @@ class Infrastructure(unittest.TestCase):
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
             db.execute("UPDATE cfg_policies SET value='{\"profile\": \"NONE\", \"overrides\": {}}' WHERE key IN ('strategy_evidence', 'risk_minimum')")  # tests before 0.58: no gate; governance tests choose a profile
+            db.execute("UPDATE cfg_policies SET value=jsonb_set(value, '{preset}', '\"ALL_OFF\"') WHERE key='setup_gates'")  # tests before 0.59: gates off; gate tests choose
             for name, roles in (('alice', ['ADMIN', 'TRADING_OPS']), ('olly', ['TRADING_OPS'])):
                 db.execute("INSERT INTO cfg_users(id, username, display_name, password_hash, roles, must_change_password) "
                            "VALUES (%s,%s,%s,%s,%s,false)", (uuid4(), name, name.title(), hash_password(PASSWORD), roles))

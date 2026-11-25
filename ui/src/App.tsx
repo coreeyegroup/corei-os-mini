@@ -189,6 +189,8 @@ export default function App() {
     };
   }, []);
   const [overview,setOverview]=useState<OverviewData|null>(null),[signedOut,setSignedOut]=useState(false);
+  // Setup landing: until the firm's target track is set up, a session opened without a chosen view starts on the Setup path.
+  const [setupState,setSetupState]=useState<{land_on_setup:boolean;done:number;total:number;target_track:string;overrides:number}|null>(null);
   async function loadOverview(){
     try{const d=await api('config/overview');
       // Show status only from a well-formed answer; anything else leaves the last good one.
@@ -240,6 +242,18 @@ export default function App() {
   }
   /* Show a view as its own workspace (as in VS Code): focus it where it is already open, otherwise open it as a new
    * tab of the focused group — the screens already open stay open, each keeping its own state. */
+  useEffect(()=>{
+    if(!overview) return;
+    let stop=false;
+    const load=()=>api('trading/setup/landing').then(r=>{if(!stop)setSetupState(r);}).catch(()=>undefined);
+    void load(); const t=setInterval(load,60_000);
+    return ()=>{stop=true;clearInterval(t);};
+  },[!!overview]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{
+    if(!setupState?.land_on_setup||launch.view) return;
+    try{ if(sessionStorage.getItem('corei-os-mini.setup.landed')) return; sessionStorage.setItem('corei-os-mini.setup.landed','1'); }catch{ /* storage may be unavailable: land every time */ }
+    goto('Configuration','guide'); go('Configuration');
+  },[setupState?.land_on_setup]); // eslint-disable-line react-hooks/exhaustive-deps
   function go(view: View) {
     const at = layout.groups.findIndex(g => g.includes(view));
     open(view, at >= 0 ? at : layout.focus);
@@ -465,6 +479,8 @@ export default function App() {
             <button className={`chip ${live.includes('LIVE')?'live':''}`} title={overview.order_adapter===false&&live.length?'Order sending is switched ON, but no order adapter is built: nothing can be sent yet':'Order sending (firm-wide switch)'} onClick={()=>{goto('Configuration','controls');go('Configuration');}}>
               Orders {live.length?`ON · ${live.join(', ')}${overview.order_adapter===false?' · no adapter':''}`:'OFF'}</button>
             {overview.approvals>0 && <button className="chip warn" onClick={()=>{goto('Configuration','approvals');go('Configuration');}}>Approvals {overview.approvals}</button>}
+            {setupState?.total ? <button className={`chip ${setupState.land_on_setup?'warn':'ok'}`} title={`Setup of the ${setupState.target_track} track: ${setupState.done} of ${setupState.total} steps done${setupState.overrides?`; ${setupState.overrides} override(s) active`:''}`} onClick={()=>{goto('Configuration','guide');go('Configuration');}}>
+              Setup {setupState.target_track} {setupState.done}/{setupState.total}{setupState.overrides?` · ${setupState.overrides} override${setupState.overrides>1?'s':''}`:''}</button> : null}
           </>}
         </div>
         {overview && <span className="top-user" title={overview.user.roles.join(', ')}>{overview.user.username}</span>}

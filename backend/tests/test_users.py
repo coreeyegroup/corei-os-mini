@@ -29,6 +29,7 @@ class UsersAndRolesTests(unittest.TestCase):
             for path in sorted((Path(__file__).parents[1] / 'sql').glob('[0-9][0-9][0-9]_*.sql')):
                 db.execute(path.read_text())
             db.execute("UPDATE cfg_policies SET value='{\"profile\": \"NONE\", \"overrides\": {}}' WHERE key IN ('strategy_evidence', 'risk_minimum')")  # tests before 0.58: no gate; governance tests choose a profile
+            db.execute("UPDATE cfg_policies SET value=jsonb_set(value, '{preset}', '\"ALL_OFF\"') WHERE key='setup_gates'")  # tests before 0.59: gates off; gate tests choose
         self.patches = [patch('corei_os_mini.config_store._connect', self.connect),
                         patch.dict(os.environ, {'COREI_OPERATOR_USER': 'Owner', 'COREI_OPERATOR_PASSWORD_HASH': hash_password(BOOT_PASSWORD)})]
         for p in self.patches:

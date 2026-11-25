@@ -381,12 +381,17 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
         check('Output', 'FAIL', f'{env} order sending is off',
               'LIVE order sending is an owner control; a workspace never turns it on.' if env == 'LIVE' else 'DEMO order sending is off in Controls.',
               'An authorised owner switches it on in Setup → Controls, or choose Observe or Paper.', 'Configuration')
-    if env == 'DEMO' and usable_acc:
-        from . import governance
-        unmet = governance.demo_unmet(db, usable_acc)
-        if unmet:
-            check('Risk', 'FAIL', 'Minimum risk limits are missing', '; '.join(u['detail'] for u in unmet),
-                  'Risk › Limits › Apply a profile (Retail, Professional or Institutional), or add the limits by hand.', 'Risk')
+    if usable_acc and data and chosen:
+        from . import setup_gates
+        gates = setup_gates.check(db, 'PAPER' if mode == 'PAPER' else env, accounts=usable_acc, instruments=list(data), strategies=list(chosen))
+        for b in gates['blocking']:
+            check('Setup', 'FAIL', f"Setup gate: {b['name']} ({b['level'].lower()})", '; '.join(i['text'] for i in b['items'][:4]),
+                  b['items'][0]['fix'] + (' Or ask for an override in Setup.' if b['level'] != 'HARD' else ' This gate is hard: no override.'), 'Setup')
+        for w in gates['warnings']:
+            check('Setup', 'WARN', f"Setup gate: {w['name']}", '; '.join(i['text'] for i in w['items'][:4]), w['items'][0]['fix'], 'Setup')
+        for o in gates['overridden']:
+            check('Setup', 'WARN', f"Setup gate: {o['name']} overridden until {str(o['until'])[:16]}",
+                  '; '.join(i['text'] for i in o['items'][:4]))
     if env == 'LIVE':
         from . import readiness
         live = readiness.live_policy(db)
@@ -490,7 +495,7 @@ def plan(db, cfg: Config, desk_id=None) -> dict:
         check('Ownership', 'FAIL', 'Nothing to run', why,
               'Stop it in the workspace that controls it, delete an ended deployment in Strategies, or map the trading symbol.', 'Strategies')
     order = {'FAIL': 0, 'WARN': 1, 'PASS': 2}
-    checks.sort(key=lambda c: (['Input', 'Market data', 'Processing', 'Risk', 'Output', 'Ownership'].index(c['stage']), order[c['status']]))
+    checks.sort(key=lambda c: (['Setup', 'Input', 'Market data', 'Processing', 'Risk', 'Output', 'Ownership'].index(c['stage']), order[c['status']]))
     return {
         'checks': checks, 'runs': runs, 'ready': not any(c['status'] == 'FAIL' for c in checks) and bool(controllable),
         'environment': env, 'mode': mode, 'handoff': execution_of(cfg.output)['handoff'],
