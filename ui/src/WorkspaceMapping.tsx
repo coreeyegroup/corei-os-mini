@@ -21,7 +21,7 @@ export default function WorkspaceMapping({config,accounts,selectedDeployment,dis
   const [limits, limitError, reloadLimits] = useData<Row>(configured?'trading/risk/limits':null,0);
   const [kills, killError, reloadKills] = useData<Row>(configured?'trading/risk/kill-switches':null,0);
   const [monitor, monitorError, reloadMonitor] = useData<Row>(configured?'trading/strategies/monitor':null,0);
-  const [operator] = useData<Row>('operator/session',0);
+  const [operator, operatorError, reloadOperator] = useData<Row>('operator/session',0);
   const [query,setQuery] = useState(''), [page,setPage] = useState(0);
   const [busy,setBusy] = useState(''), [error,setError] = useState(''), [notice,setNotice] = useState('');
   const scope = new Set(config?.instrument_symbols ?? []), strategies = new Set(config?.strategy_codes ?? []);
@@ -38,15 +38,16 @@ export default function WorkspaceMapping({config,accounts,selectedDeployment,dis
   const roles: string[] = operator?.roles ?? [];
   const canRisk = roles.includes('ADMIN') || roles.includes('RISK_APPROVER');
   const canPause = canRisk || roles.includes('TRADING_OPS');
-  const complete = !!deployments && !deploymentError && !!policies && !policyError && !!limits && !limitError && !!kills && !killError;
-  const refresh = () => {reloadRegistry();reloadDeployments();reloadSources();reloadPolicies();reloadLimits();reloadKills();reloadMonitor();};
+  const complete = !!operator && !operatorError && !!deployments && !deploymentError && !!policies && !policyError && !!limits && !limitError && !!kills && !killError;
+  const refresh = () => {reloadRegistry();reloadDeployments();reloadSources();reloadPolicies();reloadLimits();reloadKills();reloadMonitor();reloadOperator();};
   const relevant = (rows:Row[],d:Row) => rows.filter(x=>x.scope==='FIRM' ||
     (x.scope==='ACCOUNT' && x.target_id===d.account_id) || (x.scope==='STRATEGY' && x.target_id===d.strategy_id) ||
     (x.scope==='INSTRUMENT' && x.target_id===d.instrument_id) || (x.scope==='DEPLOYMENT' && x.target_id===d.id));
   function inspect(d:Row) {
     const m=live.get(d.id);
     // Do not guess a broker account from a symbol if several feeds share the same symbol.
-    const candidates=sourceRows.filter(s=>s.instrument===d.instrument_symbol && s.broker_symbol===d.data_symbol);
+    const candidates=sourceRows.filter(s=>s.instrument===d.instrument_symbol && s.broker_symbol===d.data_symbol &&
+      allAccounts.some(a=>a.id===s.account_id && a.connection_code && a.connection_code===d.data_connection_code));
     onInspect({...d,actual_timeframe:m?.timeframe ?? m?.parameters?.timeframe,
       observed_source:candidates.length===1?candidates[0]:null});
   }
@@ -79,7 +80,7 @@ export default function WorkspaceMapping({config,accounts,selectedDeployment,dis
         {accounts.some(id=>!allAccounts.some(a=>a.id===id))&&<p className="cfg-error">A saved account is unavailable. Clear the filter or review the account registry.</p>}
       </details>
     </div>
-    <Msg error={error||registryError||deploymentError||sourceError||policyError||limitError||killError||monitorError} notice={notice}/>
+    <Msg error={error||registryError||deploymentError||sourceError||policyError||limitError||killError||monitorError||operatorError} notice={notice}/>
     {!configured?<p className="cfg-note">Select instruments and strategies above to map the existing deployments. No trading changes are made by selecting them.</p>:
       !deployments&&!deploymentError?<p role="status">Loading existing deployment mappings…</p>:<>
       <div className="mw-actions"><strong>{scoped.length} mapped deployments</strong><small>{scoped.filter(d=>d.status==='ACTIVE').length} active · {scoped.filter(d=>d.status==='PAUSED').length} paused</small>

@@ -169,7 +169,7 @@ def scan_action(db, username, number, run_id, action):
 
 def catalogue(db):
     return {
-        'accounts': db.execute("""SELECT a.id,a.code,c.environment FROM cfg_accounts a
+        'accounts': db.execute("""SELECT a.id,a.code,c.environment,c.code AS connection_code FROM cfg_accounts a
                                    JOIN cfg_connections c ON c.id=a.connection_id ORDER BY a.code""").fetchall(),
         'instruments': db.execute('SELECT id,symbol,name FROM cfg_instruments ORDER BY symbol').fetchall(),
     }

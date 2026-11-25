@@ -204,7 +204,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
     if(url.endsWith('/scan/desk-scan/resume')){deskScan={...deskScan,status:'QUEUED'};return ok(deskScan);}
     if(url.includes('/scan-runs/desk-scan/results?'))return ok({items:[],has_more:false});
     if(url.endsWith('/trading/workspaces/catalogue'))return ok({
-     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE'}],
+     accounts:[{id:'a1',code:'VTM_A',environment:'DEMO',connection_code:'DEMO'},{id:'a2',code:'LIVE_A',environment:'LIVE',connection_code:'LIVE'}],
      instruments:[{id:'i1',symbol:'EURUSD',name:'EURUSD'}]});
    if(url.includes('/trading/workspaces/snapshot')){
      const q=new URL(url,w.location.origin).searchParams;
@@ -600,7 +600,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
   assert.ok(button('Inspect mapped deployment'),'exact deployment evidence can be opened in the same workspace');
   const beforeInspect=calls.filter(c=>c.method!=='GET').length;
   button('Inspect mapped deployment').click();await settle(4);
-  assert.ok(calls.some(c=>c.url.includes('workspaces/snapshot?')&&c.url.includes('deployment=mapped-eur')));
+  assert.ok(calls.some(c=>c.url.includes('workspaces/snapshot?')&&c.url.includes('deployment=mapped-eur')&&c.url.includes('account=a1')&&c.url.includes('source=a1')&&c.url.includes('mode=PAPER')));
   assert.equal(calls.filter(c=>c.method!=='GET').length,beforeInspect,'inspection does not change existing deployment or runtime');
   button('Save workspaces').click();await settle(6);
   assert.ok(!button('Start scan').disabled,'saved valid scan is available');
