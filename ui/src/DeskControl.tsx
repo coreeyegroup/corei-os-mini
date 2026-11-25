@@ -124,6 +124,7 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
   const [name, setName] = useState<string>(desk.name);
   const [shared, setShared] = useState<boolean>(desk.shared);
   const [dirty, setDirty] = useState(false);
+  const [ver, setVer] = useState<number>(desk.version);   // follows every response, so a chained action never sends a stale version
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState({ error: '', notice: '' });
   const [check, setCheck] = useState<Row | null>(desk.last_check ?? null);
@@ -134,7 +135,10 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
   const [confirmClose, setConfirmClose] = useState(false);
   const [tab, setTab] = useState<typeof TABS[number]>('runs');
   const [test] = useData<Row | null>(`trading/desks/${desk.id}/test`, 10_000, [busy]);
-  useEffect(() => { if (!dirty) { setCfg(desk.staged ?? desk.config); setName(desk.name); setShared(desk.shared); } }, [desk.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setVer(v => Math.max(v, desk.version)); if (!dirty) { setCfg(desk.staged ?? desk.config); setName(desk.name); setShared(desk.shared); } }, [desk.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // show what is missing at once, without waiting for Validate (read-only check)
+    if (!check) api('trading/desks/plan', 'POST', cfg).then(setCheck).catch(() => undefined);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {   // a live check of unsaved settings, so the readiness strip always matches what is on screen
     if (!dirty) return;
     const t = setTimeout(() => { api('trading/desks/plan', 'POST', cfg).then(setCheck).catch(() => undefined); }, 500);
@@ -143,20 +147,33 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
   const edit = (f: (c: Cfg) => Cfg) => { setCfg(c => f(JSON.parse(JSON.stringify(c)) as Cfg)); setDirty(true); setMsg({ error: '', notice: '' }); };
   const run = async (label: string, f: () => Promise<any>, ok?: (r: any) => string) => {
     setBusy(label); setMsg({ error: '', notice: '' });
-    try { const r = await f(); setMsg({ error: '', notice: ok ? ok(r) : '' }); changed(); return r; }
+    try { const r = await f(); if (r && typeof r.version === 'number' && (r.id === desk.id || r.checks)) setVer(r.version); setMsg({ error: '', notice: ok ? ok(r) : '' }); changed(); return r; }
     catch (e) { setMsg({ error: err(e), notice: '' }); const p = (e as any)?.detail?.plan; if (p) setCheck(p); }
     finally { setBusy(''); }
   };
-  const save = () => run('save', async () => {
-    const r = await api(`trading/desks/${desk.id}`, 'PUT', { name, shared, template: desk.template, config: cfg, version: desk.version });
-    setDirty(false); return r;
-  }, r => r.staged ? 'Saved as staged changes. The running settings stay until you review and apply.' : 'Workspace saved.');
-  const validate = () => run('validate', async () => { const r = await api(`trading/desks/${desk.id}/validate${desk.staged ? '?staged=true' : ''}`, 'POST'); setCheck(r); return r; },
-    r => r.ready ? 'Ready to start.' : `${r.checks.filter((c: Row) => c.status === 'FAIL').length} check(s) to fix before Start.`);
-  const reason = (q: string) => window.prompt(q)?.trim() ?? '';
+  /** Unsaved settings are saved first, so Validate, Test run and Start always act on what is on screen. */
+  const ensureSaved = async (): Promise<Row | null> => {
+    if (!dirty) return null;
+    const r = await api(`trading/desks/${desk.id}`, 'PUT', { name, shared, template: desk.template, config: cfg, version: ver });
+    setDirty(false); setVer(r.version); return r;
+  };
+  const save = () => run('save', async () => ensureSaved(), r => r?.staged ? 'Saved as staged changes. The running settings stay until you review and apply.' : 'Workspace saved.');
+  const validate = () => {
+    const wasDirty = dirty;
+    return run('validate', async () => {
+      const saved = await ensureSaved();
+      const r = await api(`trading/desks/${desk.id}/validate${(saved ?? desk).staged ? '?staged=true' : ''}`, 'POST'); setCheck(r);
+      return saved ? { ...r, version: saved.version } : r;
+    }, r => `${wasDirty ? 'Saved. ' : ''}${r.ready ? 'Ready to start.' : `${r.checks.filter((c: Row) => c.status === 'FAIL').length} check(s) to fix before Start — see “Next step”.`}`);
+  };
+  /** A reason for the audit log; a cancelled prompt does nothing, a too-short one says so instead of failing silently. */
+  const reason = (q: string) => {
+    const r = window.prompt(q + ' (at least 5 characters)')?.trim();
+    if (r !== undefined && r.length < 5) setMsg({ error: 'Nothing was done: please give a reason of at least 5 characters.', notice: '' });
+    return r ?? '';
+  };
   const startable = desk.state !== 'RUNNING';
   const adoptable = (check?.runs ?? []).filter((r: Row) => r.action === 'ADOPT');
-  const fails = (check?.checks ?? []).filter((c: Row) => c.status === 'FAIL').length;
   const env = cfg.output.environment;
   const accounts: Row[] = cat?.accounts ?? [];
   const usableAccount = (a: Row) => a.purpose !== 'MARKET_DATA' && (env === 'OBSERVE' || env === 'PAPER' || a.environment === env);
@@ -167,14 +184,15 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
         <small>{desk.shared ? 'Shared' : 'Private'} · owner {desk.owner} · {desk.state_reason ? `${plain(desk.state)} by ${desk.state_by}: ${desk.state_reason} (${ago(desk.state_at)})` : 'never started'}</small></div>
       <span className="mw-actions">
         <button disabled={!dirty || !!busy} onClick={() => void save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-        <button disabled={dirty || !!busy} onClick={() => void validate()}>Validate</button>
-        <button disabled={dirty || !!busy} title="A read-only research scan: no runs, no orders"
-          onClick={() => void run('test', () => api(`trading/desks/${desk.id}/test`, 'POST'), () => 'Test run queued: no runs are created and nothing is ordered.')}>Test run</button>
-        {desk.state === 'RUNNING' && <button disabled={!!busy} onClick={() => { const r = reason('Why pause this workspace?'); if (r.length >= 5) void run('pause', () => api(`trading/desks/${desk.id}/pause`, 'POST', { version: desk.version, reason: r }), () => 'Paused: its runs make no new decisions.'); }}>Pause</button>}
-        {desk.state === 'PAUSED' && <button disabled={!!busy} onClick={() => { const r = reason('Why resume?'); if (r.length >= 5) void run('resume', () => api(`trading/desks/${desk.id}/resume`, 'POST', { version: desk.version, reason: r }), () => 'Resumed.'); }}>Resume</button>}
+        <button disabled={!!busy} title={dirty ? 'Saves your changes, then checks them' : 'Check every stage'} onClick={() => void validate()}>{busy === 'validate' ? 'Checking…' : 'Validate'}</button>
+        <button disabled={!!busy} title="A read-only research scan: no runs, no orders"
+          onClick={() => void run('test', async () => { await ensureSaved(); return api(`trading/desks/${desk.id}/test`, 'POST'); }, () => 'Test run queued: no runs are created and nothing is ordered. Results: Strategy Studio → Runs & results.')}>Test run</button>
+        {desk.state === 'RUNNING' && <button disabled={!!busy} onClick={() => { const r = reason('Why pause this workspace?'); if (r.length >= 5) void run('pause', () => api(`trading/desks/${desk.id}/pause`, 'POST', { version: ver, reason: r }), () => 'Paused: its runs make no new decisions.'); }}>Pause</button>}
+        {desk.state === 'PAUSED' && <button disabled={!!busy} onClick={() => { const r = reason('Why resume?'); if (r.length >= 5) void run('resume', () => api(`trading/desks/${desk.id}/resume`, 'POST', { version: ver, reason: r }), () => 'Resumed.'); }}>Resume</button>}
         {desk.state !== 'STOPPED' && <button disabled={!!busy} onClick={() => { setStopPolicy(desk.config.output.stop_policy); setConfirmClose(false); setPanel('stop'); }}>Stop…</button>}
-        {startable && desk.state === 'STOPPED' && <button className="primary" disabled={dirty || !!busy || !!desk.staged}
-          onClick={() => { setPanel('start'); setAdopt([]); void validate(); }}>{fails ? `Start · ${fails} check(s) to fix` : 'Start…'}</button>}
+        {startable && desk.state === 'STOPPED' && <button className="primary" disabled={!!busy || !!desk.staged}
+          title={dirty ? 'Saves your changes, checks them, then asks you to confirm' : 'Checks every stage, then asks you to confirm'}
+          onClick={() => { setPanel('start'); setAdopt([]); void validate(); }}>Start…</button>}
         <details className="dk-more"><summary>More</summary>
           <button className="danger" disabled={desk.state === 'STOPPED' || !!busy} onClick={() => {
             const r = reason('Emergency stop: every run of this workspace gets a kill switch and pauses. Releasing is done in Risk. Reason?');
@@ -184,7 +202,7 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
           <label>Name <input maxLength={80} value={name} onChange={e => { setName(e.target.value); setDirty(true); }} /></label>
           <button disabled={desk.state !== 'STOPPED' || !!busy} onClick={() => {
             if (window.confirm(`Delete “${desk.name}”? Its runs stay as paused deployments in Strategies.`))
-              void run('delete', () => api(`trading/desks/${desk.id}?version=${desk.version}`, 'DELETE')).then(removed);
+              void run('delete', () => api(`trading/desks/${desk.id}?version=${ver}`, 'DELETE')).then(removed);
           }}>Delete workspace</button>
         </details>
       </span>
@@ -192,7 +210,7 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
     <Msg error={msg.error} notice={msg.notice || (dirty ? (desk.state === 'STOPPED' ? 'Unsaved changes' : 'Unsaved changes: saving stages them for review') : '')} />
     {desk.staged && <div className="dk-staged" role="status"><b>Changes staged</b> by {desk.staged_by}. Running settings are unchanged until you apply.
       <button onClick={() => void run('review', async () => { const r = await api(`trading/desks/${desk.id}/review`); setReview(r); setPanel('review'); return r; })}>Review & apply</button>
-      <button onClick={() => { if (window.confirm('Discard the staged changes?')) void run('discard', () => api(`trading/desks/${desk.id}/discard`, 'POST', { version: desk.version, reason: 'Discard staged changes' }), () => 'Staged changes discarded.'); }}>Discard</button></div>}
+      <button onClick={() => { if (window.confirm('Discard the staged changes?')) void run('discard', () => api(`trading/desks/${desk.id}/discard`, 'POST', { version: ver, reason: 'Discard staged changes' }), () => 'Staged changes discarded.'); }}>Discard</button></div>}
     {panel === 'review' && review && <section className="dk-panel" aria-label="Review staged changes">
       <h4>Review staged changes</h4>
       <table className="cfg-table"><thead><tr><th>Setting</th><th>Running</th><th>Staged</th></tr></thead>
@@ -201,9 +219,9 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
       <p className="cfg-note">Applying validates again. New runs start{desk.state === 'PAUSED' ? ' when you resume' : ' now'}; runs no longer in the settings are paused and released. Applying needs a Risk approver{env === 'LIVE' ? ' other than the person who staged the change' : ''}.</p>
       <span className="mw-actions"><button onClick={() => setPanel('')}>Cancel</button>
         <button className="primary" disabled={!review.plan?.ready || !!busy} onClick={() => { const r = reason('Reason for applying these changes?'); if (r.length >= 5)
-          void run('apply', () => api(`trading/desks/${desk.id}/apply`, 'POST', { version: desk.version, reason: r, adopt: [] }), () => 'Changes applied.').then(x => { if (x) setPanel(''); }); }}>Apply changes</button></span>
+          void run('apply', () => api(`trading/desks/${desk.id}/apply`, 'POST', { version: ver, reason: r, adopt: [] }), () => 'Changes applied.').then(x => { if (x) setPanel(''); }); }}>Apply changes</button></span>
     </section>}
-    <Readiness check={check} />
+    <Readiness check={check} dirty={dirty} />
     <div className="dk-cols">
       <fieldset className="dk-col" disabled={!!busy}><legend>01 · Input</legend>
         <Pick title="Data sources" hint="First is primary; others cover instruments it does not carry." items={(cat?.sources ?? []).map((r: Row) => [r.id, `${r.code} · ${plain(r.environment)}`, r.status !== 'ACTIVE' ? 'inactive' : ''])}
@@ -274,7 +292,7 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
       <p className="cfg-note">Starting needs the Risk approver role{env === 'LIVE' ? ', and on LIVE a person other than the one who last changed the settings' : ''}.</p>
       <span className="mw-actions"><button onClick={() => setPanel('')}>Cancel</button>
         <button className="primary" disabled={!check?.ready || !!busy} onClick={() => void run('start',
-          () => api(`trading/desks/${desk.id}/start`, 'POST', { version: desk.version, adopt, reason: 'Started from the workspace' }),
+          () => api(`trading/desks/${desk.id}/start`, 'POST', { version: ver, adopt, reason: 'Started from the workspace' }),
           r => `Started: ${r.result.activated.length} run(s) active${r.result.held.length ? `, ${r.result.held.length} held (${r.result.held.map((h: Row) => h.why).join('; ')})` : ''}${r.result.watched.length ? `, ${r.result.watched.length} watched` : ''}.`).then(x => { if (x) setPanel(''); })}>
           {check && !check.ready ? 'Fix the failed checks first' : 'Start'}</button></span>
     </section>}
@@ -286,7 +304,7 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
       <p className="cfg-note">Orders with an unknown outcome are never cancelled blind; they are listed for resolution with the broker. Trailing stops and reconciliation keep running.</p>
       <span className="mw-actions"><button onClick={() => setPanel('')}>Cancel</button>
         <button className="primary" disabled={!!busy || (stopPolicy === 'CLOSE_POSITIONS' && !confirmClose)} onClick={() => { const r = reason('Why stop this workspace?'); if (r.length >= 5)
-          void run('stop', () => api(`trading/desks/${desk.id}/stop`, 'POST', { version: desk.version, reason: r, policy: stopPolicy, confirm_close: confirmClose }),
+          void run('stop', () => api(`trading/desks/${desk.id}/stop`, 'POST', { version: ver, reason: r, policy: stopPolicy, confirm_close: confirmClose }),
             x => `Stopped. ${x.result.cancelled.length} order(s) cancelled, ${x.result.close_orders.length} closing order(s)${x.result.unknown.length ? `, ${x.result.unknown.length} order(s) with an unknown outcome need resolving in Execution` : ''}${x.result.cancel_failed.length + x.result.close_failed.length ? `, ${x.result.cancel_failed.length + x.result.close_failed.length} could not be done (see the log)` : ''}.`).then(x => { if (x) setPanel(''); }); }}>Stop</button></span>
     </section>}
     <div className="dk-today"><span>Runs {s.active ?? 0} active / {s.controlled ?? 0} controlled{s.watched ? ` · ${s.watched} watched` : ''}</span>
@@ -299,10 +317,14 @@ function Desk({ desk, cat, changed, removed }: { desk: Row; cat: Row | null; cha
   </section>;
 }
 
-function Readiness({ check }: { check: Row | null }) {
-  if (!check) return <p className="dk-ready">Readiness: not checked yet. Press Validate.</p>;
+function Readiness({ check, dirty }: { check: Row | null; dirty: boolean }) {
+  if (!check) return <p className="dk-ready">Readiness: checking…</p>;
   const c = check.coverage;
+  const next = check.checks.find((x: Row) => x.status === 'FAIL');
   return <div className="dk-ready" aria-label="Readiness">
+    <p className={`dk-next ${next ? 'fail' : 'pass'}`} role="status"><b>Next step:</b>{' '}
+      {next ? <>{next.title}{next.detail ? ` — ${next.detail}` : ''}{next.fix ? ` ${next.fix}` : ''} {next.view && <button className="link" onClick={() => goto(next.view)}>{next.view} ↗</button>}</>
+        : dirty ? 'Settings look ready. Press Start… (your changes are saved first).' : check.ready ? 'Ready. Press Start… to confirm and run.' : 'Validate to check again.'}</p>
     {check.checks.map((x: Row, i: number) => <span key={i} className={`dk-check ${x.status.toLowerCase()}`} title={[x.detail, x.fix].filter(Boolean).join(' — ')}>
       {MARK[x.status]} {x.stage} · {x.title}</span>)}
     <span className="dk-cover">{c.instruments[0]}/{c.instruments[1]} instruments × {c.strategies[0]}/{c.strategies[1]} strategies × {c.accounts[0]}/{c.accounts[1]} accounts
@@ -339,15 +361,19 @@ function StrategyPick({ strategies, value, timeframes, onChange }: {
   const [q, setQ] = useState('');
   const f = q.trim().toLowerCase();
   const shown = strategies.filter(s => s.status === 'ACTIVE' || value.some(v => v.strategy_id === s.id))
-    .filter(s => !f || `${s.code} ${s.name}`.toLowerCase().includes(f));
+    .filter(s => !f || `${s.code} ${s.name}`.toLowerCase().includes(f))
+    .sort((a, b) => Number(!a.approved_version) - Number(!b.approved_version));
+  const drafts = strategies.filter(s => s.status === 'ACTIVE' && !s.approved_version).length;
   return <div className="dk-field"><span>Strategies <small>{value.length} selected · approved versions run</small></span>
+    {drafts > 0 && <small className="cfg-note">{drafts} strateg{drafts === 1 ? 'y is' : 'ies are'} still draft. A Risk approver approves a version in <button className="link" onClick={() => goto('Strategies')}>Strategies ↗</button> (after a backtest or paper run), then it can run here.</small>}
     <input type="search" aria-label="Search strategies" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />
     <div className="dk-list">{shown.map(s => { const pick = value.find(v => v.strategy_id === s.id);
       const chosen = pick?.version_id ? (s.versions ?? []).find((v: Row) => v.id === pick.version_id) : null;
       const tf = chosen?.timeframe ?? s.timeframe; const out = !!pick && !!timeframes.length && tf && !timeframes.includes(tf);
       return <div key={s.id} className="dk-strat"><label className="dk-radio"><input type="checkbox" checked={!!pick}
         onChange={() => onChange(pick ? value.filter(v => v.strategy_id !== s.id) : [...value, { strategy_id: s.id, version_id: null }])} />
-        <b>{s.code}</b> <small>{s.name}{s.approved_version ? ` · v${s.approved_version} approved · ${s.timeframe ?? 'H1'}` : ' · no approved version'}</small></label>
+        <b>{s.code}</b> <small>{s.name}{s.approved_version ? ` · v${s.approved_version} approved · ${s.timeframe ?? 'H1'}` : ''}</small>
+        {!s.approved_version && <small className="dk-warn"> · draft: cannot run until a version is approved</small>}</label>
         {pick && <select aria-label={`${s.code} version`} value={pick.version_id ?? ''} onChange={e => onChange(value.map(v => v.strategy_id === s.id ? { ...v, version_id: e.target.value || null } : v))}>
           <option value="">Latest approved</option>{(s.versions ?? []).map((v: Row) => <option key={v.id} value={v.id} disabled={v.state !== 'APPROVED'}>v{v.number} · {plain(v.state)} · {v.timeframe ?? 'H1'}</option>)}</select>}
         {out && <small className="dk-warn"> runs on {tf}: add it to the timeframes or it is left out</small>}</div>; })}

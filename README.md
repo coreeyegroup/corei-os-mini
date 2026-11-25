@@ -1392,3 +1392,13 @@ A workspace now runs. Migration `048_workspace_control.sql` (additive). Tests: `
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+### 0.57.1 · the desk runs from what is on screen
+
+- Validate, Test run and Start save your changes first. In 0.57.0 they were greyed out until you pressed Save, with no
+  hint, so a desk looked as if it could not run.
+- The readiness line shows the next step at once (for example, "Choose at least one data source" with its fix), without
+  waiting for Validate.
+- A too-short reason for Pause, Stop or Emergency stop now says so; before, nothing happened.
+- Draft strategies are listed after approved ones and say they cannot run until a version is approved in Strategies.
+- After a save, Start always sends the current workspace version, so there are no spurious "changed by someone else" errors.
+

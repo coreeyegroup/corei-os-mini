@@ -145,3 +145,6 @@ button.mw-panel-heading {
 .dk-results { overflow: auto; }
 .dk-all { width: 100%; }
 button.link { background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; color: inherit; }
+.dk-next { flex-basis: 100%; margin: 0; }
+.dk-next.fail b { color: var(--bad, #c0392b); }
+.dk-next.pass b { color: var(--ok, #2e8b57); }
