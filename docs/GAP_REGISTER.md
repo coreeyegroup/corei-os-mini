@@ -409,3 +409,17 @@ left edge of every top-level block and the vertical gap between blocks (all bloc
 | AL-3 | Risk › Limits profile row: two-line label broke the row | DONE 0.63.1 |
 | AL-4 | Home stage cards uneven (questions 4–6 lines) | DONE 0.63.1 (question in tooltip; shown again with Help text › Always shown) |
 | AL-5 | Setup header repeated name, roles, password and sign-out | DONE 0.63.1 (account menu has Change password; header keeps two small links) |
+
+## Q. Compact density pass — 27 Nov 2026 (release 0.64.0)
+
+Evidence: live site inspected read-only in Chrome at the owner's window size; headless Chrome screenshots at 742×773 and
+1600×900; layout measured on 147 screens/sections (one left edge everywhere; no gap over 20px; the only flag is the
+Database screen's intended two-column layout). UI tests 77/77.
+
+| ID | Gap | Status |
+|---|---|---|
+| CD-1 | Settings three lines per setting on narrow windows | DONE 0.64.0 (one row; description on hover) |
+| CD-2 | Scrollbars covering tab labels; thick scrollbars | DONE 0.64.0 |
+| CD-3 | Side bar 38% of a narrow window | DONE 0.64.0 (capped ≈ 26%) |
+| CD-4 | Market data tiles with clipped labels and a grey filler cell | DONE 0.64.0 |
+| CD-5 | Competing style layers | PARTIAL — Settings consolidated; consolidating every component into one stylesheet is a proposal (no visible change, removes the cause for good) |

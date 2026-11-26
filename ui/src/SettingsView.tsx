@@ -45,14 +45,14 @@ const SCOPE_LABEL = { BROWSER: 'this browser', ACCOUNT: 'my account', FIRM: 'fir
 
 function Row_({ label, description, scope, modified, onReset, children, id }: { label: string; description: string; scope: keyof typeof SCOPE_LABEL; modified?: boolean;
   onReset?: () => void; children: ReactNode; id: string }) {
-  // On/off settings as in VS Code: the checkbox sits on the description line, not on a line of its own.
+  // One row per setting: title · control · description (VS Code density; the full description is on hover).
   const check = isValidElement(children) && children.type === 'input' && (children.props as { type?: string }).type === 'checkbox';
-  return <div className={`set-row ${modified ? 'modified' : ''}`} id={`setting-${id}`}>
+  return <div className={`set-row ${modified ? 'modified' : ''} ${check ? 'is-check' : ''}`} id={`setting-${id}`}>
     <div className="set-title"><b>{label}</b>{modified && <span className="set-dot" title="Changed from the default" aria-label="modified">●</span>}
-      <span className={`set-scope ${scope.toLowerCase()}`}>{SCOPE_LABEL[scope]}</span>
-      {modified && onReset && <button className="link set-reset" onClick={onReset}>Reset</button>}</div>
-    {check ? <label className="set-check">{children}<span>{description}</span></label>
-      : <><p className="set-desc">{description}</p>{children !== null && <div className="set-control">{children}</div>}</>}
+      <span className={`set-scope ${scope.toLowerCase()}`} title={`Kept in ${SCOPE_LABEL[scope]}`}>{SCOPE_LABEL[scope].replace('this ', '').replace('my ', '')}</span></div>
+    {check ? <label className="set-control set-check">{children}<span className="set-desc" title={description}>{description}</span></label>
+      : <><div className="set-control">{children}</div><p className="set-desc" title={description}>{description}</p></>}
+    {modified && onReset ? <button className="link set-reset" title="Reset to the default" onClick={onReset}>↺</button> : <span />}
   </div>;
 }
 
@@ -91,7 +91,7 @@ export default function SettingsView(p: Props) {
     ...([['left', 'Side bar', 'The explorer on the left (Ctrl+B).', true], ['right', 'Secondary side bar', 'Attention, accounts, open positions, working orders and a watchlist on the right (Ctrl+Alt+B).', false], ['bottom', 'Panel', 'Problems, events, journal and activity at the bottom (Ctrl+J).', true]] as const)
       .map(([k, label, d, def]) => ({ cat: 'Layout', id: k, label, description: d, modified: l[k] !== def, reset: () => p.setLayout({ [k]: def }),
         control: <input type="checkbox" aria-label={label} checked={l[k]} onChange={e => p.setLayout({ [k]: e.target.checked })} /> })),
-    ...([['leftWidth', 'Side bar width', 160, 380, 280], ['rightWidth', 'Secondary side bar width', 200, 440, 270], ['bottomHeight', 'Panel height', 120, 400, 170]] as const)
+    ...([['leftWidth', 'Side bar width', 160, 380, 280], ['rightWidth', 'Secondary side bar width', 200, 440, 270], ['bottomHeight', 'Panel height', 120, 400, 130]] as const)
       .map(([k, label, min, max, def]) => ({ cat: 'Layout', id: k, label, description: `${min}–${max} px.`, modified: l[k] !== def, reset: () => p.setLayout({ [k]: def }),
         control: <><input aria-label={label} type="range" min={min} max={max} value={l[k]} onChange={e => p.setLayout({ [k]: Number(e.target.value) })} /><output>{l[k]} px</output></> })),
   ];
@@ -116,7 +116,7 @@ export default function SettingsView(p: Props) {
             ...(c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut && hit(s.label, s.section, c)).map(s => <div key={s.label} className="set-row set-kbd"><span>{s.label}</span><small>{s.section}</small><kbd>{s.shortcut}</kbd></div>) : []),
             ...(c === 'Firm settings' ? FIRM.filter(f => hit(f[0], f[1], c)).map(([label, d, view, section, who]) =>
               <Row_ key={label} id={section} label={label} description={`${d} Changed by: ${who}.`} scope="FIRM"><button onClick={() => goto(view, section)}>Open ↗</button></Row_>) : []),
-            ...(c === 'About' && hit('about version schema server', c) ? [<div key="about" className="set-row"><div className="set-title"><b>COREI-OS-MINI</b></div>
+            ...(c === 'About' && hit('about version schema server', c) ? [<div key="about" className="set-row set-about"><div className="set-title"><b>COREI-OS-MINI</b></div>
               <p className="set-desc">Version {about?.release ?? '—'} · schema {about?.schema ?? '—'} · build {about?.commit ?? '—'}. Your roles: {p.roles.join(', ') || '—'}.</p></div>] : []),
           ];
           if (!rows.length) return null;

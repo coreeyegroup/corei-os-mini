@@ -48,7 +48,7 @@ export function defaults(workspace = "Research"): Layout {
     axis: "row",
     leftWidth: 280,
     rightWidth: 270,
-    bottomHeight: 170,
+    bottomHeight: 130,
     maximized: false,
   };
 }

@@ -1519,3 +1519,11 @@ Paper accounts use the standard toolbar and tiles; Home stage cards show stage a
 the account menu (top right) has Change password.
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Compact by default — release 0.64.0
+
+UI only, no migration. Tighter spacing and thin scrollbars everywhere; Settings shows one row per setting (hover a
+description to read all of it). Settings › Appearance › Density › Comfortable gives VS Code's larger sizes; the panel
+starts at 130px.
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.

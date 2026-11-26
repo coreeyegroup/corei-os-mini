@@ -215,7 +215,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(st.querySelector('#setting-region\\.timezone.modified'),'modified marker');
  await new Promise(r=>setTimeout(r,700));
  assert.equal(prefPuts.at(-1)[0],'settings.v1');assert.equal(prefPuts.at(-1)[1]['region.timezone'],'Asia/Kolkata','saved to the account');
- [...st.querySelectorAll('#setting-region\\.timezone button')].find(b=>b.textContent==='Reset').click();await tick();
+ [...st.querySelectorAll('#setting-region\\.timezone button')].find(b=>b.title==='Reset to the default').click();await tick();
  assert.equal(st.querySelector('select[aria-label="Time zone"]').value,'LOCAL');
  setv(search,'');await tick();
  [...st.querySelectorAll('.set-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
