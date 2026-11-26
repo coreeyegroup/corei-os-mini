@@ -494,3 +494,105 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .sysmap-path button { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; background: transparent; color: inherit; cursor: pointer; }
 .sysmap-path button span { font-size: .8em; color: var(--muted); }
 .sysmap-path button.done { border-color: var(--ready); } .sysmap-path button.done span { color: var(--ready); }
+
+/* ==== 0.62.0 · VS Code metrics, one place, loaded last ====
+ * Reference (VS Code defaults): UI font = system UI font at 13px; activity bar 48px with 24px icons; side bar title
+ * 35px, view headers 22px (11px bold uppercase); list rows 22px; editor tabs 35px (compact 28px); status bar 22px;
+ * buttons 2px radius; one accent colour for primary actions; explanations on hover / ⓘ, not on screen. */
+:root { --ui-font: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, Ubuntu, "Droid Sans", sans-serif; }
+:root, .app { font-family: var(--ui-font); }
+.app { font-size: var(--ui-size, 13px); line-height: 1.4; }
+.app h1, .app h2, .app h3 { font-weight: 600; letter-spacing: 0; }
+.app h2 { font-size: calc(var(--ui-size, 13px) + 3px); }
+.app h3 { font-size: calc(var(--ui-size, 13px) + 1px); }
+
+/* activity bar 48 / icons 24 */
+.activity { width: 48px; }
+.activity button { height: 48px; min-height: 48px; }
+.activity button svg { width: 24px; height: 24px; }
+
+/* side bars: 35px title like VS Code's EXPLORER row */
+.explorer.sidebar .panel-heading, .inspector .panel-heading { height: 35px; min-height: 35px; padding: 0 8px 0 20px; display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 400; letter-spacing: .04em; color: var(--text); }
+.inspector { display: flex; flex-direction: column; padding: 0; min-width: 200px; }
+.inspector .panel-heading button { padding: 0 6px; border: 0; background: none; color: var(--muted); }
+
+/* editor tabs: compact 30px, comfortable 35px (VS Code default) */
+.tabs { height: 30px; min-height: 30px; }
+.tab button { padding: 0 10px; font-size: var(--ui-size, 13px); }
+.density-comfortable .tabs { height: 35px; min-height: 35px; }
+.tab-tools { gap: 0; }
+.tab-tools button { width: 28px; padding: 0 !important; display: inline-grid; place-items: center; font-size: 15px; border: 0; background: transparent; color: var(--muted); }
+.tab-tools button:hover { color: var(--text); background: var(--hover); }
+
+/* sub-tabs (inside a screen) 28px */
+.sw-tab button[role="tab"] { font-size: var(--ui-size, 13px); padding: 0 4px 0 12px; height: 28px; }
+.sw-tools button, .sw-head button { font-size: 14px; }
+
+/* the screen's own section column repeated the sub-tabs and broke the layout without a side bar: removed */
+.cfg-topbar { display: none !important; }
+
+/* one-line page header: crumb › title ⓘ (explanations behind ⓘ) */
+.page-head, .stage-head { display: flex !important; align-items: center !important; justify-content: flex-start !important; gap: 6px; min-height: 24px; margin: 0 0 6px !important; padding: 0 !important; border-bottom: 0 !important; flex-wrap: nowrap; }
+.page-head h1, .stage-head h1 { flex: none !important; text-align: left !important; font-size: var(--ui-size, 13px); font-weight: 600; margin: 0; white-space: nowrap; }
+.stage-head .st-crumb { color: var(--muted); white-space: nowrap; font-size: calc(var(--ui-size, 13px) - 1px); }
+.page-head .push { flex: 1; }
+.page-head .cfg-user { margin-left: auto; }
+
+/* ⓘ */
+.info { position: relative; display: inline-flex; align-items: center; }
+.app .info-btn { width: 16px; height: 16px; min-height: 0; padding: 0 !important; border-radius: 50%; border: 1px solid var(--muted); background: transparent; color: var(--muted);
+  font: italic 600 10px/14px Georgia, serif; display: inline-grid; place-items: center; cursor: pointer; }
+.app .info-btn:hover, .app .info-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.info-pop { position: absolute; top: calc(100% + 6px); left: -8px; z-index: 70; width: max-content; max-width: min(480px, 70vw); padding: 8px 10px; white-space: normal;
+  font-size: calc(var(--ui-size, 13px) - 1px); line-height: 1.45; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); text-transform: none; letter-spacing: 0; }
+.info-inline { color: var(--muted); font-size: calc(var(--ui-size, 13px) - 1px); white-space: normal; }
+
+/* long explanatory notes: one line with ⓘ; click to read (Settings › Help text › Always shown keeps them open) */
+.help-icon p.cfg-note:not(.note-open), .help-icon div.cfg-note:not(.note-open) { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; cursor: help; }
+.help-icon p.cfg-note, .help-icon div.cfg-note { position: relative; padding-left: 18px; }
+.help-icon p.cfg-note::before, .help-icon div.cfg-note::before { content: 'i'; position: absolute; left: 0; top: 2px; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%;
+  font: italic 600 9px/12px Georgia, serif; text-align: center; opacity: .7; }
+
+/* workspace "All panels" index bar: one slim line */
+.ws-index.ws-index-slim { min-height: 26px; padding: 2px 8px; border-radius: 3px; }
+
+/* menus: grouped like VS Code */
+.menu-popup { padding: 4px 0; }
+.menu-group { padding: 4px 14px 2px 30px; font-size: 11px; color: var(--muted); }
+.menu-sep { border: 0; border-top: 1px solid var(--line); margin: 4px 10px; }
+.menu-popup button { justify-content: flex-start !important; gap: 0 !important; padding: 0 14px 0 8px !important; }
+.menu-popup button .menu-check { width: 22px; flex: none; text-align: center; }
+.menu-popup button > span:nth-child(2) { flex: 1; }
+.menu-popup button kbd { margin-left: 28px; }
+.menubar.compact > .menu-wrap > button { font-size: 15px; padding: 2px 8px; }
+.menu-compact .menu-tabs { display: flex; gap: 2px; padding: 0 8px 4px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menu-compact .menu-tabs button { width: auto !important; height: 22px; padding: 0 10px !important; justify-content: center !important; }
+.menu-compact .menu-tabs button[aria-pressed="true"] { background: var(--selection) !important; }
+
+/* primary buttons: one accent, normal weight, same height as other buttons (no bright blocks) */
+.app button.primary { background: var(--accent); border-color: var(--accent); color: var(--canvas, #111); font-weight: 500; }
+.app button.primary:hover { filter: brightness(1.08); }
+
+/* tables: UI font for text, tabular figures for numbers, 22px rows */
+.app table td, .app table th { line-height: 20px; }
+.app .num, .app td.num, .app th.num { font-variant-numeric: tabular-nums; }
+
+/* Settings uses the side bar as its table of contents when the side bar is shown */
+.app.with-sidebar .set-body { grid-template-columns: minmax(0, 1fr); }
+.app.with-sidebar .set-nav { display: none; }
+.set-head { padding: 8px 20px; }
+.set-list { padding: 0 20px 40px; }
+.set-row { padding: 8px 10px; }
+
+/* secondary side bar tables */
+.inspector .sb-table td.up { color: #3fb950; } .inspector .sb-table td.down { color: #f85149; }
+/* VS Code settings editor: title, description, then the control under it; readable line length */
+.set-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px !important; max-width: 900px; padding: 10px 12px !important; }
+.set-control { justify-content: flex-start; }
+.set-control select, .set-control input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { min-width: 240px; max-width: 320px; }
+.set-control input[type="range"] { flex: 0 1 260px; }
+/* a screen with sub-tabs does not repeat its sections in a second strip when the side bar is hidden */
+.cfg:has(.sw) > .cfg-nav { display: none !important; }
+.set-section { max-width: 920px; }

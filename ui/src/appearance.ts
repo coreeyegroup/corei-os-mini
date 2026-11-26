@@ -2,7 +2,7 @@ export const themes = ['Standard', 'Black', 'Dark Blue', 'White', 'COREI Orbit']
 export type Theme = typeof themes[number];
 export type Appearance = { theme: Theme; fontSize: number; density: 'Compact' | 'Comfortable'; activity: boolean; status: boolean; wrapTabs: boolean };
 export const appearanceKey = 'corei-os-mini.appearance.v1';
-export const defaultAppearance: Appearance = {theme:'Standard',fontSize:12,density:'Compact',activity:true,status:true,wrapTabs:false};
+export const defaultAppearance: Appearance = {theme:'Standard',fontSize:13,density:'Compact',activity:true,status:true,wrapTabs:false};
 export function restoreAppearance(raw:string|null):Appearance {
   try {
     const x=JSON.parse(raw||'null');

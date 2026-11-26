@@ -21,8 +21,10 @@ import "./workspaces.css";
 import { ViewFocused, ViewVisible } from "./visibility";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
 import SettingsView from "./SettingsView";
+import { SecondaryBar } from "./SecondaryBar";
 import { TopBarStatus, TopBarRight } from "./TopBar";
 import { setting, useSettings } from "./userSettings";
+import { installNoteToggle } from "./Info";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
@@ -81,6 +83,7 @@ function stored() {
 }
 export default function App() {
   useSettings();
+  installNoteToggle();
   const [launch] = useState(() => launchContext(window.location.search));
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
@@ -217,6 +220,8 @@ export default function App() {
       if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); patch({bottom:!layout.bottom}); }
       if (mod && e.key === ',') { e.preventDefault(); go('Settings'); }
+      if (mod && !e.shiftKey && (e.key === '=' || e.key === '+')) { e.preventDefault(); appearancePatch({fontSize:Math.min(16,appearance.fontSize+1)}); }
+      if (mod && !e.shiftKey && e.key === '-') { e.preventDefault(); appearancePatch({fontSize:Math.max(11,appearance.fontSize-1)}); }
       if (mod && e.key === '\\') { e.preventDefault(); split(); }
       if (mod && ['1','2','3','4'].includes(e.key)) {e.preventDefault(); const i=Number(e.key)-1;if(i<layout.groups.length) patch({focus:i});}
       if (e.altKey && ['ArrowLeft','ArrowRight'].includes(e.key)) {e.preventDefault(); cycle(e.key==='ArrowRight'?1:-1);}
@@ -371,38 +376,44 @@ export default function App() {
   }
   const commands:Command[] = [
     ...DESTINATIONS.map(d=>({section:'Go to',label:`${d.group} › ${d.label}`,keywords:d.keywords,run:()=>{goto(d.view,d.section);go(d.view);}})),
-    ...views.map(v=>({section:'Navigate',label:`Open ${v}`,run:()=>open(v)})),
-    {section:'Workspace',label:'Go to… (search everything)',shortcut:'Ctrl+K',run:()=>setPalette(true)},
-    ...["Research","Execution","Operations"].map(name=>({section:'Workspace',label:`Saved layout: ${name}`,run:()=>switchWorkspace(name)})),
-    {section:'Workspace',label:'Command palette',shortcut:'Ctrl+Shift+P',run:()=>setPalette(true)},
-    {section:'Workspace',label:'Close active tab',run:()=>close(active,layout.focus)},
-    {section:'Workspace',label:'Close other tabs in group',run:()=>closeOthers(active,layout.focus)},
-    {section:'Workspace',label:'Reopen last closed tab',run:()=>{if(closed.length){open(closed[0]);setClosed(x=>x.slice(1));}}},
-    {section:'Workspace',label:pinned.includes(active)?'Unpin active tab':'Pin active tab',run:()=>togglePin(active)},
-    ...themes.map(theme=>({section:'Appearance',label:`Color theme: ${theme}`,run:()=>appearancePatch({theme})})),
-    {section:'Appearance',label:'Increase text size',run:()=>appearancePatch({fontSize:Math.min(16,appearance.fontSize+1)})},
-    {section:'Appearance',label:'Decrease text size',run:()=>appearancePatch({fontSize:Math.max(11,appearance.fontSize-1)})},
-    {section:'Appearance',label:'Toggle activity bar',run:()=>appearancePatch({activity:!appearance.activity})},
-    {section:'Appearance',label:'Toggle status bar',run:()=>appearancePatch({status:!appearance.status})},
-    {section:'Appearance',label:'Toggle wrapped tabs',run:()=>appearancePatch({wrapTabs:!appearance.wrapTabs})},
-    {section:'Preferences',label:'Open settings',shortcut:'Ctrl+,',run:()=>open('Settings')},
-    {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
-    {section:'Workspace',label:'Reset current workspace layout',run:()=>{if(allowLayoutChange())setLayout(defaults(layout.workspace));}},
-    {section:'View',label:'Toggle side bar',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
-    {section:'View',label:'Toggle inspector',shortcut:'Ctrl+Alt+B',run:()=>patch({right:!layout.right})},
-    {section:'View',label:'Toggle toolbox (problems, events, journal)',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
-    {section:'View',label:'Toggle focus mode',run:()=>patch({maximized:!layout.maximized})},
-        {section:'Layout',label:'Single group',run:()=>preset(1,'row')},
-    {section:'Layout',label:'Two columns',run:()=>preset(2,'row')},
-    {section:'Layout',label:'Two rows',run:()=>preset(2,'column')},
-    {section:'Layout',label:'Three columns',run:()=>preset(3,'row')},
-    {section:'Layout',label:'Four groups',run:()=>preset(4,'row')},
-    {section:'Layout',label:'Add workspace group (up to four)',shortcut:'Ctrl+\\',run:split},
-    {section:'Layout',label:'Change split orientation',run:()=>patch({axis:layout.axis==='row'?'column':'row'})},
-    {section:'Navigate',label:'Next tab',shortcut:'Alt+Right',run:()=>cycle(1)},
-    {section:'Navigate',label:'Previous tab',shortcut:'Alt+Left',run:()=>cycle(-1)},
-    {section:'Layout',label:'Open active view in other group',run:()=>{if(layout.groups.length>1)open(active,(layout.focus+1)%layout.groups.length);}},
+    // View: what is shown and how it looks
+    {section:'View',group:'Commands',label:'Command palette',shortcut:'Ctrl+Shift+P',run:()=>setPalette(true)},
+    {section:'View',group:'Commands',label:'Settings',shortcut:'Ctrl+,',run:()=>open('Settings')},
+    {section:'View',group:'Show',label:'Side bar',shortcut:'Ctrl+B',checked:layout.left,run:()=>patch({left:!layout.left})},
+    {section:'View',group:'Show',label:'Panel',shortcut:'Ctrl+J',checked:layout.bottom,run:()=>patch({bottom:!layout.bottom})},
+    {section:'View',group:'Show',label:'Secondary side bar',shortcut:'Ctrl+Alt+B',checked:layout.right,run:()=>patch({right:!layout.right})},
+    {section:'View',group:'Show',label:'Activity bar',checked:appearance.activity,run:()=>appearancePatch({activity:!appearance.activity})},
+    {section:'View',group:'Show',label:'Status bar',checked:appearance.status,run:()=>appearancePatch({status:!appearance.status})},
+    {section:'View',group:'Show',label:'Wrapped tabs',checked:appearance.wrapTabs,run:()=>appearancePatch({wrapTabs:!appearance.wrapTabs})},
+    {section:'View',group:'Show',label:'Focus mode',checked:layout.maximized,run:()=>patch({maximized:!layout.maximized})},
+    {section:'View',group:'Appearance',label:'Zoom in (text size)',shortcut:'Ctrl+=',run:()=>appearancePatch({fontSize:Math.min(16,appearance.fontSize+1)})},
+    {section:'View',group:'Appearance',label:'Zoom out (text size)',shortcut:'Ctrl+-',run:()=>appearancePatch({fontSize:Math.max(11,appearance.fontSize-1)})},
+    ...themes.map(theme=>({section:'View',group:'Color theme',label:`Color theme: ${theme}`,checked:appearance.theme===theme,run:()=>appearancePatch({theme})})),
+    // Go: moving around
+    {section:'Go',group:'Find',label:'Go to anything…',shortcut:'Ctrl+K',run:()=>setPalette(true)},
+    {section:'Go',group:'Tabs',label:'Next tab',shortcut:'Alt+Right',run:()=>cycle(1)},
+    {section:'Go',group:'Tabs',label:'Previous tab',shortcut:'Alt+Left',run:()=>cycle(-1)},
+    ...views.map(v=>({section:'Go',group:'Open',label:`Open ${v}`,run:()=>open(v)})),
+    // Window: tabs, groups and saved layouts
+    {section:'Window',group:'Tabs',label:'Close active tab',run:()=>close(active,layout.focus)},
+    {section:'Window',group:'Tabs',label:'Close other tabs in group',run:()=>closeOthers(active,layout.focus)},
+    {section:'Window',group:'Tabs',label:'Reopen last closed tab',run:()=>{if(closed.length){open(closed[0]);setClosed(x=>x.slice(1));}}},
+    {section:'Window',group:'Tabs',label:pinned.includes(active)?'Unpin active tab':'Pin active tab',run:()=>togglePin(active)},
+    {section:'Window',group:'Groups',label:'Split (add a group, up to four)',shortcut:'Ctrl+\\',run:split},
+    {section:'Window',group:'Groups',label:'Single group',run:()=>preset(1,'row')},
+    {section:'Window',group:'Groups',label:'Two columns',run:()=>preset(2,'row')},
+    {section:'Window',group:'Groups',label:'Two rows',run:()=>preset(2,'column')},
+    {section:'Window',group:'Groups',label:'Three columns',run:()=>preset(3,'row')},
+    {section:'Window',group:'Groups',label:'Four groups',run:()=>preset(4,'row')},
+    {section:'Window',group:'Groups',label:'Change split orientation',run:()=>patch({axis:layout.axis==='row'?'column':'row'})},
+    {section:'Window',group:'Groups',label:'Open active view in other group',run:()=>{if(layout.groups.length>1)open(active,(layout.focus+1)%layout.groups.length);}},
+    ...["Research","Execution","Operations"].map(name=>({section:'Window',group:'Saved layouts',label:`Saved layout: ${name}`,checked:layout.workspace===name,run:()=>switchWorkspace(name)})),
+    {section:'Window',group:'Saved layouts',label:'Reset current layout',run:()=>{if(allowLayoutChange())setLayout(defaults(layout.workspace));}},
+    {section:'Window',group:'Saved layouts',label:'Open in new browser window',run:()=>openWorkspace(active,true)},
+    // Help
     {section:'Help',label:'Keyboard shortcuts & workbench guide',run:()=>setHelp(true)},
+    {section:'Help',label:'Refresh server status',run:()=>void refresh()},
+    {section:'Help',label:'About COREI-OS-MINI',run:()=>{goto('Settings','about');go('Settings');}},
   ];
   const badge=(v:View)=>!overview?null:v==='Market data'&&overview.feeds.problems?{n:overview.feeds.problems,tone:'bad'}
     :v==='Configuration'&&overview.approvals?{n:overview.approvals,tone:'warn'}
@@ -410,10 +421,10 @@ export default function App() {
   const live=overview?.order_sending.filter(o=>o.enabled).map(o=>o.environment)??[];
   const multi=layout.groups.length>1;
   return (
-    <div data-studio-active={active === 'Strategy Studio' ? true : undefined} className={`app density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""} ${layout.left&&!layout.maximized?"with-sidebar":""}`}>
+    <div data-studio-active={active === 'Strategy Studio' ? true : undefined} className={`app help-${setting<string>('workbench.help')==='INLINE'?'inline':'icon'} density-${appearance.density.toLowerCase()} ${appearance.wrapTabs?"wrap-tabs":""} ${layout.left&&!layout.maximized?"with-sidebar":""}`}>
       <header className="top">
         <div className="brand"><b>◈</b> COREI<span>OS MINI</span></div>
-        <MenuBar commands={commands}/>
+        <MenuBar commands={commands} compact={setting<string>('workbench.menu')==='COMPACT'}/>
         <button className="command" onClick={() => setPalette(true)} aria-label="Go to anything">
           <span>Go to anything…</span><kbd>Ctrl K</kbd>
         </button>
@@ -465,9 +476,9 @@ export default function App() {
                     </div>
                   ))}
                   <span className="tab-tools" role="toolbar" aria-label={`${viewTitle[layout.active[i]]} workspace actions`}>
-                    <button aria-label={`Split ${layout.active[i]} to the right`} title={layout.groups.length>=4?'Four groups open: this changes the split direction':'Open another workspace group beside this one (Ctrl+\\)'} onClick={split}><span aria-hidden="true">◫</span> Split</button>
-                    <button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this workspace in a new tab of this browser" onClick={()=>openWorkspace(layout.active[i],false)}><span aria-hidden="true">↗</span> New tab</button>
-                    <button aria-label={`Open ${layout.active[i]} in new window`} title="Open this workspace in a new browser window (e.g. on a second monitor)" onClick={()=>openWorkspace(layout.active[i],true)}><span aria-hidden="true">⧉</span> New window</button>
+                    <button aria-label={`Split ${layout.active[i]} to the right`} title={layout.groups.length>=4?'Four groups open: this changes the split direction':'Open another workspace group beside this one (Ctrl+\\)'} onClick={split}><span aria-hidden="true">◫</span></button>
+                    <button aria-label={`Open ${layout.active[i]} in new tab`} title="Open this workspace in a new tab of this browser" onClick={()=>openWorkspace(layout.active[i],false)}><span aria-hidden="true">↗</span></button>
+                    <button aria-label={`Open ${layout.active[i]} in new window`} title="Open this workspace in a new browser window (e.g. on a second monitor)" onClick={()=>openWorkspace(layout.active[i],true)}><span aria-hidden="true">⧉</span></button>
                     {multi && <button aria-label={layout.maximized?'Restore groups':`Maximise ${layout.active[i]}`} title={layout.maximized?'Show every group again':'Show only this group'} onClick={()=>patch({focus:i,maximized:!layout.maximized})}>{layout.maximized?'▭':'▢'}</button>}
                   </span>
                 </div>}
@@ -487,11 +498,8 @@ export default function App() {
         {layout.right && !layout.maximized && <ResizeHandle label="Resize inspector" reverse value={layout.rightWidth} min={200} max={440} change={rightWidth=>patch({rightWidth})}/>}
         {layout.right && !layout.maximized && (
           <aside className="inspector" style={{ width: layout.rightWidth }}>
-            <div className="panel-heading">ATTENTION <button title="Hide (Ctrl+Alt+B)" onClick={() => patch({ right: false })}>×</button></div>
-            <div className="inspector-body">
-              {overview ? (overview.attention.length ? overview.attention.map((a,n)=><button key={n} className={`attention-item ${a.severity}`} onClick={()=>{goto(a.goto.view,a.goto.section);go(a.goto.view);}}>
-                <strong>{a.title}</strong><span>{a.detail}</span></button>) : <p className="muted">Nothing needs attention.</p>) : <p className="muted">{signedOut?'Sign in to see live status.':'Loading…'}</p>}
-            </div>
+            <div className="panel-heading"><span>TRADING</span><button title="Hide secondary side bar (Ctrl+Alt+B)" aria-label="Hide secondary side bar" onClick={() => patch({ right: false })}>×</button></div>
+            <div className="sb-scroll"><ErrorBoundary name="Secondary side bar"><SecondaryBar overview={overview} signedOut={signedOut}/></ErrorBoundary></div>
           </aside>
         )}
       </div>

@@ -21,6 +21,7 @@ import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
 import { fmtTime } from './userSettings';
+import { Info } from './Info';
 
 export type Row = Record<string, any>;
 export type Section = { id: string; label: string; group: 'Overview' | 'Work' | 'Monitor' | 'Configure'; hint: string; render: (ctx: Ctx) => ReactNode };
@@ -39,12 +40,12 @@ export function Workspace({ view, sections, alone, groups = GROUPS }: { view: Vi
   const toggle = (id: string) => save(closed.includes(id) ? closed.filter(x => x !== id) : [...closed, id]);
   return <div className="ws">
     <nav className="ws-index ws-index-slim" aria-label="All panels">
-      <small className="cfg-note">Every item below, each opens and closes · open one as its own sub-tab with ⤢</small>
+      <Info label="About All panels">Every item of this area on one page. Click a header to open or close it (remembered); ⤢ opens one as its own sub-tab, ↗ in a new browser tab, ⧉ in a new window.</Info>
       <span className="ws-index-all"><button onClick={() => save([])}>Open all</button><button onClick={() => save(sections.map(x => x.id))}>Close all</button></span>
     </nav>
     {sections.map(s => <section key={s.id} id={`ws-${view}-${s.id}`} className={`ws-panel ${closed.includes(s.id) ? 'closed' : ''}`} aria-label={s.label}>
       <header className="ws-head" onClick={() => toggle(s.id)} title="Click to open or close">
-        <span className="ws-caret">{closed.includes(s.id) ? '▸' : '▾'}</span><b>{s.label}</b><small className="cfg-pill">{s.group}</small><small className="cfg-note">{s.hint}</small>
+        <span className="ws-caret">{closed.includes(s.id) ? '▸' : '▾'}</span><b>{s.label}</b><small className="cfg-pill">{s.group}</small><span onClick={e => e.stopPropagation()}><Info label={`About ${s.label}`}>{s.hint}</Info></span>
         <span className="ws-tools" onClick={e => e.stopPropagation()}>
           <button className="ws-ico" aria-label={`Open ${s.label} alone`} title="Open as its own sub-tab" onClick={() => alone(s.id)}>⤢</button>
           <button className="ws-ico" aria-label={`Open ${s.label} in new tab`} title="Open this item in a new browser tab" onClick={() => openWorkspace(view, false, s.id)}>↗</button>
@@ -60,10 +61,10 @@ export function Workspace({ view, sections, alone, groups = GROUPS }: { view: Vi
  * it hands on. The stages themselves are the main workspaces (rail and main tabs), so they are not repeated here. */
 export function StageBar({ view, title, hint }: { view: View; title: string; hint: string }) {
   const stage = stageOf(view);
-  if (!stage) return <header className="cfg-head"><div><h1>{title}</h1><p>{hint}</p></div></header>;
-  return <header className="cfg-head st-head st-bar">
-    <div className="st-title"><span className="st-crumb">Stage {stage.n} · {stage.title} ›</span><h1>{title}</h1><p>{hint}</p></div>
-    <p className="st-question" title={`${stage.question} It hands on: ${stage.feeds}.`}><b>Answers:</b> {stage.question} <b>Hands on:</b> {stage.feeds}.</p>
+  if (!stage) return <header className="cfg-head page-head"><h1>{title}</h1><Info label={`About ${title}`}>{hint}</Info></header>;
+  return <header className="cfg-head page-head stage-head">
+    <span className="st-crumb">{stage.n} · {stage.title} ›</span><h1>{title}</h1>
+    <Info label={`About ${title}`}><b>{title}:</b> {hint}<br /><b>This stage answers:</b> {stage.question}<br /><b>It hands on:</b> {stage.feeds}.</Info>
   </header>;
 }
 

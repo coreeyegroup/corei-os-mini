@@ -25,6 +25,10 @@ export const TOPBAR_ITEMS: [string, string][] = [
 ];
 
 export const SETTINGS: SettingDef[] = [
+  { id: 'workbench.help', category: 'Appearance', label: 'Help text', description: 'Explanations of each page and panel: behind an ⓘ button (compact), or always shown (for training and new users).',
+    scope: 'ACCOUNT', type: 'select', default: 'ICON', options: [['ICON', 'Behind ⓘ (compact)'], ['INLINE', 'Always shown']] },
+  { id: 'workbench.menu', category: 'Layout', label: 'Menu bar', description: 'Show the menus (View, Go, Window, Help) or fold them into one ☰ button, as VS Code "compact" does.',
+    scope: 'ACCOUNT', type: 'select', default: 'CLASSIC', options: [['CLASSIC', 'Menus'], ['COMPACT', 'One ☰ button']] },
   { id: 'region.timezone', category: 'Time & region', label: 'Time zone', description: 'Times on every screen are shown in this zone. Trading logic always uses market event time.',
     scope: 'ACCOUNT', type: 'select', default: 'LOCAL',
     options: [['LOCAL', 'This computer'], ['Asia/Kolkata', 'India (IST)'], ['UTC', 'UTC'], ['Europe/London', 'London'], ['America/New_York', 'New York'],

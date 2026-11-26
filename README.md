@@ -1484,3 +1484,17 @@ No migration. Tests: `backend/tests/test_paper_accounts.py`, `ui/tests/configura
   menu, notifications, settings and your account (sign out).
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Workbench in VS Code style — release 0.62.0
+
+No backend change. Tests: `ui/tests/workbench.cjs`, `ui/tests/trading.cjs`.
+
+- **Explanations behind ⓘ:** each page header is one line; click ⓘ to read what the page does. Settings › Appearance ›
+  Help text › "Always shown" brings every explanation back on screen.
+- **Menus:** View, Go, Window, Help (or one ☰: Settings › Layout › Menu bar). Ctrl+= / Ctrl+- change the text size.
+- **Right side bar** (Ctrl+Alt+B or the ◨ button): attention, accounts with equity and day P&L, open positions,
+  working orders and a watchlist.
+- **Side bar hidden:** screens keep their sub-tabs only (no more stacked list or empty block). In Settings, the side
+  bar is the list of categories.
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.

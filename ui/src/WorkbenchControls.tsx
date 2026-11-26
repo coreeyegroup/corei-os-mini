@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 
-export type Command = { label: string; section: string; shortcut?: string; keywords?: string; run: () => void };
-export function MenuBar({ commands }: { commands: Command[] }) {
+export type Command = { label: string; section: string; group?: string; shortcut?: string; keywords?: string; checked?: boolean; run: () => void };
+export const MENUS = ['View', 'Go', 'Window', 'Help'] as const;
+
+function MenuItems({ commands, section, done }: { commands: Command[]; section: string; done: () => void }) {
+  const list = commands.filter(c => c.section === section);
+  const groups = [...new Set(list.map(c => c.group ?? ''))];
+  return <>{groups.map((g, gi) => <div key={g || gi} role="group" aria-label={g || section}>
+    {gi > 0 && <hr className="menu-sep" />}
+    {g && <div className="menu-group">{g}</div>}
+    {list.filter(c => (c.group ?? '') === g).map(c => <button key={c.label} role={c.checked === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={c.checked}
+      onClick={() => { c.run(); done(); }}><span className="menu-check" aria-hidden="true">{c.checked ? '✓' : ''}</span><span>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
+  </div>)}</>;
+}
+
+/** Menus as in VS Code: View, Go, Window, Help; or, in compact mode, one ☰ button that holds them. Hovering across
+ * menus while one is open switches menu, as in a desktop menu bar. */
+export function MenuBar({ commands, compact = false }: { commands: Command[]; compact?: boolean }) {
   const [menu, setMenu] = useState('');
   const root = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -9,12 +24,17 @@ export function MenuBar({ commands }: { commands: Command[] }) {
     document.addEventListener('pointerdown', dismiss);
     return () => document.removeEventListener('pointerdown', dismiss);
   }, []);
-  return <nav className="menubar" aria-label="Workbench menus" ref={root} onKeyDown={e => {if(e.key==='Escape') setMenu('');}}>
-    {['Workspace', 'View', 'Layout', 'Appearance', 'Navigate', 'Help'].map(section => <div className="menu-wrap" key={section}>
-      <button aria-expanded={menu===section} onClick={() => setMenu(menu===section?'':section)}>{section}</button>
-      {menu===section && <div className="menu-popup" aria-label={`${section} commands`}>
-        {commands.filter(c=>c.section===section).map(c=><button key={c.label} onClick={()=>{c.run();setMenu('');}}><span>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
-      </div>}
+  const done = () => setMenu('');
+  if (compact) return <nav className="menubar compact" aria-label="Workbench menus" ref={root} onKeyDown={e => { if (e.key === 'Escape') setMenu(''); }}>
+    <div className="menu-wrap"><button aria-label="Application menu" title="Menu" aria-expanded={!!menu} onClick={() => setMenu(menu ? '' : 'View')}>☰</button>
+      {menu && <div className="menu-popup menu-compact" role="menu" aria-label="Application menu">
+        <div className="menu-tabs">{MENUS.map(m => <button key={m} aria-pressed={menu === m} onClick={() => setMenu(m)}>{m}</button>)}</div>
+        <MenuItems commands={commands} section={menu} done={done} /></div>}</div>
+  </nav>;
+  return <nav className="menubar" aria-label="Workbench menus" ref={root} onKeyDown={e => { if (e.key === 'Escape') setMenu(''); }}>
+    {MENUS.map(section => <div className="menu-wrap" key={section}>
+      <button aria-expanded={menu === section} onClick={() => setMenu(menu === section ? '' : section)} onMouseEnter={() => { if (menu && menu !== section) setMenu(section); }}>{section}</button>
+      {menu === section && <div className="menu-popup" role="menu" aria-label={`${section} commands`}><MenuItems commands={commands} section={section} done={done} /></div>}
     </div>)}
   </nav>;
 }
@@ -36,7 +56,7 @@ export function CommandPalette({ commands, dismiss }: { commands: Command[]; dis
   }}>
     <input ref={input} value={query} onChange={e=>{setQuery(e.target.value);setSelected(0);}} aria-label="Search commands" placeholder="Go to a screen or section, or run a command — e.g. accounts, plans, tables" role="combobox" aria-expanded="true" aria-controls="command-results" aria-activedescendant={filtered.length?`command-${selected}`:undefined}/>
     <div className="command-results" id="command-results" role="listbox">
-      {filtered.map((c,i)=><button id={`command-${i}`} role="option" aria-selected={selected===i} className={selected===i?'chosen':''} key={c.section+c.label} onMouseEnter={()=>setSelected(i)} onClick={()=>execute(c)} ref={el=>{if(selected===i)el?.scrollIntoView({block:'nearest'});}}><span><small>{c.section}: </small>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
+      {filtered.map((c,i)=><button id={`command-${i}`} role="option" aria-selected={selected===i} className={selected===i?'chosen':''} key={c.section+c.label} onMouseEnter={()=>setSelected(i)} onClick={()=>execute(c)} ref={el=>{if(selected===i)el?.scrollIntoView({block:'nearest'});}}><span><small>{c.group && c.section !== 'Go to' ? `${c.section} › ${c.group}` : c.section}: </small>{c.label}</span><kbd>{c.shortcut}</kbd></button>)}
       {!filtered.length && <p className="panel-empty">No matching commands.</p>}
     </div><div className="palette-hint">↑ ↓ Navigate &nbsp; Enter Select &nbsp; Esc Close</div>
   </div></div>;

@@ -89,7 +89,7 @@ export function TopBarRight({ overview, layout, patch, open, onBell }: { overvie
   const attention = overview?.attention ?? [];
   const critical = attention.filter(a => a.severity === 'CRITICAL').length;
   const toggles: [keyof LayoutBits, string, string, string][] = [
-    ['left', 'Toggle side bar (Ctrl+B)', '◧', 'Side bar'], ['bottom', 'Toggle panel (Ctrl+J)', '⬓', 'Panel'], ['right', 'Toggle inspector (Ctrl+Alt+B)', '◨', 'Inspector'],
+    ['left', 'Toggle side bar (Ctrl+B)', '◧', 'Side bar'], ['bottom', 'Toggle panel (Ctrl+J)', '⬓', 'Panel'], ['right', 'Toggle secondary side bar (Ctrl+Alt+B)', '◨', 'Secondary side bar'],
   ];
   return <div className="tb-right">
     {on('layout') && <div className="tb-toggles" role="group" aria-label="Layout">
