@@ -242,7 +242,10 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.equal(setupPolicyPuts[0].levels.LIVE.RISK,'HARD');assert.equal(setupPolicyPuts[0].reason,'tighten live risk');
  console.log('PASS: setup path: next step, eight ordered menus, scoped override with a reason, gate levels saved with a reason.');
  // Paper accounts: one per idea, own currency and amount, Indian brokerage as % of value; FX rate for INR valuation.
- nav('Paper accounts').click();await tick();await tick();
+ // Paper accounts live in Portfolio; Setup's entry opens them there.
+ nav('Paper accounts ↗').click();for(let i=0;i<8;i++)await tick();
+ assert.ok($('[aria-label="Paper accounts"]'),'Setup › Paper accounts opens Portfolio › Paper accounts');
+ assert.match($('.stage-head').textContent,/Portfolio intelligence.*Paper accounts/);
  assert.match($('[aria-label="Paper accounts"]').textContent,/No paper account yet/);
  [...w.document.querySelectorAll('[aria-label="Paper accounts"] button')].find(b=>/New paper account/.test(b.textContent)).click();await tick();
  const pf=$('[aria-label="New paper account"]');
@@ -275,6 +278,8 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.match(paperOrders[0].ticket_key,/^[A-Za-z0-9_-]{8,64}$/);
  [...pd.querySelectorAll('button')].find(b=>/Paper accounts/.test(b.textContent)).click();await tick();await tick();
  assert.ok($('.pa-table'),'back to the list');
+ w.document.querySelector('[aria-label="Close Portfolio in group 1"]').click();for(let i=0;i<6;i++)await tick();
+ if(!w.document.querySelector('.cfg-nav'))w.document.querySelector('nav.activity [aria-label="Configuration"]').click();for(let i=0;i<4;i++)await tick();
  nav('FX rates').click();await tick();await tick();
  const fxf=$('[aria-label="Set a rate"]');fill(fxf.querySelector('[aria-label="Rate"]'),'84.25');fill(fxf.querySelector('[aria-label="Rate note"]'),'RBI reference');await tick();
  await submit(fxf);await tick();

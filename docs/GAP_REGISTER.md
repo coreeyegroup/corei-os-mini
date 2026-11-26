@@ -378,3 +378,19 @@ Chrome screenshots of Market data, Risk and Settings with and without side bars.
 | WB-6 | Mixed sizes and fonts | DONE 0.62.0 for the shell, headers, tabs, menus, settings; individual screens still carry older local styles — reviewed screen by screen as each is touched | — |
 | WB-7 | About 480 short notes across screens | PARTIAL — long notes are one line with ⓘ automatically; rewriting each into the ⓘ of its control is a proposal | — |
 | WB-8 | Views movable between side bars (VS Code drag and drop) | OPEN — proposal | — |
+
+## O. Portfolio paper accounts and end-to-end visual audit — 27 Nov 2026 (release 0.63.0)
+
+Evidence: `backend/tests/test_paper_accounts.py` (paper flag), `ui/tests/configuration.cjs` (Setup entry opens
+Portfolio › Paper accounts), `ui/tests/workbench.cjs` (distinct activity icons, stage number in tooltip); headless
+Chrome screenshots of Home, Market data, Strategies, Risk, Portfolio, Execution, Setup, My workspaces, Settings.
+
+| ID | Gap | Status |
+|---|---|---|
+| VA-1 | Paper accounts in Setup; "Paper capital" mislabelled in Portfolio | DONE 0.63.0 |
+| VA-2 | Activity bar icons repeated; tiny digits | DONE 0.63.0 |
+| VA-3 | Editor tabs too small | DONE 0.63.0 (35px) |
+| VA-4 | Uneven tile shapes and type sizes across screens | DONE 0.63.0 (one scale, one tile size) |
+| VA-5 | "undefined" shown in Home stage cards and Execution when a count is missing | DONE 0.63.0 (0) |
+| VA-6 | Market data dashboard tiles keep their own style (uppercase labels, monospace values) | OPEN — align when that screen is next changed |
+| VA-7 | Remaining per-screen stylesheets still carry older sizes beneath the final layer | OPEN — consolidate into one stylesheet (proposal; large, no visible change expected) |

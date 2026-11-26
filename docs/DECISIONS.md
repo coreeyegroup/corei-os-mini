@@ -323,3 +323,25 @@ Decision (reference: VS Code defaults, used daily by most developers for long se
    Ctrl+= / Ctrl+- change text size.
 
 Status: accepted.
+
+## DEC-107 · Paper accounts belong to Portfolio; one visual scale end to end (release 0.63.0, 27 Nov 2026)
+
+Context: paper accounts (list, account page, ticket) lived in Setup, while Portfolio kept an older "Paper capital"
+tab and a "Set starting paper capital" button that actually set the capital COREI assumes for *broker* accounts. A
+visual audit (headless Chrome, every screen) found: one icon shared by three areas and tiny stage digits in the
+activity bar; 30px editor tabs; "My desks" / "My Workspaces" naming; tiles stretching to different shapes per screen;
+font sizes fixed in many stylesheets (11–12px) that ignored the chosen text size; monospace in lists.
+
+Decision:
+1. **Portfolio › Overview › Paper accounts** holds the list, account page and paper ticket. Setup's "Paper accounts ↗"
+   opens it there; the old address redirects. Portfolio's "Paper capital" becomes **Estimate capital** (what it is: the
+   starting equity assumed for a broker account without its own amount); a paper account's card links to its page
+   instead. `GET /trading/portfolio/accounts` marks paper accounts (`paper: true`).
+2. **One scale:** body = chosen text size (13px default), secondary −1px, labels 11px, KPI values +3px. Heights: top bar
+   32, editor tabs 35 (VS Code), sub-tabs 30, controls 24, rows 22–24. KPI tiles one size everywhere (150–190px).
+   Lists use the UI font with tabular figures; monospace stays for code, consoles and equations.
+3. **Activity bar:** a distinct icon per area (home, panels, chart, lens, antenna, target, pen, shield, pie, send,
+   check-document, nodes, pulse, wrench, server, gear), VS Code active marker, stage number in the tooltip and on the tab.
+4. Names: "My workspaces" everywhere.
+
+Status: accepted.

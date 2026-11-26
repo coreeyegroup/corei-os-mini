@@ -9,9 +9,10 @@
 import { VersionEvidence, copyToTimeframe } from './Governance';
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import './configuration.css';
-import { openSetupItem, SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
+import type { View } from './layout';
+import { goto, openSetupItem, SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
 import { SetupGates, SetupHome } from './SetupHome';
-import { FxRates, PaperAccounts } from './PaperAccounts';
+import { FxRates } from './PaperAccounts';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -2096,6 +2097,12 @@ function Users({ me }: { me: Session }) {
 
 /* ---------- workspace ---------- */
 
+/** An old address of a page that moved: opens it in its new place (bookmarks and links keep working). */
+function MovedTo({ view, section, label }: { view: View; section: string; label: string }) {
+  useEffect(() => { goto(view, section); }, [view, section]);
+  return <p className="cfg-note">{label} moved to {view}. <button className="link" onClick={() => goto(view, section)}>Open {label} ↗</button></p>;
+}
+
 export default function Configuration() {
   const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
@@ -2178,14 +2185,14 @@ export default function Configuration() {
         : `Broker login failed${brokerReason ? ': ' + brokerReason : '.'}`} <button type="button" className="cfg-link" aria-label="Dismiss" onClick={() => setLoginShown(true)}>✕</button></p>}
       {error && <p role="alert" className="cfg-error">{error}</p>}
       <SubWorkspace view="Configuration" label="Setup" tab={current.id} setTab={id => setSection(id as Section)} initial={['guide', 'health', 'brokers', 'instruments', 'strategies', 'controls']}
-        items={sections.map(x => ({ id: x.id, label: x.label, hint: x.hint, group: (SETUP_GROUPS.find(([, its]) => its.some(([k]) => k === x.id))?.[0] ?? '').replace(/^\d · /, '') }))}
+        items={sections.filter(x => x.id !== 'paper').map(x => ({ id: x.id, label: x.label, hint: x.hint, group: (SETUP_GROUPS.find(([, its]) => its.some(([k]) => k === x.id))?.[0] ?? '').replace(/^\d · /, '') }))}
         render={(id: string) => <Fragment key={id === section && openId.id ? `${id}:${openId.n}` : id}>
           {BROKER_TABS.some(([b]) => b === id) && <nav className="cfg-views" aria-label="Brokers and accounts views">
             {BROKER_TABS.map(([b, label]) => <button key={b} aria-current={id === b ? 'page' : undefined} onClick={() => navigate(b)}><span>{label}</span>
               {summary && b !== 'brokers' && <small>{summary.counts?.[b]}</small>}</button>)}</nav>}
           {id === 'guide' ? <SetupHome />
         : id === 'gates' ? <SetupGates me={user.username} roles={user.roles} />
-        : id === 'paper' ? <PaperAccounts canEdit={user.roles.includes('TRADING_OPS') || user.roles.includes('ADMIN')} />
+        : id === 'paper' ? <MovedTo view="Portfolio" section="paper" label="Paper accounts" />
         : id === 'fx' ? <FxRates canEdit={user.roles.includes('RISK_APPROVER')} />
         : id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
         : id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={id === section ? openId.id : undefined} /></div>

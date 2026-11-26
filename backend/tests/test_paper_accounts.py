@@ -147,6 +147,8 @@ class PaperAccounts(te.Execution):
         self.assertEqual([f['side'] for f in page['fills']], ['SELL', 'BUY'])
         self.assertTrue(any(a['action'] == 'CREATE' for a in page['activity']))
         self.ok(self.alice.get(f"/api/trading/paper-accounts/{_a['id']}"), 404)
+        flags = {x['account_code']: x['paper'] for x in self.ok(self.alice.get('/api/trading/portfolio/accounts'))['items']}
+        self.assertIs(flags['PAPER_T'], True, 'Portfolio knows a paper account (its amount is set on its own page, not as estimate capital)')
         bar = self.ok(self.alice.get('/api/trading/topbar'))
         self.assertEqual((bar['kill_switches'], bar['unknown_orders']), ({}, 0))
         self.assertTrue(bar['server_time'])
