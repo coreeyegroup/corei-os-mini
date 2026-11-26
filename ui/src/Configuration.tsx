@@ -11,6 +11,7 @@ import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode 
 import './configuration.css';
 import { openSetupItem, SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
 import { SetupGates, SetupHome } from './SetupHome';
+import { FxRates, PaperAccounts } from './PaperAccounts';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -21,8 +22,8 @@ import { SubWorkspace } from './SubWorkspace';
 import { useViewVisible } from './visibility';
 
 export type Row = Record<string, any>;
-type Section = 'guide' | 'gates' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
-type Entity = Exclude<Section, 'guide' | 'gates' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
+type Section = 'guide' | 'gates' | 'paper' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
+type Entity = Exclude<Section, 'guide' | 'gates' | 'paper' | 'fx' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -32,6 +33,8 @@ const ROLE_HINT: Record<string, string> = { ADMIN: 'Manage users and roles', TRA
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'guide', label: 'Setup path', hint: 'The steps from nothing to a first trade, per track (Paper, DEMO, LIVE): checked from your real data, with what to do next' },
   { id: 'gates', label: 'Gates & overrides', hint: 'How strictly each step holds actions (off · warn · soft · supervised · hard), scoped time-boxed overrides, the setup report' },
+  { id: 'paper', label: 'Paper accounts', hint: 'Simulated accounts, each with its own currency, amount, markets and costs; any strategy; nothing reaches a broker' },
+  { id: 'fx', label: 'FX rates', hint: 'Rates entered by a person, used only when no collected pair converts a currency' },
   { id: 'health', label: 'Readiness per account', hint: 'Can each account collect data and trade right now; what to set up next' },
   { id: 'brokers', label: 'Connectivity', hint: 'Provider › account › server. Select a level to add the next one' },
   { id: 'providers', label: 'Providers', hint: 'Step 1 · who you deal with: broker, exchange, ECN, feed … legal entity, regulator, contacts, exposure' },
@@ -2181,6 +2184,8 @@ export default function Configuration() {
               {summary && b !== 'brokers' && <small>{summary.counts?.[b]}</small>}</button>)}</nav>}
           {id === 'guide' ? <SetupHome />
         : id === 'gates' ? <SetupGates me={user.username} roles={user.roles} />
+        : id === 'paper' ? <PaperAccounts canEdit={user.roles.includes('TRADING_OPS') || user.roles.includes('ADMIN')} />
+        : id === 'fx' ? <FxRates canEdit={user.roles.includes('RISK_APPROVER')} />
         : id === 'health' ? <div className="cfg-pane"><HealthBoard navigate={navigate} /></div>
         : id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={id === section ? openId.id : undefined} /></div>
         : id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>

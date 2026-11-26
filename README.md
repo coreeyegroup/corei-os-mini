@@ -1448,3 +1448,22 @@ Migration `050_setup_gates.sql` (additive). Tests: `backend/tests/test_setup_gat
 
 Update: merge the PR, then `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+## Paper accounts — release 0.60.0
+
+Migration `051_paper_accounts.sql` (additive). Tests: `backend/tests/test_paper_accounts.py`.
+
+- **As many paper accounts as you need** (Setup › 2 Connect › Paper accounts). Each has its own **currency** (USD, INR,
+  EUR … any ISO code) and **starting amount**, and can run **any strategy**, in a Paper workspace or as a paper
+  deployment. No broker is needed, and nothing is ever sent to one.
+- **Markets:** any instrument, forex and metals, Indian markets (NSE, BSE, MCX, INR-quoted) or a custom list,
+  enforced before each order. Closing is always allowed.
+- **Realistic fills:** the live price of the instrument's feed (or a chosen source), plus the account's slippage and
+  costs: per lot, % of traded value (Indian brokerage) and a minimum per fill. Equity is net of costs.
+- **Currencies:** valuation goes through collected pairs, then a cross through USD or EUR, then rates you enter
+  (Setup › 3 Markets › FX rates, e.g. USD/INR for an INR account trading forex).
+- **Funds and start again:** change the amount at any time, or start again with the same settings. The old account is
+  archived with its history.
+- **Optional limits** sized on the amount at creation (Retail, Professional, Institutional).
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+

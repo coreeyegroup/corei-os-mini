@@ -92,6 +92,11 @@ def quote(db, account_id, instrument_id, data_source: tuple | None = None) -> di
         candidates.append((account_id, sym, 'ACCOUNT'))
     if data_source:
         candidates.append((data_source[0], data_source[1], 'DATA_SOURCE'))
+    preferred = db.execute("""SELECT p.account_id, p.broker_symbol FROM pf_paper_accounts x JOIN cfg_accounts a ON a.connection_id=x.price_source_id
+                              JOIN md_collection_plans p ON p.account_id=a.id AND p.instrument_id=%s AND p.status <> 'ARCHIVED'
+                              WHERE x.account_id=%s LIMIT 1""", (str(instrument_id), str(account_id))).fetchone()
+    if preferred:   # a paper account's chosen price source comes before any other feed
+        candidates.append((preferred['account_id'], preferred['broker_symbol'], 'PAPER_SOURCE'))
     for account, symbol, kind in candidates:
         r = _quote_row(db, account, symbol)
         if r:
@@ -110,22 +115,57 @@ def _exact(r: dict, ins: dict, kind: str) -> dict:
             'broker_symbol': r['broker_symbol'], 'source_time': r['source_time'], 'received_at': r['received_at']}
 
 
-def fx_rate(db, from_ccy: str, to_ccy: str) -> Decimal | None:
-    """1 unit of from_ccy in to_ccy, from a collected FX pair (either direction); None when no pair is collected."""
-    if not from_ccy or not to_ccy or from_ccy == to_ccy:
-        return Decimal(1)
+def _live_rate(db, a: str, b: str) -> Decimal | None:
+    """1 a in b from a collected FX (or metal) pair, either direction."""
     rows = db.execute("""SELECT i.base_currency, i.quote_currency, l.bid, l.ask FROM cfg_instruments i
                          JOIN md_collection_plans p ON p.instrument_id=i.id AND p.status <> 'ARCHIVED'
                          JOIN md_latest l ON l.account_id=p.account_id AND l.broker_symbol=p.broker_symbol
                          WHERE i.asset_class IN ('FX', 'METAL') AND ((i.base_currency=%s AND i.quote_currency=%s) OR (i.base_currency=%s AND i.quote_currency=%s))
                            AND l.bid IS NOT NULL AND l.ask IS NOT NULL ORDER BY l.received_at DESC LIMIT 1""",
-                      (from_ccy, to_ccy, to_ccy, from_ccy)).fetchone()
+                      (a, b, b, a)).fetchone()
     if not rows:
         return None
     mid = (D(rows['bid']) + D(rows['ask'])) / 2
     if not mid:
         return None
-    return mid if rows['base_currency'] == from_ccy else Decimal(1) / mid
+    return mid if rows['base_currency'] == a else Decimal(1) / mid
+
+
+def _manual_rate(db, a: str, b: str) -> Decimal | None:
+    """1 a in b from a rate a person entered (cfg_fx_rates), either direction."""
+    r = db.execute('SELECT base, rate FROM cfg_fx_rates WHERE (base=%s AND quote=%s) OR (base=%s AND quote=%s) ORDER BY set_at DESC LIMIT 1',
+                   (a, b, b, a)).fetchone()
+    if not r:
+        return None
+    return D(r['rate']) if r['base'] == a else Decimal(1) / D(r['rate'])
+
+
+def fx_rate(db, from_ccy: str, to_ccy: str) -> Decimal | None:
+    """1 unit of from_ccy in to_ccy. In order: a collected pair (direct or inverse); a cross through USD or EUR from
+    collected pairs; a rate a person entered (direct, inverse, or a cross with a collected leg). None when nothing
+    gives a rate: the caller reports the holding as not valued rather than guessing."""
+    if not from_ccy or not to_ccy or from_ccy == to_ccy:
+        return Decimal(1)
+    direct = _live_rate(db, from_ccy, to_ccy)
+    if direct is not None:
+        return direct
+    for via in ('USD', 'EUR'):
+        if via in (from_ccy, to_ccy):
+            continue
+        a, b = _live_rate(db, from_ccy, via), _live_rate(db, via, to_ccy)
+        if a is not None and b is not None:
+            return a * b
+    manual = _manual_rate(db, from_ccy, to_ccy)
+    if manual is not None:
+        return manual
+    for via in ('USD', 'EUR'):
+        if via in (from_ccy, to_ccy):
+            continue
+        a = _live_rate(db, from_ccy, via) or _manual_rate(db, from_ccy, via)
+        b = _live_rate(db, via, to_ccy) or _manual_rate(db, via, to_ccy)
+        if a is not None and b is not None:
+            return a * b
+    return None
 
 
 DEPLOYMENT_SELECT = """SELECT d.*, s.code AS strategy_code, v.algorithm, v.parameters, v.number AS version_number, v.state AS version_state,

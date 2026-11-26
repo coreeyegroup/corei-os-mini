@@ -75,12 +75,16 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
     fill = {'id': uuid4(), 'order_id': order['id'], 'deployment_id': order.get('deployment_id'), 'account_id': order['account_id'],
             'instrument_id': order['instrument_id'], 'side': order['side'], 'quantity': qty, 'price': price, 'mode': order['mode'], 'at': at,
             'stop_loss': order.get('stop_loss'), 'take_profit': order.get('take_profit')}
+    if order['mode'] == 'PAPER':   # a paper account's costs (commission per lot, % of value, minimum), in quote currency
+        from . import paper
+        fill['commission'] = paper.commission(db, order['account_id'], ins, qty, price)
     realised = portfolio.apply_fill(db, fill)
     db.execute('INSERT INTO oms_fills(id, order_id, deployment_id, account_id, instrument_id, side, quantity, price, quote_bid, quote_ask, slippage, '
-               'realised_pnl, currency, mode, at, broker_deal_id, latency_ms, arrival_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+               'realised_pnl, currency, mode, at, broker_deal_id, latency_ms, arrival_price, commission) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                (fill['id'], str(order['id']), str(order['deployment_id']) if order.get('deployment_id') else None, str(order['account_id']),
                 str(order['instrument_id']), order['side'], qty, price, q and q['bid'], q and q['ask'], slip, realised,
-                ins.get('quote_currency') or 'USD', order['mode'], at, str(deal_id) if deal_id is not None else None, latency, arrival))
+                ins.get('quote_currency') or 'USD', order['mode'], at, str(deal_id) if deal_id is not None else None, latency, arrival,
+                fill.get('commission') or Decimal(0)))
     filled = D(order['filled_qty']) + qty
     if filled > D(order['quantity']):
         # The broker reports more than the order asked for. The exposure is real, so it is booked (never dropped), and
@@ -112,7 +116,9 @@ def _fill(db, order: dict, qty: Decimal, price: Decimal, q: dict | None, actor: 
 def _paper_price(db, order: dict, q: dict) -> Decimal:
     ins = instrument(db, order['instrument_id'])
     tick = D(ins.get('tick_size')) or Decimal('0.00001')
-    slip = tick * int(settings(db).get('paper_slippage_ticks') or 0)
+    from . import paper
+    own = paper.slippage_ticks(db, order['account_id'])
+    slip = tick * int(own if own is not None else (settings(db).get('paper_slippage_ticks') or 0))
     return (q['ask'] + slip) if order['side'] == 'BUY' else (q['bid'] - slip)
 
 

@@ -32,7 +32,7 @@ NIL = '00000000-0000-0000-0000-000000000000'
 
 
 def apply_fill(db, fill: dict) -> Decimal:
-    """Update the position for (account, instrument, deployment, mode) with one fill; returns the realised P&L."""
+    """Update the position for (account, instrument, deployment, mode) with one fill (net of its cost); returns the gross realised P&L."""
     ins = instrument(db, fill['instrument_id'])
     size = D(ins.get('contract_size')) or Decimal(1)
     ccy = ins.get('quote_currency') or 'USD'
@@ -55,6 +55,9 @@ def apply_fill(db, fill: dict) -> Decimal:
             avg = None
         elif (new_qty > 0) != (qty > 0):
             avg = price  # flipped: the remainder opens at the fill price
+    # A fill's cost is realised at once in the position (net), while the fill keeps its gross P&L and its cost apart, so
+    # win/loss counts are not distorted by costs.
+    net = realised - (D(fill['commission']) if fill.get('commission') else ZERO)
     tick = D(ins.get('tick_size')) or Decimal('0.00001')
     avg = avg.quantize(tick / 1000) if avg is not None else None
     # Protective levels: set by the order that opens (or reverses) the position, kept while it runs, cleared when flat.
@@ -63,12 +66,12 @@ def apply_fill(db, fill: dict) -> Decimal:
     take = fill.get('take_profit') if opens else (None if new_qty == 0 else (row['take_profit'] if row else None))
     if row:
         db.execute('UPDATE pf_positions SET quantity=%s, avg_price=%s, realised_pnl=realised_pnl+%s, opened_at=CASE WHEN %s THEN %s ELSE opened_at END, '
-                   'stop_loss=%s, take_profit=%s, updated_at=now() WHERE id=%s', (new_qty, avg, realised, opens, fill['at'], stop, take, row['id']))
+                   'stop_loss=%s, take_profit=%s, updated_at=now() WHERE id=%s', (new_qty, avg, net, opens, fill['at'], stop, take, row['id']))
     else:
         db.execute('INSERT INTO pf_positions(id, account_id, instrument_id, deployment_id, mode, quantity, avg_price, realised_pnl, currency, opened_at, '
                    'stop_loss, take_profit) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                    (uuid4(), str(fill['account_id']), str(fill['instrument_id']), str(fill['deployment_id']) if fill.get('deployment_id') else None,
-                    fill['mode'], new_qty, avg, realised, ccy, fill['at'], stop, take))
+                    fill['mode'], new_qty, avg, net, ccy, fill['at'], stop, take))
     return realised
 
 

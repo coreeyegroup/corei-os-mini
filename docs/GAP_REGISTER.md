@@ -324,3 +324,21 @@ Evidence: `backend/tests/test_setup_gates.py`, `ui/tests/configuration.cjs` (set
 | SU-8 | Alert-channel test delivery as part of step 1 | OPEN — step 1 checks an active channel; proof of a delivered test is a proposal | — |
 | SU-9 | Market-data history depth in step 4 | OPEN — history is checked by the evidence profile (step 6); a depth check per plan is a proposal | — |
 | SU-10 | Choosing the target track in the screen | OPEN — set by API today (default DEMO); a selector is a small follow-up | — |
+
+## L. Paper trading: multiple accounts, any currency, forex and India — 26 Nov 2026 (release 0.60.0)
+
+Source: owner request (account 1, 2 … each any instrument, any strategy; currency and amount; international forex and Indian market).
+Evidence: `backend/tests/test_paper_accounts.py`, `ui/tests/configuration.cjs` (paper accounts, FX rates). Migration `051_paper_accounts.sql`.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| PA-1 | Paper needed a broker account | DONE 0.60.0 (standalone paper accounts on the COREI simulator) | test_paper_account_trades_on_the_feed_with_its_own_costs |
+| PA-2 | One amount and currency for all paper books | DONE 0.60.0 (per account: any currency, any amount; funds; start again) | test_funds_clone_and_risk_profile |
+| PA-3 | Paper fills cost nothing | DONE 0.60.0 (per lot, % of value, minimum; own slippage; gross vs net kept apart) | test_paper_account_trades_on_the_feed_with_its_own_costs |
+| PA-4 | INR and other currencies could not value USD instruments without a direct pair | DONE 0.60.0 (cross through USD/EUR; rates entered by a person) | test_usd_and_inr_accounts_value_the_same_trade_in_their_own_currency |
+| PA-5 | No market scope (forex vs India) | DONE 0.60.0 (any / forex / India / custom, enforced pre-trade) | test_scope_is_enforced_and_closing_is_always_allowed |
+| PA-6 | Paper runs required a broker trading symbol | DONE 0.60.0 (a paper run needs only the data feed) | test_a_paper_account_never_reaches_a_broker |
+| PA-7 | Indian lot sizes, F&O expiries, options chains | OPEN — instruments carry contract size and step today; an Upstox instrument import with lots and expiries is a proposal | — |
+| PA-8 | Overnight financing (swap) and statutory charges itemised (STT, GST, stamp duty) | OPEN — one % of value covers them today; an itemised Indian charges model is a proposal | — |
+| PA-9 | Performance P&L net of costs in the post-trade reports | OPEN — equity and positions are net; the performance table shows gross P&L and costs separately is a proposal | — |
+| PA-10 | Margin model for paper (leverage, margin calls) | OPEN — limits (leverage, gross exposure) refuse orders; a margin-call simulation is a proposal | — |

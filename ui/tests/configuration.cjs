@@ -32,7 +32,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
-const setupOverrides=[],setupPolicyPuts=[];
+const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
 const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
   policy:{preset:'RECOMMENDED',custom:{},target_track:'DEMO',default_hours:24,max_hours:{PAPER:168,DEMO:168,LIVE:24},
@@ -46,6 +46,11 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
     LIVE:{done:0,total:1,complete:false,next:null,gates:[gate('PEOPLE',1,'People and alerts','BLOCKED','SUPERVISED',[{gate:'PEOPLE',text:'Only 1 person can approve.',fix:'Add a second approver.',goto:{view:'Configuration',section:'users'}}])]}}});
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
+   if(url.endsWith('/trading/paper-accounts')&&method==='POST'){const b=JSON.parse(options.body);paperPosts.push(b);const a={id:'pa-'+paperRows.length,version:1,status:'ACTIVE',starting_amount:b.amount,equity:b.amount,return_pct:'0.00',drawdown_pct:'0.00',complete:true,missing_fx:[],open_positions:0,runs:0,fills:0,...b,commission_per_lot:b.commission_per_lot,asset_classes:b.asset_classes,markets:b.markets,instruments:b.instruments};paperRows.push(a);return ok(a,201);}
+   if(/\/trading\/paper-accounts\/[^/]+\/funds$/.test(url)){const b=JSON.parse(options.body);paperFunds.push(b);paperRows[0].starting_amount=b.amount;return ok(paperRows[0]);}
+   if(url.includes('/trading/paper-accounts'))return ok({items:paperRows,currencies:['USD','INR','EUR']});
+   if(url.endsWith('/trading/fx-rates')&&method==='PUT'){const b=JSON.parse(options.body);fxRows.push({...b,set_at:'2026-11-26T00:00:00Z',set_by:'risk-ops'});return ok(fxRows.at(-1));}
+   if(url.includes('/trading/fx-rates'))return ok({items:fxRows});
    if(url.endsWith('/trading/setup/overrides')&&method==='POST'){const b=JSON.parse(options.body);setupOverrides.push(b);return ok({id:'ov1',...b,approved_at:'2026-11-26T00:00:00Z',expires_at:'2026-11-27T00:00:00Z',requested_by:'risk-ops'},201);}
    if(url.endsWith('/trading/setup/policy')&&method==='PUT'){setupPolicyPuts.push(JSON.parse(options.body));return ok({pending:null});}
    if(url.includes('/trading/setup/landing'))return ok({target_track:'DEMO',land_on_setup:true,done:3,total:8,overrides:0,next:null});
@@ -229,6 +234,27 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  w.prompt=()=>'tighten live risk';[...qa('[aria-label="Gate levels"] button')].find(b=>b.textContent==='Save levels').click();await tick();await tick();
  assert.equal(setupPolicyPuts[0].levels.LIVE.RISK,'HARD');assert.equal(setupPolicyPuts[0].reason,'tighten live risk');
  console.log('PASS: setup path: next step, eight ordered menus, scoped override with a reason, gate levels saved with a reason.');
+ // Paper accounts: one per idea, own currency and amount, Indian brokerage as % of value; FX rate for INR valuation.
+ nav('Paper accounts').click();await tick();await tick();
+ assert.match($('[aria-label="Paper accounts"]').textContent,/No paper account yet/);
+ [...w.document.querySelectorAll('[aria-label="Paper accounts"] button')].find(b=>b.textContent==='New paper account').click();await tick();
+ const pf=$('[aria-label="New paper account"]');
+ const inp=l=>pf.querySelector(`[aria-label="${l}"]`);
+ fill(pf.querySelector('input[placeholder="PAPER_USD_1"]'),'paper_inr');fill(pf.querySelector('input[placeholder="Forex practice"]'),'NSE practice');
+ fill(inp('Currency'),'inr');fill(inp('Starting amount'),'1000000');fill(inp('Scope'),'INDIA');fill(inp('Commission percent'),'0.03');fill(inp('Minimum commission'),'20');fill(inp('Risk limits'),'PROFESSIONAL');await tick();
+ await submit(pf);await tick();
+ assert.deepEqual([paperPosts[0].code,paperPosts[0].currency,paperPosts[0].amount,paperPosts[0].scope,paperPosts[0].commission_pct,paperPosts[0].min_commission,paperPosts[0].risk_profile],
+   ['PAPER_INR','INR','1000000','INDIA','0.03','20','PROFESSIONAL'],'currency, amount, markets, costs and limits as typed text');
+ assert.match($('[aria-label="Paper accounts"]').textContent,/PAPER_INR created with 1000000 INR/);
+ assert.match($('.pa-table').textContent,/PAPER_INR.*INR.*1000000.*Indian markets/);
+ w.prompt=()=>'2500000';[...w.document.querySelectorAll('.pa-actions button')].find(b=>b.textContent==='Funds…').click();await tick();await tick();
+ assert.equal(paperFunds[0].amount,'2500000');
+ nav('FX rates').click();await tick();await tick();
+ const fxf=$('[aria-label="Set a rate"]');fill(fxf.querySelector('[aria-label="Rate"]'),'84.25');fill(fxf.querySelector('[aria-label="Rate note"]'),'RBI reference');await tick();
+ await submit(fxf);await tick();
+ assert.deepEqual(fxRows[0].base+fxRows[0].quote+fxRows[0].rate,'USDINR84.25');
+ assert.match($('[aria-label="FX rates"]').textContent,/USD\/INR.*84\.25.*RBI reference/);
+ console.log('PASS: paper accounts: own currency, amount, Indian markets, % brokerage, limits; funds; FX rate for INR valuation.');
  nav('Readiness per account').click();await tick();await tick();await tick();
  assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
  assert.match($('.cfg-health').textContent,/Next: 1 Broker/);
