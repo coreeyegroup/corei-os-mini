@@ -580,22 +580,12 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .app .num, .app td.num, .app th.num { font-variant-numeric: tabular-nums; }
 
 /* Settings uses the side bar as its table of contents when the side bar is shown */
-.app.with-sidebar .set-body { grid-template-columns: minmax(0, 1fr); }
-.app.with-sidebar .set-nav { display: none; }
-.set-head { padding: 8px 20px; }
-.set-list { padding: 0 20px 40px; }
-.set-row { padding: 8px 10px; }
 
 /* secondary side bar tables */
 .inspector .sb-table td.up { color: #3fb950; } .inspector .sb-table td.down { color: #f85149; }
 /* VS Code settings editor: title, description, then the control under it; readable line length */
-.set-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px !important; max-width: 900px; padding: 10px 12px !important; }
-.set-control { justify-content: flex-start; }
-.set-control select, .set-control input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { min-width: 240px; max-width: 320px; }
-.set-control input[type="range"] { flex: 0 1 260px; }
 /* a screen with sub-tabs does not repeat its sections in a second strip when the side bar is hidden */
 .cfg:has(.sw) > .cfg-nav { display: none !important; }
-.set-section { max-width: 920px; }
 
 /* ==== 0.63.0 · end-to-end visual audit: one type scale, fixed heights, one rhythm ====
  * Scale: --ui-size (13px default) for body; -1px secondary; 11px labels/headers; +3px values in KPI tiles.
@@ -666,26 +656,6 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 
 /* ==== 0.63.1 · alignment pass: one left edge, one vertical rhythm (4 / 8 / 12) ==== */
 /* Settings (VS Code settings editor): section title and rows share the left edge; booleans on one line */
-.set-head { gap: 12px !important; padding: 8px 16px !important; }
-.set-list { padding: 4px 16px 32px !important; }
-.set-section { max-width: 880px; margin: 0 0 8px; }
-.set-section h3 { display: flex !important; justify-content: flex-start !important; align-items: baseline; gap: 12px; margin: 12px 0 4px !important; padding: 0 0 4px 12px;
-  font-size: calc(var(--fs) + 2px) !important; border-bottom: 1px solid var(--line); }
-.set-section h3 .link { font-size: var(--fs-2); font-weight: 400; }
-.set-row { display: block !important; max-width: none; padding: 6px 10px !important; margin: 0; border-left: 2px solid transparent; border-radius: 0 3px 3px 0; }
-.set-row.modified { border-left-color: var(--accent); }
-.set-title { display: flex; align-items: center; gap: 6px; min-height: 20px; }
-.set-title b { font-weight: 600; }
-.set-scope { margin-left: 2px !important; }
-.set-reset { margin-left: 4px; font-size: var(--fs-2); }
-.set-desc { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-2); line-height: 1.45; }
-.set-control { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.set-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; color: var(--muted); font-size: var(--fs-2); line-height: 1.45; cursor: pointer; }
-.set-check input { margin: 2px 0 0; flex: none; }
-.set-kbd { display: grid !important; grid-template-columns: minmax(0, 1fr) 160px 140px; align-items: center; gap: 12px; padding: 3px 10px !important; }
-.set-kbd small { color: var(--muted); }
-.set-kbd kbd { justify-self: start; }
-.set-nav button { padding: 4px 16px !important; }
 
 /* Paper accounts: same toolbar and tiles as every other screen; account page tiles match */
 .pa-toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 4px !important; }
@@ -704,10 +674,6 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .content .cfg-error, .content .cfg-ok { margin: 0 0 8px !important; }
 .content p.cfg-note, .content div.cfg-note { margin: 4px 0 8px !important; }
 .content h4 { margin: 12px 0 6px; font-size: var(--fs); }
-.set-head { padding-left: 28px !important; }
-.set-control input[type="range"] { height: 16px; margin: 0; }
-.set-control output { color: var(--muted); font-size: var(--fs-2); min-width: 48px; }
-.set-control { margin-top: 4px !important; }
 /* inline forms: title on its own line, fields bottom-aligned on one row */
 .gv-preset { display: flex !important; flex-wrap: wrap; align-items: flex-end !important; gap: 8px 10px !important; }
 .gv-preset > b { flex-basis: 100%; margin: 4px 0 0; }
@@ -717,3 +683,99 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .sysmap-flow button b { font-size: var(--fs); line-height: 1.3; }
 .sysmap-flow button em { font-size: var(--fs-2); font-style: normal; }
 .sysmap > header { display: flex; align-items: center; gap: 6px; }
+
+/* ==== 0.64.0 · compact by default: every pixel carries information ====
+ * Thin scrollbars; tab strips never covered by a scrollbar; 30px tabs (35 comfortable); 4/6/8 spacing; one-line settings. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 70%, transparent); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+/* tab strips scroll with the wheel / trackpad; a 2px line appears only on hover, never over the labels */
+.tabs, .sw-bar, .sw-tabs, .menubar, .pd-tabs [role="tablist"] { scrollbar-width: none; }
+.tabs::-webkit-scrollbar, .sw-bar::-webkit-scrollbar, .sw-tabs::-webkit-scrollbar, .menubar::-webkit-scrollbar, .pd-tabs [role="tablist"]::-webkit-scrollbar { height: 0; width: 0; }
+.tabs:hover, .sw-tabs:hover { scrollbar-width: thin; }
+.tabs:hover::-webkit-scrollbar, .sw-tabs:hover::-webkit-scrollbar { height: 2px; }
+
+/* heights: compact default, comfortable = VS Code defaults */
+.tabs, .tab, .tab-tools button { height: 30px !important; min-height: 30px !important; }
+.density-comfortable .tabs, .density-comfortable .tab, .density-comfortable .tab-tools button { height: 35px !important; min-height: 35px !important; }
+.sw-bar { min-height: 26px !important; }
+.sw-tab button[role="tab"] { height: 26px !important; padding: 0 4px 0 10px !important; }
+.sw-tools button, .sw-bar > button, .sw-bar select { height: 22px !important; min-height: 22px !important; }
+.activity button { height: 40px !important; min-height: 40px !important; }
+.activity button svg { width: 22px !important; height: 22px !important; }
+.explorer.sidebar .panel-heading, .inspector .panel-heading { height: 30px !important; min-height: 30px !important; padding-left: 14px !important; }
+.sb-row { min-height: 22px; padding-top: 0 !important; padding-bottom: 0 !important; }
+
+/* spacing: content 6/10, panels 6, blocks 6 */
+.content, .cfg-main { padding: 4px 10px 8px !important; }
+.sw-body { padding-top: 4px !important; }
+.page-head, .stage-head { min-height: 22px !important; margin-bottom: 4px !important; }
+.ws-index { margin: 0 0 6px !important; min-height: 24px !important; padding: 1px 6px !important; }
+.ws-panel { margin: 0 0 6px !important; }
+.ws-panel > header, .ws-head { min-height: 26px; padding-top: 0 !important; padding-bottom: 0 !important; }
+.ws-body { padding: 6px 8px !important; }
+.content .intel-bar, .intel-bar { margin: 0 0 6px !important; gap: 4px !important; }
+.content p.cfg-note, .content div.cfg-note { margin: 2px 0 6px !important; }
+.intel-kpis { gap: 4px !important; margin: 4px 0 6px !important; grid-template-columns: repeat(auto-fill, minmax(124px, 170px)) !important; }
+.intel-kpi { padding: 3px 8px !important; }
+.intel-kpi b { font-size: calc(var(--fs) + 2px) !important; }
+.app .content button:not(.link):not(.info-btn):not([role="tab"]):not(.tb-icon), .app .cfg-main button:not(.link):not(.info-btn):not([role="tab"]):not(.tb-icon) { min-height: 22px; padding: 1px 8px !important; }
+.app .content select, .app .content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.app .cfg-main select, .app .cfg-main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { min-height: 22px; height: 22px; padding-top: 0; padding-bottom: 0; }
+.app table td, .app table th { line-height: 18px !important; }
+.app .cfg-table td, .app .cfg-table th { padding: 2px 6px !important; }
+
+/* Market data tiles: labels on one line, values never cut */
+.mb-kpis { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)) !important; }
+.mb-kpi { padding: 2px 6px !important; min-width: 0; }
+.mb-kpi > :first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px !important; }
+.mb-kpi b, .mb-kpi strong { white-space: nowrap; font-size: calc(var(--fs) + 1px) !important; }
+
+/* Settings: one row per setting — title | control | description | ↺ */
+.set-head { padding: 4px 10px 4px 20px !important; gap: 8px !important; flex-wrap: nowrap !important; }
+.set-head h2 { font-size: calc(var(--fs) + 2px) !important; }
+.set-search { height: 24px !important; min-width: 120px; }
+.set-meta { white-space: nowrap; overflow: hidden; }
+.set-list { padding: 0 10px 24px !important; }
+.set-section { max-width: none !important; margin: 0 0 4px !important; }
+.set-section h3 { margin: 8px 0 2px !important; padding: 0 0 3px 10px !important; font-size: var(--fs) !important; }
+.set-row { display: grid !important; grid-template-columns: minmax(150px, 220px) minmax(140px, 300px) minmax(0, 1fr) 18px; align-items: center; gap: 2px 12px;
+  padding: 2px 8px !important; min-height: 26px; border-left: 2px solid transparent; }
+.set-row:hover { background: var(--hover); }
+.set-row.is-check { grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 18px; }
+.set-title { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 0 !important; }
+.set-title b { font-weight: 500 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-scope { border: 0 !important; padding: 0 !important; margin: 0 !important; font-size: 9.5px !important; letter-spacing: .04em; text-transform: uppercase; opacity: .75; white-space: nowrap; }
+.set-control { margin: 0 !important; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.set-control select, .set-control input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { min-width: 0 !important; width: 100%; max-width: 300px !important; height: 22px; }
+.set-control input[type="range"] { flex: 1 1 auto; min-width: 80px; height: 14px; }
+.set-control output { min-width: 44px; }
+.set-desc { margin: 0 !important; color: var(--muted); font-size: var(--fs-2); line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.set-check { margin: 0 !important; gap: 8px !important; align-items: center !important; }
+.set-check input { margin: 0 !important; }
+.set-reset { font-size: 13px !important; text-decoration: none !important; justify-self: end; }
+.set-themes { gap: 3px !important; } .set-themes button { padding: 1px 6px !important; min-height: 22px; }
+.set-kbd { grid-template-columns: minmax(0, 1fr) 200px 140px !important; min-height: 22px; padding: 1px 8px !important; }
+.set-about { grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) !important; }
+/* narrow windows: title and control on one line, description under them */
+@media (max-width: 1100px) {
+  .set-row { grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 18px !important; }
+  .set-row:not(.is-check) .set-desc { grid-column: 1 / -1; -webkit-line-clamp: 1; padding-left: 0; }
+  .set-row.is-check { grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 18px !important; }
+  .set-row.is-check .set-desc { -webkit-line-clamp: 1; }
+  .set-head .set-meta { display: none; }
+}
+
+.app.with-sidebar .set-body { grid-template-columns: minmax(0, 1fr); }
+.app.with-sidebar .set-nav { display: none; }
+.set-section h3 { display: flex !important; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--line); }
+.set-section h3 .link { font-size: var(--fs-2) !important; font-weight: 400 !important; }
+.app input[type="checkbox"], .app input[type="radio"] { flex: none; width: 13px; height: 13px; margin: 0; }
+/* side bars never take more than about a quarter of a narrow window (the chosen width applies on wide screens) */
+.explorer.sidebar { max-width: max(170px, 26vw); }
+.inspector { max-width: max(200px, 28vw); }
+/* market data tiles: separate tiles, no grey filler cell */
+.mb-kpis { background: transparent !important; gap: 3px !important; }
+.mb-kpi { border: 1px solid var(--line); border-radius: 3px; }

@@ -161,21 +161,8 @@ footer .push { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: el
 .set-nav button[aria-current="page"] { color: var(--text); border-left-color: var(--accent); background: var(--hover); }
 .set-nav small { opacity: .7; }
 .set-list { overflow: auto; padding: 6px 24px 40px; }
-.set-section h3 { display: flex; justify-content: space-between; align-items: baseline; margin: 18px 0 6px; font-size: 15px; }
-.set-section h3 .link { font-size: 11px; font-weight: 400; }
-.set-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 360px); gap: 16px; align-items: center; padding: 9px 10px; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
-.set-row:hover { background: var(--hover); }
-.set-row.modified { border-left-color: var(--accent); }
-.set-text b { font-weight: 600; } .set-text p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.set-dot { color: var(--accent); margin-left: 6px; font-size: 9px; }
-.set-scope { display: inline-block; margin-left: 8px; padding: 0 5px; border-radius: 3px; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; border: 1px solid var(--line); color: var(--muted); }
 .set-scope.account { border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--accent); }
 .set-scope.firm { border-color: color-mix(in srgb, #e0a530 60%, transparent); color: #e0a530; }
-.set-control { display: flex; gap: 8px; align-items: center; justify-content: flex-start; flex-wrap: wrap; }
-.set-control select, .set-control input:not([type="checkbox"]):not([type="range"]) { min-width: 200px; }
-.set-control input[type="range"] { flex: 1; }
 .set-control kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--input); font-size: 11px; }
-.set-themes { display: flex; flex-wrap: wrap; gap: 4px; }
-.set-themes button { display: inline-flex; gap: 6px; align-items: center; padding: 3px 8px; }
 .set-themes button[aria-pressed="true"] { border-color: var(--accent); }
-@media (max-width: 800px) { .set-body { grid-template-columns: 1fr; } .set-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); } .set-row { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .set-body { grid-template-columns: 1fr; } .set-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); } }

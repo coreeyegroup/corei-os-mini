@@ -147,7 +147,7 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
           <button onClick={() => { const r = window.prompt(`Archive ${a.code}? Its history stays. Reason:`)?.trim(); if (r && r.length >= 5) void run(() => api(`trading/paper-accounts/${a.id}/archive`, 'POST', { reason: r }), x => `${x.code} archived.`); }}>Archive</button>
         </>}</td></tr>)}</tbody></table>}
     {data && !items.length && !form && <div className="pa-empty"><b>No paper account yet</b><p>Create one per idea — for example a USD forex account and an INR account for NSE and MCX. Each has its own currency, amount, markets and costs.</p>
-      {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}</div>}
+</div>}
   </div>;
 }
 

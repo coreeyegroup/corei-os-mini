@@ -345,3 +345,21 @@ Decision:
 4. Names: "My workspaces" everywhere.
 
 Status: accepted.
+
+## DEC-108 · Compact by default; one definition per component (release 0.64.0, 27 Nov 2026)
+
+Context: the owner's live window (about 740px wide) showed Settings at three lines per setting, horizontal scrollbars
+covering the tab labels, a 280px side bar that was mostly empty, and market-data tiles with clipped labels. The cause
+under the visible mess: several style layers (0.57 → 0.63.1) each redefined the same components with `!important`, so
+fixes in one layer were silently overruled by another.
+
+Decision:
+1. **Compact is the default** (Comfortable keeps VS Code's larger sizes): tabs 30px (35 comfortable), sub-tabs 26px,
+   controls 22px, rows 18–22px, activity bar 40px, side-bar titles 30px, spacing 4 / 6 / 8, panel 130px by default.
+2. **Thin scrollbars** (7px) everywhere; tab strips scroll by wheel or trackpad with no scrollbar over their labels.
+3. **Settings: one row per setting** — title (with where it is kept) · control · description · ↺ reset; the full
+   description is on hover; on narrow windows the description goes under the row.
+4. **Side bars cap at about a quarter of a narrow window**; the chosen width applies on wide screens.
+5. **One definition per component:** superseded Settings rules were deleted rather than overridden again.
+
+Status: accepted.
