@@ -145,3 +145,19 @@ class SetupGates(te.Execution):
         self.assertTrue(land['next']['fix'])
         rep = self.ok(self.alice.get('/api/trading/setup/report'))
         self.assertIn('history', rep)
+
+    def test_one_missing_trading_symbol_is_reported_once_not_per_strategy(self):
+        """Live finding 27 Nov 2026: eight strategies on one account and instrument listed the same missing mapping eight times."""
+        _c, a, _b, ins = self.real_account('DEMO')
+        with self.connect() as db:
+            db.execute("UPDATE cfg_symbol_mappings SET usage='MARKET_DATA' WHERE instrument_id=%s", (ins['id'],))
+        import uuid
+        pairs = {(a['id'], ins['id'], str(uuid.uuid4()), None) for _ in range(8)}
+        original = setup_gates._in_use
+        setup_gates._in_use = lambda db, track: {'pairs': pairs, 'accounts': {a['id']}, 'instruments': {ins['id']}, 'strategies': {p[2] for p in pairs}}
+        try:
+            with store.transaction('read') as db:
+                found = [i['text'] for i in setup_gates._compute(db, 'DEMO')['SYMBOLS'] if 'no trading symbol' in i['text']]
+        finally:
+            setup_gates._in_use = original
+        self.assertEqual(len(found), 1, found)
