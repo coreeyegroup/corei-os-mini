@@ -204,6 +204,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  // Settings: VS Code style — search, categories, scope labels, modified marker, reset; account settings saved to the server.
  tb.querySelector('[aria-label="Settings"]').click();for(let i=0;i<4;i++)await tick();
  const st=sw.document.querySelector('[aria-label="Settings"].set');assert.ok(st,'settings view');
+ [...st.querySelectorAll('.set-nav button')].find(b=>/^Layout/.test(b.textContent)).click();await tick();
+ assert.ok(st.querySelector('#setting-activity .set-check input[type="checkbox"]'),'on/off settings: checkbox on the description line');
+ [...st.querySelectorAll('.set-nav button')].find(b=>/^Appearance/.test(b.textContent)).click();await tick();
  assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','About']);
  const setv=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new sw.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const search=st.querySelector('[aria-label="Search settings"]');setv(search,'time zone');await tick();

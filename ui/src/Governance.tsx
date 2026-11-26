@@ -98,7 +98,7 @@ export function RiskProfiles({ canRisk, onApplied }: { canRisk: boolean; onAppli
         <option value="">Choose…</option>{(accounts?.items ?? []).map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {words(a.environment ?? a.connection_environment ?? '')}</option>)}</select></label>
       <label>Profile <select aria-label="Preset profile" value={form.profile} onChange={e => { setForm({ ...form, profile: e.target.value }); setPreview(null); }}>
         {PROFILES.filter(p => p[0] !== 'NONE').map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-      <label>Equity <small>(blank: measured)</small><input aria-label="Preset equity" inputMode="decimal" value={form.equity} onChange={e => { setForm({ ...form, equity: e.target.value }); setPreview(null); }} /></label>
+      <label>Equity<input aria-label="Preset equity" inputMode="decimal" placeholder="blank: measured equity" value={form.equity} onChange={e => { setForm({ ...form, equity: e.target.value }); setPreview(null); }} /></label>
       <button disabled={!form.account_id}>Preview</button>
       <button type="button" className="primary" disabled={!preview} onClick={() => void call(false)}>Apply</button>
     </form>}

@@ -663,3 +663,57 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .help-icon p.cfg-note[class*="empty"], .help-icon div.cfg-note[class*="empty"] { display: block !important; -webkit-line-clamp: unset; padding-left: 0; cursor: default; }
 .help-icon p.cfg-note[class*="empty"]::before, .help-icon div.cfg-note[class*="empty"]::before { content: none; }
 .intel-kpis { grid-template-columns: repeat(auto-fill, minmax(150px, 190px)) !important; }
+
+/* ==== 0.63.1 · alignment pass: one left edge, one vertical rhythm (4 / 8 / 12) ==== */
+/* Settings (VS Code settings editor): section title and rows share the left edge; booleans on one line */
+.set-head { gap: 12px !important; padding: 8px 16px !important; }
+.set-list { padding: 4px 16px 32px !important; }
+.set-section { max-width: 880px; margin: 0 0 8px; }
+.set-section h3 { display: flex !important; justify-content: flex-start !important; align-items: baseline; gap: 12px; margin: 12px 0 4px !important; padding: 0 0 4px 12px;
+  font-size: calc(var(--fs) + 2px) !important; border-bottom: 1px solid var(--line); }
+.set-section h3 .link { font-size: var(--fs-2); font-weight: 400; }
+.set-row { display: block !important; max-width: none; padding: 6px 10px !important; margin: 0; border-left: 2px solid transparent; border-radius: 0 3px 3px 0; }
+.set-row.modified { border-left-color: var(--accent); }
+.set-title { display: flex; align-items: center; gap: 6px; min-height: 20px; }
+.set-title b { font-weight: 600; }
+.set-scope { margin-left: 2px !important; }
+.set-reset { margin-left: 4px; font-size: var(--fs-2); }
+.set-desc { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-2); line-height: 1.45; }
+.set-control { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; color: var(--muted); font-size: var(--fs-2); line-height: 1.45; cursor: pointer; }
+.set-check input { margin: 2px 0 0; flex: none; }
+.set-kbd { display: grid !important; grid-template-columns: minmax(0, 1fr) 160px 140px; align-items: center; gap: 12px; padding: 3px 10px !important; }
+.set-kbd small { color: var(--muted); }
+.set-kbd kbd { justify-self: start; }
+.set-nav button { padding: 4px 16px !important; }
+
+/* Paper accounts: same toolbar and tiles as every other screen; account page tiles match */
+.pa-toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 4px !important; }
+.pa-toolbar .info { margin-left: 2px; }
+.pa { gap: 8px !important; }
+.pa-empty { padding: 12px 14px !important; gap: 6px !important; border-radius: 4px !important; }
+.pa-empty p { font-size: var(--fs-2); }
+.pd-kpis { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(150px, 190px)) !important; gap: 6px !important; background: none !important; border: 0 !important; }
+.pd-kpi { border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px !important; background: transparent !important; }
+.pd-kpi span { font-size: 11px !important; text-transform: none !important; letter-spacing: .02em !important; }
+.pd-kpi b { font-size: calc(var(--fs) + 3px) !important; }
+.pd-kpi small { font-size: 11px !important; }
+
+/* generic rhythm inside a screen: toolbars, notes, messages and tables separated by 8px, never stacked margins */
+.content .intel-bar { margin: 0 0 8px !important; gap: 6px !important; flex-wrap: wrap; align-items: center; }
+.content .cfg-error, .content .cfg-ok { margin: 0 0 8px !important; }
+.content p.cfg-note, .content div.cfg-note { margin: 4px 0 8px !important; }
+.content h4 { margin: 12px 0 6px; font-size: var(--fs); }
+.set-head { padding-left: 28px !important; }
+.set-control input[type="range"] { height: 16px; margin: 0; }
+.set-control output { color: var(--muted); font-size: var(--fs-2); min-width: 48px; }
+.set-control { margin-top: 4px !important; }
+/* inline forms: title on its own line, fields bottom-aligned on one row */
+.gv-preset { display: flex !important; flex-wrap: wrap; align-items: flex-end !important; gap: 8px 10px !important; }
+.gv-preset > b { flex-basis: 100%; margin: 4px 0 0; }
+.gv-preset label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-2); color: var(--muted); }
+/* Home trading flow: equal cards — number, stage, live figure (question in the tooltip / ⓘ) */
+.sysmap-flow button { min-height: 0 !important; padding: 6px 10px !important; gap: 2px !important; justify-content: flex-start !important; }
+.sysmap-flow button b { font-size: var(--fs); line-height: 1.3; }
+.sysmap-flow button em { font-size: var(--fs-2); font-style: normal; }
+.sysmap > header { display: flex; align-items: center; gap: 6px; }

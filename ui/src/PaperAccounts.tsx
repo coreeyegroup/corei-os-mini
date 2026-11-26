@@ -17,7 +17,8 @@ import { api } from './Configuration';
 import { goto } from './nav';
 import './my-workspaces.css';
 import { PaperAccountDetail } from './PaperAccountDetail';
-import { Msg, useData, when, type Row } from './StageShell';
+import { Kpis, Msg, useData, when, type Row } from './StageShell';
+import { Info } from './Info';
 import { fmtMoney, fmtNum, setting, useSettings } from './userSettings';
 
 const SCOPES: [string, string][] = [['ANY', 'Any instrument'], ['FOREX', 'Forex & metals'], ['INDIA', 'Indian markets (NSE · BSE · MCX · INR)'], ['CUSTOM', 'Custom list']];
@@ -113,18 +114,15 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
     <PaperAccountDetail id={selected} canTrade={canEdit} back={() => { setSelected(null); reload(); }} edit={a => open(a)} />
   </div>;
   return <div className="cfg-pane pa" aria-label="Paper accounts">
-    <div className="pa-bar">
-      <div className="pa-kpis" aria-label="Paper summary">
-        <div><span>Accounts</span><b>{live.length}</b><small>{byCcy.map(([c, n]) => `${n} ${c}`).join(' · ') || 'none yet'}</small></div>
-        <div><span>Open positions</span><b>{live.reduce((n, a) => n + Number(a.open_positions ?? 0), 0)}</b><small>across all accounts</small></div>
-        <div><span>Runs</span><b>{live.reduce((n, a) => n + Number(a.runs ?? 0), 0)}</b><small>strategies on paper</small></div>
-        <div><span>Fills</span><b>{live.reduce((n, a) => n + Number(a.fills ?? 0), 0)}</b><small>simulated</small></div>
-      </div>
-      <div className="pa-tools">
-        <label className="dk-radio"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Show archived</label>
-        {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}
-      </div>
+    <div className="intel-bar pa-toolbar">
+      {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}
+      <label className="dk-radio"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Show archived</label>
+      <Info label="About paper accounts">Simulated accounts fill at the live price of each instrument's feed plus slippage and costs; nothing is ever sent to a broker. Open an account to see it as a broker terminal shows it and to place paper orders. Run strategies on them from a workspace (environment Paper) or a paper deployment.</Info>
     </div>
+    <Kpis items={[['Accounts', live.length, byCcy.map(([c, n]) => `${n} ${c}`).join(' · ') || 'none yet'],
+      ['Open positions', live.reduce((n, a) => n + Number(a.open_positions ?? 0), 0)],
+      ['Strategy runs', live.reduce((n, a) => n + Number(a.runs ?? 0), 0)],
+      ['Simulated fills', live.reduce((n, a) => n + Number(a.fills ?? 0), 0)]]} />
     <Msg error={msg.error || error} notice={msg.notice} />
     {formEl}
     {items.length > 0 && <table className="cfg-table pa-table"><thead><tr><th>Account</th><th className="num">Balance</th><th className="num">Equity</th><th className="num">Return</th><th className="num">Open</th><th className="num">Runs · fills</th><th>Markets</th><th>Costs</th><th /></tr></thead>
@@ -150,7 +148,6 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
         </>}</td></tr>)}</tbody></table>}
     {data && !items.length && !form && <div className="pa-empty"><b>No paper account yet</b><p>Create one per idea — for example a USD forex account and an INR account for NSE and MCX. Each has its own currency, amount, markets and costs.</p>
       {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}</div>}
-    <p className="pa-foot">Simulated accounts fill at the live price of each instrument's feed plus slippage and costs; nothing is ever sent to a broker. Run strategies on them from <button className="link" onClick={() => goto('My Workspaces', 'desks')}>a workspace ↗</button> (environment Paper) or a paper deployment.</p>
   </div>;
 }
 
