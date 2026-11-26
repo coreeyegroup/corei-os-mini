@@ -342,3 +342,22 @@ Evidence: `backend/tests/test_paper_accounts.py`, `ui/tests/configuration.cjs` (
 | PA-8 | Overnight financing (swap) and statutory charges itemised (STT, GST, stamp duty) | OPEN — one % of value covers them today; an itemised Indian charges model is a proposal | — |
 | PA-9 | Performance P&L net of costs in the post-trade reports | OPEN — equity and positions are net; the performance table shows gross P&L and costs separately is a proposal | — |
 | PA-10 | Margin model for paper (leverage, margin calls) | OPEN — limits (leverage, gross exposure) refuse orders; a margin-call simulation is a proposal | — |
+
+## M. Polishing: paper account page, settings, top bar — 26 Nov 2026 (release 0.61.0)
+
+Source: owner request (paper page blank space and no account detail; Settings incomplete and unorganised; top ribbon
+review against VS Code with layout toggles at the top right).
+Evidence: `backend/tests/test_paper_accounts.py::test_account_page_shows_what_a_broker_terminal_shows`,
+`ui/tests/configuration.cjs` (paper account page), `ui/tests/workbench.cjs` (top bar and Settings). No migration.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| PO-1 | Paper page: stretched button, blank space, tall rows | DONE 0.61.0 (KPI bar, compact clickable rows, grouped form) | configuration.cjs |
+| PO-2 | A paper account could not be opened | DONE 0.61.0 (account page: KPIs, positions + close, orders + cancel, history, performance, runs, activity, ticket) | test_account_page_shows_what_a_broker_terminal_shows |
+| PO-3 | Settings held only appearance | DONE 0.61.0 (time & region, trading, startup, top bar, shortcuts, firm links, about; per-account storage) | workbench.cjs |
+| PO-4 | Top bar hid kill switches and unknown orders | DONE 0.61.0 (always shown) | workbench.cjs |
+| PO-5 | No layout toggles / notifications / account menu in the top bar | DONE 0.61.0 | workbench.cjs |
+| PO-6 | Settings sync across browsers for appearance and layout | OPEN — appearance and layout stay per browser (as VS Code without Settings Sync); moving them to the account is a proposal | — |
+| PO-7 | Market clock knows NSE holidays | OPEN — the clock shows weekday sessions only; the trading calendar already holds holidays and could feed it | — |
+| PO-8 | Keyboard shortcuts can be re-bound | OPEN — the list is read-only today | — |
+| PO-9 | Paper ticket shows a live bid/ask before sending | OPEN — fills use the live price; a quote line in the ticket is a proposal | — |

@@ -88,8 +88,12 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const shErrors=[];sw.addEventListener('error',e=>shErrors.push(e.message));
  const overview={user:{username:'yatheesh',roles:['ADMIN']},feeds:{active_plans:1,collectors:1,live:0,problems:1,paused:false},order_sending:[{environment:'LIVE',enabled:false}],approvals:2,
    attention:[{severity:'CRITICAL',area:'Market data',title:'Broker refused the connector version',detail:'Update the SDK.',goto:{view:'Market data',section:'live'}}]};
- sw.fetch=async(url)=>{const j=b=>({ok:true,status:200,json:async()=>b});
+ const prefPuts=[];let loggedOut=0;
+ sw.fetch=async(url,o={})=>{const j=b=>({ok:true,status:200,json:async()=>b});
    if(url.includes('/config/overview'))return j(overview);
+   if(url.includes('/trading/topbar'))return j({kill_switches:{ACCOUNT:1},desks:{RUNNING:2,PAUSED:1},unknown_orders:1,approvals_waiting:0,server_time:'2026-11-26T05:00:00Z'});
+   if(url.includes('/operator/prefs')){if(o.method==='PUT')prefPuts.push([url.split('/prefs/')[1],JSON.parse(o.body).value]);return j({});}
+   if(url.includes('/operator/logout')){loggedOut++;return j({});}
    if(url.includes('operator/session'))return j({username:'yatheesh',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
    if(url.includes('/api/workstation'))return j({project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:true,demo_enabled:false,capabilities:[]});
    return j({items:[],counts:{},execution_controls:[],connections:[],accounts:[],controls:[],checklist:[],summary:{accounts:0,data_ready:0,trading_ready:0,with_warnings:0},pending_approvals:0,failed_alerts:0,four_eyes_live_changes:true,network:{}});};
@@ -177,6 +181,44 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(sqa('.pl-step').length,7);
  sqa('.pl-node').find(n=>n.textContent.includes('Post-trade')).click();for(let i=0;i<4;i++)await tick();
  assert.equal(sq('nav.activity [aria-current="page"]').getAttribute('aria-label'),'Post-trade');
+ // Top bar: kill switches and UNKNOWN orders always shown; VS Code-style layout toggles, customise menu, bell, gear, account menu.
+ const chips=sw.document.querySelector('[aria-label="Live status"]').textContent;
+ assert.match(chips,/Kill account 1/);assert.match(chips,/Unknown orders 1/);assert.match(chips,/FX.*NSE/,'market clock');
+ const tb=sw.document.querySelector('.tb-right');const lb=sw.document.querySelector('[aria-label="Layout"]');
+ const sideBtn=lb.querySelector('[aria-label="Toggle side bar (Ctrl+B)"]');const sbBefore=sideBtn.getAttribute('aria-pressed');sideBtn.click();await tick();
+ assert.notEqual(lb.querySelector('[aria-label="Toggle side bar (Ctrl+B)"]').getAttribute('aria-pressed'),sbBefore,'side bar toggles from the top bar');
+ lb.querySelector('[aria-label="Toggle side bar (Ctrl+B)"]').click();await tick();
+ tb.querySelector('[aria-label="Customize layout"]').click();await tick();
+ const feedsBox=[...tb.querySelectorAll('[role="menu"] label')].find(l=>l.textContent==='Feeds').querySelector('input');feedsBox.click();await tick();
+ assert.doesNotMatch(sw.document.querySelector('[aria-label="Live status"]').textContent,/Feeds/,'feeds chip hidden from the customise menu');
+ assert.match(sw.document.querySelector('[aria-label="Live status"]').textContent,/Kill account 1/,'kill switch never hidden');
+ [...tb.querySelectorAll('[role="menu"] label')].find(l=>l.textContent==='Feeds').querySelector('input').click();await tick();
+ sw.document.dispatchEvent(new sw.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();
+ tb.querySelector('[aria-label^="Notifications"]').click();await tick();
+ assert.match(tb.querySelector('[role="menu"]').textContent,/Broker refused the connector version/);
+ sw.document.dispatchEvent(new sw.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();
+ // Settings: VS Code style — search, categories, scope labels, modified marker, reset; account settings saved to the server.
+ tb.querySelector('[aria-label="Settings"]').click();for(let i=0;i<4;i++)await tick();
+ const st=sw.document.querySelector('[aria-label="Settings"].st');assert.ok(st,'settings view');
+ assert.deepEqual([...st.querySelectorAll('.st-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','About']);
+ const setv=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new sw.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
+ const search=st.querySelector('[aria-label="Search settings"]');setv(search,'time zone');await tick();
+ const tz=st.querySelector('select[aria-label="Time zone"]');assert.ok(tz,'search finds the time zone');
+ setv(tz,'Asia/Kolkata');await tick();
+ assert.ok(st.querySelector('#setting-region\\.timezone.modified'),'modified marker');
+ await new Promise(r=>setTimeout(r,700));
+ assert.equal(prefPuts.at(-1)[0],'settings.v1');assert.equal(prefPuts.at(-1)[1]['region.timezone'],'Asia/Kolkata','saved to the account');
+ [...st.querySelectorAll('#setting-region\\.timezone button')].find(b=>b.textContent==='Reset').click();await tick();
+ assert.equal(st.querySelector('select[aria-label="Time zone"]').value,'LOCAL');
+ setv(search,'');await tick();
+ [...st.querySelectorAll('.st-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
+ assert.match(st.textContent,/Kill switches.*Changed by: Risk approver/);
+ [...st.querySelectorAll('.st-nav button')].find(b=>/Keyboard shortcuts/.test(b.textContent)).click();await tick();
+ assert.match(st.textContent,/Open settings.*Ctrl\+,/);
+ tb.querySelector('[aria-label="Account yatheesh"]').click();await tick();
+ [...tb.querySelectorAll('[role="menu"] button')].find(b=>b.textContent==='Sign out').click();await tick();await tick();
+ assert.equal(loggedOut,1,'sign out from the account menu');
  assert.deepEqual(shErrors,[]);
+ console.log('PASS: top bar: kill switches and unknown orders always shown, market clock, layout toggles, customise menu, notifications, account menu; Settings: search, categories, scopes, modified, reset, saved to the account.');
  console.log('PASS: shell shows live status chips and badges, each screen opens as its own workspace tab, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
 })().catch(e=>{console.error(String(e&&e.message||e).slice(0,3000));process.exit(1)});

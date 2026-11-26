@@ -165,10 +165,81 @@ button.link { background: none; border: none; padding: 0; text-decoration: under
 .gv-policies label, .gv-preset label { display: grid; gap: 2px; }
 
 /* Paper accounts (PaperAccounts.tsx) */
-.pa { display: grid; gap: 8px; }
-.pa-form { display: grid; gap: 8px; padding: 8px; border: 1px solid var(--line, #788290); border-radius: 4px; }
+/* ---- paper accounts (0.61.0: KPI bar, compact clickable rows, account page) ---- */
+.pa { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.pa-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; justify-content: space-between; }
+.pa-kpis { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 1px; flex: 1 1 520px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.pa-kpis > div, .pd-kpi { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: var(--surface); min-width: 0; }
+.pa-kpis span, .pd-kpi span { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pa-kpis b, .pd-kpi b { font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pa-kpis small, .pd-kpi small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pa-tools { display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+.pa-tools .primary, .pa-empty .primary { width: auto; flex: none; }
+.pa-form { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); max-width: 1100px; }
+.pa-form h3 { margin: 0; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.pa-form fieldset { border: 0; border-top: 1px solid var(--line); margin: 0; padding: 8px 0 0; display: grid; gap: 8px; }
+.pa-form legend { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-right: 8px; }
+.pa-form .dk-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 .pa-custom { display: grid; gap: 6px; }
-.pa-table td.neg { color: var(--bad, #c0392b); }
-.pa-table td.pos { color: var(--ok, #2e8b57); }
+.pa-table { width: 100%; }
+.pa-table td, .pd-table td { padding-top: 5px; padding-bottom: 5px; vertical-align: middle; }
+.pa-table th.num, .pa-table td.num, .pd-table th.num, .pd-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pa-table td.neg, .pd-table td.neg, .pd-kpi.neg b { color: var(--danger, #c0392b); }
+.pa-table td.pos, .pd-table td.pos, .pd-kpi.pos b { color: var(--ready, #2e8b57); }
+.pd-kpi.warn small { color: #e0a530; }
+.pa-row { cursor: pointer; }
+.pa-row:hover, .pa-row:focus-visible { background: var(--hover); outline: none; }
 .pa-table tr.archived { opacity: .6; }
-.pa-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.pa-ccy { display: inline-block; min-width: 34px; margin-right: 6px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; font-size: 10px; text-align: center; color: var(--muted); }
+.pa-actions { display: flex; gap: 4px; flex-wrap: nowrap; justify-content: flex-end; white-space: nowrap; }
+.pa-actions button { padding: 2px 8px; }
+.pa-empty { display: grid; gap: 6px; justify-items: start; padding: 22px; border: 1px dashed var(--line); border-radius: 6px; }
+.pa-empty p { margin: 0; color: var(--muted); max-width: 620px; }
+.pa-foot, .pd-fine { margin: 0; color: var(--muted); font-size: 11.5px; }
+
+/* ---- paper account page ---- */
+.pd { display: flex; flex-direction: column; gap: 10px; }
+.pd-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.pd-head h2 { margin: 2px 0; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.pd-head p { margin: 0; color: var(--muted); }
+.pd-head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pd-badge { display: inline-block; padding: 1px 6px; margin-left: 6px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); vertical-align: middle; }
+.pd-badge.muted { background: var(--hover); color: var(--muted); }
+.pd-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.pd-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: start; }
+.pd-main.with-ticket { grid-template-columns: minmax(0, 1fr) 280px; }
+@media (max-width: 1000px) { .pd-main.with-ticket { grid-template-columns: minmax(0, 1fr); } }
+.pd-tabs { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; overflow: hidden; }
+.pd-tabs [role="tablist"] { display: flex; gap: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.pd-tabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 7px 12px; color: var(--muted); white-space: nowrap; }
+.pd-tabs [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.pd-tabs [role="tab"] small { margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--hover); font-size: 10px; }
+.pd-tabs [role="tabpanel"] { padding: 6px 8px; overflow-x: auto; }
+.pd-table { width: 100%; }
+.pd-empty { margin: 14px 6px; color: var(--muted); }
+.pd-sidetag { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+.pd-sidetag.buy { background: color-mix(in srgb, var(--ready, #2e8b57) 20%, transparent); color: var(--ready, #2e8b57); }
+.pd-sidetag.sell { background: color-mix(in srgb, var(--danger, #c0392b) 20%, transparent); color: var(--danger, #c0392b); }
+.pd-state { font-size: 10.5px; padding: 1px 5px; border-radius: 3px; background: var(--hover); }
+.pd-state.rejected, .pd-state.unknown { color: var(--danger); } .pd-state.active, .pd-state.filled, .pd-state.working { color: var(--ready); }
+.pd-perf { display: grid; gap: 10px; padding: 4px; }
+.pd-curve { margin: 0; }
+.pd-curve svg { width: 100%; height: 160px; display: block; }
+.pd-curve .ln { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.pd-curve .ln.up { stroke: var(--ready, #2e8b57); } .pd-curve .ln.down { stroke: var(--danger, #c0392b); }
+.pd-curve .area.up { fill: color-mix(in srgb, var(--ready, #2e8b57) 12%, transparent); } .pd-curve .area.down { fill: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent); }
+.pd-curve figcaption { display: flex; gap: 16px; color: var(--muted); font-size: 11px; }
+.pd-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1px; margin: 0; background: var(--line); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.pd-stats div { background: var(--surface); padding: 6px 10px; } .pd-stats dt { color: var(--muted); font-size: 11px; } .pd-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pd-ticket { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); position: sticky; top: 0; }
+.pd-ticket h3 { margin: 0; font-size: 14px; } .pd-ticket h3 small { color: var(--muted); font-weight: 400; }
+.pd-ticket label { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.pd-ticket input, .pd-ticket select { width: 100%; box-sizing: border-box; color: var(--text); }
+.pd-ticket select[size] { height: auto; }
+.pd-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pd-side { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.pd-side button { border: 0; border-radius: 0; padding: 6px; font-weight: 600; background: transparent; }
+.pd-side button.side-buy.on { background: var(--ready, #2e8b57); color: #04140c; } .pd-side button.side-sell.on { background: var(--danger, #c0392b); color: #1b0505; }
+.pd-ticket button.primary.side-buy { background: var(--ready, #2e8b57); border-color: var(--ready, #2e8b57); color: #04140c; }
+.pd-ticket button.primary.side-sell { background: var(--danger, #c0392b); border-color: var(--danger, #c0392b); color: #1b0505; }
