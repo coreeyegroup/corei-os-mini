@@ -10,7 +10,7 @@
  * Dependencies: userSettings, nav.goto, StageShell.useData. Consumers: App (view "Settings").
  * Architectural position: UI preferences.
  */
-import { useMemo, useState, type ReactNode } from 'react';
+import { isValidElement, useMemo, useState, type ReactNode } from 'react';
 import { goto, useSection } from './nav';
 import type { View } from './layout';
 import { useData, type Row } from './StageShell';
@@ -45,10 +45,14 @@ const SCOPE_LABEL = { BROWSER: 'this browser', ACCOUNT: 'my account', FIRM: 'fir
 
 function Row_({ label, description, scope, modified, onReset, children, id }: { label: string; description: string; scope: keyof typeof SCOPE_LABEL; modified?: boolean;
   onReset?: () => void; children: ReactNode; id: string }) {
+  // On/off settings as in VS Code: the checkbox sits on the description line, not on a line of its own.
+  const check = isValidElement(children) && children.type === 'input' && (children.props as { type?: string }).type === 'checkbox';
   return <div className={`set-row ${modified ? 'modified' : ''}`} id={`setting-${id}`}>
-    <div className="set-text"><b>{label}</b>{modified && <span className="set-dot" title="Changed from the default" aria-label="modified">●</span>}
-      <span className={`set-scope ${scope.toLowerCase()}`}>{SCOPE_LABEL[scope]}</span><p>{description}</p></div>
-    <div className="set-control">{children}{modified && onReset && <button className="link" onClick={onReset}>Reset</button>}</div>
+    <div className="set-title"><b>{label}</b>{modified && <span className="set-dot" title="Changed from the default" aria-label="modified">●</span>}
+      <span className={`set-scope ${scope.toLowerCase()}`}>{SCOPE_LABEL[scope]}</span>
+      {modified && onReset && <button className="link set-reset" onClick={onReset}>Reset</button>}</div>
+    {check ? <label className="set-check">{children}<span>{description}</span></label>
+      : <><p className="set-desc">{description}</p>{children !== null && <div className="set-control">{children}</div>}</>}
   </div>;
 }
 
@@ -109,15 +113,15 @@ export default function SettingsView(p: Props) {
           const rows = [
             ...browser.filter(b => b.cat === c && hit(b.label, b.description, c)).map(b => <Row_ key={b.id} id={b.id} label={b.label} description={b.description} scope="BROWSER" modified={b.modified} onReset={b.reset}>{b.control}</Row_>),
             ...SETTINGS.filter(s => s.category === c && hit(s.label, s.description, c)).map(s => <AccountSetting key={s.id} def={s} />),
-            ...(c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut && hit(s.label, s.section, c)).map(s => <div key={s.label} className="set-row"><div className="set-text"><b>{s.label}</b><p>{s.section}</p></div><div className="set-control"><kbd>{s.shortcut}</kbd></div></div>) : []),
+            ...(c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut && hit(s.label, s.section, c)).map(s => <div key={s.label} className="set-row set-kbd"><span>{s.label}</span><small>{s.section}</small><kbd>{s.shortcut}</kbd></div>) : []),
             ...(c === 'Firm settings' ? FIRM.filter(f => hit(f[0], f[1], c)).map(([label, d, view, section, who]) =>
               <Row_ key={label} id={section} label={label} description={`${d} Changed by: ${who}.`} scope="FIRM"><button onClick={() => goto(view, section)}>Open ↗</button></Row_>) : []),
-            ...(c === 'About' && hit('about version schema server', c) ? [<div key="about" className="set-row"><div className="set-text"><b>COREI-OS-MINI</b>
-              <p>Version {about?.release ?? '—'} · schema {about?.schema ?? '—'} · build {about?.commit ?? '—'}. Your roles: {p.roles.join(', ') || '—'}.</p></div></div>] : []),
+            ...(c === 'About' && hit('about version schema server', c) ? [<div key="about" className="set-row"><div className="set-title"><b>COREI-OS-MINI</b></div>
+              <p className="set-desc">Version {about?.release ?? '—'} · schema {about?.schema ?? '—'} · build {about?.commit ?? '—'}. Your roles: {p.roles.join(', ') || '—'}.</p></div>] : []),
           ];
           if (!rows.length) return null;
           const resettable = c === 'Appearance' ? p.resetAppearance : c === 'Layout' ? p.resetLayout : SETTINGS.some(s => s.category === c) ? () => resetAll(c) : null;
-          return <section key={c} className="set-section" aria-label={c}><h3>{c}{resettable && !query && <button className="link" onClick={resettable}>Reset {c.toLowerCase()}</button>}</h3>{rows}</section>;
+          return <section key={c} className="set-section" aria-label={c}><h3><span>{c}</span>{resettable && !query && <button className="link" onClick={resettable}>Reset all</button>}</h3>{rows}</section>;
         })}
         {query && !CATS.some(c => [...browser.filter(b => b.cat === c && hit(b.label, b.description, c)), ...SETTINGS.filter(s => s.category === c && hit(s.label, s.description, c))].length
           || (c === 'Firm settings' && FIRM.some(f => hit(f[0], f[1], c))) || (c === 'Keyboard shortcuts' && p.shortcuts.some(s => s.shortcut && hit(s.label, s.section, c)))) && <p className="cfg-note">No setting matches “{q}”.</p>}

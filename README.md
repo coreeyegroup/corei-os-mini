@@ -1511,3 +1511,11 @@ No migration.
   icon for every area in the left bar (hover shows the stage number and description).
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Alignment pass — release 0.63.1
+
+UI only, no migration. Settings rows follow VS Code (on/off settings show the checkbox on the description line);
+Paper accounts use the standard toolbar and tiles; Home stage cards show stage and live figure (question on hover);
+the account menu (top right) has Change password.
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.

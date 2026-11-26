@@ -24,7 +24,7 @@ import SettingsView from "./SettingsView";
 import { SecondaryBar } from "./SecondaryBar";
 import { TopBarStatus, TopBarRight } from "./TopBar";
 import { setting, useSettings } from "./userSettings";
-import { installNoteToggle } from "./Info";
+import { helpInline, Info, installNoteToggle } from "./Info";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
@@ -534,7 +534,7 @@ function Home({ overview, signedOut, runtime, error, refresh }: { overview: Over
   return <div className="dense-page">
     <div className="dense-bar"><b>Overview</b>
       <span className="muted">{overview ? `${overview.user.username} · ${runtime ? `server ${runtime.database_connected ? 'OK' : 'DB DOWN'} · ${runtime.release}${runtime.commit ? ` · ${runtime.commit}` : ''}${runtime.schema ? ` · schema ${String(runtime.schema).slice(0, 3)}` : ''}` : 'server ?'}` : 'Loading…'}</span>
-      <span className="push" /><button className="primary" onClick={() => goto('My Workspaces')}>Open My Workspaces</button><button onClick={refresh}>Refresh</button></div>
+      <span className="push" /><button className="primary" onClick={() => goto('My Workspaces')}>Open My workspaces</button><button onClick={refresh}>Refresh</button></div>
     {error && <div role="alert" className="dense-error">{error}</div>}
     {overview?.setup && overview.setup.next && <div className="dense-next" role="status">
       <span className="muted">Set-up {overview.setup.done}/{overview.setup.total}</span>
@@ -588,9 +588,9 @@ function SystemMap({ overview }: { overview: OverviewData | null }) {
     ['Watch signals, orders and P&L', !!t && sum(t.orders_today) > 0, 'Signals', 'overview'],
   ];
   return <section className="dense-box wide sysmap" aria-label="How COREI works">
-    <header>How COREI works <span className="muted">a trade passes through eight stages, left to right; Setup feeds them all, Monitor watches them all</span></header>
+    <header>How COREI works <Info label="About the trading flow">A trade passes through eight stages, left to right; Setup feeds them all, Monitor watches them all. Hover a stage for the question it answers.</Info></header>
     <ol className="sysmap-flow">{PIPELINE.map(st => <li key={st.view}><button onClick={() => goto(st.view)} title={`${st.question}\nHands on: ${st.feeds}`}>
-      <span className="sysmap-n">{st.n}</span><b>{st.title}</b><small>{st.question}</small><em>{figure[st.view] ?? ''}</em></button></li>)}</ol>
+      <span className="sysmap-n">{st.n}</span><b>{st.title}</b>{helpInline() && <small>{st.question}</small>}<em>{figure[st.view] ?? ''}</em></button></li>)}</ol>
     <div className="sysmap-path"><b>Your path</b>{steps.map(([label, done, v, sec], i) => <button key={label} className={done ? 'done' : ''} onClick={() => goto(v, sec)}>
       <span>{done ? '✓' : i + 1}</span>{label}</button>)}</div>
   </section>;

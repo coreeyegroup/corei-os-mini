@@ -394,3 +394,18 @@ Chrome screenshots of Home, Market data, Strategies, Risk, Portfolio, Execution,
 | VA-5 | "undefined" shown in Home stage cards and Execution when a count is missing | DONE 0.63.0 (0) |
 | VA-6 | Market data dashboard tiles keep their own style (uppercase labels, monospace values) | OPEN — align when that screen is next changed |
 | VA-7 | Remaining per-screen stylesheets still carry older sizes beneath the final layer | OPEN — consolidate into one stylesheet (proposal; large, no visible change expected) |
+
+## P. Alignment pass — 27 Nov 2026 (release 0.63.1)
+
+Source: owner review of Settings › Layout and Portfolio › Paper accounts after 0.63.0 ("spacing and gaps increased,
+alignment missing"). Method: headless Chrome screenshots plus a script measuring, for 147 screens and sections, the
+left edge of every top-level block and the vertical gap between blocks (all blocks share one left edge; no gap over
+20px; the only flags were buttons sharing a toolbar row). Visual review of the densest panels found the issues below.
+
+| ID | Gap | Status |
+|---|---|---|
+| AL-1 | Settings: each checkbox on its own line, title and rows on different left edges, reset link floating mid-page | DONE 0.63.1 (VS Code layout: checkbox on the description line, one left edge, "Reset all" beside the title, shortcuts as one-line rows) |
+| AL-2 | Paper accounts: own tile style, actions floating right, long footer | DONE 0.63.1 (standard toolbar and tiles; footer behind ⓘ; account page tiles match) |
+| AL-3 | Risk › Limits profile row: two-line label broke the row | DONE 0.63.1 |
+| AL-4 | Home stage cards uneven (questions 4–6 lines) | DONE 0.63.1 (question in tooltip; shown again with Help text › Always shown) |
+| AL-5 | Setup header repeated name, roles, password and sign-out | DONE 0.63.1 (account menu has Change password; header keeps two small links) |

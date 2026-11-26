@@ -114,7 +114,8 @@ export function TopBarRight({ overview, layout, patch, open, onBell }: { overvie
       <div className="tb-pop-h">{overview.user.username}</div>
       <p className="tb-empty">Roles: {overview.user.roles.join(', ') || '—'}</p>
       <button className="link" onClick={() => { close(); open('Settings'); }}>Settings</button>
-      <button className="link" onClick={() => { close(); open('Configuration', 'users'); }}>Users, roles & password</button>
+      <button className="link" onClick={() => { close(); try { sessionStorage.setItem('corei-os-mini.change-password', '1'); } catch { /* ignore */ } open('Configuration', 'guide'); window.dispatchEvent(new Event('corei-change-password')); }}>Change password</button>
+      <button className="link" onClick={() => { close(); open('Configuration', 'users'); }}>Users & roles</button>
       <button className="link" onClick={() => { void api('operator/logout', 'POST').finally(() => window.dispatchEvent(new Event('corei-session'))); close(); }}>Sign out</button>
     </>}</Menu>}
   </div>;

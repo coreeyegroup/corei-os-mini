@@ -2105,6 +2105,11 @@ function MovedTo({ view, section, label }: { view: View; section: string; label:
 
 export default function Configuration() {
   const [user, setUser] = useState<Session | null>(null), [checking, setChecking] = useState(true), [changing, setChanging] = useState(false);
+  // The top bar's account menu asks for a password change by opening Setup with this flag.
+  useEffect(() => {
+    const take = () => { try { if (sessionStorage.getItem('corei-os-mini.change-password')) { sessionStorage.removeItem('corei-os-mini.change-password'); setChanging(true); } } catch { /* ignore */ } };
+    take(); window.addEventListener('corei-change-password', take); return () => window.removeEventListener('corei-change-password', take);
+  }, []);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState('');
   const [section, setSection] = useSection<Section>('Configuration', 'guide', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
   const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
@@ -2177,8 +2182,9 @@ export default function Configuration() {
     </nav>
     <section className="cfg-main">
       <header className="cfg-head page-head"><h1>{current.label}</h1><Info label={`About ${current.label}`}>{current.hint}</Info><span className="push" />
-        <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
-          <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></header>
+        <div className="cfg-user" title={`${user.display_name || user.username} · ${user.roles.map(r => ROLE_LABEL[r]).join(', ')}`}>
+          <span className="sr-only">{user.display_name || user.username} · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</span>
+          <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></header>
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}
       {summary && summary.four_eyes_live_changes === false && <p role="alert" className="cfg-error">Four-eyes on LIVE changes is OFF: one person can change LIVE addresses and passwords. Turn it on under Order sending › Policies.</p>}
       {brokerLogin && !loginShown && <p role="status" className={brokerLogin === 'ok' ? 'cfg-ok' : 'cfg-error'}>{brokerLogin === 'ok' ? 'Broker login completed; today’s access token is stored.'
