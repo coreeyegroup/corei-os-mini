@@ -20,6 +20,7 @@ import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUs
 import { BlendEditor } from './SignalLibrary';
 import { SubWorkspace } from './SubWorkspace';
 import { useViewVisible } from './visibility';
+import { Info } from './Info';
 
 export type Row = Record<string, any>;
 type Section = 'guide' | 'gates' | 'paper' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
@@ -2168,7 +2169,7 @@ export default function Configuration() {
           {id === 'controls' && live && <small className={live.trading_enabled ? 'cfg-live-on' : ''}>{live.trading_enabled ? 'LIVE ON' : 'off'}</small>}</button>)}</Fragment>)}
     </nav>
     <section className="cfg-main">
-      <header className="cfg-head"><div><h1>{current.label}</h1><p>{current.hint}</p></div>
+      <header className="cfg-head page-head"><h1>{current.label}</h1><Info label={`About ${current.label}`}>{current.hint}</Info><span className="push" />
         <div className="cfg-user" title={user.roles.map(r => ROLE_LABEL[r]).join(', ')}>{user.display_name || user.username}
           <small> · {user.roles.map(r => ROLE_LABEL[r]).join(', ')}</small> · <button className="link" onClick={() => setChanging(true)}>Change password</button> · <button className="link" onClick={() => void signOut()}>Sign out</button></div></header>
       {summary && !summary.credential_storage_ready && <p role="alert" className="cfg-error">Credential encryption is not set up on the server. Run scripts/setup-broker-accounts.sh.</p>}

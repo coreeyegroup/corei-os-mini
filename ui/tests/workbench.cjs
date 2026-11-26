@@ -14,10 +14,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.fetch=async()=>({ok:true,json:async()=>({project_id:'corei-os-mini',contract_version:2,release:'test',database_connected:false,demo_enabled:false,capabilities:[]})});
  w.eval(js);await tick();
  const buttons=()=>[...w.document.querySelectorAll('button')];
- const click=(text)=>{const b=buttons().find(b=>b.textContent.trim()===text);assert.ok(b,'button '+text);b.click();};
+ const click=(text)=>{const b=buttons().find(b=>b.textContent.trim()===text||b.querySelector(':scope > span:nth-child(2)')?.textContent===text);assert.ok(b,'button '+text);b.click();};
  assert.match(w.document.body.textContent,/Overview/);
  assert.ok(w.document.querySelector('.explorer.sidebar'),'side bar open by default');assert.ok(w.document.querySelector('.bottom.toolbox'),'toolbox open by default');
- click('Layout');await tick();click('Four groups');await tick();
+ click('Window');await tick();click('Four groups');await tick();
  assert.equal(w.document.querySelectorAll('.group').length,4);
  assert.equal(JSON.parse(w.localStorage.getItem('corei-os-mini.workstation.layout.v1')).groups.length,4);
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'b',ctrlKey:true,bubbles:true}));await tick();assert.equal(w.document.querySelector('.explorer'),null);
@@ -33,21 +33,21 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();assert.equal(w.document.querySelector('[aria-label="Workbench guide"]'),null);
 
  for(const theme of ['Black','Dark Blue','White','Standard','COREI Orbit']) {
-   click('Appearance');await tick();click('Color theme: '+theme);await tick();
+   click('View');await tick();click('Color theme: '+theme);await tick();
    assert.equal(w.document.documentElement.dataset.theme,theme);
    assert.equal(JSON.parse(w.localStorage.getItem('corei-os-mini.appearance.v1')).theme,theme);
  }
- click('Appearance');await tick();click('Increase text size');await tick();assert.equal(w.document.documentElement.style.getPropertyValue('--ui-size'),'13px');
- click('Appearance');await tick();click('Toggle status bar');await tick();assert.equal(w.document.querySelector('footer'),null);
- click('Appearance');await tick();click('Toggle status bar');await tick();assert.ok(w.document.querySelector('footer'));
- click('Appearance');await tick();click('Toggle wrapped tabs');await tick();assert.ok(w.document.querySelector('.wrap-tabs'));
+ click('View');await tick();click('Zoom in (text size)');await tick();assert.equal(w.document.documentElement.style.getPropertyValue('--ui-size'),'14px');
+ click('View');await tick();click('Status bar');await tick();assert.equal(w.document.querySelector('footer'),null);
+ click('View');await tick();click('Status bar');await tick();assert.ok(w.document.querySelector('footer'));
+ click('View');await tick();click('Wrapped tabs');await tick();assert.ok(w.document.querySelector('.wrap-tabs'));
  const firstTab=w.document.querySelector('.tab');firstTab.dispatchEvent(new w.MouseEvent('contextmenu',{bubbles:true,clientX:20,clientY:20}));await tick();
  click('Pin tab');await tick();assert.ok(w.document.querySelector('[aria-label="Close Overview in group 1"]').disabled);
  assert.deepEqual(JSON.parse(w.localStorage.getItem('corei-os-mini.pins.v1')),['Overview']);
  firstTab.dispatchEvent(new w.MouseEvent('contextmenu',{bubbles:true}));await tick();click('Unpin tab');await tick();assert.equal(w.document.querySelector('[aria-label="Close Overview in group 1"]').disabled,false);
- click('Navigate');await tick();click('Open Strategies');await tick();
- click('Workspace');await tick();click('Close active tab');await tick();assert.equal(w.document.querySelector('[role="tab"][aria-selected="true"]').textContent.trim(),'Home');
- click('Workspace');await tick();click('Reopen last closed tab');await tick();assert.ok([...w.document.querySelectorAll('[role="tab"]')].some(t=>t.textContent==='Strategies'&&t.getAttribute('aria-selected')==='true'));
+ click('Go');await tick();click('Open Strategies');await tick();
+ click('Window');await tick();click('Close active tab');await tick();assert.equal(w.document.querySelector('[role="tab"][aria-selected="true"]').textContent.trim(),'Home');
+ click('Window');await tick();click('Reopen last closed tab');await tick();assert.ok([...w.document.querySelectorAll('[role="tab"]')].some(t=>t.textContent==='Strategies'&&t.getAttribute('aria-selected')==='true'));
  console.log('PASS: five themes persist, font size, status toggle, wrapped tabs, tab context menu, pin protection, unpin and reopen.');
 
  const opened=[];w.open=(...args)=>{opened.push(args);return null;};
@@ -58,7 +58,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  // Plain Ctrl+P remains available to the browser.
  const printEvent=new w.KeyboardEvent('keydown',{key:'p',ctrlKey:true,bubbles:true,cancelable:true});w.dispatchEvent(printEvent);assert.equal(printEvent.defaultPrevented,false);
  // Removed views are gone from navigation; Configuration replaces them.
- click('Navigate');await tick();const navigate=w.document.body.textContent;assert.ok(!/Open Providers|Open Accounts|Open Instruments/.test(navigate));click('Open Configuration');await tick();
+ click('Go');await tick();const navigate=w.document.body.textContent;assert.ok(!/Open Providers|Open Accounts|Open Instruments/.test(navigate));click('Open Configuration');await tick();
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();
  assert.deepEqual(errors,[]);console.log('PASS: production bundle mounts; four groups persist; keyboard toggles; accessible resizing; filtered palette action; two-row layout; help closes; no runtime errors.');w.close();
  const detached=new JSDOM('<div id="root"></div>',{url:'https://corei-os-mini.coreeye.in/?view=Configuration&detached=1',runScripts:'outside-only',pretendToBeVisual:true});
@@ -199,8 +199,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  sw.document.dispatchEvent(new sw.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();
  // Settings: VS Code style — search, categories, scope labels, modified marker, reset; account settings saved to the server.
  tb.querySelector('[aria-label="Settings"]').click();for(let i=0;i<4;i++)await tick();
- const st=sw.document.querySelector('[aria-label="Settings"].st');assert.ok(st,'settings view');
- assert.deepEqual([...st.querySelectorAll('.st-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','About']);
+ const st=sw.document.querySelector('[aria-label="Settings"].set');assert.ok(st,'settings view');
+ assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','About']);
  const setv=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new sw.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const search=st.querySelector('[aria-label="Search settings"]');setv(search,'time zone');await tick();
  const tz=st.querySelector('select[aria-label="Time zone"]');assert.ok(tz,'search finds the time zone');
@@ -211,14 +211,39 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...st.querySelectorAll('#setting-region\\.timezone button')].find(b=>b.textContent==='Reset').click();await tick();
  assert.equal(st.querySelector('select[aria-label="Time zone"]').value,'LOCAL');
  setv(search,'');await tick();
- [...st.querySelectorAll('.st-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
+ [...st.querySelectorAll('.set-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
  assert.match(st.textContent,/Kill switches.*Changed by: Risk approver/);
- [...st.querySelectorAll('.st-nav button')].find(b=>/Keyboard shortcuts/.test(b.textContent)).click();await tick();
- assert.match(st.textContent,/Open settings.*Ctrl\+,/);
+ [...st.querySelectorAll('.set-nav button')].find(b=>/Keyboard shortcuts/.test(b.textContent)).click();await tick();
+ assert.match(st.textContent,/SettingsViewCtrl\+,/);
+ // Settings: the side bar is its table of contents.
+ const sbSet=[...sw.document.querySelectorAll('.sb-pane')].find(x=>x.querySelector('.sb-title')?.textContent==='Settings');
+ assert.ok(sbSet,'settings side bar pane');[...sbSet.querySelectorAll('.sb-row')].find(b=>b.textContent==='Trading').click();for(let i=0;i<3;i++)await tick();
+ assert.ok(st.querySelector('select[aria-label="Confirm orders"]'),'side bar opens the Trading category');
+ // Menus: View, Go, Window, Help (standard names), with groups and check marks; compact mode folds them into one button.
+ assert.deepEqual([...sw.document.querySelectorAll('.menubar > .menu-wrap > button')].map(b=>b.textContent),['View','Go','Window','Help']);
+ [...sw.document.querySelectorAll('.menubar > .menu-wrap > button')][0].click();await tick();
+ assert.deepEqual([...sw.document.querySelectorAll('.menu-popup .menu-group')].map(g=>g.textContent),['Commands','Show','Appearance','Color theme']);
+ assert.equal(sw.document.querySelector('.menu-popup [role="menuitemcheckbox"][aria-checked="true"]')?.textContent.replace(/Ctrl.*$/,''),'✓Side bar');
+ sw.document.dispatchEvent(new sw.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));sw.document.querySelector('.menubar').dispatchEvent(new sw.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();
+ const menuSel=st.querySelector('select[aria-label="Menu bar"]')||(()=>{[...sbSet.querySelectorAll('.sb-row')].find(b=>b.textContent==='Layout').click();return null;})();
+ for(let i=0;i<3;i++)await tick();setv(st.querySelector('select[aria-label="Menu bar"]'),'COMPACT');await tick();
+ assert.ok(sw.document.querySelector('.menubar.compact [aria-label="Application menu"]'),'compact menu');
+ sw.document.querySelector('[aria-label="Application menu"]').click();await tick();
+ [...sw.document.querySelectorAll('.menu-tabs button')].find(b=>b.textContent==='Window').click();await tick();
+ assert.ok([...sw.document.querySelectorAll('.menu-compact button')].some(b=>/Two columns/.test(b.textContent)));
+ setv(st.querySelector('select[aria-label="Menu bar"]'),'CLASSIC');await tick();
+ // Secondary side bar: attention, accounts, open positions, working orders, watchlist.
+ if(!sw.document.querySelector('aside.inspector'))lb.querySelector('[aria-label="Toggle secondary side bar (Ctrl+Alt+B)"]').click();await tick();await tick();
+ assert.deepEqual([...sw.document.querySelectorAll('aside.inspector .sb-title')].map(t=>t.textContent),['Attention','Accounts','Open positions','Working orders','Watchlist']);
+ // Help text: explanations behind ⓘ; "Always shown" puts them inline.
+ sq('nav.activity [aria-label="Risk"]').click();for(let i=0;i<6;i++)await tick();
+ const ib=sw.document.querySelector('.group.focused .stage-head .info-btn');assert.ok(ib,'stage header has ⓘ');assert.equal(sw.document.querySelector('.group.focused .st-question'),null,'no always-on stage text');
+ ib.click();await tick();assert.match(sw.document.querySelector('.info-pop').textContent,/This stage answers:/);
+ assert.ok(sw.document.querySelector('.app.help-icon'));
  tb.querySelector('[aria-label="Account yatheesh"]').click();await tick();
  [...tb.querySelectorAll('[role="menu"] button')].find(b=>b.textContent==='Sign out').click();await tick();await tick();
  assert.equal(loggedOut,1,'sign out from the account menu');
  assert.deepEqual(shErrors,[]);
- console.log('PASS: top bar: kill switches and unknown orders always shown, market clock, layout toggles, customise menu, notifications, account menu; Settings: search, categories, scopes, modified, reset, saved to the account.');
+ console.log('PASS: top bar: kill switches and unknown orders always shown, market clock, layout toggles, customise menu, notifications, account menu; Settings: search, categories, scopes, modified, reset, saved to the account, side bar contents; menus View/Go/Window/Help and compact ☰; secondary side bar; ⓘ help.');
  console.log('PASS: shell shows live status chips and badges, each screen opens as its own workspace tab, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
 })().catch(e=>{console.error(String(e&&e.message||e).slice(0,3000));process.exit(1)});

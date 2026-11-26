@@ -361,3 +361,20 @@ Evidence: `backend/tests/test_paper_accounts.py::test_account_page_shows_what_a_
 | PO-7 | Market clock knows NSE holidays | OPEN — the clock shows weekday sessions only; the trading calendar already holds holidays and could feed it | — |
 | PO-8 | Keyboard shortcuts can be re-bound | OPEN — the list is read-only today | — |
 | PO-9 | Paper ticket shows a live bid/ask before sending | OPEN — fills use the live price; a quote line in the ticket is a proposal | — |
+
+## N. Workbench polish to VS Code conventions — 26 Nov 2026 (release 0.62.0)
+
+Source: owner request (duplicate explorer in Settings, layout break without side bar, always-on explanations, menu
+names, right side bar, VS Code fonts and spacing). Evidence: `ui/tests/workbench.cjs`, `ui/tests/trading.cjs`; headless
+Chrome screenshots of Market data, Risk and Settings with and without side bars. No backend change, no migration.
+
+| ID | Gap | Status | Evidence |
+|---|---|---|---|
+| WB-1 | Settings categories shown twice | DONE 0.62.0 (side bar is the table of contents) | workbench.cjs |
+| WB-2 | Hiding the side bar stacked a section column above the content | DONE 0.62.0 (column removed; sub-tabs remain) | screenshots |
+| WB-3 | Explanations always on screen | DONE 0.62.0 (ⓘ; "Always shown" setting) | workbench.cjs |
+| WB-4 | Six custom menus | DONE 0.62.0 (View, Go, Window, Help; compact ☰) | workbench.cjs |
+| WB-5 | Right side bar held only attention | DONE 0.62.0 (accounts, positions, orders, watchlist) | workbench.cjs |
+| WB-6 | Mixed sizes and fonts | DONE 0.62.0 for the shell, headers, tabs, menus, settings; individual screens still carry older local styles — reviewed screen by screen as each is touched | — |
+| WB-7 | About 480 short notes across screens | PARTIAL — long notes are one line with ⓘ automatically; rewriting each into the ⓘ of its control is a proposal | — |
+| WB-8 | Views movable between side bars (VS Code drag and drop) | OPEN — proposal | — |

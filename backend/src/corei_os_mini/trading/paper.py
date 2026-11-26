@@ -324,8 +324,10 @@ def detail(db, account_id) -> dict:
     orders = oms.orders(db, None, account_id, 100, True)
     fills = [store.clean(dict(r)) for r in db.execute(
         """SELECT f.id, f.at, f.side, f.quantity, f.price, f.realised_pnl, f.commission, f.currency, f.slippage, i.symbol, s.code AS strategy_code, f.order_id
-           FROM oms_fills f JOIN cfg_instruments i ON i.id=f.instrument_id LEFT JOIN cfg_deployments d ON d.id=f.deployment_id
-           LEFT JOIN cfg_strategies s ON s.id=d.strategy_id WHERE f.account_id=%s AND f.mode='PAPER' ORDER BY f.at DESC, f.id DESC LIMIT 300""",
+           FROM oms_fills f JOIN cfg_instruments i ON i.id=f.instrument_id JOIN oms_orders o ON o.id=f.order_id LEFT JOIN cfg_deployments d ON d.id=f.deployment_id
+           LEFT JOIN cfg_strategies s ON s.id=d.strategy_id WHERE f.account_id=%s AND f.mode='PAPER'
+           -- fills at the same market time (one quote) keep the order they were placed in; the UUID alone is random
+           ORDER BY f.at DESC, o.created_at DESC, f.id DESC LIMIT 300""",
         (str(account_id),)).fetchall()]
     # Performance from closing fills (gross P&L per fill; costs shown apart), in each quote currency converted to the account currency.
     from .common import fx_rate

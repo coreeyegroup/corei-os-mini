@@ -3,6 +3,7 @@
  * Setup: sections with counts + order-sending state. System: sections + every table.
  * Home / Monitor: problems + feeds. Dense rows; a click goes straight to the item. */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { CATS, catId } from './SettingsView';
 import { api } from './Configuration';
 import type { View } from './layout';
 import { current, digitsOf, DESTINATIONS, goto, gotoTable, INTEL_GROUPS, openSetupItem, SETUP_GROUPS, setupRowOf, stageSections, type Overview } from './nav';
@@ -34,7 +35,7 @@ function useCurrent(view: View) {
   return section;
 }
 
-function Pane({ title, count, actions, children, initiallyOpen = true }: { title: string; count?: ReactNode; actions?: ReactNode; children: ReactNode; initiallyOpen?: boolean }) {
+export function Pane({ title, count, actions, children, initiallyOpen = true }: { title: string; count?: ReactNode; actions?: ReactNode; children: ReactNode; initiallyOpen?: boolean }) {
   const key = 'corei-os-mini.pane.' + title;
   const [open, setOpen] = useState(() => { try { const v = localStorage.getItem(key); return v == null ? initiallyOpen : v === '1'; } catch { return initiallyOpen; } });
   return <section className="sb-pane">
@@ -85,7 +86,7 @@ export function Feeds() {
     {data && !items.length && <div className="sb-empty">No collector running</div>}</>;
 }
 
-function Problems({ overview }: { overview: Overview | null }) {
+export function Problems({ overview }: { overview: Overview | null }) {
   const items = overview?.attention ?? [];
   return <>{items.map((a, i) => <button key={i} className="sb-row sb-problem" title={a.detail} onClick={() => goto(a.goto.view, a.goto.section)}>
     <span className={`sb-sev ${a.severity}`}>{a.severity === 'CRITICAL' ? '⛔' : '⚠'}</span><span className="sb-grow">{a.title}</span></button>)}
@@ -113,7 +114,13 @@ function IntelTree() {
       <span className="sb-grow">{label}</span></button>)}</div>)}</>;
 }
 
-function StageTree({ view }: { view: View }) {
+/* Settings categories: the side bar is the settings table of contents (the screen hides its own list then). */
+function SettingsTree() {
+  const section = useCurrent('Settings') ?? 'appearance';
+  return <>{CATS.map(c => <button key={c} className={`sb-row ${section === catId(c) ? 'selected' : ''}`} onClick={() => goto('Settings', catId(c))}><span className="sb-grow">{c}</span></button>)}</>;
+}
+
+export function StageTree({ view }: { view: View }) {
   const section = useCurrent(view);
   const [, bump] = useState(0);
   useEffect(() => {
@@ -151,6 +158,7 @@ export default function Sidebar({ view, overview }: { view: View; overview: Over
     <Pane title="Feeds" count={overview ? `${overview.feeds.live}/${overview.feeds.collectors}` : undefined}><Feeds /></Pane>
   </>;
   if (view === 'Configuration') return <Pane title="Setup"><SetupTree /></Pane>;
+  if (view === 'Settings') return <Pane title="Settings"><SettingsTree /></Pane>;
   if (view === 'Infrastructure') return <>
     <Pane title="System"><StageTree view="Infrastructure" /></Pane>
     <Pane title="Tables"><TablesList /></Pane>

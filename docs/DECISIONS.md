@@ -300,3 +300,26 @@ Decision:
    value shown as money.
 
 Status: accepted.
+
+## DEC-106 · VS Code workbench conventions: help behind ⓘ, standard menus, secondary side bar, one metric set (release 0.62.0, 26 Nov 2026)
+
+Context: every screen repeated its explanation (two to four lines); with the side bar hidden, Market data and System
+showed their section column stacked above the content (a large empty block); Settings showed its categories twice;
+the menu bar used six custom menus; the right side bar held only the attention list; sizes and fonts differed by screen.
+
+Decision (reference: VS Code defaults, used daily by most developers for long sessions):
+1. **Explanations behind ⓘ.** Page and stage headers are one line (crumb › title ⓘ); the stage question and hand-off
+   are in the ⓘ. Long explanatory notes show one line with ⓘ and open on click. Settings › Appearance › Help text
+   "Always shown" restores the full text. Warnings, errors and blocking reasons are never hidden.
+2. **One navigation per screen.** The side bar lists a screen's sections; the screen's own sub-tabs remain when it is
+   hidden; the old section column and the second section strip are removed. Settings uses the side bar as its table
+   of contents.
+3. **Menus: View, Go, Window, Help** with grouped items and check marks (as VS Code); optional single ☰ (Settings ›
+   Layout › Menu bar).
+4. **Secondary side bar** (right, Ctrl+Alt+B): Attention, Accounts (equity, day P&L), Open positions, Working orders,
+   Watchlist; read-only, each row opens its page.
+5. **Metrics:** system UI font at 13px default, activity bar 48px with 24px icons, side-bar title 35px, view headers
+   22px, rows 22px, tabs 30px (35px comfortable), icon-only editor actions, one accent for primary buttons;
+   Ctrl+= / Ctrl+- change text size.
+
+Status: accepted.

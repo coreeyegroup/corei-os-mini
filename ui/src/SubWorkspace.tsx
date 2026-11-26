@@ -139,7 +139,7 @@ export function SubWorkspace({ view, items, tab, setTab, render, initial, label 
               <option value="">+ Open…</option>{unopened.map(i => <option key={i.id} value={i.id}>{i.group ? `${i.group} › ` : ''}{i.label}</option>)}</select>}
             {k > 0 && <button aria-label={`Move ${byId.get(p.active)?.label} to the pane on the left`} title="Move this item to the pane on the left" onClick={() => moveTo(p.active, k - 1)}>◀</button>}
             {k < st.panes.length - 1 && <button aria-label={`Move ${byId.get(p.active)?.label} to the pane on the right`} title="Move this item to the pane on the right" onClick={() => moveTo(p.active, k + 1)}>▶</button>}
-            {st.panes.length < MAX && <button aria-label={`Split ${byId.get(p.active)?.label} to the right`} title="Split right: see two items side by side" onClick={() => split(k)}><span aria-hidden="true">◫</span> Split</button>}
+            {st.panes.length < MAX && <button aria-label={`Split ${byId.get(p.active)?.label} to the right`} title="Split right: see two items side by side" onClick={() => split(k)}><span aria-hidden="true">◫</span></button>}
             <button aria-label={`Open ${byId.get(p.active)?.label} in new tab`} title="Open this item in a new browser tab" onClick={() => openWorkspace(view, false, p.active)}>↗</button>
             <button aria-label={`Open ${byId.get(p.active)?.label} in new window`} title="Open this item in a new browser window" onClick={() => openWorkspace(view, true, p.active)}>⧉</button>
           </span>

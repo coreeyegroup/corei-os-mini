@@ -7,6 +7,7 @@ import { addReauthHandler, api, Field } from './Configuration';
 import { ReauthDialog } from './ConfigControls';
 import { publishSections, takeTable, useSection } from './nav';
 import { SubWorkspace } from './SubWorkspace';
+import { Info } from './Info';
 import './configuration.css';
 import './infrastructure.css';
 
@@ -44,7 +45,7 @@ export default function Infrastructure() {
         <button key={t.id} aria-current={current.id === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}><span>{t.label}</span></button>)}</nav>
       <div className="cfg-user">{user.username}</div></div>
     <section className="cfg-main">
-      <header className="cfg-head"><h1>{current.label}</h1><p>{current.hint}</p></header>
+      <header className="cfg-head page-head"><h1>{current.label}</h1><Info label={`About ${current.label}`}>{current.hint}</Info></header>
       {!admin && <p className="cfg-note">The database views are for administrators.</p>}
       <PublishTabs list={tabs} />
       <SubWorkspace view="Infrastructure" label="Infrastructure" tab={current.id} setTab={id => setTab(id as Tab)} items={tabs.map(t => ({ id: t.id, label: t.label, hint: t.hint }))}

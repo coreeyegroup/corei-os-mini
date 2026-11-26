@@ -421,14 +421,14 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: sub-workspace: each item of a domain is a sub-tab (side bar opens it), closes and reopens, splits side by side, opens in a new tab or window.');
 
  // Signals: the frame, then the reason a signal was refused, in plain words.
- assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence/);
- assert.match($('.st-head').textContent,/Stage 3 · Signal intelligence ›All panels/);
+ assert.match($('.stage-head').textContent,/3 · Signal intelligence/);
+ assert.match($('.stage-head').textContent,/3 · Signal intelligence ›All panels/);
  assert.equal($('.st-steps'),null,'the stages are the main workspaces, not repeated inside one');
  assert.deepEqual($$('.cfg-nav .cfg-nav-group').map(g=>g.textContent),['Overview','Work','Monitor','Configure']);
  // Stage 4 owns what a strategy decides: its signals, their checks and the decisions; the desk shows every strategy at once.
  await go('Strategies');
- assert.match($('.st-head').textContent,/Stage 4 · Strategy intelligence/);
- assert.match($('.st-head').textContent,/›Dashboard/);
+ assert.match($('.stage-head').textContent,/4 · Strategy intelligence/);
+ assert.match($('.stage-head').textContent,/›Dashboard/);
  assert.deepEqual(subTabs(),[['Dashboard','Runtime','Strategy signals','Trade decisions','All panels']]);
  assert.match($('.sd-card').textContent,/EMA_FAST.*running.*paper.*automatic.*long 0\.10.*\+12\.50.*BUY.*70.*acted/);
  promptAnswer='review the levels';$('.sd-card footer button').click();await settle(4);
@@ -438,7 +438,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.equal(hand.handoff,'APPROVE');assert.equal(hand.version,4);assert.equal(hand.reason,'review the levels');assert.equal(hand.order_type,'MARKET');
  console.log('PASS: strategies: the desk shows each strategy with position, P&L, last signal and decision; pause and handoff change from the card.');
  $('.sd-card footer button:nth-last-child(1)').click();await settle(6);
- assert.match($('.st-head').textContent,/Trade decisions/);
+ assert.match($('.stage-head').textContent,/Trade decisions/);
  assert.ok(calls.some(c=>c.url.includes('/execution/flow?limit=30&deployment_id=d1')));
  button('Show all deployments').click();await settle(4);
  assert.ok(calls.some(c=>c.url.endsWith('/execution/flow?limit=30')));
@@ -454,7 +454,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Execution receives every decision from the strategies: the chain, what waits for a trader, execute or decline.
  await go('Execution');
- assert.match($('.st-head').textContent,/›Dashboard/);
+ assert.match($('.stage-head').textContent,/›Dashboard/);
  assert.ok(button('Review decisions'));
  nav('All panels').click();await settle(6);
  const ep=name=>$$('.ws-panel').find(p=>p.querySelector('.ws-head b').textContent===name);
@@ -551,7 +551,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
 
  await go('Portfolio');
- assert.match($('.st-head').textContent,/›Accounts/);
+ assert.match($('.stage-head').textContent,/›Accounts/);
  assert.match($('.st-card').textContent,/COREI equity estimate/);
  button('Positions').click();await settle(6);
  assert.equal($('[aria-label="Position account"]').value,'a1');
@@ -761,7 +761,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
 
  // Post-trade: breaks with their actions, execution quality.
  await go('Post-trade');
- assert.match($('.st-head').textContent,/Stage 8 · Post-trade/);
+ assert.match($('.stage-head').textContent,/8 · Post-trade/);
  assert.match($('.intel-kpis').textContent,/Open breaks1/);
  assert.match($('.intel-table').textContent,/3 cached deals checked/);
  assert.match($('.intel-table').textContent,/NEW_ACCOUNT.*never checked/i);
