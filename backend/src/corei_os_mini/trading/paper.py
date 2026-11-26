@@ -312,6 +312,67 @@ def archive(actor: str, account_id: UUID, reason: str) -> dict:
         return _public(db, account_id)
 
 
+# ---------- the account page: what a broker terminal shows ----------
+
+def detail(db, account_id) -> dict:
+    """Everything a trader looks at for one paper account: balance, equity, open P&L, exposure, positions, working
+    orders, trade history, performance, its runs and its activity."""
+    from . import oms, portfolio
+    head = _public(db, account_id)
+    pos = [p for p in portfolio.positions(db, account_id, True, 'PAPER')]
+    exposure = sum((p['notional'] * (p['fx_to_account'] or 0) for p in pos if p.get('notional') is not None), ZERO)
+    orders = oms.orders(db, None, account_id, 100, True)
+    fills = [store.clean(dict(r)) for r in db.execute(
+        """SELECT f.id, f.at, f.side, f.quantity, f.price, f.realised_pnl, f.commission, f.currency, f.slippage, i.symbol, s.code AS strategy_code, f.order_id
+           FROM oms_fills f JOIN cfg_instruments i ON i.id=f.instrument_id LEFT JOIN cfg_deployments d ON d.id=f.deployment_id
+           LEFT JOIN cfg_strategies s ON s.id=d.strategy_id WHERE f.account_id=%s AND f.mode='PAPER' ORDER BY f.at DESC, f.id DESC LIMIT 300""",
+        (str(account_id),)).fetchall()]
+    # Performance from closing fills (gross P&L per fill; costs shown apart), in each quote currency converted to the account currency.
+    from .common import fx_rate
+    ccy = head['currency']
+    closed, costs = [], ZERO
+    for f in reversed(fills):
+        rate = fx_rate(db, f['currency'], ccy)
+        if rate is None:
+            continue
+        costs += D(f['commission'] or 0) * rate
+        if D(f['realised_pnl'] or 0) != 0:
+            closed.append({'at': f['at'], 'pnl': D(f['realised_pnl']) * rate, 'cost': D(f['commission'] or 0) * rate})
+    wins = [c['pnl'] for c in closed if c['pnl'] > 0]
+    losses = [c['pnl'] for c in closed if c['pnl'] < 0]
+    start = D(head['starting_amount'])
+    curve, running = [{'at': head['created_at'], 'equity': str(start)}], start
+    for f in reversed(fills):     # realised equity after each fill (net of its cost); the last point adds open P&L
+        rate = fx_rate(db, f['currency'], ccy)
+        if rate is None:
+            continue
+        running += (D(f['realised_pnl'] or 0) - D(f['commission'] or 0)) * rate
+        curve.append({'at': f['at'], 'equity': str(running.quantize(Decimal('0.01')))})
+    curve.append({'at': None, 'equity': head['equity']})
+    q2 = Decimal('0.01')
+    perf = {'closed_trades': len(closed), 'wins': len(wins), 'losses': len(losses),
+            'win_rate_pct': str((Decimal(len(wins)) / len(closed) * 100).quantize(q2)) if closed else None,
+            'gross_profit': str(sum(wins, ZERO).quantize(q2)), 'gross_loss': str(sum(losses, ZERO).quantize(q2)),
+            'profit_factor': str((sum(wins, ZERO) / -sum(losses, ZERO)).quantize(q2)) if losses else None,
+            'best': str(max(wins).quantize(q2)) if wins else None, 'worst': str(min(losses).quantize(q2)) if losses else None,
+            'average': str((sum(wins + losses, ZERO) / len(closed)).quantize(q2)) if closed else None, 'costs': str(costs.quantize(q2))}
+    runs = [store.clean(dict(r)) for r in db.execute(
+        """SELECT d.id, d.status, d.mode, s.code AS strategy_code, v.number AS version_number, i.symbol, v.parameters->>'timeframe' AS timeframe,
+                  w.name AS workspace, w.id AS workspace_id
+           FROM cfg_deployments d JOIN cfg_strategies s ON s.id=d.strategy_id JOIN cfg_strategy_versions v ON v.id=d.strategy_version_id
+           JOIN cfg_instruments i ON i.id=d.instrument_id LEFT JOIN ws_runs r ON r.deployment_id=d.id AND r.role IN ('OWNED','ADOPTED')
+           LEFT JOIN ws_workspaces w ON w.id=r.workspace_id WHERE d.account_id=%s ORDER BY d.status, s.code""", (str(account_id),)).fetchall()]
+    activity = [store.clean(dict(r)) for r in db.execute(
+        """SELECT occurred_at, actor, action, entity, reason FROM cfg_audit_log
+           WHERE entity_id=%s OR (entity IN ('order') AND entity_id IN (SELECT id::text FROM oms_orders WHERE account_id=%s))
+           ORDER BY occurred_at DESC, id DESC LIMIT 100""", (str(account_id), str(account_id))).fetchall()]
+    balance = (start + D(head['realised'])).quantize(q2)
+    return {**head, 'balance': str(balance), 'exposure': str(exposure.quantize(q2)),
+            'leverage': str((exposure / D(head['equity'])).quantize(q2)) if D(head['equity']) > 0 else None,
+            'positions': [store.clean(p) for p in pos], 'orders': [store.clean(o) for o in orders], 'fills': fills,
+            'performance': perf, 'equity_curve': curve[-500:], 'runs_list': runs, 'activity': activity}
+
+
 # ---------- FX rates entered by a person ----------
 
 def fx_rates(db) -> list[dict]:

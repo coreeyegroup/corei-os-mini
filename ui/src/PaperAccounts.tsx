@@ -7,13 +7,18 @@
  * deployment. Funds can be changed; "Start again" makes a fresh account with the same settings and archives the old
  * one with its history. FxRates keeps the rates a person enters for currencies no collected pair converts.
  * Must never: send money values as binary floats (amounts, costs and rates are sent as typed text); delete history.
- * Dependencies: Configuration.api, StageShell helpers, nav.goto. Consumers: Configuration (sections "paper", "fx").
+ * Each row opens the account's own page (PaperAccountDetail): balance, equity, positions, orders, history,
+ * performance and an order ticket, as a broker terminal shows a real account.
+ * Dependencies: Configuration.api, StageShell helpers, nav.goto, PaperAccountDetail, userSettings. Consumers: Configuration (sections "paper", "fx").
  * Architectural position: UI over /api/trading/paper-accounts and /api/trading/fx-rates.
  */
 import { useMemo, useState } from 'react';
 import { api } from './Configuration';
 import { goto } from './nav';
-import { Msg, useData, type Row } from './StageShell';
+import './my-workspaces.css';
+import { PaperAccountDetail } from './PaperAccountDetail';
+import { Msg, useData, when, type Row } from './StageShell';
+import { fmtMoney, fmtNum, setting, useSettings } from './userSettings';
 
 const SCOPES: [string, string][] = [['ANY', 'Any instrument'], ['FOREX', 'Forex & metals'], ['INDIA', 'Indian markets (NSE · BSE · MCX · INR)'], ['CUSTOM', 'Custom list']];
 const CLASSES = ['FX', 'METAL', 'INDEX', 'COMMODITY', 'CRYPTO', 'EQUITY', 'FUTURE', 'OPTION'];
@@ -32,7 +37,9 @@ function body(f: Form) {
 }
 
 export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
+  useSettings();
   const [archived, setArchived] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
   const [data, error, reload] = useData<Row>(`trading/paper-accounts${archived ? '?archived=true' : ''}`, 15_000, [archived]);
   const [ins] = useData<Row>('config/instruments', 120_000);
   const [conns] = useData<Row>('config/connections', 120_000);
@@ -68,14 +75,13 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
       if (r) setForm(null);
     }
   };
-  return <div className="cfg-pane pa" aria-label="Paper accounts">
-    <p className="cfg-note">Each paper account is a separate simulated account with its own currency and amount. It fills at the live price of the instrument's feed
-      (plus its slippage), charges its own costs, and can run any strategy. Nothing is ever sent to a broker. Use it in <button className="link" onClick={() => goto('My Workspaces', 'desks')}>a workspace ↗</button> (environment Paper) or a paper deployment.</p>
-    <div className="cfg-actions">{canEdit && <button className="primary" onClick={() => open()}>New paper account</button>}
-      <label className="dk-radio"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Show archived</label></div>
-    <Msg error={msg.error || error} notice={msg.notice} />
-    {form && <form className="pa-form" aria-label={editing ? `Edit ${editing.code}` : 'New paper account'} onSubmit={e => { e.preventDefault(); if (!bad.length) void save(); }}>
-      <div className="dk-grid">
+  const def = setting<string>('trading.paperAccount');
+  const sorted = [...items].sort((x, y) => Number(y.code === def) - Number(x.code === def));
+  const live = items.filter(a => a.status !== 'ARCHIVED');
+  const byCcy = Object.entries(live.reduce((m: Record<string, number>, a) => ({ ...m, [a.currency]: (m[a.currency] ?? 0) + 1 }), {}));
+  const formEl = form && <form className="pa-form" aria-label={editing ? `Edit ${editing.code}` : 'New paper account'} onSubmit={e => { e.preventDefault(); if (!bad.length) void save(); }}>
+      <h3>{editing ? `Settings · ${editing.code}` : 'New paper account'}<button type="button" className="link" aria-label="Close form" onClick={() => setForm(null)}>✕</button></h3>
+      <fieldset><legend>Account</legend><div className="dk-grid">
         <label>Code <input required disabled={!!editing} pattern="[A-Za-z][A-Za-z0-9_]{1,31}" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="PAPER_USD_1" /></label>
         <label>Name <input required maxLength={120} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Forex practice" /></label>
         <label>Currency <input aria-label="Currency" required disabled={!!editing} list="pa-ccy" pattern="[A-Za-z]{3}" value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value.toUpperCase() })} />
@@ -89,8 +95,8 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
           onChange={() => setForm({ ...form, asset_classes: form.asset_classes.includes(c) ? form.asset_classes.filter(x => x !== c) : [...form.asset_classes, c] })} />{words(c)}</label>)}</div>
         <label>Markets / exchanges <small>(comma separated, e.g. NSE, MCX; blank: any)</small><input aria-label="Markets" value={form.markets} onChange={e => setForm({ ...form, markets: e.target.value })} /></label>
         <InstrumentPick all={ins?.items ?? []} value={form.instruments} onChange={v => setForm({ ...form, instruments: v })} />
-      </div>}
-      <div className="dk-grid">
+      </div>}</fieldset>
+      <fieldset><legend>Costs & fills</legend><div className="dk-grid">
         <label>Commission per lot <small>({form.currency || 'account currency'})</small><input aria-label="Commission per lot" inputMode="decimal" aria-invalid={bad.includes('commission_per_lot')} value={form.commission_per_lot} onChange={e => setForm({ ...form, commission_per_lot: e.target.value })} /></label>
         <label>Commission % of value <small>(e.g. 0.03 for Indian brokerage)</small><input aria-label="Commission percent" inputMode="decimal" aria-invalid={bad.includes('commission_pct')} value={form.commission_pct} onChange={e => setForm({ ...form, commission_pct: e.target.value })} /></label>
         <label>Minimum per fill <small>({form.currency || 'account currency'})</small><input aria-label="Minimum commission" inputMode="decimal" aria-invalid={bad.includes('min_commission')} value={form.min_commission} onChange={e => setForm({ ...form, min_commission: e.target.value })} /></label>
@@ -98,20 +104,40 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
         <label>Price source <select aria-label="Price source" value={form.price_source_id} onChange={e => setForm({ ...form, price_source_id: e.target.value })}>
           <option value="">Freshest feed of each instrument</option>{sources.map((c: Row) => <option key={c.id} value={c.id}>{c.code} · {words(c.environment)}</option>)}</select></label>
         <label>Notes <input maxLength={1000} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
-      </div>
+      </div></fieldset>
       {bad.length > 0 && <p className="cfg-error" role="alert">Use plain numbers for costs, e.g. 7 or 0.03.</p>}
       <span className="mw-actions"><button type="button" onClick={() => setForm(null)}>Cancel</button><button className="primary" disabled={busy || bad.length > 0}>{editing ? 'Save' : 'Create paper account'}</button></span>
-    </form>}
-    <table className="cfg-table pa-table"><thead><tr><th>Account</th><th>Currency</th><th>Start</th><th>Equity</th><th>Return</th><th>Open</th><th>Runs · fills</th><th>Markets</th><th>Costs</th><th /></tr></thead>
-      <tbody>{items.map(a => <tr key={a.id} className={a.status === 'ARCHIVED' ? 'archived' : ''}>
-        <td><b>{a.code}</b><br /><small>{a.name}{a.cloned_from_code ? ` · from ${a.cloned_from_code}` : ''}{a.status === 'ARCHIVED' ? ' · archived' : ''}</small></td>
-        <td>{a.currency}</td><td>{a.starting_amount}</td>
-        <td>{a.equity}{!a.complete && <><br /><small className="dk-warn" title="Add a rate under Markets › FX rates">no rate for {a.missing_fx.join(', ') || 'a holding'}</small></>}</td>
-        <td className={Number(a.return_pct) < 0 ? 'neg' : 'pos'}>{a.return_pct}%<br /><small>dd {a.drawdown_pct}%</small></td>
-        <td>{a.open_positions}</td><td>{a.runs} · {a.fills}</td>
-        <td>{SCOPES.find(s => s[0] === a.scope)?.[1]}{a.scope === 'CUSTOM' ? `: ${[...(a.asset_classes ?? []), ...(a.markets ?? [])].join(', ') || `${(a.instruments ?? []).length} instrument(s)`}` : ''}</td>
+    </form>;
+  if (selected) return <div className="cfg-pane pa">
+    {formEl}
+    <PaperAccountDetail id={selected} canTrade={canEdit} back={() => { setSelected(null); reload(); }} edit={a => open(a)} />
+  </div>;
+  return <div className="cfg-pane pa" aria-label="Paper accounts">
+    <div className="pa-bar">
+      <div className="pa-kpis" aria-label="Paper summary">
+        <div><span>Accounts</span><b>{live.length}</b><small>{byCcy.map(([c, n]) => `${n} ${c}`).join(' · ') || 'none yet'}</small></div>
+        <div><span>Open positions</span><b>{live.reduce((n, a) => n + Number(a.open_positions ?? 0), 0)}</b><small>across all accounts</small></div>
+        <div><span>Runs</span><b>{live.reduce((n, a) => n + Number(a.runs ?? 0), 0)}</b><small>strategies on paper</small></div>
+        <div><span>Fills</span><b>{live.reduce((n, a) => n + Number(a.fills ?? 0), 0)}</b><small>simulated</small></div>
+      </div>
+      <div className="pa-tools">
+        <label className="dk-radio"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Show archived</label>
+        {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}
+      </div>
+    </div>
+    <Msg error={msg.error || error} notice={msg.notice} />
+    {formEl}
+    {items.length > 0 && <table className="cfg-table pa-table"><thead><tr><th>Account</th><th className="num">Balance</th><th className="num">Equity</th><th className="num">Return</th><th className="num">Open</th><th className="num">Runs · fills</th><th>Markets</th><th>Costs</th><th /></tr></thead>
+      <tbody>{sorted.map(a => <tr key={a.id} className={`pa-row ${a.status === 'ARCHIVED' ? 'archived' : ''}`} tabIndex={0} aria-label={`Open ${a.code}`}
+        onClick={e => { if (!(e.target as Element).closest('button')) setSelected(a.id); }} onKeyDown={e => { if (e.key === 'Enter' && e.target === e.currentTarget) setSelected(a.id); }}>
+        <td><span className="pa-ccy">{a.currency}</span><b>{a.code}</b>{a.code === def && <span className="pd-badge">default</span>}<br /><small>{a.name}{a.cloned_from_code ? ` · from ${a.cloned_from_code}` : ''}{a.status === 'ARCHIVED' ? ' · archived' : ''}</small></td>
+        <td className="num">{fmtMoney(a.starting_amount)}</td>
+        <td className="num"><b>{fmtMoney(a.equity)}</b>{!a.complete && <><br /><small className="dk-warn" title="Add a rate under FX rates">no rate for {a.missing_fx.join(', ') || 'a holding'}</small></>}</td>
+        <td className={`num ${String(a.return_pct).startsWith('-') ? 'neg' : Number(a.return_pct) ? 'pos' : ''}`}>{fmtNum(a.return_pct)}%<br /><small>dd {fmtNum(a.drawdown_pct)}%</small></td>
+        <td className="num">{a.open_positions}</td><td className="num">{a.runs} · {a.fills}</td>
+        <td><small>{SCOPES.find(s => s[0] === a.scope)?.[1]}{a.scope === 'CUSTOM' ? `: ${[...(a.asset_classes ?? []), ...(a.markets ?? [])].join(', ') || `${(a.instruments ?? []).length} instrument(s)`}` : ''}</small></td>
         <td><small>{Number(a.commission_per_lot) ? `${a.commission_per_lot}/lot ` : ''}{Number(a.commission_pct) ? `${a.commission_pct}% ` : ''}{Number(a.min_commission) ? `min ${a.min_commission} ` : ''}{a.slippage_ticks != null ? `· ${a.slippage_ticks} tick slip` : ''}{!Number(a.commission_per_lot) && !Number(a.commission_pct) && !Number(a.min_commission) ? 'none' : ''}</small></td>
-        <td>{canEdit && a.status !== 'ARCHIVED' && <span className="pa-actions">
+        <td className="pa-actions"><button className="primary" onClick={() => setSelected(a.id)}>Open</button>{canEdit && a.status !== 'ARCHIVED' && <>
           <button onClick={() => open(a)}>Settings</button>
           <button onClick={() => { const v = window.prompt(`New amount for ${a.code} (${a.currency}). Equity becomes this amount plus its realised and open P&L.`, a.starting_amount)?.trim();
             if (v && /^\d+(\.\d{1,2})?$/.test(v)) void run(() => api(`trading/paper-accounts/${a.id}/funds`, 'PUT', { amount: v, reason: `Funds set to ${v} ${a.currency}` }), x => `${x.code}: amount ${x.starting_amount} ${x.currency}.`);
@@ -121,8 +147,10 @@ export function PaperAccounts({ canEdit }: { canEdit: boolean }) {
             if (!amount || !/^\d+(\.\d{1,2})?$/.test(amount)) return;
             void run(() => api(`trading/paper-accounts/${a.id}/clone`, 'POST', { code, amount, reason: `Start again from ${a.code}` }), x => `${x.code} started with ${x.starting_amount} ${x.currency}; ${a.code} archived.`); }}>Start again…</button>
           <button onClick={() => { const r = window.prompt(`Archive ${a.code}? Its history stays. Reason:`)?.trim(); if (r && r.length >= 5) void run(() => api(`trading/paper-accounts/${a.id}/archive`, 'POST', { reason: r }), x => `${x.code} archived.`); }}>Archive</button>
-        </span>}</td></tr>)}</tbody></table>
-    {data && !items.length && <p className="cfg-note">No paper account yet. Create one per idea: for example a USD forex account and an INR account for NSE and MCX.</p>}
+        </>}</td></tr>)}</tbody></table>}
+    {data && !items.length && !form && <div className="pa-empty"><b>No paper account yet</b><p>Create one per idea — for example a USD forex account and an INR account for NSE and MCX. Each has its own currency, amount, markets and costs.</p>
+      {canEdit && <button className="primary" onClick={() => open()}>+ New paper account</button>}</div>}
+    <p className="pa-foot">Simulated accounts fill at the live price of each instrument's feed plus slippage and costs; nothing is ever sent to a broker. Run strategies on them from <button className="link" onClick={() => goto('My Workspaces', 'desks')}>a workspace ↗</button> (environment Paper) or a paper deployment.</p>
   </div>;
 }
 
@@ -155,7 +183,7 @@ export function FxRates({ canEdit }: { canEdit: boolean }) {
       <button className="primary" disabled={!ok}>Save rate</button></form>}
     <table className="cfg-table compact"><thead><tr><th>Pair</th><th>Rate</th><th>Note</th><th>Set</th><th /></tr></thead>
       <tbody>{(data?.items ?? []).map((r: Row) => <tr key={r.base + r.quote}><td>{r.base}/{r.quote}</td><td>{r.rate}</td><td>{r.note || '—'}</td>
-        <td>{new Date(r.set_at).toLocaleString()} · {r.set_by}</td>
+        <td>{when(r.set_at)} · {r.set_by}</td>
         <td>{canEdit && <button onClick={() => { if (window.confirm(`Remove the ${r.base}/${r.quote} rate?`)) void api(`trading/fx-rates/${r.base}/${r.quote}`, 'DELETE').then(() => { setMsg({ error: '', notice: 'Removed.' }); reload(); }).catch(x => setMsg({ error: (x as Error).message, notice: '' })); }}>Remove</button>}</td></tr>)}</tbody></table>
     {data && !data.items.length && <p className="cfg-note">No rate entered. An INR account trading USD-quoted instruments needs a USD/INR rate if no USDINR feed is collected.</p>}
   </div>;

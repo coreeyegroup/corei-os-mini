@@ -20,6 +20,9 @@ import { initialLayout, launchContext, openWorkspace, useAddressBar } from "./wo
 import "./workspaces.css";
 import { ViewFocused, ViewVisible } from "./visibility";
 import { themes, appearanceKey, defaultAppearance, restoreAppearance, type Appearance } from "./appearance";
+import SettingsView from "./SettingsView";
+import { TopBarStatus, TopBarRight } from "./TopBar";
+import { setting, useSettings } from "./userSettings";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
@@ -77,6 +80,7 @@ function stored() {
   }
 }
 export default function App() {
+  useSettings();
   const [launch] = useState(() => launchContext(window.location.search));
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});
@@ -212,6 +216,7 @@ export default function App() {
       if (typing || palette || document.querySelector('dialog[open]')) return;
       if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); patch(e.altKey?{right:!layout.right}:{left:!layout.left}); }
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); patch({bottom:!layout.bottom}); }
+      if (mod && e.key === ',') { e.preventDefault(); go('Settings'); }
       if (mod && e.key === '\\') { e.preventDefault(); split(); }
       if (mod && ['1','2','3','4'].includes(e.key)) {e.preventDefault(); const i=Number(e.key)-1;if(i<layout.groups.length) patch({focus:i});}
       if (e.altKey && ['ArrowLeft','ArrowRight'].includes(e.key)) {e.preventDefault(); cycle(e.key==='ArrowRight'?1:-1);}
@@ -250,10 +255,13 @@ export default function App() {
     return ()=>{stop=true;clearInterval(t);};
   },[!!overview]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{
-    if(!setupState?.land_on_setup||launch.view) return;
+    const start=setting<string>('workbench.start');
+    if(launch.view||!overview) return;
+    if(start==='DESKS'){ try{ if(sessionStorage.getItem('corei-os-mini.start.landed')) return; sessionStorage.setItem('corei-os-mini.start.landed','1'); }catch{ /* ignore */ } go('My Workspaces'); return; }
+    if(start!=='SETUP_UNTIL_DONE'||!setupState?.land_on_setup) return;
     try{ if(sessionStorage.getItem('corei-os-mini.setup.landed')) return; sessionStorage.setItem('corei-os-mini.setup.landed','1'); }catch{ /* storage may be unavailable: land every time */ }
     goto('Configuration','guide'); go('Configuration');
-  },[setupState?.land_on_setup]); // eslint-disable-line react-hooks/exhaustive-deps
+  },[setupState?.land_on_setup,!!overview]); // eslint-disable-line react-hooks/exhaustive-deps
   function go(view: View) {
     const at = layout.groups.findIndex(g => g.includes(view));
     open(view, at >= 0 ? at : layout.focus);
@@ -342,71 +350,9 @@ export default function App() {
     if (view === "Configuration") return <Configuration/>;
     if (view === "Infrastructure") return <Infrastructure/>;
     if (view === "Market data") return <MarketData/>;
-    if (view === "Settings")
-      return (
-        <div className="content">
-          <div className="eyebrow">PERSONAL WORKSPACE</div>
-          <h1>Arrange your workstation</h1>
-          <p>
-            Preferences are saved in this browser. Layout changes do not change
-            trading state.
-          </p>
-          <div className="appearance-settings">
-            <h2>Color theme</h2><div className="theme-picker">{themes.map(theme=><button key={theme} aria-pressed={appearance.theme===theme} onClick={()=>appearancePatch({theme})}><span className="theme-swatch" data-swatch={theme}/>{theme}{appearance.theme===theme?' ✓':''}</button>)}</div>
-            <label>Interface text size <input aria-label="Interface text size" type="range" min="11" max="16" value={appearance.fontSize} onChange={e=>appearancePatch({fontSize:Number(e.target.value)})}/><output>{appearance.fontSize}px</output></label>
-            <label>Density <select aria-label="Interface density" value={appearance.density} onChange={e=>appearancePatch({density:e.target.value as Appearance['density']})}><option>Compact</option><option>Comfortable</option></select></label>
-            {(['activity','status','wrapTabs'] as const).map(k=><label key={k}><input type="checkbox" checked={appearance[k]} onChange={e=>appearancePatch({[k]:e.target.checked})}/>{k==='activity'?'Activity bar':k==='status'?'Status bar':'Wrap workspace tabs'}</label>)}
-            <button onClick={()=>setAppearance({...defaultAppearance})}>Reset appearance</button>
-          </div>
-          <div className="settings">
-            {(["left", "right", "bottom"] as const).map((k) => (
-              <label key={k}>
-                <span>
-                  {k === "left"
-                    ? "Explorer"
-                    : k === "right"
-                      ? "Inspector"
-                      : "Bottom panel"}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={layout[k]}
-                  onChange={(e) => patch({ [k]: e.target.checked })}
-                />
-              </label>
-            ))}
-            {(
-              [
-                ["leftWidth", "Explorer width", 160, 380],
-                ["rightWidth", "Inspector width", 200, 440],
-                ["bottomHeight", "Bottom height", 120, 400],
-              ] as const
-            ).map(([k, label, min, max]) => (
-              <label key={k}>
-                {label}
-                <input
-                  aria-label={label}
-                  type="range"
-                  min={min}
-                  max={max}
-                  value={layout[k]}
-                  onChange={(e) => patch({ [k]: Number(e.target.value) })}
-                />
-                <output>{layout[k]} px</output>
-              </label>
-            ))}
-            <button
-              onClick={() => {
-                if(!allowLayoutChange())return;
-                patch({ ...defaults(layout.workspace) });
-                log("Layout reset");
-              }}
-            >
-              Reset layout
-            </button>
-          </div>
-        </div>
-      );
+    if (view === "Settings") return <SettingsView appearance={appearance} themes={themes} setAppearance={appearancePatch} resetAppearance={()=>setAppearance({...defaultAppearance})}
+      layout={layout} setLayout={p=>patch(p)} resetLayout={()=>{if(!allowLayoutChange())return;patch({...defaults(layout.workspace)});log("Layout reset");}}
+      shortcuts={commands} roles={overview?.user.roles??[]}/>;
     if (view === "Overview") return <Home overview={overview} signedOut={signedOut} runtime={runtime} error={error} refresh={()=>{void refresh();void loadOverview();}}/>;
     if (view === "My Workspaces") return <MyWorkspaces username={overview?.user.username} signedOut={signedOut} loadError={error}
       refreshSession={() => window.dispatchEvent(new Event('corei-session'))} />;
@@ -439,15 +385,14 @@ export default function App() {
     {section:'Appearance',label:'Toggle activity bar',run:()=>appearancePatch({activity:!appearance.activity})},
     {section:'Appearance',label:'Toggle status bar',run:()=>appearancePatch({status:!appearance.status})},
     {section:'Appearance',label:'Toggle wrapped tabs',run:()=>appearancePatch({wrapTabs:!appearance.wrapTabs})},
-    {section:'Appearance',label:'Appearance settings',run:()=>open('Settings')},
+    {section:'Preferences',label:'Open settings',shortcut:'Ctrl+,',run:()=>open('Settings')},
     {section:'Workspace',label:'Refresh backend status',run:()=>void refresh()},
     {section:'Workspace',label:'Reset current workspace layout',run:()=>{if(allowLayoutChange())setLayout(defaults(layout.workspace));}},
     {section:'View',label:'Toggle side bar',shortcut:'Ctrl+B',run:()=>patch({left:!layout.left})},
     {section:'View',label:'Toggle inspector',shortcut:'Ctrl+Alt+B',run:()=>patch({right:!layout.right})},
     {section:'View',label:'Toggle toolbox (problems, events, journal)',shortcut:'Ctrl+J',run:()=>patch({bottom:!layout.bottom})},
     {section:'View',label:'Toggle focus mode',run:()=>patch({maximized:!layout.maximized})},
-    {section:'View',label:'Layout settings',run:()=>open('Settings')},
-    {section:'Layout',label:'Single group',run:()=>preset(1,'row')},
+        {section:'Layout',label:'Single group',run:()=>preset(1,'row')},
     {section:'Layout',label:'Two columns',run:()=>preset(2,'row')},
     {section:'Layout',label:'Two rows',run:()=>preset(2,'column')},
     {section:'Layout',label:'Three columns',run:()=>preset(3,'row')},
@@ -472,18 +417,8 @@ export default function App() {
         <button className="command" onClick={() => setPalette(true)} aria-label="Go to anything">
           <span>Go to anything…</span><kbd>Ctrl K</kbd>
         </button>
-        <div className="status-chips" aria-label="Live status">
-          {signedOut ? <button className="chip" onClick={()=>go('Overview')}>Sign in</button> : overview && <>
-            <button className={`chip ${overview.feeds.problems?'bad':overview.feeds.live?'ok':''}`} title="Market-data feeds" onClick={()=>{goto('Market data','live');go('Market data');}}>
-              <span className="chip-dot"/>Feeds {overview.feeds.live}/{overview.feeds.collectors}{overview.feeds.problems?` · ${overview.feeds.problems} problem${overview.feeds.problems>1?'s':''}`:''}</button>
-            <button className={`chip ${live.includes('LIVE')?'live':''}`} title={overview.order_adapter===false&&live.length?'Order sending is switched ON, but no order adapter is built: nothing can be sent yet':'Order sending (firm-wide switch)'} onClick={()=>{goto('Configuration','controls');go('Configuration');}}>
-              Orders {live.length?`ON · ${live.join(', ')}${overview.order_adapter===false?' · no adapter':''}`:'OFF'}</button>
-            {overview.approvals>0 && <button className="chip warn" onClick={()=>{goto('Configuration','approvals');go('Configuration');}}>Approvals {overview.approvals}</button>}
-            {setupState?.total ? <button className={`chip ${setupState.land_on_setup?'warn':'ok'}`} title={`Setup of the ${setupState.target_track} track: ${setupState.done} of ${setupState.total} steps done${setupState.overrides?`; ${setupState.overrides} override(s) active`:''}`} onClick={()=>{goto('Configuration','guide');go('Configuration');}}>
-              Setup {setupState.target_track} {setupState.done}/{setupState.total}{setupState.overrides?` · ${setupState.overrides} override${setupState.overrides>1?'s':''}`:''}</button> : null}
-          </>}
-        </div>
-        {overview && <span className="top-user" title={overview.user.roles.join(', ')}>{overview.user.username}</span>}
+        <TopBarStatus overview={overview} signedOut={signedOut} setup={setupState} live={live} open={(v,section)=>{if(section)goto(v,section);go(v);}}/>
+        <TopBarRight overview={overview} layout={layout} patch={p=>patch(p)} open={(v,section)=>{if(section)goto(v,section);go(v);}} onBell={()=>patch({bottom:true})}/>
       </header>
       <div className="shell">
         {appearance.activity && <nav className="activity" aria-label="Activities">

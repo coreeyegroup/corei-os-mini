@@ -1467,3 +1467,20 @@ Migration `051_paper_accounts.sql` (additive). Tests: `backend/tests/test_paper_
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
 
+
+## Paper account page, Settings and top bar — release 0.61.0
+
+No migration. Tests: `backend/tests/test_paper_accounts.py`, `ui/tests/configuration.cjs`, `ui/tests/workbench.cjs`.
+
+- **Paper accounts open like a broker account** (Setup › Paper accounts › Open): balance, equity, open P&L, realised,
+  return and drawdown, exposure and leverage, win rate; positions with Close, working orders with Cancel, trade
+  history, performance with an equity curve, runs and activity; and an order ticket (paper only).
+- **Settings** (gear at the top right, or Ctrl+,): search and categories as in VS Code. Time zone, 12/24-hour clock,
+  date order, Indian or international number grouping, order confirmation, default quantity and paper account, start
+  page and the top-bar items follow your account to any browser; appearance and layout stay in this browser; firm
+  settings link to their own audited pages.
+- **Top bar:** engaged kill switches and unknown orders are always shown; feeds, orders, approvals, setup, running
+  workspaces and a market clock can be hidden. At the right: side bar, panel and inspector toggles, a customise-layout
+  menu, notifications, settings and your account (sign out).
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.

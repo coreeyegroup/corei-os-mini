@@ -203,6 +203,31 @@ def paper_list(response: Response, archived: bool = False, _: Principal = Depend
         return _j({'items': paper.listing(db, archived), 'currencies': paper.CURRENCIES})
 
 
+@router.get('/paper-accounts/{account_id}')
+def paper_detail(account_id: UUID, response: Response, _: Principal = Depends(current_user)):
+    """One paper account as a broker terminal shows it."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        if not paper.is_paper(db, account_id):
+            raise HTTPException(404, 'Paper account not found.')
+        return _j(paper.detail(db, account_id))
+
+
+@router.get('/topbar')
+def topbar(response: Response, _: Principal = Depends(current_user)):
+    """What the top bar shows besides the overview: engaged kill switches, running workspaces, orders whose outcome is
+    unknown, decisions waiting for approval, and the server clock (display only)."""
+    _no_store(response)
+    with store.transaction('read') as db:
+        kills = db.execute("SELECT scope, count(*) AS n FROM risk_kill_switches WHERE engaged GROUP BY scope").fetchall()
+        desks = db.execute("SELECT state, count(*) AS n FROM ws_workspaces GROUP BY state").fetchall()
+        unknown = db.execute("SELECT count(*) AS n FROM oms_orders WHERE state='UNKNOWN'").fetchone()['n']
+        pending = db.execute("SELECT count(*) AS n FROM tr_intents WHERE outcome='PENDING'").fetchone()['n']
+        now = db.execute('SELECT now() AS t').fetchone()['t']
+    return _j({'kill_switches': {r['scope']: r['n'] for r in kills}, 'desks': {r['state']: r['n'] for r in desks},
+               'unknown_orders': unknown, 'approvals_waiting': pending, 'server_time': now})
+
+
 @router.post('/paper-accounts', status_code=201)
 def paper_create(payload: paper.PaperIn, response: Response, user: Principal = Depends(_ops)):
     _no_store(response)

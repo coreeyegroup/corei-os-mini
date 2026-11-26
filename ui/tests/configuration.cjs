@@ -32,7 +32,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
-const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[];
+const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[],paperOrders=[],paperCloses=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
 const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
   policy:{preset:'RECOMMENDED',custom:{},target_track:'DEMO',default_hours:24,max_hours:{PAPER:168,DEMO:168,LIVE:24},
@@ -48,6 +48,13 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
    const method=options.method||'GET';requests.push({url,method,body:options.body});
    if(url.endsWith('/trading/paper-accounts')&&method==='POST'){const b=JSON.parse(options.body);paperPosts.push(b);const a={id:'pa-'+paperRows.length,version:1,status:'ACTIVE',starting_amount:b.amount,equity:b.amount,return_pct:'0.00',drawdown_pct:'0.00',complete:true,missing_fx:[],open_positions:0,runs:0,fills:0,...b,commission_per_lot:b.commission_per_lot,asset_classes:b.asset_classes,markets:b.markets,instruments:b.instruments};paperRows.push(a);return ok(a,201);}
    if(/\/trading\/paper-accounts\/[^/]+\/funds$/.test(url)){const b=JSON.parse(options.body);paperFunds.push(b);paperRows[0].starting_amount=b.amount;return ok(paperRows[0]);}
+   if(/\/trading\/paper-accounts\/pa-0$/.test(url))return ok({...paperRows[0],created_at:'2026-11-20T04:30:00Z',balance:'2500012.50',realised:'12.50',unrealised:'-3.10',exposure:'24000.00',leverage:'0.01',
+     positions:[{instrument_id:'ins-nifty',symbol:'NIFTY',asset_class:'INDEX',quote_currency:'INR',quantity:'1',avg_price:'24000',mark:'23996.9',unrealised_account:'-3.1',notional_account:'23996.9',valuation:'OK'}],
+     orders:[],fills:[{id:'f1',at:'2026-11-21T05:00:00Z',side:'SELL',quantity:'1',price:'24020',realised_pnl:'20',commission:'7.5',currency:'INR',symbol:'NIFTY'}],
+     performance:{closed_trades:1,wins:1,losses:0,win_rate_pct:'100.00',gross_profit:'20.00',gross_loss:'0.00',profit_factor:null,best:'20.00',worst:null,average:'20.00',costs:'7.50'},
+     equity_curve:[{at:'2026-11-20T04:30:00Z',equity:'2500000'},{at:'2026-11-21T05:00:00Z',equity:'2500012.50'},{at:null,equity:'2500009.40'}],runs_list:[],activity:[{occurred_at:'2026-11-20T04:30:00Z',actor:'risk-ops',action:'CREATE',entity:'account',reason:'New paper account'}]});
+   if(url.endsWith('/trading/orders')&&method==='POST'){const b=JSON.parse(options.body);paperOrders.push(b);return ok({id:'o-'+paperOrders.length,state:'FILLED'},201);}
+   if(url.endsWith('/trading/portfolio/flatten')&&method==='POST'){paperCloses.push(JSON.parse(options.body));return ok({state:'FILLED'});}
    if(url.includes('/trading/paper-accounts'))return ok({items:paperRows,currencies:['USD','INR','EUR']});
    if(url.endsWith('/trading/fx-rates')&&method==='PUT'){const b=JSON.parse(options.body);fxRows.push({...b,set_at:'2026-11-26T00:00:00Z',set_by:'risk-ops'});return ok(fxRows.at(-1));}
    if(url.includes('/trading/fx-rates'))return ok({items:fxRows});
@@ -237,7 +244,7 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  // Paper accounts: one per idea, own currency and amount, Indian brokerage as % of value; FX rate for INR valuation.
  nav('Paper accounts').click();await tick();await tick();
  assert.match($('[aria-label="Paper accounts"]').textContent,/No paper account yet/);
- [...w.document.querySelectorAll('[aria-label="Paper accounts"] button')].find(b=>b.textContent==='New paper account').click();await tick();
+ [...w.document.querySelectorAll('[aria-label="Paper accounts"] button')].find(b=>/New paper account/.test(b.textContent)).click();await tick();
  const pf=$('[aria-label="New paper account"]');
  const inp=l=>pf.querySelector(`[aria-label="${l}"]`);
  fill(pf.querySelector('input[placeholder="PAPER_USD_1"]'),'paper_inr');fill(pf.querySelector('input[placeholder="Forex practice"]'),'NSE practice');
@@ -246,15 +253,34 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.deepEqual([paperPosts[0].code,paperPosts[0].currency,paperPosts[0].amount,paperPosts[0].scope,paperPosts[0].commission_pct,paperPosts[0].min_commission,paperPosts[0].risk_profile],
    ['PAPER_INR','INR','1000000','INDIA','0.03','20','PROFESSIONAL'],'currency, amount, markets, costs and limits as typed text');
  assert.match($('[aria-label="Paper accounts"]').textContent,/PAPER_INR created with 1000000 INR/);
- assert.match($('.pa-table').textContent,/PAPER_INR.*INR.*1000000.*Indian markets/);
+ assert.match($('.pa-table').textContent,/INR.*PAPER_INR.*1,000,000\.00.*Indian markets/,'compact row: currency tag, code, grouped amount, markets');
  w.prompt=()=>'2500000';[...w.document.querySelectorAll('.pa-actions button')].find(b=>b.textContent==='Funds…').click();await tick();await tick();
  assert.equal(paperFunds[0].amount,'2500000');
+ // The account opens like a broker account: balance, equity, positions with Close, history, performance, and a paper-only ticket.
+ db.instruments.push({id:'ins-nifty',symbol:'NIFTY',name:'Nifty 50',asset_class:'INDEX',market:'NSE',quote_currency:'INR',contract_size:'1'});
+ [...qa('.pa-actions button')].find(b=>b.textContent==='Open').click();await tick();await tick();await tick();
+ const pd=$('[aria-label="Paper account PAPER_INR"]');assert.ok(pd,'account page opens');
+ assert.match(pd.querySelector('[aria-label="Account summary"]').textContent,/Balance2,500,012\.50 INR.*Open P&L-3\.10 INR.*Exposure24,000\.00 INR.*Win rate100\.00%/);
+ assert.match(pd.querySelector('.pd-table').textContent,/NIFTY.*LONG.*24,000.*23,996\.9.*-3\.10/);
+ w.prompt=()=>'take the loss';[...pd.querySelectorAll('.pd-table button')].find(b=>b.textContent==='Close').click();await tick();await tick();
+ assert.deepEqual([paperCloses[0].mode,paperCloses[0].instrument_id,paperCloses[0].reason],['PAPER','ins-nifty','take the loss'],'close is a paper order with a reason');
+ [...pd.querySelectorAll('[role="tab"]')].find(b=>/History/.test(b.textContent)).click();await tick();
+ assert.match(pd.querySelector('[role="tabpanel"]').textContent,/NIFTY.*SELL.*24,020.*7\.5 INR.*20 INR/);
+ [...pd.querySelectorAll('[role="tab"]')].find(b=>/Performance/.test(b.textContent)).click();await tick();
+ assert.ok(pd.querySelector('[aria-label="Equity curve"] svg path'),'equity curve drawn');assert.match(pd.querySelector('.pd-stats').textContent,/Costs paid7\.50 INR/);
+ const tk=pd.querySelector('[aria-label="Order ticket"]');fill(tk.querySelector('[aria-label="Instrument"]'),'ins-nifty');fill(tk.querySelector('[aria-label="Quantity"]'),'2');await tick();
+ [...tk.querySelectorAll('[role="radio"]')].find(b=>b.textContent==='Sell').click();await tick();
+ w.confirm=()=>true;await submit(tk);await tick();await tick();
+ assert.deepEqual([paperOrders[0].mode,paperOrders[0].side,paperOrders[0].quantity,paperOrders[0].instrument_id,paperOrders[0].account_id],['PAPER','SELL','2','ins-nifty','pa-0'],'ticket sends a paper order, quantity as typed text');
+ assert.match(paperOrders[0].ticket_key,/^[A-Za-z0-9_-]{8,64}$/);
+ [...pd.querySelectorAll('button')].find(b=>/Paper accounts/.test(b.textContent)).click();await tick();await tick();
+ assert.ok($('.pa-table'),'back to the list');
  nav('FX rates').click();await tick();await tick();
  const fxf=$('[aria-label="Set a rate"]');fill(fxf.querySelector('[aria-label="Rate"]'),'84.25');fill(fxf.querySelector('[aria-label="Rate note"]'),'RBI reference');await tick();
  await submit(fxf);await tick();
  assert.deepEqual(fxRows[0].base+fxRows[0].quote+fxRows[0].rate,'USDINR84.25');
  assert.match($('[aria-label="FX rates"]').textContent,/USD\/INR.*84\.25.*RBI reference/);
- console.log('PASS: paper accounts: own currency, amount, Indian markets, % brokerage, limits; funds; FX rate for INR valuation.');
+ console.log('PASS: paper accounts: own currency, amount, Indian markets, % brokerage, limits; funds; account page with positions, close, history, performance, paper ticket; FX rate for INR valuation.');
  nav('Readiness per account').click();await tick();await tick();await tick();
  assert.match($('.cfg-health').textContent,/203\.0\.113\.200/);
  assert.match($('.cfg-health').textContent,/Next: 1 Broker/);

@@ -20,6 +20,7 @@ import ErrorBoundary from './ErrorBoundary';
 import './configuration.css';
 import './infrastructure.css';
 import './marketdata.css';
+import { fmtTime } from './userSettings';
 
 export type Row = Record<string, any>;
 export type Section = { id: string; label: string; group: 'Overview' | 'Work' | 'Monitor' | 'Configure'; hint: string; render: (ctx: Ctx) => ReactNode };
@@ -130,7 +131,7 @@ export function DeploymentFilter({ label, clear }: { label: string; clear: () =>
     <button onClick={clear}>Show all deployments</button></div>;
 }
 
-export const when = (v?: string | null) => v ? new Date(v).toLocaleString() : '—';
+export const when = (v?: string | null) => fmtTime(v);
 export const ago = (v?: string | null) => { if (!v) return '—'; const s = (Date.now() - new Date(v).getTime()) / 1000; return s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : when(v); };
 export const num = (v: any, d = 2) => v == null || v === '' ? '–' : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 export const money = (v: any, ccy?: string) => v == null ? '–' : `${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${ccy ? ' ' + ccy : ''}`;

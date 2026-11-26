@@ -128,3 +128,25 @@ class PaperAccounts(te.Execution):
         old = {x['code']: x for x in self.ok(self.alice.get('/api/trading/paper-accounts?archived=true'))['items']}['PAPER_A']
         self.assertEqual((old['status'], old['fills']), ('ARCHIVED', 1), 'archived with its history, never wiped')
         self.assertNotIn('PAPER_A', [x['code'] for x in self.ok(self.alice.get('/api/trading/paper-accounts'))['items']])
+
+    def test_account_page_shows_what_a_broker_terminal_shows(self):
+        _c, _a, ins = self.feed()
+        p = self.paper('PAPER_T', commission_per_lot='7', slippage_ticks=0)
+        self.buy(p, ins, 't1')
+        page = self.ok(self.alice.get(f"/api/trading/paper-accounts/{p['id']}"))
+        self.assertEqual((len(page['positions']), page['positions'][0]['quantity']), (1, '0.1'))
+        self.assertEqual(page['balance'], '49999.30', 'balance = start + realised net of the 0.70 cost')
+        self.assertEqual(page['exposure'], '10800.50', 'open position at the mid, in USD')
+        self.quote(_a['id'], 1.08100, 1.08110)                 # +10 pips
+        self.buy(p, ins, 't2', side='SELL')
+        page = self.ok(self.alice.get(f"/api/trading/paper-accounts/{p['id']}"))
+        perf = page['performance']
+        self.assertEqual((page['positions'], perf['closed_trades'], perf['wins'], perf['gross_profit'], perf['costs']), ([], 1, 1, '9.00', '1.40'))
+        self.assertEqual(page['equity'], '50007.60', '50,000 + 9.00 gross − 1.40 costs')
+        self.assertEqual(page['equity_curve'][-1]['equity'], '50007.60')
+        self.assertEqual([f['side'] for f in page['fills']], ['SELL', 'BUY'])
+        self.assertTrue(any(a['action'] == 'CREATE' for a in page['activity']))
+        self.ok(self.alice.get(f"/api/trading/paper-accounts/{_a['id']}"), 404)
+        bar = self.ok(self.alice.get('/api/trading/topbar'))
+        self.assertEqual((bar['kill_switches'], bar['unknown_orders']), ({}, 0))
+        self.assertTrue(bar['server_time'])

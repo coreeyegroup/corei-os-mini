@@ -273,3 +273,30 @@ Decision:
 6. Optional risk limits are sized on the paper amount when the account is created (Retail, Professional or
    Institutional preset).
 Status: accepted.
+
+## DEC-105 · Paper account page, account-wide settings and a VS Code-style top bar (release 0.61.0, 26 Nov 2026)
+
+Context: a paper account could be created but not opened; Settings held only appearance; the top bar was designed at
+the start of the project and showed neither engaged kill switches nor unresolved orders, and had no layout controls.
+
+Decision:
+1. **Paper account page.** Each paper account opens like a broker account: Balance (start + realised), Equity,
+   Open P&L, Realised, Return / drawdown, Exposure / leverage, Win rate; tabs Positions (Close), Orders (Cancel),
+   History, Performance (statistics and an equity curve), Runs, Activity; and an order ticket. Every request from this
+   page carries mode PAPER; the ticket has its own idempotency key, so a double click is one order. Served by
+   `GET /api/trading/paper-accounts/{id}` (404 for a broker account).
+2. **Settings, VS Code style.** Search, categories, a description per setting, a modified marker and reset, and a scope
+   label: *this browser* (appearance, layout), *my account* (saved to `operator/prefs` key `settings.v1`: time zone,
+   12/24-hour clock, date order, Indian or international number grouping, order confirmation, default quantity,
+   default paper account, start page, top-bar items), *firm* (links to the audited pages that own them, with who may
+   change them). Settings change only how things are shown and confirmed, never trading state; trading logic keeps
+   market event time whatever zone is chosen.
+3. **Top bar.** Left: safety status. Engaged kill switches and UNKNOWN orders are always shown (cannot be hidden);
+   feeds, order sending, approvals, setup, running workspaces and a market clock (FX and NSE session markers, display
+   only) can each be hidden. Right, as in VS Code: toggles for the side bar, panel and inspector, a customise-layout
+   menu (visibility, focus mode, top-bar items), a notifications bell over the attention list, a settings gear
+   (Ctrl+,) and an account menu (roles, users & password, sign out). Served by `GET /api/trading/topbar`.
+4. Amounts on screen are formatted from exact decimal strings (BigInt half-up rounding); no binary float is used for a
+   value shown as money.
+
+Status: accepted.
