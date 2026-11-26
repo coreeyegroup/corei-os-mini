@@ -132,7 +132,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(sqa('.sb-pane header').some(h=>h.textContent.includes('Market watch')),'Market watch in the side bar');
  // The trading flow: eight stages on the rail, each a screen with its components and build state.
  const stages=['Market data','Intelligence','Signals','Strategies','Risk','Portfolio','Execution','Post-trade'];
- stages.forEach((v,i)=>assert.equal(sq(`nav.activity [aria-label="${v}"] .rail-n`).textContent,String(i+1)));
+ stages.forEach((v,i)=>assert.match(sq(`nav.activity [aria-label="${v}"]`).title,new RegExp(`^${i+1} · `),"stage number in the tooltip"));
  sq('nav.activity [aria-label="Risk"]').click();for(let i=0;i<4;i++)await tick();
  const riskNav=[...sqa('.cfg-nav button')].map(b=>b.textContent);
  ['Dashboard','Kill switches','Limits','Risk checks','Exposure','Stage map'].forEach(t=>assert.ok(riskNav.includes(t),t));
@@ -181,6 +181,10 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.equal(sqa('.pl-step').length,7);
  sqa('.pl-node').find(n=>n.textContent.includes('Post-trade')).click();for(let i=0;i<4;i++)await tick();
  assert.equal(sq('nav.activity [aria-current="page"]').getAttribute('aria-label'),'Post-trade');
+ // Activity bar: every area has its own icon (no shape shared by two areas).
+ const iconPaths=[...sw.document.querySelectorAll('nav.activity button svg path')].map(p=>p.getAttribute('d'));
+ assert.equal(new Set(iconPaths).size,iconPaths.length,'each activity icon is distinct');
+ assert.equal(sw.document.querySelectorAll('nav.activity .rail-n').length,0,'no tiny stage digits under icons');
  // Top bar: kill switches and UNKNOWN orders always shown; VS Code-style layout toggles, customise menu, bell, gear, account menu.
  const chips=sw.document.querySelector('[aria-label="Live status"]').textContent;
  assert.match(chips,/Kill account 1/);assert.match(chips,/Unknown orders 1/);assert.match(chips,/FX.*NSE/,'market clock');

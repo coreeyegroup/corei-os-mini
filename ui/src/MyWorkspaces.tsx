@@ -7,6 +7,7 @@ import { launchContext, usePublishRoute } from './workspaceLinks';
 import WorkspaceControl, { type ScanConfig } from './WorkspaceControl';
 import WorkspaceMapping from './WorkspaceMapping';
 import DeskControl from './DeskControl';
+import { Info } from './Info';
 import './my-workspaces.css';
 
 const labels = {
@@ -79,8 +80,8 @@ function WorkspaceHome() {
     <SavedWorkspaces />
   </>;
   return <section className="my-workspaces">
-    <header className="mw-header"><h2>My Workspaces</h2>
-      <small>Choose input, processing and output; Validate; Start, Pause or Stop. Every order still passes the risk check.</small></header>
+    <header className="cfg-head page-head"><h1>My workspaces</h1>
+      <Info label="About My workspaces">Choose input, processing and output; Validate; Start, Pause or Stop. Every order still passes the risk check.</Info></header>
     <DeskControl onLayouts={() => setTab('layouts')} />
   </section>;
 }

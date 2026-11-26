@@ -1113,7 +1113,8 @@ def accounts(response: Response, _: str = Depends(require_operator)):
         ids = [r['id'] for r in db.execute("SELECT DISTINCT a.id FROM cfg_accounts a LEFT JOIN cfg_deployments d ON d.account_id=a.id "
                                            "LEFT JOIN pf_positions p ON p.account_id=a.id WHERE d.id IS NOT NULL OR p.id IS NOT NULL").fetchall()]
         codes = {str(r['id']): r['code'] for r in db.execute('SELECT id, code FROM cfg_accounts').fetchall()}
-        out = [{**portfolio.equity(db, a), 'account_code': codes.get(str(a)), 'day_pnl': portfolio.day_pnl(db, a),
+        paper_ids = {str(r['account_id']) for r in db.execute('SELECT account_id FROM pf_paper_accounts').fetchall()}
+        out = [{**portfolio.equity(db, a), 'account_code': codes.get(str(a)), 'day_pnl': portfolio.day_pnl(db, a), 'paper': str(a) in paper_ids,
                 'capital_set': bool(db.execute('SELECT 1 FROM pf_accounts WHERE account_id=%s AND version > 0', (str(a),)).fetchone())} for a in ids]
         return {'items': _j(out)}
 

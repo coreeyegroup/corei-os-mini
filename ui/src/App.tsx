@@ -69,11 +69,11 @@ const descriptions: Record<View, string> = {
   Settings: "Workspace layout and navigation preferences",
   Flow: "Calculation flow: every calculation, formula and equation as nodes and wires (n8n-style), with live values",
 };
-const activityLabels:Record<View,string>={Overview:'Home','My Workspaces':'My desks','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy','Strategy Studio':'Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
+const activityLabels:Record<View,string>={Overview:'Home','My Workspaces':'Workspaces','Market data':'Market',Intelligence:'Intel',Signals:'Signals',Strategies:'Strategy','Strategy Studio':'Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Flow'};
 /* The rail: home, then the trading flow in order (1 market data → 8 post-trade), watching, setting up. */
 const RAIL:(View|'-')[]=['Overview','My Workspaces','-','Market data','Intelligence','Signals','Strategies','Strategy Studio','Risk','Portfolio','Execution','Post-trade','Flow','-','Operations','-','Configuration','Infrastructure'];
-const viewTitle:Record<View,string>={Overview:'Home','My Workspaces':'My desks','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies','Strategy Studio':'Strategy Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
-const iconIndex:Record<View,number>={Overview:0,'My Workspaces':5,'Market data':1,Intelligence:11,Signals:12,Strategies:5,'Strategy Studio':5,Risk:13,Portfolio:7,Execution:6,'Post-trade':14,Configuration:2,Operations:8,Infrastructure:10,Settings:9,Flow:3};
+const viewTitle:Record<View,string>={Overview:'Home','My Workspaces':'My workspaces','Market data':'Market data',Intelligence:'Market intelligence',Signals:'Signals',Strategies:'Strategies','Strategy Studio':'Strategy Studio',Risk:'Risk',Portfolio:'Portfolio',Execution:'Execution','Post-trade':'Post-trade',Configuration:'Setup',Operations:'Monitor',Infrastructure:'System',Settings:'Settings',Flow:'Calculation flow'};
+const iconIndex:Record<View,number>={Overview:15,'My Workspaces':16,'Market data':1,Intelligence:17,Signals:12,Strategies:18,'Strategy Studio':19,Risk:13,Portfolio:20,Execution:21,'Post-trade':14,Configuration:23,Operations:8,Infrastructure:10,Settings:24,Flow:22};
 function stored() {
   try {
     return initialLayout(localStorage.getItem(key));
@@ -434,11 +434,10 @@ export default function App() {
       <div className="shell">
         {appearance.activity && <nav className="activity" aria-label="Activities">
           {RAIL.map((v,i) => v==='-' ? <span key={'sep'+i} className="rail-sep" aria-hidden="true"/> : (
-            <button key={v} title={`${viewTitle[v]} — ${descriptions[v]}`} aria-label={v}
+            <button key={v} title={`${stageOf(v)?`${stageOf(v)!.n} · `:''}${viewTitle[v]} — ${descriptions[v]}`} aria-label={v}
               aria-current={active === v ? "page" : undefined}
               onClick={(e) => { if (e.ctrlKey || e.metaKey) open(v); else selectDomain(v); }}>
               <WorkbenchIcon index={iconIndex[v]}/><span className="sr-only">{activityLabels[v]}</span>
-              {stageOf(v)&&<span className="rail-n" aria-hidden="true">{stageOf(v)!.n}</span>}
               {(()=>{const b=badge(v);return b?<span className={`rail-badge ${b.tone}`}>{b.n}</span>:null;})()}
             </button>
           ))}
@@ -572,10 +571,10 @@ function SystemMap({ overview }: { overview: OverviewData | null }) {
     'Market data': overview ? `${overview.feeds.live}/${overview.feeds.collectors} feeds live` : '',
     Intelligence: intel ? `${intel.covered ?? intel.instruments ?? 0} instruments analysed` : '',
     Signals: t ? `${sum(t.signals_today)} signals today` : '',
-    Strategies: t ? `${t.deployments?.ACTIVE ?? 0} running · ${t.backtests} backtests` : '',
-    Risk: t ? `${t.kill_switches} kill switches · ${t.limits} limits` : '',
-    Portfolio: t ? `${t.positions} open positions` : '',
-    Execution: t ? `${sum(t.orders_today)} orders today · ${t.open_orders} working` : '',
+    Strategies: t ? `${t.deployments?.ACTIVE ?? 0} running · ${t.backtests ?? 0} backtests` : '',
+    Risk: t ? `${t.kill_switches ?? 0} kill switches · ${t.limits ?? 0} limits` : '',
+    Portfolio: t ? `${t.positions ?? 0} open positions` : '',
+    Execution: t ? `${sum(t.orders_today)} orders today · ${t.open_orders ?? 0} working` : '',
     'Post-trade': t?.posttrade ? `${t.posttrade.open_total} open breaks · ${t.posttrade.fills_today} fills today` : '',
   };
   const steps: [string, boolean, View, string?][] = [

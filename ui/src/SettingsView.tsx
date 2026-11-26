@@ -33,7 +33,7 @@ const FIRM: [string, string, View, string, string][] = [
   ['Approvals (four-eyes)', 'Changes waiting for a second person.', 'Configuration', 'approvals', 'Administrator or Risk approver'],
   ['Alerts', 'E-mail, Telegram and webhook channels and rules.', 'Configuration', 'alerts', 'Administrator'],
   ['Users & roles', 'People, roles and sessions.', 'Configuration', 'users', 'Administrator'],
-  ['Paper accounts', 'Simulated accounts: currency, amount, markets, costs.', 'Configuration', 'paper', 'Trading operations'],
+  ['Paper accounts', 'Simulated accounts: currency, amount, markets, costs (in Portfolio).', 'Portfolio', 'paper', 'Trading operations'],
   ['FX rates', 'Rates for currencies no collected pair converts.', 'Configuration', 'fx', 'Risk approver'],
   ['Market data policies', 'Collection plans, quality gates, backfill and archive.', 'Market data', 'plans', 'Trading operations'],
   ['VaR settings', 'Value-at-risk method, horizon and confidence.', 'Risk', 'var-settings', 'Risk approver'],

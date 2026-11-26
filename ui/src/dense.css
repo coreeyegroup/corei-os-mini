@@ -596,3 +596,70 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 /* a screen with sub-tabs does not repeat its sections in a second strip when the side bar is hidden */
 .cfg:has(.sw) > .cfg-nav { display: none !important; }
 .set-section { max-width: 920px; }
+
+/* ==== 0.63.0 · end-to-end visual audit: one type scale, fixed heights, one rhythm ====
+ * Scale: --ui-size (13px default) for body; -1px secondary; 11px labels/headers; +3px values in KPI tiles.
+ * Heights: title bar 32, editor tabs 35, sub-tabs 30, rows 22–24, controls 24, status bar 22. Spacing: 4 / 8 / 12 / 16. */
+.app { --fs: var(--ui-size, 13px); --fs-2: calc(var(--ui-size, 13px) - 1px); --fs-label: 11px; }
+
+/* activity bar: distinct icons, no tiny digits (the stage number is in the tooltip and on the tab), VS Code active bar */
+.activity { width: 48px; }
+.activity button { height: 44px !important; min-height: 44px !important; color: var(--muted); }
+.activity button:hover { color: var(--text); }
+.activity button[aria-current="page"] { color: var(--text); box-shadow: inset 2px 0 0 var(--accent); background: transparent; }
+.activity button svg { width: 24px !important; height: 24px !important; stroke-width: 1.5; }
+.activity .rail-n { display: none; }
+.activity .rail-badge { top: 6px !important; right: 7px !important; left: auto !important; min-width: 16px; height: 16px; font-size: 10px; line-height: 16px; border-radius: 8px; }
+
+/* editor tabs (workspace tabs): VS Code 35px, body size text, stage number as a quiet chip */
+.tabs { height: 35px !important; min-height: 35px !important; }
+.tab { height: 35px; }
+.tab button[role="tab"] { font-size: var(--fs) !important; padding: 0 8px 0 12px !important; gap: 6px; }
+.tab button[data-n]::after { min-width: 16px; height: 16px; font-size: 10px; font-weight: 600; opacity: .8; }
+.tab button[role="tab"] svg { width: 16px; height: 16px; }
+.tab button:not([role="tab"]) { width: 26px; padding: 0 !important; font-size: 14px; color: var(--muted); }
+.tab-tools button { height: 35px; }
+
+/* sub-tabs inside a screen: 30px */
+.sw-bar { min-height: 30px; }
+.sw-tab button[role="tab"] { height: 30px !important; font-size: var(--fs) !important; }
+
+/* content: one padding, no stray top gaps */
+.content { padding: 8px 16px 12px !important; }
+.page-head, .stage-head { min-height: 26px; margin-bottom: 8px !important; }
+.page-head h1, .stage-head h1 { font-size: calc(var(--fs) + 1px) !important; }
+
+/* controls: 24px everywhere (inputs, selects, buttons), body-size text */
+.app button, .app input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .app select { font-size: var(--fs); }
+.app .content button:not(.link):not(.info-btn):not([role="tab"]):not(.tb-icon), .app .content select, .app .content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+  min-height: 24px; }
+.app .content button:not(.link):not(.info-btn):not([role="tab"]) { padding-top: 2px; padding-bottom: 2px; border-radius: 3px; }
+
+/* KPI tiles: compact, label above value, equal rhythm */
+.intel-kpis { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; gap: 6px !important; margin: 6px 0 10px !important; }
+.intel-kpi { padding: 6px 10px !important; border-radius: 4px !important; gap: 2px; min-height: 0 !important; }
+.intel-kpi small { font-size: var(--fs-label); letter-spacing: .02em; }
+.intel-kpi b { font-size: calc(var(--fs) + 3px) !important; line-height: 1.2; font-variant-numeric: tabular-nums; }
+
+/* tables: UI font with tabular figures (VS Code lists), 24px rows, 11px uppercase headers */
+.sb-table, .dense-box .sb-table, .md-live td, .infra-grid table { font-family: var(--ui-font) !important; font-variant-numeric: tabular-nums; font-size: var(--fs-2) !important; }
+.app table th { font-size: var(--fs-label) !important; font-weight: 600; letter-spacing: .03em; color: var(--muted); }
+.app table td { font-size: var(--fs-2); }
+.app .cfg-table td, .app .cfg-table th { padding-top: 3px; padding-bottom: 3px; }
+
+/* side bar: VS Code rows 22px, section labels 11px */
+.sb-row { min-height: 22px; font-size: var(--fs); }
+.sb-title { font-size: var(--fs-label) !important; font-weight: 700; letter-spacing: .04em; }
+.cfg-nav-group, .sb-group { font-size: var(--fs-label) !important; }
+
+/* small text never below 11px */
+.app small, .app .cfg-note, .app .sb-meta { font-size: max(11px, var(--fs-2)); }
+
+/* top bar: 32px with 22px chips */
+.top { height: 32px; min-height: 32px; }
+.top .chip { height: 22px; font-size: 12px; padding: 0 8px; border-radius: 3px; }
+.tb-icon { width: 26px; height: 26px; }
+/* empty states are messages, not explanations: no ⓘ marker, never clamped */
+.help-icon p.cfg-note[class*="empty"], .help-icon div.cfg-note[class*="empty"] { display: block !important; -webkit-line-clamp: unset; padding-left: 0; cursor: default; }
+.help-icon p.cfg-note[class*="empty"]::before, .help-icon div.cfg-note[class*="empty"]::before { content: none; }
+.intel-kpis { grid-template-columns: repeat(auto-fill, minmax(150px, 190px)) !important; }

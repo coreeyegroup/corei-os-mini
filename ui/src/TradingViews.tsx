@@ -6,6 +6,7 @@
  * Purpose: each stage's Overview / Work / Monitor / Configure sections over /api/trading.
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
 import { RiskProfiles } from './Governance';
+import { PaperAccounts } from './PaperAccounts';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { useViewVisible } from './visibility';
@@ -37,7 +38,7 @@ const SETTING_LABEL: Record<string, [string, string]> = {
   decision_mode: ['Decision', 'Latest signal wins, or several agreeing signals are needed'],
   agree_count: ['Agreeing signals needed', 'With "agree": how many in a row'],
   paper_slippage_ticks: ['Paper slippage (ticks)', 'Paper fills pay this many ticks beyond the bid / ask'],
-  default_capital: ['Default paper capital', 'Starting equity of an account without its own (account currency)'],
+  default_capital: ['Default estimate capital', 'Starting equity COREI assumes for a broker account without its own amount (account currency)'],
   pre_check_orders: ['Pre-check real orders at the broker', 'MT5 order_check (margin, volume, price, trading rules) before every real order'],
   live_four_eyes: ['Four-eyes on LIVE accounts', 'A second Risk approver releases the order before it goes to the broker'],
   broker_magic: ['MT5 magic number', 'Marks COREI\'s positions and deals in the terminal (reconciliation counts only these)'],
@@ -546,7 +547,7 @@ export function RiskView() {
 
 function Accounts({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/portfolio/accounts', 15_000);
-  const set = (a: Row) => { const amount = window.prompt(`Starting paper capital for ${a.account_code} (${a.currency})`, a.starting_capital); if (!amount) return;
+  const set = (a: Row) => { const amount = window.prompt(`Estimate capital for ${a.account_code} (${a.currency}): the starting equity COREI assumes for this broker account`, a.starting_capital); if (!amount) return;
     const reason = window.prompt('Reason (audit log)'); if (!reason) return;
     void api(`trading/portfolio/accounts/${a.account_id}/capital`, 'PUT', { amount, reason }).then(reload).catch(e => alert((e as Error).message)); };
   return <section className="intel"><Msg error={error} />
@@ -557,7 +558,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
     </div>
     <p className="cfg-note">COREI account estimates can combine paper and broker fills. Broker balances and equity are shown with their source and time in Broker positions.</p>
     <div className="st-cards">{(data?.items ?? []).map((a: Row) => <div key={a.account_id} className="st-card">
-      <b>{a.account_code}</b><small className="cfg-note">{a.currency}</small>
+      <b>{a.account_code}</b> <small className="cfg-pill">{a.paper ? 'PAPER' : a.currency}</small>{a.paper && <small> {a.currency}</small>}
       <small>COREI equity estimate</small><div className="st-big">{money(a.equity, a.currency)}</div>
       <table className="cfg-table compact"><tbody><tr><td>Starting capital</td><td>{money(a.starting_capital)}{!a.capital_set && <small className="cfg-note"> default</small>}</td></tr>
         <tr><td>Realised</td><td className={Number(a.realised) >= 0 ? 'up' : 'down'}>{money(a.realised)}</td></tr><tr><td>Unrealised</td><td className={Number(a.unrealised) >= 0 ? 'up' : 'down'}>{money(a.unrealised)}</td></tr>
@@ -566,7 +567,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
       <div className="intel-bar">
         <button onClick={() => openAccountView('positions', a.account_id)}>Positions</button>
         <button onClick={() => openAccountView('broker', a.account_id)}>Broker book</button>
-        {ctx.canRisk && <button onClick={() => set(a)}>Set starting paper capital</button>}
+        {a.paper ? <button onClick={() => ctx.open('paper')}>Open paper account</button> : ctx.canRisk && <button onClick={() => set(a)}>Set estimate capital</button>}
       </div></div>)}
       {data && !(data.items ?? []).length && <p className="cfg-note">No account has a deployment or a position yet.</p>}</div>
     <p className="cfg-note">The estimate uses starting capital and COREI’s recorded P&L. A broker deployment’s sizing basis depends on its capital partition and the availability of broker equity.</p></section>;
@@ -652,6 +653,8 @@ function PositionEvidence({ position: p, close }: { position: Row; close: () => 
 export function PortfolioView() {
   const sections: Section[] = [
     { id: 'accounts', label: 'Accounts', group: 'Overview', hint: 'Equity, P&L today and drawdown per account.', render: ctx => <Accounts ctx={ctx} /> },
+    { id: 'paper', label: 'Paper accounts', group: 'Overview', hint: 'Simulated accounts, each with its own currency, amount, markets and costs. Open one to see balance, equity, positions, orders, history, performance and to place paper orders. Nothing reaches a broker.',
+      render: ctx => <PaperAccounts canEdit={ctx.canOps} /> },
     { id: 'positions', label: 'Positions', group: 'Work', hint: 'Inspect a position’s valuation and fills, or request closes by execution mode.', render: ctx => <Positions ctx={ctx} /> },
     { id: 'allocation', label: 'Allocation', group: 'Work', hint: 'Capital partitions per account, deployment weights, and rebalancing.', render: ctx => <Allocation ctx={ctx} /> },
     { id: 'copy', label: 'Copy trading', group: 'Work', hint: 'Follower accounts that mirror a master account\'s fills, each with its own size and risk.', render: ctx => <CopyTrading ctx={ctx} /> },
@@ -659,8 +662,8 @@ export function PortfolioView() {
     { id: 'contribution', label: 'Attribution', group: 'Monitor', hint: 'Where the result came from: by strategy, deployment, instrument, account, order source.', render: () => <Attribution /> },
     { id: 'exposure', label: 'Exposure', group: 'Monitor', hint: 'Net and gross value per account and instrument.', render: () => <Exposure /> },
     { id: 'broker', label: 'Broker positions', group: 'Monitor', hint: 'What the broker itself holds for a real account.', render: ctx => <BrokerBook ctx={ctx} /> },
-    { id: 'capital', label: 'Paper capital', group: 'Configure', hint: 'Starting equity of accounts without their own.',
-      render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="Each account's own starting capital is set on its card (Overview › Accounts)." /> },
+    { id: 'capital', label: 'Estimate capital', group: 'Configure', hint: 'Starting equity COREI assumes for a broker account that has no amount of its own (used only for COREI’s equity estimate; paper accounts have their own amount).',
+      render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['default_capital']} intro="A broker account's own estimate capital is set on its card (Overview › Accounts). Paper accounts: Overview › Paper accounts › Funds." /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Average cost, realised and unrealised P&L, equity, drawdown, partitions, allocation, copy size and attribution.', render: () => <Formulas stage="Portfolio" /> },
     { id: 'graphs', label: 'Calculation graphs', group: 'Configure', hint: 'Draft and test portfolio graphs. The portfolio engine uses its built-in calculations.', render: ctx => <GraphWorkbench ctx={ctx} purposes={['ALLOCATION', 'MEASURE']} /> },
   ];
@@ -841,7 +844,7 @@ function OrdersOverview({ ctx }: { ctx: Ctx }) {
       <button onClick={() => ctx.open('flow')}>From strategies</button>
       <button onClick={() => ctx.open('queue')}>Review decisions</button>
       <button onClick={() => ctx.open('waiting')}>Review waiting orders{status ? ` (${status.open?.APPROVED ?? 0})` : ''}</button>
-      <button onClick={() => ctx.open('unknown')}>Investigate unknown orders{ov ? ` (${ov.unknown_orders})` : ''}</button>
+      <button onClick={() => ctx.open('unknown')}>Investigate unknown orders{ov?.unknown_orders != null ? ` (${ov.unknown_orders})` : ''}</button>
       <button onClick={() => ctx.open('connections')}>Broker connections</button>
     </div>
     <Msg error={[error, statusError].filter(Boolean).join(' · ')} />

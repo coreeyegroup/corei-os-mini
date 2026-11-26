@@ -87,7 +87,7 @@ export default function DeskControl({ onLayouts }: { onLayouts: () => void }) {
       {items.map(d => <button key={d.id} aria-current={!overview && d.id === selected ? 'page' : undefined}
         onClick={() => { setSelected(d.id); setOverview(false); setNotice(''); setError(''); }}>
         <span className={`dk-dot ${STATE_CLS[d.state] ?? ''}`} aria-hidden="true">●</span> {d.name}</button>)}
-      <label className="dk-new">New <select aria-label="New workspace template" value="" onChange={e => { if (e.target.value) void create(e.target.value); }}>
+      <label className="dk-new"><select aria-label="New workspace template" value="" onChange={e => { if (e.target.value) void create(e.target.value); }}>
         <option value="">+ New workspace…</option>{TEMPLATES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       <button onClick={onLayouts}>Saved layouts</button>
     </nav>

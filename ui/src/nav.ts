@@ -282,7 +282,7 @@ export const ago = (v?: number | string | null) => { const s = v == null || v ==
  * "@View:section" opens that stage's own page (one home per object; Setup links to it rather than copying it). */
 export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['1 · Setup', [['guide', 'Setup path'], ['health', 'Readiness per account'], ['gates', 'Gates & overrides']]],
-  ['2 · Connect', [['paper', 'Paper accounts'], ['brokers', 'Connectivity map'], ['providers', 'Providers'], ['connections', 'Servers'], ['accounts', 'Accounts'], ['bridges', 'Bridge nodes'], ['groups', 'Account groups']]],
+  ['2 · Connect', [['@Portfolio:paper', 'Paper accounts ↗'], ['brokers', 'Connectivity map'], ['providers', 'Providers'], ['connections', 'Servers'], ['accounts', 'Accounts'], ['bridges', 'Bridge nodes'], ['groups', 'Account groups']]],
   ['3 · Markets', [['instruments', 'Instruments'], ['mappings', 'Symbol mappings'], ['fx', 'FX rates'], ['@Market data:plans', 'Market data plans ↗']]],
   ['4 · Risk', [['@Risk:limits', 'Profiles & limits ↗'], ['@Risk:kill', 'Kill switches ↗']]],
   ['5 · Strategies', [['strategies', 'Strategies & evidence'], ['deployments', 'Deployments']]],

@@ -1498,3 +1498,16 @@ No backend change. Tests: `ui/tests/workbench.cjs`, `ui/tests/trading.cjs`.
   bar is the list of categories.
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Paper accounts in Portfolio; one visual scale — release 0.63.0
+
+No migration.
+
+- **Paper accounts are in Portfolio › Overview › Paper accounts** (list, account page with positions, orders,
+  history, performance and the paper ticket). Setup › Paper accounts ↗ opens them there.
+- Portfolio › Configure › **Estimate capital** (formerly "Paper capital"): the starting equity COREI assumes for a
+  broker account without its own amount. Paper accounts set their amount with Funds… on their own row.
+- One visual scale on every screen: 13px text by default (View › Zoom in / out), 35px tabs, equal tiles, a distinct
+  icon for every area in the left bar (hover shows the stage number and description).
+
+Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
