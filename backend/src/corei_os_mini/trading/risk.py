@@ -272,6 +272,13 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
     signed = qty if order['side'] == 'BUY' else -qty
     after = current + signed
     reducing = current != 0 and abs(after) < abs(current) and (after == 0 or (after > 0) == (current > 0))
+    # A paper account trades only its chosen markets (any, forex, India or a custom list); closing is always allowed.
+    from . import paper
+    outside = None if reducing or flatten else paper.scope_reason(db, order['account_id'], {**ins, 'id': order['instrument_id']})
+    if outside:
+        reasons.append(f'OUTSIDE_PAPER_SCOPE: {outside}')
+    if mode == 'BROKER' and paper.is_paper(db, order['account_id']):
+        reasons.append('PAPER_ACCOUNT_IS_SIMULATED: a paper account never sends orders to a broker')
     work = working(db, order['account_id'], mode, exclude=order.get('id'))
     mine = work.get(str(order['instrument_id']), {'BUY': ZERO, 'SELL': ZERO})
     # The largest long and short the book could reach if every working order and this one filled.

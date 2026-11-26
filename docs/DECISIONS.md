@@ -246,3 +246,30 @@ Decision:
    object keeps one home; items owned by a stage (market data plans, risk limits, kill switches, workspaces) are links
    to that stage, not copies.
 Status: accepted.
+
+## DEC-104 · Paper accounts are real accounts on COREI's simulator (release 0.60.0, 26 Nov 2026)
+
+Context: paper trading was a book inside a broker account. A broker login was needed, every book started from one
+firm-wide amount in the broker account's currency, and paper fills cost nothing. The owner asked for many paper
+accounts, each able to trade any instrument with any strategy, suitable for international forex and the Indian market,
+with a chosen currency and amount, keeping every option open.
+Decision:
+1. A paper account is a cfg_accounts row on COREI's built-in simulator connection. That connection has the new
+   environment PAPER, the platform SIMULATOR and the provider kind SIMULATOR, and is created on first use. Every stage
+   works on it unchanged. It is ready at once (no broker, login or adapter) and can never send to a broker: BROKER mode
+   is a structural blocker for its deployments and a risk refusal for its orders.
+2. Its currency (any ISO code) and starting amount are its portfolio capital. Funds can be changed (audited). "Start
+   again" makes a new account with the same settings and any new amount or currency; the old one is archived with its
+   history, never wiped.
+3. Markets: any instrument, forex and metals, Indian markets (NSE, BSE, MCX, NCDEX or INR-quoted) or a custom list
+   (asset classes, markets, instruments). This is enforced in the pre-trade risk check; closing a position is always
+   allowed.
+4. Fills use the live price of the instrument's feed (or a chosen price-source connection) plus the account's own
+   slippage. Costs per fill are a commission per lot, a % of traded value (Indian brokerage and charges) and a minimum,
+   in the account currency and converted to the quote currency. The fill keeps its gross P&L and its cost apart;
+   positions and equity are net.
+5. FX conversion, in order: a collected pair (direct or inverse), a cross through USD or EUR, then rates a person
+   enters (cfg_fx_rates, risk approver, audited). A holding no rate converts is reported as not valued, never guessed.
+6. Optional risk limits are sized on the paper amount when the account is created (Retail, Professional or
+   Institutional preset).
+Status: accepted.

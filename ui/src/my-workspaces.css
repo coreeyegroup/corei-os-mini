@@ -163,3 +163,12 @@ button.link { background: none; border: none; padding: 0; text-decoration: under
 .gv-risk { display: grid; gap: 8px; margin-bottom: 8px; }
 .gv-policies, .gv-preset { display: flex; gap: 8px 12px; align-items: end; flex-wrap: wrap; }
 .gv-policies label, .gv-preset label { display: grid; gap: 2px; }
+
+/* Paper accounts (PaperAccounts.tsx) */
+.pa { display: grid; gap: 8px; }
+.pa-form { display: grid; gap: 8px; padding: 8px; border: 1px solid var(--line, #788290); border-radius: 4px; }
+.pa-custom { display: grid; gap: 6px; }
+.pa-table td.neg { color: var(--bad, #c0392b); }
+.pa-table td.pos { color: var(--ok, #2e8b57); }
+.pa-table tr.archived { opacity: .6; }
+.pa-actions { display: flex; gap: 4px; flex-wrap: wrap; }

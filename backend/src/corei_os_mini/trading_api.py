@@ -7,7 +7,7 @@ research of one or all signals: IC, hit rate, quintiles); the strategy monitor; 
 execute / decline a waiting decision, execution policy per deployment); settings; runtime state and Run now; signals (list, detail,
 manual, cancel, quality); intents; backtests; risk limits, kill switches, decisions and a pre-trade preview;
 orders (blotter, detail, ticket with routing, cancel, resolve UNKNOWN, release a held LIVE order, look up at the broker,
-dispatcher status); setup gates and overrides; governance (strategy evidence, risk-minimum profiles, presets, timeframe copies); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
+dispatcher status); paper accounts and FX rates; setup gates and overrides; governance (strategy evidence, risk-minimum profiles, presets, timeframe copies); workspace control desks (plan, start / pause / stop, staged changes, results); fills; positions, exposure, equity, capital, performance, partitions and allocation, copy links,
 attribution; VaR, stress scenarios, margin; optimisation and walk-forward, drift; post-trade reconciliation and breaks,
 broker book, TCA, trade journal, statements, order audit trail and CSV exports.
 Roles: signed-in operators read; Trading operations places tickets, manual signals, flattens, cancels and engages
@@ -30,7 +30,7 @@ from . import config_store as store
 from .config_api import parse
 from .operator_auth import Principal, current_user, require_operator, require_role
 from .trading import (algorithms, algos, backtest, brokers, copytrade, handoff, quickstart, execution, oms, optimise, partitions, portfolio, posttrade, risk, runtime, signals,
-                      signal_library, strategy_health, var, workspace_control as desks, workspaces, governance, setup_gates)
+                      signal_library, strategy_health, var, workspace_control as desks, workspaces, governance, setup_gates, paper)
 from . import formulas
 from .trading.common import settings as read_settings
 
@@ -192,6 +192,66 @@ def setup_override_approve(override_id: UUID, response: Response, user: Principa
 def setup_override_revoke(override_id: UUID, payload: _Reason, response: Response, user: Principal = Depends(current_user)):
     _no_store(response)
     return _j(setup_gates.revoke_override(user, override_id, payload.reason))
+
+
+# ----- paper accounts: many simulated accounts, any currency and amount, any instrument and strategy -----
+
+@router.get('/paper-accounts')
+def paper_list(response: Response, archived: bool = False, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'items': paper.listing(db, archived), 'currencies': paper.CURRENCIES})
+
+
+@router.post('/paper-accounts', status_code=201)
+def paper_create(payload: paper.PaperIn, response: Response, user: Principal = Depends(_ops)):
+    _no_store(response)
+    return _j(paper.create(user.username, payload))
+
+
+@router.put('/paper-accounts/{account_id}')
+def paper_update(account_id: UUID, payload: paper.PaperUpdate, response: Response, user: Principal = Depends(_ops)):
+    _no_store(response)
+    return _j(paper.update(user.username, account_id, payload))
+
+
+@router.put('/paper-accounts/{account_id}/funds')
+def paper_funds(account_id: UUID, payload: paper.FundsIn, response: Response, user: Principal = Depends(_ops)):
+    _no_store(response)
+    return _j(paper.set_funds(user.username, account_id, payload))
+
+
+@router.post('/paper-accounts/{account_id}/clone', status_code=201)
+def paper_clone(account_id: UUID, payload: paper.CloneIn, response: Response, user: Principal = Depends(_ops)):
+    """Start again with the same settings: a new account; the old one is archived with its history."""
+    _no_store(response)
+    return _j(paper.clone(user.username, account_id, payload))
+
+
+@router.post('/paper-accounts/{account_id}/archive')
+def paper_archive(account_id: UUID, payload: _Reason, response: Response, user: Principal = Depends(_ops)):
+    _no_store(response)
+    return _j(paper.archive(user.username, account_id, payload.reason))
+
+
+@router.get('/fx-rates')
+def fx_list(response: Response, _: Principal = Depends(current_user)):
+    _no_store(response)
+    with store.transaction('read') as db:
+        return _j({'items': paper.fx_rates(db)})
+
+
+@router.put('/fx-rates')
+def fx_set(payload: paper.FxIn, response: Response, user: Principal = Depends(_risk)):
+    """A rate a person enters; used only when no collected pair (direct, inverse or through USD/EUR) gives one."""
+    _no_store(response)
+    return _j(paper.set_fx(user.username, payload))
+
+
+@router.delete('/fx-rates/{base}/{quote}', status_code=204)
+def fx_delete(base: str, quote: str, user: Principal = Depends(_risk)):
+    paper.delete_fx(user.username, base, quote)
+    return Response(status_code=204, headers={'Cache-Control': 'no-store'})
 
 
 # ----- governance: strategy evidence and risk minimums (profiles: none / retail / professional / institutional) -----

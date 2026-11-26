@@ -250,6 +250,9 @@ def policy(db, key: str, default: Any = None) -> Any:
 def account_readiness(row: dict, controls: dict[str, dict], context: dict | None = None) -> dict[str, list[str]]:
     context = context or {}
     """Explain, in order, every reason an account cannot yet stream data or send orders."""
+    if row.get('environment') == 'PAPER':   # simulated by COREI: no broker, no login, no adapter; prices from the feeds
+        blocked = [] if row['status'] == 'ACTIVE' else ['ACCOUNT_INACTIVE']
+        return {'data_blockers': blocked, 'trading_blockers': blocked, 'warnings': ['PAPER_ACCOUNT_SIMULATED']}
     data: list[str] = []
     if row['provider_status'] != 'ACTIVE':
         data.append('PROVIDER_INACTIVE')

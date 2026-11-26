@@ -329,6 +329,11 @@ def readiness(row: dict, account: dict, controls: dict) -> list[str]:
         blockers.append('INSTRUMENT_INACTIVE')
     if row['data_mapping_status'] != 'ACTIVE' or row['data_connection_status'] != 'ACTIVE':
         blockers.append('DATA_SOURCE_INACTIVE')
+    if account.get('environment') == 'PAPER':
+        # A paper account trades on the market-data feed (no broker symbol) and can never send to a broker.
+        if row.get('mode', 'PAPER') == 'BROKER':
+            blockers.append('PAPER_ACCOUNT_IS_SIMULATED')
+        return blockers
     if not row['trading_symbol']:
         blockers.append('NO_TRADING_SYMBOL_ON_ACCOUNT_CONNECTION')
     elif row['trading_mapping_status'] != 'ACTIVE':
@@ -457,7 +462,7 @@ def transition(deployment_id: UUID, action: Literal['activate', 'pause', 'end'],
             raise HTTPException(422, f'A {before["status"].lower()} deployment cannot be {target.lower()}.')
         if action == 'activate':
             current = _deployment(db, deployment_id)
-            structural = [b for b in current['blockers'] if b in ('STRATEGY_RETIRED', 'VERSION_NOT_APPROVED', 'INSTRUMENT_INACTIVE',
+            structural = [b for b in current['blockers'] if b in ('STRATEGY_RETIRED', 'VERSION_NOT_APPROVED', 'INSTRUMENT_INACTIVE', 'PAPER_ACCOUNT_IS_SIMULATED',
                                                                     'NO_TRADING_SYMBOL_ON_ACCOUNT_CONNECTION', 'DATA_SOURCE_INACTIVE')]
             if structural:
                 raise HTTPException(422, 'Resolve these before activating: ' + ', '.join(b.replace('_', ' ').lower() for b in structural) + '.')
