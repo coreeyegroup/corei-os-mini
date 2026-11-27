@@ -451,10 +451,17 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
         if blocked and db.execute('SELECT 1 FROM cfg_symbol_mappings WHERE connection_id=%s AND usage = ANY(%s)',
                                   (record_id, list(blocked))).fetchone():
             raise HTTPException(422, 'Symbol mappings on this connection use a purpose this change would remove. Update them first.')
+        # The stored server credential must still fit the connection. Only REST connections choose an authentication
+        # method; MT5 servers hold the terminal bridge/push token and FIX sessions their login (0.66.1: before, any
+        # MT5 or FIX connection with a stored credential could not be edited at all).
         credential = db.execute('SELECT kind FROM cfg_credentials WHERE connection_id=%s', (record_id,)).fetchone()
-        expected = {'API_KEY': 'API_KEY', 'OAUTH2': 'OAUTH_CLIENT'}.get(data['settings'].get('auth_method'))
-        if credential and credential['kind'] != expected:
-            raise HTTPException(422, 'The stored credential does not match the new authentication method. Remove it first.')
+        if credential:
+            if data['platform'] == 'REST_API':
+                expected = {'API_KEY': 'API_KEY', 'OAUTH2': 'OAUTH_CLIENT'}.get(data['settings'].get('auth_method'))
+            else:
+                expected = {'MT5': 'BRIDGE_TOKEN', 'FIX': 'FIX_LOGIN', 'CTRADER': 'OAUTH_CLIENT'}.get(data['platform'])
+            if credential['kind'] != expected:
+                raise HTTPException(422, 'The stored credential does not match the new authentication method. Remove it first.')
 
 
 # ---------- writes ----------

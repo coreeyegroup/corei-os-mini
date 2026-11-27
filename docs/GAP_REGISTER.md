@@ -481,3 +481,9 @@ Open gaps:
 | PM-7 | Behaviour on the live server after deploy | NEEDS VERIFICATION by the owner |
 
 Open: reset covers paper accounts only (not DEMO broker positions, scan runs or signals) — PM-G1, by design for now.
+
+### T-fix · 0.66.1 (27 Nov 2026)
+
+| ID | Defect | Status |
+|---|---|---|
+| CF-1 | Any MT5 or FIX connection with a stored server credential (terminal bridge token, FIX login) could not be edited: every save was refused with "The stored credential does not match the new authentication method" because the check only knew REST authentication methods. Found by the owner editing clock and order rate on METAQUOTES_MT5_DEMO and VTMARKET_MT5_DEMO. | FIXED — checked per platform; TESTED (`test_mt5_connection_with_bridge_token_can_be_edited`, fails without the fix) |
