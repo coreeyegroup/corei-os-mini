@@ -397,7 +397,7 @@ def overview(response: Response, user: Principal = Depends(current_user)):
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
             'live_policy': live_policy,
-            'platform_mode': {k: mode[k] for k in ('mode', 'allow_live_in_development', 'live_blocked', 'updated_by', 'updated_at')},
+            'platform_mode': {k: mode[k] for k in ('mode', 'operating', 'allow_live_in_development', 'live_blocked', 'updated_by', 'updated_at')},
             'setup': setup,
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}
@@ -419,6 +419,15 @@ def put_platform_mode(payload: dict, response: Response, user: Principal = Depen
     from .config_api import parse
     response.headers['Cache-Control'] = 'no-store'
     return platform_mode.set_mode(user.username, parse(platform_mode.ModeIn, payload))
+
+
+@router.put('/platform-mode/operating')
+def put_operating_profile(payload: dict, response: Response, user: Principal = Depends(require_role('ADMIN'))):
+    """Administrator only. TEAM (four-eyes with different people) or SOLO (one person confirms their own actions)."""
+    from . import platform_mode
+    from .config_api import parse
+    response.headers['Cache-Control'] = 'no-store'
+    return platform_mode.set_operating(user.username, parse(platform_mode.OperatingIn, payload))
 
 
 @router.post('/platform-mode/reset-test-data')

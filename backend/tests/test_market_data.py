@@ -235,7 +235,11 @@ class MarketData(unittest.TestCase):
         backup = self.start(self.plan(b, instrument, 'EU_B', role='BACKUP'))
         reference = self.start(self.plan(c, instrument, 'EU_C', role='REFERENCE', purpose='REFERENCE'))
         self.collector = Collector(self.root)
-        self.run_collector(3.0)
+        # Staleness is reported only in session; pin the session so the test does not depend on the wall clock
+        # (it failed every weekend and every night after the FX close).
+        from corei_os_mini.md import collector as collector_module
+        with patch.object(collector_module, 'in_session', return_value=True):
+            self.run_collector(3.0)
         with self.connect() as db:
             n = {r['account_id']: r['n'] for r in db.execute('SELECT account_id, count(*) AS n FROM md_ticks GROUP BY 1').fetchall()}
             self.assertGreater(n[UUID(a['id'])], 30)

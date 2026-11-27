@@ -218,7 +218,8 @@ def release(actor: str, order_id: UUID, reason: str) -> dict:
         o = dict(o)
         if o['state'] != 'APPROVED' or not o['hold_for_approval']:
             raise HTTPException(409, 'This order is not waiting for approval.')
-        if o['created_by'] == actor:
+        from .. import platform_mode
+        if not platform_mode.second_person_ok(db, o['created_by'], actor):
             raise HTTPException(403, 'Four-eyes: the person who placed the order cannot release it.')
         row = db.execute('UPDATE oms_orders SET hold_for_approval=false, released_by=%s, released_at=now(), version=version+1 WHERE id=%s RETURNING *',
                          (actor, str(order_id))).fetchone()

@@ -9,6 +9,7 @@ import importlib
 import importlib.util
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from unittest.mock import patch
 from uuid import UUID
 
 tmd = importlib.import_module('test_market_data') if importlib.util.find_spec('test_market_data') else importlib.import_module('tests.test_market_data')
@@ -99,7 +100,8 @@ class Trading(tmd.MarketData):
         self.assertEqual(self.ok(self.alice.get('/api/trading/orders'))['items'], [])
         self.assertEqual(self.ok(self.alice.get('/api/trading/signals'))['items'], [])
 
-    def test_paper_trade_end_to_end(self):
+    @patch('corei_os_mini.md.markets.is_open', return_value=True)   # not about market hours; must not depend on the wall clock
+    def test_paper_trade_end_to_end(self, _open):
         connection, (a, _b, _c), instrument = self.setup_accounts()
         self.start(self.plan(a, instrument, 'EU_M5'))
         strat, ver, dep = self.deploy(connection, a, instrument, sizing={'method': 'FIXED_QTY', 'quantity': '0.10'})

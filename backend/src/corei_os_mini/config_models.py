@@ -396,6 +396,8 @@ class MappingIn(_Strict):
     # Set for a mapping that applies to one account only (e.g. XAUUSD.r on a raw account);
     # it overrides the connection-wide mapping for that account.
     account_id: UUID | None = None
+    # Or the accounts of one group (0.68.0), e.g. every VIP or raw account. Resolving: account, then group, then server.
+    account_group_id: UUID | None = None
     instrument_id: UUID
     broker_symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
     usage: Purpose

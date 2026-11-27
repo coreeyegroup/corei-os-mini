@@ -636,7 +636,8 @@ def _activate(db, dep_id, actor: str, reason: str, env: str) -> str | None:
     structural = [b for b in current['blockers'] if b in STRUCTURAL]
     if structural:
         return ', '.join(b.replace('_', ' ').lower() for b in structural)
-    if env == 'LIVE' and current['proposed_by'] == actor:
+    from .. import platform_mode
+    if env == 'LIVE' and not platform_mode.second_person_ok(db, current['proposed_by'], actor):
         return 'on LIVE a different person must activate than the one who proposed it'
     if env == 'LIVE':
         from . import governance
@@ -726,7 +727,8 @@ def _converge(db, desk: dict, cfg: Config, result: dict, actor: str, adopt: set[
 
 
 def _four_eyes(desk: dict, cfg: Config, actor: str, settings_by: str) -> None:
-    if cfg.output.environment == 'LIVE' and settings_by == actor:
+    from .. import platform_mode
+    if cfg.output.environment == 'LIVE' and settings_by == actor and not platform_mode.current()['operating'] == 'SOLO':
         raise HTTPException(422, 'On LIVE a different person must start or apply this workspace than the one who last changed its settings.')
 
 

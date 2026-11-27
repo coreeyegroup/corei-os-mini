@@ -179,7 +179,8 @@ def transition(db, actor: str, can_approve: bool, code: str, n: int, action: str
             raise HTTPException(403, 'Approving or rejecting a calculation needs the Risk approver role.')
         if v['status'] != 'PROPOSED':
             raise HTTPException(409, f"Only a proposed version can be {action}d; version {n} is {v['status']}.")
-        if actor == v['proposed_by']:
+        from .. import platform_mode
+        if not platform_mode.second_person_ok(db, v['proposed_by'], actor):
             raise HTTPException(409, 'Four-eyes: someone other than the person who proposed it must approve or reject it.')
         if action == 'approve':
             _check(v['definition'])

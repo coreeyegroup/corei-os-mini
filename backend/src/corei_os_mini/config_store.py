@@ -51,12 +51,14 @@ class Spec:
 
 
 SPECS: dict[str, Spec] = {
-    'providers': Spec('cfg_providers', 'provider', ProviderIn, ('code',)),
-    'connections': Spec('cfg_connections', 'connection', ConnectionIn, ('provider_id', 'code', 'platform', 'environment')),
-    'accounts': Spec('cfg_accounts', 'account', AccountIn, ('connection_id', 'code', 'external_account_id')),
-    'instruments': Spec('cfg_instruments', 'instrument', InstrumentIn, ('symbol',)),
-    'mappings': Spec('cfg_symbol_mappings', 'symbol mapping', MappingIn, ('connection_id', 'instrument_id', 'account_id')),
-    'groups': Spec('cfg_account_groups', 'account group', AccountGroupIn, ('code',)),
+    # Only what makes it a different real thing stays fixed (0.68.0): a server's platform and environment (a DEMO server
+    # never quietly becomes LIVE) and an account's broker login. Everything else can change; see IDENTITY.
+    'providers': Spec('cfg_providers', 'provider', ProviderIn, ()),
+    'connections': Spec('cfg_connections', 'connection', ConnectionIn, ('platform', 'environment')),
+    'accounts': Spec('cfg_accounts', 'account', AccountIn, ('external_account_id',)),
+    'instruments': Spec('cfg_instruments', 'instrument', InstrumentIn, ()),
+    'mappings': Spec('cfg_symbol_mappings', 'symbol mapping', MappingIn, ()),
+    'groups': Spec('cfg_account_groups', 'account group', AccountGroupIn, ()),
 }
 # Records that are archived (kept, read-only) instead of deleted once they have history.
 ARCHIVABLE = ('providers', 'connections', 'accounts', 'groups')
@@ -186,10 +188,10 @@ SELECTS = {
     'instruments': '''SELECT i.*, (SELECT count(*) FROM cfg_symbol_mappings m WHERE m.instrument_id=i.id) AS mapping_count
         FROM cfg_instruments i''',
     'mappings': '''SELECT m.*, i.symbol AS instrument_symbol, c.code AS connection_code, c.environment,
-        c.purpose AS connection_purpose, p.code AS provider_code, ac.code AS account_code
+        c.purpose AS connection_purpose, p.code AS provider_code, ac.code AS account_code, ag.code AS group_code
         FROM cfg_symbol_mappings m JOIN cfg_instruments i ON i.id=m.instrument_id
         JOIN cfg_connections c ON c.id=m.connection_id JOIN cfg_providers p ON p.id=c.provider_id
-        LEFT JOIN cfg_accounts ac ON ac.id=m.account_id''',
+        LEFT JOIN cfg_accounts ac ON ac.id=m.account_id LEFT JOIN cfg_account_groups ag ON ag.id=m.account_group_id''',
     'groups': '''SELECT g.*, (SELECT count(*) FROM cfg_account_group_members m WHERE m.group_id=g.id) AS account_count,
         (SELECT coalesce(array_agg(m.account_id::text), '{}') FROM cfg_account_group_members m WHERE m.group_id=g.id) AS account_ids
         FROM cfg_account_groups g''',
@@ -436,10 +438,15 @@ def _rules(db, entity: str, data: dict, record_id: UUID | None) -> None:
                 raise HTTPException(422, 'An account group does not exist.')
     elif entity == 'mappings':
         connection = _connection(db, data['connection_id'])
+        if data.get('account_id') and data.get('account_group_id'):
+            raise HTTPException(422, 'A mapping applies to the whole server, one account or one group — choose one.')
         if data.get('account_id'):
             owner = db.execute('SELECT connection_id FROM cfg_accounts WHERE id=%s', (data['account_id'],)).fetchone()
             if not owner or owner['connection_id'] != data['connection_id']:
                 raise HTTPException(422, 'An account-specific mapping must use an account on the same connection.')
+        if data.get('account_group_id') and not db.execute("SELECT 1 FROM cfg_account_groups WHERE id=%s AND status <> 'ARCHIVED'",
+                                                           (data['account_group_id'],)).fetchone():
+            raise HTTPException(422, 'That account group does not exist or is archived.')
         if data['usage'] not in PURPOSE_ALLOWS[connection['purpose']]:
             raise HTTPException(422, f"Usage {data['usage']} is not possible on a {connection['purpose']} connection.")
     elif entity == 'connections' and record_id:
@@ -573,6 +580,20 @@ def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: i
         for field in spec.immutable:
             if str(before[field]) != str(values[field]):
                 raise HTTPException(422, f'{field} cannot be changed. Create a new {spec.label} instead.')
+        moved = [f for f in IDENTITY.get(entity, ()) if f in values and str(before.get(f)) != str(values[f])]
+        if moved and len((reason or '').strip()) < 5:
+            raise HTTPException(422, f"Changing {', '.join(f.replace('_id', '').replace('_', ' ') for f in moved)} needs a reason "
+                                     '(at least 5 characters); it is kept in the audit log.')
+        if entity == 'accounts' and 'connection_id' in moved:
+            old, new = (db.execute('SELECT platform, environment FROM cfg_connections WHERE id=%s', (x,)).fetchone()
+                        for x in (before['connection_id'], values['connection_id']))
+            if not new or (old['platform'], old['environment']) != (new['platform'], new['environment']):
+                raise HTTPException(422, 'An account can move only to a server with the same platform and environment.')
+            # Its own symbol mappings move with it.
+            db.execute('UPDATE cfg_symbol_mappings SET connection_id=%s, version=version+1, updated_at=now() WHERE account_id=%s',
+                       (values['connection_id'], record_id))
+        if entity == 'instruments' and 'symbol' in moved and before['symbol'] not in (values.get('aliases') or []):
+            values['aliases'] = [*(values.get('aliases') or []), before['symbol']]   # the old symbol keeps working
         if before.get('status') == 'ARCHIVED' and values.get('status') == 'ARCHIVED':
             raise HTTPException(422, f'This {spec.label} is archived. Restore it (set status Inactive) before editing.')
         _rules(db, entity, values, record_id)
@@ -591,6 +612,12 @@ def update(actor: str, entity: str, record_id: UUID, data: BaseModel, version: i
         after = db.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(sql.Identifier(spec.table)), (record_id,)).fetchone()
         audit(db, actor, 'UPDATE', spec.label, record_id, before, after, reason)
         return get_record(db, entity, record_id)
+
+
+# Fields that identify a record: changeable (0.68.0), but only with a reason, kept in the audit log.
+IDENTITY = {'providers': ('code',), 'connections': ('provider_id', 'code'), 'accounts': ('connection_id', 'code'),
+            'instruments': ('symbol',), 'mappings': ('connection_id', 'instrument_id', 'account_id', 'account_group_id'),
+            'groups': ('code',)}
 
 
 HISTORY = {

@@ -429,3 +429,29 @@ re-checks everything itself, backs up the database, fast-forwards to exactly the
 deploys, verifies the running commit and rolls the code back automatically on failure. The design is in `docs/UPDATER.md`.
 
 Status: accepted. The first installation of the updater is by hand (a normal deploy installs it).
+
+## DEC-112 · Team or Single user; flexible configuration (release 0.68.0, 28 Nov 2026)
+
+Context: the owner builds the platform as a developer, runs it as a four-person company, and plans to offer it to retail
+traders who work alone. Four-eyes rules that need a different person made a single user's LIVE work impossible (or
+possible only through the narrow "sole approver" exception for change requests). The owner also asked to keep options
+open: many fields were "Fixed after creation" without need.
+
+Decision:
+1. **Operating profile** next to Development/Production (Settings › Platform mode): **Team** (default) keeps every
+   "a different person must…" rule; **Single user** lets the one person confirm their own LIVE change requests, LIVE
+   deployment activation, LIVE workspace starts, held LIVE orders, loosening LIVE gates and calculation versions — still
+   with the password and reason each step asks for, all audited. The "second risk approver" readiness check and setup
+   item do not apply to a single user. One rule (`platform_mode.second_person_ok`) is used by all eight places.
+   Switching: administrator, reason, typed SOLO; audited and alerted. Team and Single user, Development and Production
+   combine freely.
+2. **Only four things stay fixed**: a server's platform and environment (a DEMO server never quietly becomes LIVE), an
+   account's broker login, and usernames. Codes and symbols (provider, server, account, instrument, group, strategy),
+   a server's provider, an account's server (same platform and environment; its own mappings move with it), a mapping's
+   server/instrument/scope, a deployment's strategy/instrument/account (while not active) and a plan's account/symbol
+   (while not collecting) change **with a reason** in the audit log. A renamed instrument keeps its old symbol as an alias.
+3. **Mapping scope by account group** (account → group → server), so many accounts of one type share one mapping.
+4. **Plans**: display name; the form sends only plan fields (newer read-only fields broke every save); one-step
+   "collect from a broker symbol" creates the instrument and its mapping from the source's details on save.
+
+Status: accepted.

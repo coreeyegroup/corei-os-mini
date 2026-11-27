@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from uuid import uuid4
@@ -97,7 +98,8 @@ class Stage1(MarketData):
                 db.execute("INSERT INTO md_symbol_catalog(account_id, broker_symbol, display_symbol, source) VALUES (%s,%s,%s,'MT5_LOGIN')",
                            (account['id'], s, s))
 
-    def test_unlisted_symbol_is_caught_left_out_and_explained(self):
+    @patch('corei_os_mini.md.markets.is_open', return_value=True)   # not about market hours; must not depend on the wall clock
+    def test_unlisted_symbol_is_caught_left_out_and_explained(self, _open):
         _, (a, _b, c), instrument = self.setup_accounts()           # account b is the fake's silent login
         bad = self.start(self.plan(a, instrument, 'EU_A'))          # accepted: the source had no symbol list yet
         good = self.start(self.plan(c, instrument, 'EU_C', role='BACKUP'))

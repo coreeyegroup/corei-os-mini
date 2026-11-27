@@ -44,7 +44,8 @@ def update_plan(plan_id: UUID, payload: dict, response: Response, user: Principa
     if not isinstance(version, int):
         from fastapi import HTTPException
         raise HTTPException(422, 'version is required.')
-    return plans.update(user.username, plan_id, _parse(plans.PlanIn, body), version)
+    reason = str(body.pop('reason', '') or '')[:500]
+    return plans.update(user.username, plan_id, _parse(plans.PlanIn, body), version, reason)
 
 
 @router.post('/plans/{plan_id}/status')

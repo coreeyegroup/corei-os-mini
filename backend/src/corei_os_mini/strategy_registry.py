@@ -184,16 +184,17 @@ def create_strategy(payload: dict, response: Response, user: Principal = Depends
 def update_strategy(strategy_id: UUID, payload: dict, response: Response, user: Principal = Depends(_ops)):
     _no_store(response)
     version = _parse(Versioned, {'version': payload.pop('version', None)}).version
+    reason = str(payload.pop('reason', '') or '')[:500]
     data = _parse(StrategyIn, payload)
     with store.transaction('update') as db:
         before = _locked(db, 'cfg_strategies', strategy_id, version, 'strategy')
-        if data.code != before['code']:
-            raise HTTPException(422, 'code cannot be changed. Create a new strategy instead.')
+        if data.code != before['code'] and len(reason.strip()) < 5:   # renamable (0.68.0): everything links by id
+            raise HTTPException(422, 'Changing the code needs a reason (at least 5 characters); it is kept in the audit log.')
         if data.status == 'RETIRED' and db.execute("SELECT 1 FROM cfg_deployments WHERE strategy_id=%s AND status='ACTIVE'", (strategy_id,)).fetchone():
             raise HTTPException(422, 'This strategy has active deployments. Pause or end them before retiring it.')
-        after = db.execute('UPDATE cfg_strategies SET name=%s, description=%s, status=%s, version=version+1, updated_at=now() '
-                           'WHERE id=%s RETURNING *', (data.name, data.description, data.status, strategy_id)).fetchone()
-        store.audit(db, user.username, 'UPDATE', 'strategy', strategy_id, before, after)
+        after = db.execute('UPDATE cfg_strategies SET code=%s, name=%s, description=%s, status=%s, version=version+1, updated_at=now() '
+                           'WHERE id=%s RETURNING *', (data.code, data.name, data.description, data.status, strategy_id)).fetchone()
+        store.audit(db, user.username, 'UPDATE', 'strategy', strategy_id, before, after, reason)
         return store.clean(db.execute(STRATEGY_SELECT + ' WHERE s.id=%s', (strategy_id,)).fetchone())
 
 
@@ -420,23 +421,27 @@ def update_deployment(deployment_id: UUID, payload: dict, response: Response, us
     """Any change returns the deployment to PROPOSED so it needs activating again."""
     _no_store(response)
     version = _parse(Versioned, {'version': payload.pop('version', None)}).version
+    reason = str(payload.pop('reason', '') or '')[:500]
     data = _parse(DeploymentIn, payload)
     with store.transaction('update') as db:
         before = _locked(db, 'cfg_deployments', deployment_id, version, 'deployment')
-        for field in ('strategy_id', 'instrument_id', 'account_id'):
-            if getattr(data, field) != before[field]:
-                raise HTTPException(422, f'{field} cannot be changed. End this deployment and create a new one.')
+        moved = [f for f in ('strategy_id', 'instrument_id', 'account_id') if getattr(data, f) != before[f]]
+        if moved and before['status'] == 'ACTIVE':   # never switch what a running deployment trades (0.68.0)
+            raise HTTPException(422, 'Pause this deployment before changing its strategy, instrument or account.')
+        if moved and len(reason.strip()) < 5:
+            raise HTTPException(422, 'Changing the strategy, instrument or account needs a reason (at least 5 characters).')
         if before['status'] == 'ENDED':
             raise HTTPException(422, 'This deployment has ended. Create a new one instead.')
         _check_links(db, data)
-        after = db.execute("UPDATE cfg_deployments SET strategy_version_id=%s, data_mapping_id=%s, allocation_weight_bps=%s, note=%s, "
+        after = db.execute("UPDATE cfg_deployments SET strategy_id=%s, instrument_id=%s, account_id=%s, strategy_version_id=%s, data_mapping_id=%s, allocation_weight_bps=%s, note=%s, "
                            "mode=%s, sizing=%s, signal_expiry_bars=%s, protect=%s, realign=%s, "
                            "status='PROPOSED', proposed_by=%s, activated_by=NULL, activated_at=NULL, version=version+1, updated_at=now() "
-                           'WHERE id=%s RETURNING *', (data.strategy_version_id, data.data_mapping_id, data.allocation_weight_bps,
+                           'WHERE id=%s RETURNING *', (data.strategy_id, data.instrument_id, data.account_id,
+                                                       data.strategy_version_id, data.data_mapping_id, data.allocation_weight_bps,
                                                        data.note, data.mode, Jsonb(data.sizing.model_dump()), data.signal_expiry_bars,
                                                        Jsonb(data.protect.model_dump(exclude_none=True)), data.realign, user.username, deployment_id)).fetchone()
         store.audit(db, user.username, 'UPDATE', 'deployment', deployment_id, before, after,
-                    'Returned to PROPOSED; needs activation' if before['status'] == 'ACTIVE' else '')
+                    ' · '.join(x for x in (reason, 'Returned to PROPOSED; needs activation' if before['status'] == 'ACTIVE' else '') if x))
         return _deployment(db, deployment_id)
 
 
@@ -466,7 +471,8 @@ def transition(deployment_id: UUID, action: Literal['activate', 'pause', 'end'],
                                                                     'NO_TRADING_SYMBOL_ON_ACCOUNT_CONNECTION', 'DATA_SOURCE_INACTIVE')]
             if structural:
                 raise HTTPException(422, 'Resolve these before activating: ' + ', '.join(b.replace('_', ' ').lower() for b in structural) + '.')
-            if current['environment'] == 'LIVE' and before['proposed_by'] == user.username:
+            from . import platform_mode
+            if current['environment'] == 'LIVE' and not platform_mode.second_person_ok(db, before['proposed_by'], user.username):
                 raise HTTPException(422, 'On LIVE accounts a different person must activate the deployment than the one who proposed it.')
             from .trading import setup_gates
             setup_gates.enforce(db, 'activating a deployment', 'PAPER' if before['mode'] == 'PAPER' else current['environment'],
