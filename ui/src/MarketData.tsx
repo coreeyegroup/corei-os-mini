@@ -122,13 +122,17 @@ export const BLANK: Row = { code: '', account_id: '', broker_symbol: '', instrum
   bars_hot_days: 365, archive: true, backfill_from: '', backfill_per_minute: 30, max_latency_ms: 1500, max_gap_seconds: 60, max_spread_points: '',
   stale_seconds: 10, on_breach: 'ALERT' };
 
+// Only the fields a plan accepts are sent (0.68.0): read-only fields the server adds later (health, errors…) can
+// no longer break saving ("Extra inputs are not permitted").
+const PLAN_FIELDS = ['code', 'name', 'account_id', 'broker_symbol', 'instrument_id', 'purpose', 'feed_role', 'data_types', 'bar_timeframes', 'depth_levels',
+  'schedule', 'window_start', 'window_end', 'window_days', 'conflate_ms', 'hot_days', 'bars_hot_days', 'archive', 'backfill_from', 'backfill_per_minute',
+  'max_latency_ms', 'max_gap_seconds', 'max_spread_points', 'stale_seconds', 'on_breach'];
 function body(f: Row): Row {
-  const out: Row = { ...f };
+  const out: Row = Object.fromEntries(PLAN_FIELDS.filter(k => k in f).map(k => [k, f[k]]));
+  out.name = out.name ?? '';
   for (const k of ['instrument_id', 'window_start', 'window_end', 'backfill_from', 'max_spread_points']) if (out[k] === '' || out[k] == null) out[k] = null;
   for (const k of ['depth_levels', 'conflate_ms', 'hot_days', 'bars_hot_days', 'backfill_per_minute', 'max_latency_ms', 'max_gap_seconds', 'stale_seconds']) out[k] = Number(out[k]);
   if (out.max_spread_points != null) out.max_spread_points = Number(out.max_spread_points);
-  for (const k of ['id', 'version', 'status', 'status_reason', 'created_by', 'updated_by', 'created_at', 'updated_at', 'account_code', 'account_name', 'external_account_id',
-    'connection_code', 'environment', 'platform', 'instrument_symbol', 'bid', 'ask', 'last_price_at', 'score', 'collector_state', 'collector_heartbeat_at', 'active_feed', 'pending_changes', 'digits']) delete out[k];
   return out;
 }
 
@@ -150,12 +154,12 @@ function Plans({ canEdit }: { canEdit: boolean }) {
     {view === 'matrix' ? <div className="infra-grid md-matrix"><table><thead><tr><th>Instrument / symbol</th>{usedAccounts.map(([id, code]) => <th key={id}>{code}</th>)}</tr></thead>
       <tbody>{usedInstruments.map(([key, label]) => <tr key={key}><td><strong>{label}</strong></td>{usedAccounts.map(([aid]) => {
         const p = items.find(x => x.account_id === aid && (x.instrument_id ?? `sym:${x.broker_symbol}`) === key);
-        return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)} title={p ? `${p.code} · ${p.data_types.join(', ').toLowerCase()} · ${p.bar_timeframes.join(',')}${p.collector_error ? ' · ' + p.collector_error : ''}` : ''}>{p ? <span className="md-cell-line">
+        return <td key={aid} className={p ? 'md-cell' : 'infra-placeholder'} onClick={() => p && setOpen(p)} title={p ? `${p.name || p.code} · ${p.data_types.join(', ').toLowerCase()} · ${p.bar_timeframes.join(',')}${p.collector_error ? ' · ' + p.collector_error : ''}` : ''}>{p ? <span className="md-cell-line">
           <span className={`sb-dot ${p.status === 'ACTIVE' ? (['LIVE', 'CLOSED'].includes(p.health) ? 'ok' : p.bid == null || ['ERROR', 'INVALID_SYMBOL', 'STALE'].includes(p.health) ? 'bad' : 'ok') : ''}`} />{p.status === 'ACTIVE' && p.health ? HEALTH[p.health] ?? p.health : p.status.toLowerCase()} · {p.feed_role.toLowerCase()}{p.active_feed ? '*' : ''}
           {p.bid == null ? <span className="md-nodata">{p.status === 'ACTIVE' ? 'no data' : ''}</span> : p.score != null && <span className={`md-score ${scoreClass(p.score)}`}>{p.score}</span>}</span> : '—'}</td>; })}</tr>)}
         {!items.length && <tr><td className="infra-placeholder">No plans yet.</td></tr>}</tbody></table></div>
       : <table className="cfg-table"><thead><tr><th>Plan</th><th>Account</th><th>Symbol</th><th>Instrument</th><th>Purpose</th><th>Role</th><th>Data</th><th>When</th><th>Keep</th><th>Status</th><th>Health</th></tr></thead>
-        <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td>{p.code}</td><td title={p.account_code}>{p.account_name || p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
+        <tbody>{items.map(p => <tr key={p.id} onClick={() => setOpen(p)}><td><b>{p.code}</b>{p.name ? <><br /><small>{p.name}</small></> : null}</td><td title={p.account_code}>{p.account_name || p.account_code}</td><td>{p.broker_symbol}</td><td>{p.instrument_symbol ?? '—'}</td>
           <td>{p.purpose.replace('_', ' ').toLowerCase()}</td><td>{p.feed_role.toLowerCase()}</td><td>{p.data_types.join(', ').toLowerCase()}</td><td>{p.schedule.replace('_', ' ').toLowerCase()}</td>
           <td>{p.hot_days} d{p.archive ? ' → archive' : ''}</td><td><span className={`md-status ${p.status}`}>{p.status.toLowerCase()}</span>{p.pending_changes > 0 && <small> · awaiting approval</small>}</td>
           <td>{p.status === 'ACTIVE' && p.health ? <span className={`sb-plan H-${p.health}`} title={p.health_detail || undefined}>{HEALTH[p.health] ?? p.health}</span> : '—'}</td></tr>)}</tbody></table>}
@@ -183,7 +187,23 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
   }, [JSON.stringify(f)]);
   async function save(e: FormEvent) {
     e.preventDefault(); setError(''); setNotice('');
-    try { const p = isNew ? await api('md/plans', 'POST', body(f)) : await api(`md/plans/${plan.id}`, 'PUT', { ...body(f), version: plan.version }); saved(p); setNotice('Saved.'); }
+    try {
+      let draft = f;
+      // One step from a broker symbol (0.68.0): the COREI instrument and its symbol mapping are created from the
+      // source's own details when the plan is saved, unless "research only" was chosen.
+      if (isNew && picked && !f.instrument_id && autoInstrument) {
+        const i = await api(`md/catalog/${f.account_id}/instrument`, 'POST', { broker_symbol: f.broker_symbol });
+        setMade(m => [...m, i]); draft = { ...f, instrument_id: i.id, purpose: f.purpose === 'RESEARCH' ? 'TRADING_FEED' : f.purpose };
+      }
+      let reason = '';
+      if (!isNew && (draft.account_id !== plan.account_id || draft.broker_symbol !== plan.broker_symbol)) {
+        const r = window.prompt('You are changing where this plan collects from. Data already collected stays under the old source. Reason (audit log):');
+        if (r === null) return;
+        reason = r.trim();
+      }
+      const p = isNew ? await api('md/plans', 'POST', body(draft)) : await api(`md/plans/${plan.id}`, 'PUT', { ...body(draft), version: plan.version, ...(reason ? { reason } : {}) });
+      saved(p); setNotice(isNew && draft.instrument_id !== f.instrument_id ? 'Saved, with its instrument and symbol mapping.' : 'Saved.');
+    }
     catch (err) { setError((err as Error).message); }
   }
   async function changeStatus(e: FormEvent) {
@@ -198,7 +218,8 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
   // Broker symbol: searched in the source's own list (MT5 symbols, the Upstox file: NSE/BSE/MCX indices, stocks, F&O),
   // so nobody types "NSE_INDEX|Nifty Bank" by hand; picking it links or creates the COREI instrument.
   const [hits, setHits] = useState<Row[] | null>(null), [picked, setPicked] = useState<Row | null>(null), [made, setMade] = useState<Row[]>([]);
-  const [insQ, setInsQ] = useState(''), [catSize, setCatSize] = useState<number | null>(null);
+  const [insQ, setInsQ] = useState(''), [catSize, setCatSize] = useState<number | null>(null), [autoInstrument, setAutoInstrument] = useState(true);
+  const sourceLocked = !isNew && plan.status === 'ACTIVE';   // account and symbol change while the plan is not collecting
   useEffect(() => {
     if (!isNew || !f.account_id || !f.broker_symbol || f.broker_symbol === picked?.broker_symbol) { setHits(null); return; }
     const t = window.setTimeout(() => void api(`md/catalog/${f.account_id}?q=${encodeURIComponent(f.broker_symbol)}&limit=12`)
@@ -228,11 +249,13 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
       <button onClick={close}>Close</button></div>}>
     <form id="md-plan-form" className="cfg-form md-plan" onSubmit={save}><fieldset disabled={locked} className="cfg-plain">
       <section className="cfg-section"><h4><span>1</span>What and from where</h4><div className="cfg-section-body">
-        <div className="cfg-pair"><Field label="Plan code"><input aria-label="Plan code" required value={f.code} onChange={e => set('code', e.target.value.toUpperCase())} /></Field>
-          <Field label="Account (source)"><select aria-label="Plan account" required disabled={!isNew} value={f.account_id} onChange={e => set('account_id', e.target.value)}>
-            <option value="">Choose…</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.provider_code} {a.environment}</option>)}</select></Field></div>
-        <div className="cfg-pair"><Field label="Broker symbol" hint={isNew ? 'Type a name: nifty, banknifty, reliance, gold, EURUSD… and pick from the source\'s own list. Or type the exact symbol (MT5 XAUUSD.r; Upstox key NSE_INDEX|Nifty 50).' : undefined}>
-            <div className="md-suggest-wrap"><input aria-label="Broker symbol" required disabled={!isNew} autoComplete="off" value={f.broker_symbol}
+        <div className="cfg-pair"><Field label="Plan code" hint="Short, for logs: SOURCE_INSTRUMENT, e.g. MQDEMO_EURUSD"><input aria-label="Plan code" required value={f.code} onChange={e => set('code', e.target.value.toUpperCase())} /></Field>
+          <Field label="Name" hint="Shown on screens, e.g. EURUSD · MetaQuotes demo · main feed"><input aria-label="Plan name" maxLength={120} value={f.name ?? ''} onChange={e => set('name', e.target.value)} /></Field></div>
+        <div className="cfg-pair">
+          <Field label="Account (source)" hint={sourceLocked ? 'Pause the plan to change its source' : undefined}><select aria-label="Plan account" required disabled={sourceLocked} value={f.account_id} onChange={e => set('account_id', e.target.value)}>
+            <option value="">Choose…</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.code} · {a.provider_code} {a.environment}</option>)}</select></Field>
+        <Field label="Broker symbol" hint={isNew ? 'Type a name: nifty, banknifty, reliance, gold, EURUSD… and pick from the source\'s own list. Or type the exact symbol (MT5 XAUUSD.r; Upstox key NSE_INDEX|Nifty 50).' : undefined}>
+            <div className="md-suggest-wrap"><input aria-label="Broker symbol" required disabled={sourceLocked} autoComplete="off" value={f.broker_symbol}
               placeholder={f.account_id ? 'Search this source…' : 'Choose the account first'} onChange={e => { setPicked(null); set('broker_symbol', e.target.value); }} />
               {hits && <ul className="md-suggest" role="listbox" aria-label="Matching symbols">
                 {hits.map(r => <li key={r.broker_symbol} role="option" aria-selected={false} onMouseDown={e => { e.preventDefault(); choose(r); }}>
@@ -243,8 +266,11 @@ export function PlanWindow({ plan, canEdit, accounts, instruments, close, saved 
           <Field label="Instrument" hint="The COREI instrument (one name across brokers). Needed for a trading feed; links sources of the same instrument for comparison and switching.">
             <input aria-label="Filter instruments" placeholder={`Filter ${allInstruments.length} instruments (name or alias)…`} value={insQ} onChange={e => setInsQ(e.target.value)} />
             <select aria-label="Plan instrument" value={f.instrument_id} onChange={e => set('instrument_id', e.target.value)}><option value="">None (research only)</option>
-              {Object.entries(byClass).map(([cls, list]) => <optgroup key={cls} label={cls}>{(list as Row[]).map((i: Row) => <option key={i.id} value={i.id}>{i.symbol} · {i.name}{i.aliases?.length ? ` (${i.aliases.join(', ')})` : ''}</option>)}</optgroup>)}</select>
-            {isNew && picked && !f.instrument_id && <button type="button" onClick={() => void createInstrument()}>Create instrument {picked.suggested_instrument} from the source's details</button>}
+              {Object.entries(byClass).sort(([a], [b]) => a.localeCompare(b)).map(([cls, list]) => <optgroup key={cls} label={cls}>
+                {[...(list as Row[])].sort((a, b) => a.symbol.localeCompare(b.symbol)).map((i: Row) => <option key={i.id} value={i.id}>{i.symbol} — {i.name}</option>)}</optgroup>)}</select>
+            {isNew && picked && !f.instrument_id && <label className="md-auto"><input type="checkbox" aria-label="Create the instrument automatically" checked={autoInstrument} onChange={e => setAutoInstrument(e.target.checked)} />
+              {' '}On save, create instrument <b>{picked.suggested_instrument}</b> and its symbol mapping from the source's details (untick for research only)</label>}
+            {isNew && picked && !f.instrument_id && !autoInstrument && <button type="button" onClick={() => void createInstrument()}>Create it now</button>}
           </Field></div>
         <div className="cfg-pair"><Field label="Purpose"><select aria-label="Plan purpose" value={f.purpose} onChange={e => set('purpose', e.target.value)}>
             {[['RESEARCH', 'Collect (research)'], ['TRADING_FEED', 'Trading feed (needs an instrument)'], ['REFERENCE', 'Reference (comparison)'], ['MONITORING', 'Quality monitoring']].map(([v, l]) => <option key={v} value={v} disabled={v === 'TRADING_FEED' && !f.instrument_id}>{l}</option>)}</select></Field>
@@ -385,7 +411,7 @@ function Backfill({ canEdit }: { canEdit: boolean }) {
   return <>
     {canEdit && <form className="cfg-form cfg-panel md-backfill" onSubmit={create}><header><strong>Fetch history from the broker</strong></header>
       <div className="cfg-pair"><Field label="Plan"><select aria-label="Backfill plan" required value={f.plan_id} onChange={e => setF({ ...f, plan_id: e.target.value })}><option value="">Choose…</option>
-        {(plans?.items ?? []).map((p: Row) => <option key={p.id} value={p.id}>{p.code} · {p.account_code} · {p.broker_symbol}</option>)}</select></Field>
+        {(plans?.items ?? []).map((p: Row) => <option key={p.id} value={p.id}>{p.name || p.code} · {p.account_code} · {p.broker_symbol}</option>)}</select></Field>
         <Field label="Timeframe"><select aria-label="Backfill timeframe" value={f.timeframe} onChange={e => setF({ ...f, timeframe: e.target.value })}>{FRAMES.slice(1).map(t => <option key={t}>{t}</option>)}</select></Field></div>
       <div className="cfg-pair"><Field label="From"><input aria-label="Backfill start" type="datetime-local" required value={f.range_from} onChange={e => setF({ ...f, range_from: e.target.value })} /></Field>
         <Field label="To"><input aria-label="Backfill end" type="datetime-local" required value={f.range_to} onChange={e => setF({ ...f, range_to: e.target.value })} /></Field></div>

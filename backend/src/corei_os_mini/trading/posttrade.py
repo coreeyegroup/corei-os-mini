@@ -488,7 +488,10 @@ def _adopt(db, actor: str, b: dict, note: str) -> dict:
     iid = b['instrument_id']
     if not iid:
         m = db.execute("""SELECT m.instrument_id FROM cfg_symbol_mappings m JOIN cfg_accounts a ON a.connection_id=m.connection_id
-                          WHERE a.id=%s AND m.broker_symbol=%s AND m.status='ACTIVE' LIMIT 1""", (str(b['account_id']), b['broker_symbol'])).fetchone()
+                          WHERE a.id=%s AND m.broker_symbol=%s AND m.status='ACTIVE' AND (m.account_id IS NULL OR m.account_id=a.id)
+                            AND (m.account_group_id IS NULL OR EXISTS (SELECT 1 FROM cfg_account_group_members g
+                                                                       WHERE g.group_id=m.account_group_id AND g.account_id=a.id))
+                          ORDER BY (m.account_id IS NOT NULL) DESC, (m.account_group_id IS NOT NULL) DESC LIMIT 1""", (str(b['account_id']), b['broker_symbol'])).fetchone()
         if not m:
             raise HTTPException(409, f"{b['broker_symbol']} is not mapped to a COREI instrument (Setup › Instruments).")
         iid = m['instrument_id']

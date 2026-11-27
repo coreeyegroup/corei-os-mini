@@ -67,7 +67,8 @@ def live_policy(db) -> dict:
         checks.append({'code': 'LIVE_FOUR_EYES_NOT_ALL', 'detail': f'Automated LIVE orders are not held for a second person (four-eyes rule is {rule}; ALL holds every LIVE order).',
                        'goto': {'view': 'Execution', 'section': 'execution'}})
     approvers = db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE' AND 'RISK_APPROVER' = ANY(roles)").fetchone()['n']
-    if approvers < 2:
+    from .. import platform_mode
+    if approvers < 2 and not platform_mode.is_solo(db):
         checks.append({'code': 'LIVE_NO_SECOND_APPROVER', 'detail': f'{approvers} active risk approver(s): four-eyes needs two different people.',
                        'goto': {'view': 'Configuration', 'section': 'users'}})
     channels = db.execute("SELECT count(*) AS n FROM cfg_alert_channels WHERE status='ACTIVE'").fetchone()['n']

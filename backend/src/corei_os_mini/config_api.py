@@ -308,7 +308,8 @@ def update_entity(entity: Entity, record_id: UUID, payload: dict, response: Resp
                   actor: str = Depends(editor)):
     _no_store(response)
     version = parse(VersionIn, {'version': payload.pop('version', None)}).version
-    return _pending(response, store.update(actor, entity, record_id, parse(store.SPECS[entity].model, payload), version))
+    reason = str(payload.pop('reason', '') or '')[:500]   # needed when an identifying field changes (store.IDENTITY)
+    return _pending(response, store.update(actor, entity, record_id, parse(store.SPECS[entity].model, payload), version, reason=reason))
 
 
 @router.delete('/{entity}/{record_id}', status_code=204)

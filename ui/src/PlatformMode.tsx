@@ -1,4 +1,4 @@
-/* Platform mode: switch between Development (build and test the platform as a user) and Production (real trading).
+/* Platform mode: Development (build and test) or Production (real trading); and Team or Single user (0.68.0).
  *
  * Why it exists: one installation is used for two jobs; the rules that keep real trading safe get in the way of testing,
  * and testing freedoms must never reach real trading. One administrator switch, with a reason, decides which apply.
@@ -8,6 +8,8 @@
  * Must never: turn LIVE order sending on (only the Order sending page does that, with its own checks); offer reset in
  * Production; act without a reason.
  * Dependencies: Configuration.api, StageShell (Msg, useData, when), Info.
+ * Team keeps every four-eyes rule (a different person confirms LIVE actions); Single user lets the one person confirm
+ * their own, still with password and reason, all audited. Switching needs a reason (and the typed word SOLO).
  * Consumers: Configuration (Setup › 9 · Admin › Platform mode).
  * Architectural position: UI over /api/config/platform-mode.
  */
@@ -72,6 +74,14 @@ export default function PlatformMode({ isAdmin }: { isAdmin: boolean }) {
         <button disabled={busy} onClick={doReset}>Reset test data…</button>
       </> : <button className="primary" disabled={busy} onClick={toDevelopment}>Switch to Development…</button>}
     </div> : <p className="cfg-note">Only an administrator can change the platform mode.</p>}
+    <div className={`pm-now ${m.operating === 'SOLO' ? 'dev' : 'prod'}`} role="status" aria-label="Operating profile">
+      <b>{m.operating === 'SOLO' ? 'Single user' : 'Team'}</b>
+      <span>{m.operating === 'SOLO' ? 'One person confirms their own LIVE actions (password and reason still asked)' : 'LIVE actions are confirmed by a different person (four-eyes)'}</span>
+      <Info label="About Team and Single user">Team suits a firm or institution: changes to LIVE, LIVE deployments and workspace starts, held LIVE orders, loosening LIVE gates and calculation versions need a second person. Single user suits one trader: the same steps are confirmed by you, with your password and a reason where asked, and every step is in the audit log. Switch any time.</Info>
+      {isAdmin && (m.operating === 'SOLO'
+        ? <button disabled={busy} onClick={() => { const reason = ask('Reason for switching to Team (four-eyes)'); if (reason) void run(() => api('config/platform-mode/operating', 'PUT', { operating: 'TEAM', reason, version: m.version }), () => 'Now a team: a different person confirms LIVE actions.'); }}>Switch to Team…</button>
+        : <button disabled={busy} onClick={() => { const c = window.prompt('Run as a single user? You will confirm your own LIVE actions (password and reason still asked; all audited). Type SOLO to confirm.'); if (c === null) return; const reason = ask('Reason for running as a single user'); if (reason) void run(() => api('config/platform-mode/operating', 'PUT', { operating: 'SOLO', confirm: c.trim(), reason, version: m.version }), () => 'Now a single user: you confirm your own LIVE actions.'); }}>Switch to Single user…</button>)}
+    </div>
     {reset && <table className="cfg-table" aria-label="Reset result"><thead><tr><th>Paper account</th><th>Result</th></tr></thead>
       <tbody>{reset.reset.map((r: Row) => <tr key={r.old}><td>{r.old}</td><td>archived · fresh copy {r.new}</td></tr>)}
         {reset.skipped.map((r: Row) => <tr key={r.code}><td>{r.code}</td><td className="dk-warn">skipped: {r.why}</td></tr>)}</tbody></table>}

@@ -503,3 +503,18 @@ Open: reset covers paper accounts only (not DEMO broker positions, scan runs or 
 | UP-8 | Floating-window footer: one aligned row; help behind ⓘ (owner's screenshot 27 Nov) | Checked by screenshot; UI tests pass |
 | UP-9 | 0.67.1: every check on the live server failed with "No such file or directory: 'runuser'" — the updater searched only /usr/local/bin:/usr/bin:/bin, and runuser is in /usr/sbin on Ubuntu; the screen also said "Up to date" after a failed check | FIXED — sbin folders searched; a failed check is shown as failed; TESTED (`test_commands_find_runuser_in_sbin`, fails without the fix; UI scenario) |
 | UP-10 | 0.67.1: Update moved from Setup to the main Settings (Software update), with Help › Check for updates and About › Check for updates; Setup's "7 · Settings" renamed "7 · Team & alerts" (no two "Settings") | DONE — UI scenarios updated |
+
+## V. Team or Single user; flexible configuration — 28 Nov 2026 (release 0.68.0)
+
+| ID | Criterion | Status |
+|---|---|---|
+| FX-1 | Single user confirms own held LIVE order; Team refuses; "second approver" readiness only in Team; switch needs admin, SOLO typed, reason; audited; profile and mode independent | TESTED (`test_single_user_confirms_own_live_steps_team_needs_a_second_person`) |
+| FX-2 | Only platform/environment/broker login stay fixed; codes and symbols change with a reason (refused without); audit keeps the reason; old instrument symbol becomes an alias | TESTED (`test_identity_changes_need_a_reason_and_only_platform_environment_login_stay_fixed`) |
+| FX-3 | Account moves only to a server with the same platform and environment; its own mappings move | TESTED |
+| FX-4 | Group-scoped mapping; resolution account → group → server | TESTED (`test_group_mapping_resolves_between_account_and_server`) |
+| FX-5 | Strategy code rename with reason; deployment links change only while not active | TESTED |
+| FX-6 | Plan display name; account/symbol change only while not collecting, with reason | TESTED |
+| FX-7 | Plan save sends only plan fields (live error "Extra inputs are not permitted"); one-step instrument + mapping + plan | TESTED (UI `marketdata.cjs`) |
+| FX-8 | ⓘ popover stays on screen (above when no room below), footer ⓘ 22 px | Checked by screenshot; UI tests pass |
+| FX-9 | `test_collector_end_to_end` depended on the wall clock (failed weekends/nights after the FX close) | FIXED — session pinned in the test |
+| FX-10 | Single-user self-confirmation in the remaining places where the code checks "different person" through a shared rule: change requests, LIVE deployments, workspace start/apply, held orders, gate loosening, calculation versions | Implemented through one rule; held orders and readiness TESTED end to end, others share the same function |

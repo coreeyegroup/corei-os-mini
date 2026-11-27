@@ -115,7 +115,8 @@ def decide(actor: str, request_id: UUID, approve: bool, note: str) -> dict:
             # marked as such in the audit log and alerted as CRITICAL. A second approver ends this at once.
             others = db.execute("SELECT count(*) AS n FROM cfg_users WHERE status='ACTIVE' AND username <> %s "
                                 "AND roles && ARRAY['RISK_APPROVER']::text[]", (actor,)).fetchone()['n']
-            if others:
+            from . import platform_mode
+            if others and not platform_mode.is_solo(db):
                 raise HTTPException(403, 'A change must be approved by a different person from the one who asked for it.')
             if approve and len(note.strip()) < 8:
                 raise HTTPException(422, 'You are the only approver: write why you approve your own LIVE change (at least 8 characters).')
@@ -398,7 +399,10 @@ def health() -> dict:
         {'step': '7 Strategy', 'how': 'Register, approve a version, deploy on instrument × account', 'done': counts['deployments'] > 0, 'section': 'deployments'},
         {'step': '8 Alerts', 'how': 'An e-mail, Telegram or webhook channel', 'done': counts['alert_channels'] > 0, 'section': 'alerts'},
     ]
-    if four_eyes and users < 2:
+    from . import platform_mode
+    with store.transaction('read') as db:
+        solo = platform_mode.is_solo(db)
+    if four_eyes and users < 2 and not solo:
         checklist.append({'step': 'Second approver', 'how': 'Four-eyes is on and you are the only user: add a user with the Risk approver role, '
                                   'or approve your own LIVE changes with a reason under Approvals', 'done': False, 'section': 'users'})
     return {'generated_at': datetime.now(timezone.utc).isoformat(), 'network': network.status(), 'controls': list(controls.values()),

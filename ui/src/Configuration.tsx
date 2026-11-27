@@ -229,11 +229,15 @@ const FIELDS: Record<Entity, string[]> = {
   instruments: ['symbol', 'name', 'asset_class', 'base_currency', 'quote_currency', 'price_precision', 'quantity_precision',
     'tick_size', 'min_quantity', 'quantity_step', 'contract_size', 'contract_unit', 'trading_session', 'status',
     'exchange', 'market', 'isin', 'lot_size', 'expiry', 'strike', 'option_type', 'underlying', 'aliases'],
-  mappings: ['connection_id', 'account_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
+  mappings: ['connection_id', 'account_id', 'account_group_id', 'instrument_id', 'broker_symbol', 'usage', 'broker_contract_size', 'broker_price_digits', 'status'],
 };
+// Only what makes it a different real thing stays fixed (0.68.0). Identifying fields can change, with a reason (audit log).
 const IMMUTABLE: Record<Entity, string[]> = {
-  providers: ['code'], connections: ['provider_id', 'code', 'platform', 'environment'],
-  accounts: ['connection_id', 'code', 'external_account_id'], instruments: ['symbol'], mappings: ['connection_id', 'instrument_id', 'account_id'], groups: ['code'],
+  providers: [], connections: ['platform', 'environment'], accounts: ['external_account_id'], instruments: [], mappings: [], groups: [],
+};
+const IDENTITY: Record<Entity, string[]> = {
+  providers: ['code'], connections: ['provider_id', 'code'], accounts: ['connection_id', 'code'], instruments: ['symbol'],
+  mappings: ['connection_id', 'instrument_id', 'account_id', 'account_group_id'], groups: ['code'],
 };
 const SINGULAR: Record<Entity, string> = { providers: 'provider', connections: 'server', accounts: 'account', instruments: 'instrument', mappings: 'symbol mapping', groups: 'account group' };
 const ARCHIVABLE: Entity[] = ['providers', 'connections', 'accounts', 'groups'];
@@ -263,7 +267,7 @@ export function toPayload(entity: Entity, draft: Row): Row {
     out.max_orders_per_second = strOrNull(draft.max_orders_per_second); out.registered_egress_ip = orNull(draft.registered_egress_ip);
     out.adapter = draft.adapter ?? 'DEFAULT'; out.dst_rule = draft.dst_rule ?? 'UNKNOWN'; out.clock_source = draft.clock_source ?? 'UNKNOWN';
     out.maintenance = draft.maintenance ?? []; }
-  if (entity === 'mappings') out.account_id = orNull(draft.account_id);
+  if (entity === 'mappings') { out.account_id = orNull(draft.account_id); out.account_group_id = orNull(draft.account_group_id); }
   if (entity === 'instruments') { out.price_precision = Number(draft.price_precision); out.quantity_precision = Number(draft.quantity_precision);
     for (const k of ['lot_size', 'strike', 'expiry']) out[k] = orNull(draft[k]);
     for (const k of ['exchange', 'market', 'isin', 'option_type', 'underlying']) out[k] = draft[k] ?? '';
@@ -683,12 +687,13 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
     setDraft(next);
   };
   const locked = (k: string) => editing && IMMUTABLE[entity].includes(k);
+  const idHint = (k: string, hint?: string) => editing && IDENTITY[entity].includes(k) ? 'Changeable; a reason is asked when saving' : hint;
   const text = (k: string, label: string, props: Row = {}, hint?: string) =>
-    <Field label={label} hint={locked(k) ? 'Fixed after creation' : hint}><input aria-label={label} value={draft[k] ?? ''} readOnly={locked(k)} onChange={e => set(k, e.target.value)} {...props} /></Field>;
+    <Field label={label} hint={locked(k) ? 'Fixed after creation' : idHint(k, hint)}><input aria-label={label} value={draft[k] ?? ''} readOnly={locked(k)} onChange={e => set(k, e.target.value)} {...props} /></Field>;
   const pick = (k: string, label: string, options: (string | [string, string])[], hint?: string) =>
     <Field label={label} hint={locked(k) ? 'Fixed after creation' : hint}><Choice label={label} value={draft[k] ?? ''} options={options} disabled={locked(k)} onChange={v => set(k, v)} /></Field>;
   const ref = (k: string, label: string, rows: Row[], show: (r: Row) => string) =>
-    <Field label={label} hint={locked(k) ? 'Fixed after creation' : undefined}><select aria-label={label} required value={draft[k] ?? ''} disabled={locked(k)} onChange={e => set(k, e.target.value)}>
+    <Field label={label} hint={locked(k) ? 'Fixed after creation' : idHint(k)}><select aria-label={label} required value={draft[k] ?? ''} disabled={locked(k)} onChange={e => set(k, e.target.value)}>
       <option value="" disabled>Select…</option>{rows.map(r => <option key={r.id} value={r.id}>{show(r)}</option>)}</select></Field>;
   const status = pick('status', 'Status', editing && draft.status === 'ARCHIVED' ? ['ARCHIVED', 'INACTIVE'] : ['ACTIVE', 'INACTIVE']);
   const code = (label: string, example: string) => text('code', label, { required: true, maxLength: 32, pattern: '[A-Za-z][A-Za-z0-9_]{1,31}' },
@@ -876,9 +881,12 @@ function RecordForm({ entity, draft, setDraft, editing, refs }: { entity: Entity
 
   const accountsHere = (refs.accounts ?? []).filter((a: Row) => a.connection_id === draft.connection_id);
   return <>{ref('connection_id', 'Connection', refs.connections, r => `${r.code} · ${PURPOSE_LABEL[r.purpose] ?? r.purpose}`)}
-    <Field label="Applies to" hint={locked('account_id') ? 'Fixed after creation' : 'An account-specific symbol overrides the connection-wide one for that account (e.g. XAUUSD.r on a raw account)'}>
-      <select aria-label="Applies to" value={draft.account_id ?? ''} disabled={locked('account_id')} onChange={e => set('account_id', e.target.value)}>
-        <option value="">Every account on this connection</option>{accountsHere.map((a: Row) => <option key={a.id} value={a.id}>Only {a.code}</option>)}</select></Field>
+    <Field label="Applies to" hint="One broker can name the same market differently per account type (VT Markets: EURUSD-VIP). The most specific wins: one account, then a group, then every account on the server.">
+      <select aria-label="Applies to" value={draft.account_id ? `a:${draft.account_id}` : draft.account_group_id ? `g:${draft.account_group_id}` : ''}
+        onChange={e => { const v = e.target.value; setDraft((d: Row) => ({ ...d, account_id: v.startsWith('a:') ? v.slice(2) : '', account_group_id: v.startsWith('g:') ? v.slice(2) : '' })); }}>
+        <option value="">Every account on this server</option>
+        {(refs.groups ?? []).length > 0 && <optgroup label="Accounts in a group">{(refs.groups ?? []).map((g: Row) => <option key={g.id} value={`g:${g.id}`}>Group {g.code} · {g.name}</option>)}</optgroup>}
+        {accountsHere.length > 0 && <optgroup label="One account">{accountsHere.map((a: Row) => <option key={a.id} value={`a:${a.id}`}>Only {a.code}{a.name && a.name !== a.code ? ` · ${a.name}` : ''}</option>)}</optgroup>}</select></Field>
     {ref('instrument_id', 'Instrument', refs.instruments, r => `${r.symbol} · ${r.name}`)}
     {text('broker_symbol', 'Broker symbol', { required: true, maxLength: 64 }, 'As shown in the broker platform, e.g. XAUUSD.r')}
     {pick('usage', 'Used for', ROLE_OPTIONS)}
@@ -1437,7 +1445,7 @@ const COLUMNS: Record<Entity, [string, (r: Row) => ReactNode][]> = {
     ['Market', r => r.market ? `${r.market}${r.expiry ? ` · ${r.expiry}` : ''}${r.strike ? ` · ${r.strike} ${r.option_type}` : ''}` : '—'], ['Tick', r => r.tick_size],
     ['Contract min / step', r => `${r.min_quantity} / ${r.quantity_step}`], ['Contract', r => `${r.contract_size} ${r.contract_unit}`], ['Mappings', r => r.mapping_count], ['Status', r => <Status value={r.status} />]],
   mappings: [['Instrument', r => r.instrument_symbol], ['Provider', r => r.provider_code], ['Connection', r => <Link to="connections" id={r.connection_id}>{r.connection_code}</Link>], ['Env', r => <Env value={r.environment} />],
-    ['Applies to', r => r.account_id ? <Link to="accounts" id={r.account_id}>{r.account_code}</Link> : 'All accounts'], ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
+    ['Applies to', r => r.account_id ? <Link to="accounts" id={r.account_id}>{r.account_code}</Link> : r.account_group_id ? `Group ${r.group_code}` : 'All accounts'], ['Broker symbol', r => r.broker_symbol], ['Used for', r => r.usage], ['Contract override', r => r.broker_contract_size ?? '—'], ['Status', r => <Status value={r.status} />]],
 };
 
 const SORT_RAW: Record<string, (r: Row) => string | number> = {
@@ -1513,7 +1521,16 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
     e.preventDefault(); if (!draft) return; setBusy(true); setError('');
     try {
       const body = toPayload(entity, draft);
-      const saved = selected ? await api(`config/${entity}/${selected.id}`, 'PUT', { ...body, version: selected.version }) : await api(`config/${entity}`, 'POST', body);
+      // Changing an identifying field (code, symbol, server, scope…) asks for a reason; it is kept in the audit log.
+      const moved = selected ? IDENTITY[entity].filter(k => k in body && String(body[k] ?? '') !== String(selected[k] ?? '')) : [];
+      let reason = '';
+      if (moved.length) {
+        const r = window.prompt(`You are changing ${moved.map(k => k.replace(/_id$/, '').replace(/_/g, ' ')).join(', ')}. Reason (kept in the audit log):`);
+        if (r === null) { setBusy(false); return; }
+        if (r.trim().length < 5) { setError('Give a reason of at least 5 characters.'); setBusy(false); return; }
+        reason = r.trim();
+      }
+      const saved = selected ? await api(`config/${entity}/${selected.id}`, 'PUT', { ...body, version: selected.version, ...(reason ? { reason } : {}) }) : await api(`config/${entity}`, 'POST', body);
       const pending = pendingMessage(saved);
       if (pending) { setNotice(pending); if (selected) { setDraft({ ...selected }); await load(selected.id); } else { setSelected(null); setDraft(null); await load(); } reloadRefs(); return; }
       setNotice(selected ? 'Changes saved.' : `${SINGULAR[entity][0].toUpperCase() + SINGULAR[entity].slice(1)} created.`);

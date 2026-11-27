@@ -137,3 +137,59 @@ class PlatformMode(te.Execution):
         self.assertEqual([r['new'] for r in again['reset']], ['PAPER_USD_R3'])
         audit = self.ok(self.alice.get('/api/config/audit', params={'entity': 'policy', 'entity_id': 'platform_mode'}))['items']
         self.assertEqual(audit[0]['action'], 'RESET_TEST_DATA')
+
+
+class OperatingProfile(PlatformMode):
+    """Team (four-eyes with different people) or Single user (one person confirms their own steps) — 0.68.0."""
+    test_starts_in_production_and_only_an_administrator_switches = None
+    test_development_keeps_live_off_unless_allowed = None
+    test_development_gates_only_warn_but_live_gates_keep_their_levels = None
+    test_reset_test_data_only_in_development_and_keeps_history = None
+
+    def operating(self, operating, confirm='', status=200, client=None):
+        v = self.ok(self.alice.get('/api/config/platform-mode'))['version']
+        r = (client or self.alice).put('/api/config/platform-mode/operating', json={'operating': operating, 'confirm': confirm, 'reason': 'test profile', 'version': v})
+        self.assertEqual(r.status_code, status, r.text)
+        return r.json()
+
+    def test_single_user_confirms_own_live_steps_team_needs_a_second_person(self):
+        from corei_os_mini import platform_mode
+        from corei_os_mini.trading import readiness
+        self.assertEqual(self.ok(self.alice.get('/api/config/platform-mode'))['operating'], 'TEAM')
+        _connection, a, _b, ins = self.real_account('LIVE')
+        self.live_ready(a)
+        self.sending('LIVE')
+        # TEAM: the person who placed a held LIVE order cannot release it.
+        o = self.place(a, ins, 'solo-1', source='MANUAL', actor='alice')
+        self.assertTrue(o['hold_for_approval'])
+        self.ok(self.alice.post(f"/api/trading/orders/{o['id']}/release", json={'reason': 'my own order'}), 403)
+        with self.connect() as db:
+            db.execute("UPDATE cfg_users SET roles = array_remove(roles, 'RISK_APPROVER') WHERE username <> 'alice'")
+            policy = readiness.live_policy(db)
+        self.assertIn('LIVE_NO_SECOND_APPROVER', [c['code'] for c in policy['unmet'] + policy['waived']], 'TEAM: one approver is not enough')
+        # Switching needs an administrator, the typed word and a reason; it is audited.
+        with self.connect() as db:
+            db.execute("INSERT INTO cfg_users(id, username, display_name, password_hash, roles, must_change_password) "
+                       "VALUES (%s,'carol','Carol',%s,ARRAY['TRADING_OPS'],false)", (uuid4(), hash_password(tc.PASSWORD)))
+        self.operating('SOLO', 'SOLO', client=self.sign_in('carol'), status=403)
+        self.operating('SOLO', 'solo', status=422)
+        self.assertEqual(self.operating('SOLO', 'SOLO')['operating'], 'SOLO')
+        audit = self.ok(self.alice.get('/api/config/audit', params={'entity': 'policy', 'entity_id': 'platform_mode'}))['items']
+        self.assertEqual((audit[0]['action'], audit[0]['after_state']), ('OPERATING_PROFILE', {'operating': 'SOLO'}))
+        self.assertEqual(self.ok(self.alice.get('/api/config/overview'))['platform_mode']['operating'], 'SOLO')
+        # SOLO: the same person releases their own held order (reason still asked) …
+        self.ok(self.alice.post(f"/api/trading/orders/{o['id']}/release", json={'reason': 'single user: checked size and price'}))
+        # … and the "second approver" readiness check and LIVE people gate no longer apply.
+        with self.connect() as db:
+            self.assertTrue(platform_mode.second_person_ok(db, 'alice', 'alice'))
+            policy = readiness.live_policy(db)
+        self.assertNotIn('LIVE_NO_SECOND_APPROVER', [c['code'] for c in policy['unmet'] + policy['waived']])
+        # The Development/Production mode is kept when switching profile, and the profile when switching mode.
+        self.mode('DEVELOPMENT')
+        self.assertEqual(self.ok(self.alice.get('/api/config/platform-mode'))['operating'], 'SOLO')
+        # Back to TEAM: a different person again.
+        self.mode('PRODUCTION', confirm='PRODUCTION')
+        self.assertEqual(self.operating('TEAM')['operating'], 'TEAM')
+        with self.connect() as db:
+            self.assertFalse(platform_mode.second_person_ok(db, 'alice', 'alice'))
+            self.assertTrue(platform_mode.second_person_ok(db, 'alice', 'bob'))

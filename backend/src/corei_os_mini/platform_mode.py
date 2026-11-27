@@ -1,4 +1,5 @@
-"""Platform mode: DEVELOPMENT (build and test the platform as a user) or PRODUCTION (real trading).
+"""Platform mode: DEVELOPMENT (build and test the platform as a user) or PRODUCTION (real trading); and the operating
+profile: TEAM (a firm or institution, four-eyes with different people) or SOLO (one person runs everything, 0.68.0).
 
 Why it exists: the owner uses one installation for two jobs — building the trading platform and testing it as a user.
 Production rules (blocking setup gates, longer passwords, no resets) get in the way of testing; testing freedoms
@@ -11,6 +12,10 @@ Purpose:
   - PRODUCTION: today's strict gates; LIVE order sending available through its own controls (Risk approver,
     re-authentication, readiness policy, four-eyes); passwords at least 6 characters; no reset.
   - set_mode / reset_test_data: administrator only, with a reason; audited in the same transaction.
+  - Operating profile (0.68.0): TEAM keeps every "a different person must…" rule. SOLO lets the one person confirm their own
+    change requests, LIVE deployments and workspace starts, held LIVE orders, gate loosening and calculation versions —
+    still with the password and reason each asks for, and audited. second_person_ok() is the one rule every site uses;
+    set_operating() switches it (administrator, reason, typed word, audited, alerted).
 Must never: switch LIVE order sending ON by itself (it only ever forces it OFF); delete order, fill or audit history
 (a reset archives paper accounts and starts fresh copies); allow a reset in PRODUCTION.
 Dependencies: config_store (policies, execution controls, audit, alerts), trading.setup_gates (cache), trading.paper.
@@ -31,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config_store as store
 
 MODES = ('DEVELOPMENT', 'PRODUCTION')
+OPERATING = ('TEAM', 'SOLO')
 KEY = 'platform_mode'
 PRODUCTION_PASSWORD_MIN = 6
 
@@ -44,7 +50,8 @@ def get(db) -> dict:
     v = (row or {}).get('value') or {}
     mode = v.get('mode') if v.get('mode') in MODES else 'PRODUCTION'
     allow = bool(v.get('allow_live_in_development')) and mode == 'DEVELOPMENT'
-    return {'mode': mode, 'allow_live_in_development': allow, 'live_blocked': mode == 'DEVELOPMENT' and not allow,
+    operating = v.get('operating') if v.get('operating') in OPERATING else 'TEAM'
+    return {'mode': mode, 'operating': operating, 'allow_live_in_development': allow, 'live_blocked': mode == 'DEVELOPMENT' and not allow,
             'password_min': password_min_for(mode), 'reset_allowed': mode == 'DEVELOPMENT',
             'reason': v.get('reason'), 'updated_by': row['updated_by'] if row else None,
             'updated_at': row['updated_at'].isoformat() if row and row.get('updated_at') else None,
@@ -109,7 +116,7 @@ def set_mode(actor: str, data: ModeIn) -> dict:
             raise HTTPException(422, 'To switch to Production, confirm by typing PRODUCTION.')
         if allow and not before['allow_live_in_development'] and data.confirm != 'LIVE':
             raise HTTPException(422, 'To allow LIVE order sending in Development, confirm by typing LIVE.')
-        value = {'mode': data.mode, 'allow_live_in_development': allow, 'reason': data.reason}
+        value = {'mode': data.mode, 'allow_live_in_development': allow, 'reason': data.reason, 'operating': before['operating']}
         db.execute('UPDATE cfg_policies SET value=%s, updated_by=%s, updated_at=now(), version=version+1 WHERE key=%s',
                    (Jsonb(value), actor, KEY))
         after = get(db)
@@ -123,6 +130,50 @@ def set_mode(actor: str, data: ModeIn) -> dict:
     from .trading import setup_gates
     setup_gates._cache.clear()
     return {**after, 'live_switched_off': forced}
+
+
+def is_solo(db) -> bool:
+    return get(db)['operating'] == 'SOLO'
+
+
+def second_person_ok(db, first: str | None, actor: str) -> bool:
+    """The one four-eyes rule: a different person, or anyone when the firm runs as a single user (SOLO)."""
+    return not first or first != actor or is_solo(db)
+
+
+class OperatingIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    operating: Literal['TEAM', 'SOLO']
+    confirm: str = Field('', max_length=20)
+    reason: str = Field(min_length=5, max_length=500)
+    version: int = Field(ge=0)
+
+
+def set_operating(actor: str, data: OperatingIn) -> dict:
+    """Administrator only (route). SOLO needs the typed word SOLO: one person may then confirm their own LIVE actions."""
+    with store.transaction('update') as db:
+        db.execute("INSERT INTO cfg_policies(key, value, updated_by) VALUES (%s, %s, 'system') ON CONFLICT (key) DO NOTHING",
+                   (KEY, Jsonb({'mode': 'PRODUCTION'})))
+        row = db.execute('SELECT value, version FROM cfg_policies WHERE key=%s FOR UPDATE', (KEY,)).fetchone()
+        before = get(db)
+        if row['version'] != data.version and not (row['version'] == 1 and data.version == 0):
+            raise HTTPException(409, 'The platform mode was changed by someone else. Reload before changing it.')
+        if data.operating == before['operating']:
+            return before
+        if data.operating == 'SOLO' and data.confirm != 'SOLO':
+            raise HTTPException(422, 'To run as a single user, confirm by typing SOLO.')
+        value = {**(row['value'] or {}), 'operating': data.operating}
+        db.execute('UPDATE cfg_policies SET value=%s, updated_by=%s, updated_at=now(), version=version+1 WHERE key=%s',
+                   (Jsonb(value), actor, KEY))
+        after = get(db)
+        store.audit(db, actor, 'OPERATING_PROFILE', 'policy', KEY, {'operating': before['operating']}, {'operating': after['operating']}, data.reason)
+        from .alerts import enqueue
+        enqueue(db, 'LIVE_CHANGE', 'WARNING', f"Operating profile: {'single user' if data.operating == 'SOLO' else 'team'}",
+                f'By {actor}. ' + ('One person may now confirm their own LIVE actions (password and reason still asked). '
+                                   if data.operating == 'SOLO' else 'LIVE actions need a different person again. ') + f'Reason: {data.reason}')
+    from .trading import setup_gates
+    setup_gates._cache.clear()
+    return after
 
 
 class ResetIn(BaseModel):

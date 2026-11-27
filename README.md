@@ -1557,3 +1557,12 @@ Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh
   safety checks, acknowledgements, typed UPDATE and your password; live steps, log and history.
 * A separate root updater (installed by the deploy) backs up, updates, restarts, verifies and rolls back automatically.
 * Install 0.67.0 by hand once; later releases can be installed from the screen. Design: `docs/UPDATER.md` · DEC-111.
+
+## Team or Single user; flexible configuration — release 0.68.0
+
+* **Settings › Platform mode › Team / Single user**: a single user confirms their own LIVE steps (password and reason still
+  asked, all audited); a team keeps four-eyes with a different person. Combines with Development / Production.
+* Codes, symbols, servers, scopes and links are **changeable with a reason** (audit log); only a server's platform and
+  environment, an account's broker login and usernames stay fixed. Symbol mappings can apply to an **account group**.
+* Market data plans: display name, fixed saving, one-step creation from a broker symbol (instrument + mapping + plan).
+* DEC-112 · GAP register section V.

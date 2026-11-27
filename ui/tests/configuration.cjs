@@ -34,7 +34,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    return r;};
 const intClients=[],intPosts=[],bearerCalls=[],modePuts=[],resets=[],updPosts=[];
 let upd={installed:true,running:{version:'0.66.2',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,blockers:['Not checked yet: press Check now.'],acknowledgements:[{code:'RESTART',text:'Restart 1–3 minutes.'},{code:'PRODUCTION',text:'Production mode.'}],history:[],manual_commands:['git fetch origin'],available:null,status:null,log:''};
-let pm={mode:'PRODUCTION',allow_live_in_development:false,live_blocked:false,password_min:6,reset_allowed:false,version:1,updated_by:'system'};
+let pm={mode:'PRODUCTION',operating:'TEAM',allow_live_in_development:false,live_blocked:false,password_min:6,reset_allowed:false,version:1,updated_by:'system'};
 const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[],paperOrders=[],paperCloses=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
 const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
@@ -54,6 +54,9 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
      upd={...upd,can_update:false,update_running:true,blockers:[],status:{id:'upd-1',kind:'APPLY',state:'RUNNING',from_version:'0.66.2',to_version:'0.67.0',requested_by:'risk-ops',steps:[{name:'Check GitHub',state:'DONE',detail:'0.66.2 → 0.67.0'},{name:'Build',state:'RUNNING',detail:''}]},log:'$ bash scripts/install-workstation.sh'};
      return ok({id:'upd-1',target_version:'0.67.0'});}
    if(url.endsWith('/config/update'))return ok(upd);
+   if(url.endsWith('/config/platform-mode/operating')&&method==='PUT'){const b=JSON.parse(options.body);modePuts.push(b);
+     if(b.operating==='SOLO'&&b.confirm!=='SOLO')return {ok:false,status:422,json:async()=>({detail:'To run as a single user, confirm by typing SOLO.'})};
+     pm={...pm,operating:b.operating,version:pm.version+1};return ok(pm);}
    if(url.endsWith('/config/platform-mode')&&method==='PUT'){const b=JSON.parse(options.body);modePuts.push(b);
      if(b.mode==='PRODUCTION'&&pm.mode!=='PRODUCTION'&&b.confirm!=='PRODUCTION')return {ok:false,status:422,json:async()=>({detail:'To switch to Production, confirm by typing PRODUCTION.'})};
      const dev=b.mode==='DEVELOPMENT',allow=dev&&b.allow_live_in_development;
@@ -847,6 +850,22 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.match(pmPane().textContent,/confirm by typing PRODUCTION/);
  pmAnswers.push('PRODUCTION','go live');button('Switch to Production…').click();for(let i=0;i<4;i++)await tick();
  assert.match(pmPane().textContent,/Now in production mode/);
+ // Team or Single user (0.68.0).
+ assert.match($('[aria-label="Operating profile"]').textContent,/Team.*different person/);
+ pmAnswers.push('SOLO','one trader runs everything');button('Switch to Single user…').click();for(let i=0;i<4;i++)await tick();
+ assert.deepEqual([modePuts.at(-1).operating,modePuts.at(-1).confirm,modePuts.at(-1).reason],['SOLO','SOLO','one trader runs everything']);
+ assert.match($('[aria-label="Operating profile"]').textContent,/Single user.*confirms their own/);
+ assert.ok(button('Switch to Team…'),'can switch back any time');
+ // Identifying fields are changeable; saving asks for a reason that goes to the audit log.
+ nav('Instruments').click();await tick();await tick();
+ vis('.cfg-table tbody tr')[0].click();await tick();
+ assert.match($('.fw').textContent,/Changeable; a reason is asked when saving/);
+ const oldSym=byLabel('Symbol').value;fill(byLabel('Symbol'),oldSym+'X');await tick();
+ pmAnswers.push('clearer broker-neutral name');await submit($('.fw .cfg-form'));for(let i=0;i<3;i++)await tick();
+ const renamed=JSON.parse(requests.filter(r=>r.method==='PUT'&&r.url.includes('/config/instruments/')).at(-1).body);
+ assert.equal(renamed.symbol,oldSym+'X');assert.equal(renamed.reason,'clearer broker-neutral name');
+ $('[aria-label="Close window"]').click();await tick();
+ console.log('PASS: team or single user switch with SOLO typed and a reason; identifying fields change with a reason sent to the audit log.');
  console.log('PASS: platform mode: administrator switches with a reason; Production and LIVE need typed words; reset only in Development, result listed.');
 
  // An observer sees configuration read-only and no Users section.

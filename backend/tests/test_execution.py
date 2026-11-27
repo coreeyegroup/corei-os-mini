@@ -643,7 +643,8 @@ class EndToEnd(Execution):
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) AS n FROM oms_orders WHERE source='PROTECT'").fetchone()['n'], 1)
 
-    def test_realign_and_working_order_rule(self):
+    @patch('corei_os_mini.md.markets.is_open', return_value=True)   # not about market hours; must not depend on the wall clock
+    def test_realign_and_working_order_rule(self, _open):
         connection, a, _b, ins = self.real_account()
         self.start(self.plan(a, ins, 'EU_RA'))
         strat, ver, dep = self.deploy_on(a, ins, sizing={'method': 'FIXED_QTY', 'quantity': '0.10'}, protect={'stop_atr': '2', 'take_atr': '3'})

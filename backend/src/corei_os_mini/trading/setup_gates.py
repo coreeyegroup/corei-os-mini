@@ -157,7 +157,8 @@ def approve_pending(actor: str, reason: str) -> dict:
         pending = store.policy(db, 'setup_gates_pending')
         if not pending:
             raise HTTPException(404, 'No gate change is waiting for approval.')
-        if pending['by'] == actor:
+        from .. import platform_mode
+        if not platform_mode.second_person_ok(db, pending['by'], actor):
             raise HTTPException(422, 'A different person must approve loosening LIVE gates than the one who asked.')
         prior = store.policy(db, 'setup_gates')
         db.execute("UPDATE cfg_policies SET value=%s, updated_by=%s, updated_at=now() WHERE key='setup_gates'", (Jsonb(pending['value']), actor))
@@ -229,7 +230,8 @@ def _compute(db, track: str) -> dict[str, list[dict]]:
     if track in ('DEMO', 'LIVE') and not db.execute("SELECT 1 FROM cfg_alert_channels WHERE status='ACTIVE' LIMIT 1").fetchone():
         items['PEOPLE'].append(_item('PEOPLE', 'No active alert channel: nobody is told when something breaks.',
                                      'Add an e-mail, Telegram or webhook channel in Settings › Alerts and send a test.'))
-    if track == 'LIVE' and len(set(approvers)) < 2:
+    from .. import platform_mode
+    if track == 'LIVE' and len(set(approvers)) < 2 and not platform_mode.is_solo(db):
         items['PEOPLE'].append(_item('PEOPLE', f"Only {len(set(approvers))} person can approve: LIVE four-eyes needs two.",
                                      'Add a second person with the Risk approver (or Administrator) role.'))
 

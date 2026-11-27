@@ -310,12 +310,18 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  hit.dispatchEvent(new w.MouseEvent('mousedown',{bubbles:true}));await settle(2);
  assert.equal($('[aria-label="Broker symbol"]').value,'XAGUSD.r');
  assert.equal($('[aria-label="Plan code"]').value,'VTM_A_XAGUSD');
- button('Create instrument XAGUSD from the source\'s details').click();await settle(3);
+ // One step (0.68.0): saving creates the instrument and its mapping from the source's details, then the plan.
+ assert.ok($('[aria-label="Create the instrument automatically"]').checked,'on by default');
+ fill($('[aria-label="Plan name"]'),'Silver · VTM A');
+ const before=created.length;
+ await submit($('#md-plan-form'));await settle(3);
  assert.deepEqual(catalogCalls.at(-1),{broker_symbol:'XAGUSD.r'});
- assert.equal($('[aria-label="Plan instrument"]').value,'i9');
- assert.match($('[role="status"]').textContent,/Instrument XAGUSD ready/);
+ const sent=created.at(-1);assert.equal(created.length,before+1);
+ assert.equal(sent.instrument_id,'i9');assert.equal(sent.name,'Silver · VTM A');assert.equal(sent.purpose,'TRADING_FEED');
+ for(const k of ['collector_error','health','health_detail','status','id','version','account_code'])assert.ok(!(k in sent),`no read-only field ${k} is sent`);
+ assert.match($('[role="status"]').textContent,/Saved, with its instrument and symbol mapping/);
  $('[aria-label="Close window"]').click();await settle(2);
- console.log('PASS: plan form finds the broker symbol in the source list and creates the missing instrument from it.');
+ console.log('PASS: plan form finds the broker symbol in the source list; saving creates the instrument, its mapping and the plan in one step; only plan fields are sent.');
 
  nav('Controls').click();await settle();
  button('Pause everything…').click();await settle(2);

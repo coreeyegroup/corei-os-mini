@@ -26,7 +26,7 @@ Code = Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pa
 Symbol = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 Frame = Literal['S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
-COLUMNS = ('code', 'account_id', 'broker_symbol', 'instrument_id', 'purpose', 'feed_role', 'data_types', 'bar_timeframes', 'depth_levels',
+COLUMNS = ('code', 'name', 'account_id', 'broker_symbol', 'instrument_id', 'purpose', 'feed_role', 'data_types', 'bar_timeframes', 'depth_levels',
            'schedule', 'window_start', 'window_end', 'window_days', 'conflate_ms', 'hot_days', 'bars_hot_days', 'archive',
            'backfill_from', 'backfill_per_minute', 'max_latency_ms', 'max_gap_seconds', 'max_spread_points', 'stale_seconds', 'on_breach')
 
@@ -34,6 +34,7 @@ COLUMNS = ('code', 'account_id', 'broker_symbol', 'instrument_id', 'purpose', 'f
 class PlanIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     code: Code
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] = ''   # display name (0.68.0)
     account_id: UUID
     broker_symbol: Symbol
     instrument_id: UUID | None = None
@@ -209,7 +210,7 @@ def create(actor: str, data: PlanIn) -> dict:
         return _row(row)
 
 
-def update(actor: str, plan_id: UUID, data: PlanIn, version: int) -> dict:
+def update(actor: str, plan_id: UUID, data: PlanIn, version: int, reason: str = '') -> dict:
     with store.transaction('update') as db:
         before = db.execute('SELECT * FROM md_collection_plans WHERE id=%s FOR UPDATE', (plan_id,)).fetchone()
         if not before:
@@ -219,14 +220,18 @@ def update(actor: str, plan_id: UUID, data: PlanIn, version: int) -> dict:
         if before['status'] == 'ARCHIVED':
             raise HTTPException(409, 'Archived plans are read-only.')
         if before['account_id'] != data.account_id or before['broker_symbol'] != data.broker_symbol:
-            raise HTTPException(409, 'The account and symbol of a plan cannot change; archive it and create a new one.')
+            # Changeable while not collecting (0.68.0). Collected data stays under the old account and symbol.
+            if before['status'] == 'ACTIVE':
+                raise HTTPException(409, 'Pause this plan before changing its account or symbol.')
+            if len(reason.strip()) < 5:
+                raise HTTPException(422, 'Changing the account or symbol needs a reason (at least 5 characters).')
         _check(db, data, plan_id)
         values = _values(data)
         sets = ', '.join(f'{k}=%s' for k in values)
         db.execute(f'UPDATE md_collection_plans SET {sets}, version=version+1, updated_by=%s, updated_at=now() WHERE id=%s',
                    (*values.values(), actor, plan_id))
         after = get_plan(db, plan_id)
-        store.audit(db, actor, 'UPDATE', 'md_plan', plan_id, before, after)
+        store.audit(db, actor, 'UPDATE', 'md_plan', plan_id, before, after, reason)
         return _row(after)
 
 
