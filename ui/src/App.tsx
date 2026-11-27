@@ -414,6 +414,7 @@ export default function App() {
     {section:'Help',label:'Keyboard shortcuts & workbench guide',run:()=>setHelp(true)},
     {section:'Help',label:'Refresh server status',run:()=>void refresh()},
     {section:'Help',label:'About COREI-OS-MINI',run:()=>{goto('Settings','about');go('Settings');}},
+    {section:'Help',label:'Check for updates…',run:()=>{goto('Settings','software-update');go('Settings');}},
   ];
   const badge=(v:View)=>!overview?null:v==='Market data'&&overview.feeds.problems?{n:overview.feeds.problems,tone:'bad'}
     :v==='Configuration'&&overview.approvals?{n:overview.approvals,tone:'warn'}

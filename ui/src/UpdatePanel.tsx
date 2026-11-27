@@ -9,7 +9,7 @@
  * reload when the new version is running; history (audit); manual commands as the fallback.
  * Must never: start anything itself; hide the restart; offer Update while something blocks it.
  * Dependencies: Configuration.api (handles the password prompt on 428), StageShell (Msg, useData, when), Info.
- * Consumers: Configuration (Setup › 7 · Settings › Update).
+ * Consumers: SettingsView (Settings › Software update; Help › Check for updates; About › Check for updates).
  * Architectural position: UI over /api/config/update.
  */
 import { useEffect, useRef, useState } from 'react';
@@ -53,9 +53,9 @@ export default function UpdatePanel({ isAdmin }: { isAdmin: boolean }) {
     <div className="up-versions">
       <div><small>Running</small><b>{u.running.version}</b><code>{u.running.commit}</code></div>
       <span aria-hidden="true">→</span>
-      <div className={newer ? 'new' : ''}><small>GitHub main</small><b>{a.latest_version ?? '—'}</b><code>{(a.latest_sha ?? '').slice(0, 12) || '—'}</code></div>
+      <div className={a.error ? 'err' : newer ? 'new' : ''}><small>GitHub main</small><b>{a.latest_version ?? '—'}</b><code>{(a.latest_sha ?? '').slice(0, 12) || '—'}</code></div>
       <div className="up-meta"><small>Checked {a.checked_at ? when(a.checked_at) : 'never'} · automatic check every 6 hours</small>
-        <span>{newer ? `${a.behind} new commit(s)` : a.checked_at ? 'Up to date' : ''}{a.ci ? ` · GitHub checks ${a.ci.toLowerCase()}` : ''}{a.migrations?.length ? ` · ${a.migrations.length} database change(s)` : ''}</span></div>
+        <span>{a.error ? 'Last check failed' : newer ? `${a.behind} new commit(s)` : a.checked_at ? 'Up to date' : ''}{a.ci ? ` · GitHub checks ${a.ci.toLowerCase()}` : ''}{a.migrations?.length ? ` · ${a.migrations.length} database change(s)` : ''}</span></div>
       <span className="up-actions">
         <button disabled={busy || running || !u.installed} onClick={() => void check()}>Check now</button>
         <button className="primary" disabled={busy || !u.can_update || !!form} onClick={() => setForm({ reason: '', confirm: '', acks: [] })}>Update now…</button>

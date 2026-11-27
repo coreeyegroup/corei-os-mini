@@ -47,6 +47,8 @@ MAX_REQUEST = 8192
 REQUEST_MAX_AGE = 15 * 60
 ENV_FILE = Path('/etc/corei-os-mini/workstation.env')
 PORT = 18786
+# runuser lives in /usr/sbin on Ubuntu (0.67.1: without the sbin folders every check failed with "No such file: 'runuser'").
+SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 
 def now() -> str:
@@ -75,7 +77,7 @@ class Updater:
         cmd = (['runuser', '-u', self.user, '--', 'env', f'HOME={self.pw.pw_dir}'] if as_user and os.geteuid() == 0 else []) + args
         self._log('$ ' + ' '.join(args))
         result = self.runner(cmd, cwd=str(self.repo), capture_output=True, text=True, timeout=timeout,
-                             env=env if env is not None else {'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'})
+                             env=env if env is not None else {'PATH': SAFE_PATH, 'LANG': 'C.UTF-8'})
         if result.stdout:
             self._log(result.stdout[-20000:])
         if result.stderr:
@@ -186,7 +188,7 @@ class Updater:
 
     # ----- apply -----
     def env(self) -> dict:
-        env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+        env = {'PATH': SAFE_PATH, 'LANG': 'C.UTF-8'}
         with contextlib.suppress(OSError):
             for line in ENV_FILE.read_text().splitlines():
                 key, sep, value = line.strip().partition('=')
