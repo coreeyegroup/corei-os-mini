@@ -354,12 +354,14 @@ class SourceWorker(threading.Thread):
                 self.proc.kill()
 
     def _config_stamp(self) -> Any:
-        """Changes when the account, its connection (method, bridge, addresses) or either's saved login changes."""
+        """Changes when the account, its connection (method, bridge, addresses), either's saved login, or the account's
+        daily broker session (Upstox login, 0.66.2) changes."""
         try:
             with cfg.transaction('read') as db:
                 row = db.execute(
                     'SELECT a.version AS av, a.updated_at AS au, c.version AS cv, c.updated_at AS cu, c.adapter, '
                     '(SELECT max(updated_at) FROM cfg_credentials k WHERE k.account_id=a.id OR k.connection_id=c.id) AS ku, '
+                    '(SELECT max(obtained_at) FROM cfg_session_tokens s WHERE s.account_id=a.id) AS su, '
                     '(SELECT max(updated_at)::text || count(*) FROM cfg_account_routes r WHERE r.account_id=a.id) AS ru '
                     'FROM cfg_accounts a JOIN cfg_connections c ON c.id=a.connection_id WHERE a.id=%s', (self.account_id,)).fetchone()
             return tuple(row.values()) if row else None
