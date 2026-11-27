@@ -183,7 +183,7 @@ class Updater(unittest.TestCase):
 
     def runner(self, fail=None):
         def run(cmd, **kw):
-            args = cmd[cmd.index('--') + 3:] if '--' in cmd else cmd
+            args = cmd[cmd.index('--') + 3:] if cmd[0] == 'runuser' else cmd   # runuser -u USER -- env HOME=… <command>
             if args[0] == 'git':
                 return subprocess.run(args, **kw)
             self.calls.append(' '.join(args[:2]))
