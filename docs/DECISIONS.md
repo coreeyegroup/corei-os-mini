@@ -387,3 +387,31 @@ Decision:
    `COREI_PASSWORD_MIN_LENGTH` for production.
 
 Status: accepted. Guide: `docs/INTEGRATION_GATEWAY.md`.
+
+## DEC-110 · Platform mode: Development and Production (release 0.66.0, 27 Nov 2026)
+
+Context: the owner uses one installation for two jobs — building the trading platform, and testing it as a user —
+and later for real trading. Production rules get in the way of testing; testing freedoms must never reach real money.
+
+Decision (owner, 27 Nov 2026):
+1. **One switch, administrator only**, with a reason, audited in the same transaction, alerted (LIVE_CHANGE). Production
+   needs the typed word PRODUCTION. Migration 053 starts every installation in **Production**, so deploying changes
+   nothing by itself.
+2. **Development:** PAPER and DEMO setup gates only warn; LIVE order sending is turned **OFF** on entering Development and
+   cannot be switched on (switch, pre-trade check and last check before sending all refuse, `LIVE_OFF_IN_DEVELOPMENT`);
+   passwords need 2 characters; test data can be reset; a TEST banner shows on every screen.
+3. **"Allow LIVE in Development"** (owner's request "give option open to ON"): administrator, reason, typed word LIVE.
+   It only lifts the Development block; LIVE order sending is still turned on separately with all its checks (Risk
+   approver, password, readiness policy, four-eyes), and LIVE setup gates keep their levels. Removing the allowance
+   turns LIVE order sending off again. The banner says "LIVE allowed — real money possible".
+4. **Production:** today's strict gates; LIVE available through its own controls; passwords need 6 characters
+   (`COREI_PASSWORD_MIN_LENGTH` if higher); no reset. Returning to Production never turns LIVE on.
+5. **Improvised, safety:** LIVE gates are not relaxed in Development (only PAPER/DEMO warn), because "Allow LIVE in
+   Development" would otherwise mean real orders with warn-only gates. The configured gate levels are never overwritten:
+   Development lowers them only when read.
+6. **Improvised, audit:** "reset test data" archives each active paper account with its full history and starts a
+   fresh copy (same settings and amount, code `_R2`, `_R3`…); accounts with active runs are skipped and listed.
+   Orders, fills and audit rows are never deleted (they are protected and insert-only by design).
+7. Existing passwords keep working; the minimum applies when a password is set.
+
+Status: accepted.

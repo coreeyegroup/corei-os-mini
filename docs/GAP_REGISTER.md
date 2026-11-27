@@ -467,3 +467,17 @@ Open gaps:
 | IG-G5 | Backtests through the gateway | OPEN |
 | IG-G6 | LIVE, approvals, release and amend through integrations | NOT OFFERED by design (DEC-109) |
 | IG-G7 | Rate limit counted from the usage table (one database) — fine for one server, not for several | ACCEPTED for the mini platform |
+
+## T. Platform mode — 27 Nov 2026 (release 0.66.0)
+
+| ID | Criterion | Status |
+|---|---|---|
+| PM-1 | Starts in Production; only an administrator switches; reason; typed PRODUCTION; stale version refused; audited | TESTED (`test_starts_in_production_and_only_an_administrator_switches`) |
+| PM-2 | Passwords: 6 in Production, 2 in Development | TESTED (same test; gateway test runs in Development) |
+| PM-3 | Entering Development turns LIVE off (audited); switch, pre-trade check and last check refuse LIVE; LIVE allowance needs typed LIVE; removing it turns LIVE off; Production never turns LIVE on | TESTED (`test_development_keeps_live_off_unless_allowed`) |
+| PM-4 | Development: PAPER/DEMO gates warn only; LIVE gates and configured levels unchanged | TESTED (`test_development_gates_only_warn_but_live_gates_keep_their_levels`) |
+| PM-5 | Reset: refused in Production, needs RESET, archives with history, fresh copies `_R2`/`_R3` | TESTED (`test_reset_test_data_only_in_development_and_keeps_history`); skipping an account with active runs relies on the existing clone check — not separately tested |
+| PM-6 | TEST banner on every screen in Development; Platform mode page | TESTED (UI `workbench.cjs`, `configuration.cjs`, mocked server) |
+| PM-7 | Behaviour on the live server after deploy | NEEDS VERIFICATION by the owner |
+
+Open: reset covers paper accounts only (not DEMO broker positions, scan runs or signals) — PM-G1, by design for now.

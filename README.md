@@ -1541,3 +1541,12 @@ Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh
   Bearer Auth › the raw key.
 * **Passwords:** minimum 2 characters (raise with `COREI_PASSWORD_MIN_LENGTH`).
 * Guide: `docs/INTEGRATION_GATEWAY.md` · decision DEC-109 · gaps: GAP register section S.
+
+## Platform mode: Development and Production — release 0.66.0
+
+* **Setup › 9 · Admin › Platform mode** (administrator, with a reason). Starts in **Production** after deploy.
+* **Development:** PAPER and DEMO setup gates only warn; LIVE order sending is turned off and stays off unless
+  "Allow LIVE in Development" is on (typed LIVE); passwords need 2 characters; **Reset test data** starts paper accounts
+  fresh (old ones archived with history); a **TEST** banner on every screen.
+* **Production:** strict gates; LIVE through Order sending with all its checks; passwords need 6 characters; no reset.
+* Decision DEC-110 · gaps: GAP register section T.

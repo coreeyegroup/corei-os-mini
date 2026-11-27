@@ -90,7 +90,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    attention:[{severity:'CRITICAL',area:'Market data',title:'Broker refused the connector version',detail:'Update the SDK.',goto:{view:'Market data',section:'live'}}]};
  const prefPuts=[];let loggedOut=0;
  sw.fetch=async(url,o={})=>{const j=b=>({ok:true,status:200,json:async()=>b});
-   if(url.includes('/config/overview'))return j(overview);
+   if(url.includes('/config/overview'))return j(JSON.parse(JSON.stringify(overview)));
    if(url.includes('/trading/topbar'))return j({kill_switches:{ACCOUNT:1},desks:{RUNNING:2,PAUSED:1},unknown_orders:1,approvals_waiting:0,server_time:'2026-11-26T05:00:00Z'});
    if(url.includes('/operator/prefs')){if(o.method==='PUT')prefPuts.push([url.split('/prefs/')[1],JSON.parse(o.body).value]);return j({});}
    if(url.includes('/operator/logout')){loggedOut++;return j({});}
@@ -247,10 +247,22 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const ib=sw.document.querySelector('.group.focused .stage-head .info-btn');assert.ok(ib,'stage header has ⓘ');assert.equal(sw.document.querySelector('.group.focused .st-question'),null,'no always-on stage text');
  ib.click();await tick();assert.match(sw.document.querySelector('.info-pop').textContent,/This stage answers:/);
  assert.ok(sw.document.querySelector('.app.help-icon'));
+ // Platform mode (0.66.0): no banner in Production; a TEST banner on every screen in Development, linking to Platform mode.
+ assert.equal(sw.document.querySelector('.test-banner'),null,'no banner in Production');
+ overview.platform_mode={mode:'DEVELOPMENT',allow_live_in_development:false,live_blocked:true};
+ sw.dispatchEvent(new sw.Event('corei-session'));for(let i=0;i<4;i++)await tick();
+ const banner=sw.document.querySelector('.test-banner');assert.ok(banner,'TEST banner in Development');
+ assert.match(banner.textContent,/TEST.*Development mode.*LIVE order sending off/);
+ assert.ok(banner.previousElementSibling.matches('header.top')&&banner.nextElementSibling.matches('.shell'),'the banner sits above every screen');
+ overview.platform_mode.allow_live_in_development=true;sw.dispatchEvent(new sw.Event('corei-session'));for(let i=0;i<4;i++)await tick();
+ assert.match(sw.document.querySelector('.test-banner').textContent,/LIVE allowed — real money possible/);
+ delete overview.platform_mode;sw.dispatchEvent(new sw.Event('corei-session'));for(let i=0;i<4;i++)await tick();
+ assert.equal(sw.document.querySelector('.test-banner'),null,'banner gone after switching back to Production');
  tb.querySelector('[aria-label="Account yatheesh"]').click();await tick();
  [...tb.querySelectorAll('[role="menu"] button')].find(b=>b.textContent==='Sign out').click();await tick();await tick();
  assert.equal(loggedOut,1,'sign out from the account menu');
  assert.deepEqual(shErrors,[]);
+ console.log('PASS: TEST banner on every screen in Development (LIVE state shown), none in Production.');
  console.log('PASS: top bar: kill switches and unknown orders always shown, market clock, layout toggles, customise menu, notifications, account menu; Settings: search, categories, scopes, modified, reset, saved to the account, side bar contents; menus View/Go/Window/Help and compact ☰; secondary side bar; ⓘ help.');
  console.log('PASS: shell shows live status chips and badges, each screen opens as its own workspace tab, Ctrl+K goes straight to a section, attention list, trading flow stages with build plan.');sw.close();
 })().catch(e=>{console.error(String(e&&e.message||e).slice(0,3000));process.exit(1)});

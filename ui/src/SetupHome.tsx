@@ -92,7 +92,7 @@ export function SetupGates({ me, roles }: { me: string; roles: string[] }) {
   if (!st) return <div className="cfg-pane"><Msg error={error} />{!error && <p role="status">Loading…</p>}</div>;
   if (!st.tracks || !st.policy) return <div className="cfg-pane"><p role="alert" className="cfg-error">The gate settings could not be read from the server (an older server version?). Update the server, then reload.</p></div>;
   const pol = st.policy;
-  const cur = levels ?? pol.levels;
+  const cur = levels ?? pol.configured_levels ?? pol.levels;
   const act = async (f: () => Promise<Row>, ok: string) => { try { await f(); setMsg({ error: '', notice: ok }); reload(); } catch (e) { setMsg({ error: (e as Error).message, notice: '' }); } };
   const reasonOf = (q: string) => { const r = window.prompt(q + ' (at least 5 characters)')?.trim(); if (r !== undefined && r.length < 5) setMsg({ error: 'Nothing was done: a reason of at least 5 characters is needed.', notice: '' }); return r && r.length >= 5 ? r : ''; };
   const save = () => { const reason = reasonOf('Reason for changing the gate levels (audit log)'); if (!reason) return;
@@ -109,6 +109,7 @@ export function SetupGates({ me, roles }: { me: string; roles: string[] }) {
         <button onClick={() => { const r = reasonOf('Reason for rejecting'); if (r) void act(() => api('trading/setup/policy/reject', 'POST', { reason: r }), 'Rejected.'); }}>Reject</button></>}</div>}
     <section aria-label="Gate levels"><h3>How strictly each step holds actions</h3>
       <p className="cfg-note">Checked when order sending is switched on, a workspace starts and a deployment is activated; hard gates also at the order dispatcher. Overrides are scoped to one gate and track (optionally one account) and expire.</p>
+      {pol.development_mode && <p className="cfg-note" role="note">Development mode: PAPER and DEMO gates below only warn until the platform is switched to Production (Settings › Platform mode). LIVE gates apply as set.</p>}
       <div className="su-row"><label>Preset <select aria-label="Gate preset" disabled={!canSet} value={preset ?? pol.preset} onChange={e => { setPreset(e.target.value); setLevels({}); }}>
         <option value="RECOMMENDED">Recommended</option><option value="ALL_WARN">All warn (flexible)</option><option value="STRICT">Strict</option><option value="ALL_OFF">All off (sandbox)</option></select></label>
         <span className="cfg-note">Target track (where people land until it is set up): <b>{pol.target_track}</b> · overrides last {pol.default_hours} h by default, at most {pol.max_hours.PAPER} / {pol.max_hours.DEMO} / {pol.max_hours.LIVE} h (Paper / DEMO / LIVE).</span></div>

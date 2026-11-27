@@ -32,7 +32,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
-const intClients=[],intPosts=[],bearerCalls=[];
+const intClients=[],intPosts=[],bearerCalls=[],modePuts=[],resets=[];
+let pm={mode:'PRODUCTION',allow_live_in_development:false,live_blocked:false,password_min:6,reset_allowed:false,version:1,updated_by:'system'};
 const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[],paperOrders=[],paperCloses=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
 const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
@@ -47,6 +48,13 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
     LIVE:{done:0,total:1,complete:false,next:null,gates:[gate('PEOPLE',1,'People and alerts','BLOCKED','SUPERVISED',[{gate:'PEOPLE',text:'Only 1 person can approve.',fix:'Add a second approver.',goto:{view:'Configuration',section:'users'}}])]}}});
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
+   if(url.endsWith('/config/platform-mode')&&method==='PUT'){const b=JSON.parse(options.body);modePuts.push(b);
+     if(b.mode==='PRODUCTION'&&pm.mode!=='PRODUCTION'&&b.confirm!=='PRODUCTION')return {ok:false,status:422,json:async()=>({detail:'To switch to Production, confirm by typing PRODUCTION.'})};
+     const dev=b.mode==='DEVELOPMENT',allow=dev&&b.allow_live_in_development;
+     pm={...pm,mode:b.mode,allow_live_in_development:allow,live_blocked:dev&&!allow,password_min:dev?2:6,reset_allowed:dev,version:pm.version+1,updated_by:'risk-ops',reason:b.reason};
+     return ok({...pm,live_switched_off:dev&&!allow});}
+   if(url.endsWith('/config/platform-mode/reset-test-data')){resets.push(JSON.parse(options.body));return ok({reset:[{old:'PAPER_USD',new:'PAPER_USD_R2'}],skipped:[{code:'PAPER_RUN',why:'PAPER_RUN still has 1 active run(s).'}]});}
+   if(url.endsWith('/config/platform-mode'))return ok(pm);
    if(url.includes('/api/v1/automation/openapi.json'))return ok({paths:{'/api/v1/automation/auth/test':{get:{'x-required-scopes':[]}},
      '/api/v1/automation/market-data/snapshot':{post:{summary:'Market snapshot','x-required-scopes':['market_data.snapshot'],requestBody:{content:{'application/json':{}}}}}}});
    if(url.includes('/api/v1/automation/')){bearerCalls.push({url,headers:options.headers||{},credentials:options.credentials});
@@ -813,6 +821,27 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  [...$('.int-explorer nav').querySelectorAll('button')].find(b=>/market-data\/snapshot/.test(b.textContent)).click();await tick();
  assert.match($('[aria-label="Endpoint detail"]').textContent,/POST.*PermissionMARKET_DATA\.SNAPSHOT|Permissionmarket_data\.snapshot/i);
  console.log('PASS: integrations: connection from a profile (LIVE permission disabled), key shown once, real Bearer test without the session, API explorer with required permissions.');
+
+ // Platform mode (0.66.0): administrator switches with a reason; Production needs PRODUCTION typed; LIVE in Development needs LIVE; reset needs RESET.
+ const pmAnswers=[];w.prompt=()=>pmAnswers.shift()??null;w.confirm=()=>true;
+ nav('Platform mode').click();for(let i=0;i<4;i++)await tick();
+ const pmPane=()=>$('[aria-label="Platform mode"]');
+ assert.match(pmPane().textContent,/Production.*Real trading rules/);
+ assert.match(pmPane().querySelector('[aria-label="What each mode does"]').textContent,/PasswordsAt least 2 charactersAt least 6 characters/);
+ assert.equal(button('Reset test data…'),undefined,'no reset in Production');
+ pmAnswers.push('start testing');button('Switch to Development…').click();for(let i=0;i<4;i++)await tick();
+ assert.deepEqual([modePuts[0].mode,modePuts[0].allow_live_in_development,modePuts[0].reason,modePuts[0].version],['DEVELOPMENT',false,'start testing',1]);
+ assert.match(pmPane().textContent,/LIVE order sending was turned off/);
+ pmAnswers.push('nope','try live');button('Allow LIVE in Development…').click();for(let i=0;i<4;i++)await tick();
+ assert.deepEqual([modePuts[1].allow_live_in_development,modePuts[1].confirm],[true,'nope'],'the typed word is sent; the server decides');
+ pmAnswers.push('RESET','clean slate');button('Reset test data…').click();for(let i=0;i<4;i++)await tick();
+ assert.deepEqual(resets[0],{confirm:'RESET',reason:'clean slate'});
+ assert.match($('[aria-label="Reset result"]').textContent,/PAPER_USDarchived · fresh copy PAPER_USD_R2PAPER_RUNskipped: PAPER_RUN still has 1 active run/);
+ pmAnswers.push('production','go live');button('Switch to Production…').click();for(let i=0;i<4;i++)await tick();
+ assert.match(pmPane().textContent,/confirm by typing PRODUCTION/);
+ pmAnswers.push('PRODUCTION','go live');button('Switch to Production…').click();for(let i=0;i<4;i++)await tick();
+ assert.match(pmPane().textContent,/Now in production mode/);
+ console.log('PASS: platform mode: administrator switches with a reason; Production and LIVE need typed words; reset only in Development, result listed.');
 
  // An observer sees configuration read-only and no Users section.
  session.roles=['OBSERVER'];if($('[aria-label="Close window"]'))$('[aria-label="Close window"]').click();await tick();

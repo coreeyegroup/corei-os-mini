@@ -247,7 +247,7 @@ export const DESTINATIONS: { view: View; section?: string; label: string; group:
   { view: 'Settings', label: 'Appearance & layout', group: 'Settings', keywords: 'theme font density' },
 ];
 
-export type Overview = {
+export type Overview = { platform_mode?: { mode: 'DEVELOPMENT' | 'PRODUCTION'; allow_live_in_development: boolean; live_blocked: boolean; updated_by?: string | null; updated_at?: string | null };
   user: { username: string; roles: string[] };
   feeds: { active_plans: number; collectors: number; live: number; problems: number; paused: boolean };
   order_sending: { environment: string; enabled: boolean }[];
@@ -289,7 +289,7 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['6 · Run', [['@My Workspaces:desks', 'Workspaces ↗'], ['controls', 'Order sending']]],
   ['7 · Settings', [['approvals', 'Approvals (four-eyes)'], ['alerts', 'Alerts'], ['users', 'Users & roles']]],
   ['8 · Integrate', [['integrations', 'Integrations']]],
-  ['9 · Admin', [['audit', 'Audit log'], ['database', 'Database']]],
+  ['9 · Admin', [['mode', 'Platform mode'], ['audit', 'Audit log'], ['database', 'Database']]],
 ];
 /** Open a Setup menu item: a Setup section, or another stage's page for "@View:section". */
 export function openSetupItem(id: string, local: (id: string) => void) {
