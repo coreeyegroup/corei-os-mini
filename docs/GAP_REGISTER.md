@@ -423,3 +423,16 @@ Database screen's intended two-column layout). UI tests 77/77.
 | CD-3 | Side bar 38% of a narrow window | DONE 0.64.0 (capped ≈ 26%) |
 | CD-4 | Market data tiles with clipped labels and a grey filler cell | DONE 0.64.0 |
 | CD-5 | Competing style layers | PARTIAL — Settings consolidated; consolidating every component into one stylesheet is a proposal (no visible change, removes the cause for good) |
+
+## R. Production setup, stage 0 — 27 Nov 2026 (release 0.64.1)
+
+Guided production setup started (plan: claude.ai project doc `claude/production-setup-plan-2026-11-27.md`). Read-only
+check of the live system: Paper 5/5, DEMO 3/8, LIVE 4/8; LIVE held by trading permission, hard/supervised gates and
+the pre-LIVE readiness policy.
+
+| ID | Gap | Status |
+|---|---|---|
+| PS-1 | Setup path listed one missing trading symbol once per strategy (8× on the live system) | DONE 0.64.1 (`test_one_missing_trading_symbol_is_reported_once_not_per_strategy`, fails on 0.64.0 with 8 copies) |
+| PS-2 | No exchange trading calendar for India LIVE (build spec W1-6) | OPEN — before India LIVE |
+| PS-3 | No per-account entitlements (W1-7) | OPEN — before LIVE |
+| PS-4 | No PENDING_REPLACE (W1-1) | OPEN — before any LIVE order modify |

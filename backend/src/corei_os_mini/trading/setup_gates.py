@@ -259,7 +259,8 @@ def _compute(db, track: str) -> dict[str, list[dict]]:
                                           'Markets › Symbol mappings: map it on a data connection (usage Market data or Both).',
                                           instrument=i, labels={'instrument': sym}))
     if track != 'PAPER':
-        for acc, ins, _s, _v in sorted(use['pairs']):
+        # One finding per account and instrument (several strategies on the same pair need the same one mapping).
+        for acc, ins in sorted({(acc, ins) for acc, ins, _s, _v in use['pairs']}):
             a = by_id.get(acc)
             if a and (str(a['connection_id']), ins) not in trade_map:
                 items['SYMBOLS'].append(_item('SYMBOLS', f"{names.get(ins, ins)} on {a['code']}: no trading symbol on its connection.",
