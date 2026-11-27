@@ -307,6 +307,19 @@ class ConfigurationPostgresTests(unittest.TestCase):
         'accounts': ('connection_id', 'code', 'name', 'external_account_id', 'base_currency', 'trading_permission', 'status'),
     }
 
+    def test_mt5_connection_with_bridge_token_can_be_edited(self):
+        # 0.66.1 regression: saving clock or order-rate changes on an MT5 connection with a stored bridge token was refused
+        # ("The stored credential does not match the new authentication method").
+        provider = self.post('providers', dict(code='VTM', name='VT Markets', kind='BROKER'))
+        mt5 = self.post('connections', dict(provider_id=provider['id'], code='VTM_MT5_DEMO', name='VTMARKET MT5 demo', platform='MT5',
+                                            environment='DEMO', purpose='BOTH', adapter='TERMINAL_BRIDGE',
+                                            settings={**MT5_SETTINGS, 'bridge': {'host': '127.0.0.1', 'port': 9443, 'fingerprint': 'AA:' * 31 + 'AA'}}))
+        cpath = f"/api/config/connections/{mt5['id']}/credential"
+        self.assertEqual(self.client.put(cpath, json={'credential': {'kind': 'BRIDGE_TOKEN', 'token': 't' * 40}}).status_code, 200)
+        edited = self.put('connections', mt5, {'name': 'VT Markets MT5 demo · VTMarkets-Demo', 'clock_source': 'BROKER_LOGIN',
+                                               'max_orders_per_second': '5', 'max_order_burst': 10})
+        self.assertEqual((edited['name'], edited['clock_source'], edited['max_order_burst']), ('VT Markets MT5 demo · VTMarkets-Demo', 'BROKER_LOGIN', 10))
+
     def test_full_configuration_lifecycle(self):
         provider = self.post('providers', {'code': 'icm', 'name': 'IC Markets', 'kind': 'BROKER'})
         self.assertEqual(provider['code'], 'ICM')
