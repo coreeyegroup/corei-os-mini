@@ -1,4 +1,4 @@
-# Settings › Update — design (release 0.67.0, DEC-111)
+# Settings › Software update — design (release 0.67.0, moved to the main Settings in 0.67.1; DEC-111)
 
 ## Goal
 Install a newer COREI-OS-MINI release from the workstation, safely: no SSH for routine updates, never an update that
@@ -46,6 +46,7 @@ Browser (admin) ──▶ workstation (no root, read-only system)            roo
   `_ROLLED_BACK`, `_FAILED`, `_REFUSED`) is audited once with an alert.
 
 ## Options and controls on the screen
+Where: **Settings › Software update** (main Settings), **Help › Check for updates…**, **Settings › About › Check for updates…**.
 Running vs GitHub version · Check now · automatic check every 6 h · what's new (commits, database changes, GitHub checks) ·
 blockers · Update now (acknowledgements, reason, UPDATE, password) · live steps and log · reload when the new version runs ·
 history · manual commands.

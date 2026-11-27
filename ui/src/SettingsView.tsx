@@ -5,7 +5,8 @@
  * confirmation, start page, the top bar's contents and links to the firm's own settings were missing or scattered.
  * Purpose: browser settings (appearance, layout: passed in from the shell), account settings (userSettings: follow the
  * person to any browser), keyboard shortcuts (from the command list), firm settings (links to the pages that own
- * them, with who may change them), and About (version, schema, server).
+ * them, with who may change them), Software update (UpdatePanel: check GitHub, install with safety checks; 0.67.1) and
+ * About (version, schema, server, Check for updates).
  * Must never: change trading state; change a firm setting here (firm settings open their own audited pages).
  * Dependencies: userSettings, nav.goto, StageShell.useData. Consumers: App (view "Settings").
  * Architectural position: UI preferences.
@@ -14,6 +15,7 @@ import { isValidElement, useMemo, useState, type ReactNode } from 'react';
 import { goto, useSection } from './nav';
 import type { View } from './layout';
 import { useData, type Row } from './StageShell';
+import UpdatePanel from './UpdatePanel';
 import { defaultAppearance, type Appearance } from './appearance';
 import { SETTINGS, isModified, resetAll, resetSetting, setSetting, setting, useSettings, type SettingDef } from './userSettings';
 
@@ -39,7 +41,7 @@ const FIRM: [string, string, View, string, string][] = [
   ['VaR settings', 'Value-at-risk method, horizon and confidence.', 'Risk', 'var-settings', 'Risk approver'],
   ['Audit log', 'Every change with who, when and why.', 'Configuration', 'audit', 'Read: everyone'],
 ];
-export const CATS = ['Appearance', 'Layout', 'Time & region', 'Trading', 'Startup', 'Top bar', 'Keyboard shortcuts', 'Firm settings', 'About'];
+export const CATS = ['Appearance', 'Layout', 'Time & region', 'Trading', 'Startup', 'Top bar', 'Keyboard shortcuts', 'Firm settings', 'Software update', 'About'];
 export const catId = (c: string) => c.toLowerCase().replace(/[^a-z]+/g, '-');
 const SCOPE_LABEL = { BROWSER: 'this browser', ACCOUNT: 'my account', FIRM: 'firm' } as const;
 
@@ -95,7 +97,7 @@ export default function SettingsView(p: Props) {
       .map(([k, label, min, max, def]) => ({ cat: 'Layout', id: k, label, description: `${min}–${max} px.`, modified: l[k] !== def, reset: () => p.setLayout({ [k]: def }),
         control: <><input aria-label={label} type="range" min={min} max={max} value={l[k]} onChange={e => p.setLayout({ [k]: Number(e.target.value) })} /><output>{l[k]} px</output></> })),
   ];
-  const counts = useMemo(() => Object.fromEntries(CATS.map(c => [c, c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut).length : c === 'Firm settings' ? FIRM.length : c === 'About' ? 1
+  const counts = useMemo(() => Object.fromEntries(CATS.map(c => [c, c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut).length : c === 'Firm settings' ? FIRM.length : c === 'About' || c === 'Software update' ? 1
     : browser.filter(b => b.cat === c).length + SETTINGS.filter(s => s.category === c).length])), [p.shortcuts]); // eslint-disable-line react-hooks/exhaustive-deps
   const show = (c: string) => query ? true : c === cat;
   const modifiedCount = SETTINGS.filter(s => isModified(s.id)).length + browser.filter(b => b.modified).length;
@@ -116,8 +118,10 @@ export default function SettingsView(p: Props) {
             ...(c === 'Keyboard shortcuts' ? p.shortcuts.filter(s => s.shortcut && hit(s.label, s.section, c)).map(s => <div key={s.label} className="set-row set-kbd"><span>{s.label}</span><small>{s.section}</small><kbd>{s.shortcut}</kbd></div>) : []),
             ...(c === 'Firm settings' ? FIRM.filter(f => hit(f[0], f[1], c)).map(([label, d, view, section, who]) =>
               <Row_ key={label} id={section} label={label} description={`${d} Changed by: ${who}.`} scope="FIRM"><button onClick={() => goto(view, section)}>Open ↗</button></Row_>) : []),
-            ...(c === 'About' && hit('about version schema server', c) ? [<div key="about" className="set-row set-about"><div className="set-title"><b>COREI-OS-MINI</b></div>
-              <p className="set-desc">Version {about?.release ?? '—'} · schema {about?.schema ?? '—'} · build {about?.commit ?? '—'}. Your roles: {p.roles.join(', ') || '—'}.</p></div>] : []),
+            ...(c === 'Software update' && hit('software update upgrade version github release', c) ? [<div key="update" className="set-update"><UpdatePanel isAdmin={p.roles.includes('ADMIN')} /></div>] : []),
+            ...(c === 'About' && hit('about version schema server update', c) ? [<div key="about" className="set-row set-about"><div className="set-title"><b>COREI-OS-MINI</b></div>
+              <p className="set-desc">Version {about?.release ?? '—'} · schema {about?.schema ?? '—'} · build {about?.commit ?? '—'}. Your roles: {p.roles.join(', ') || '—'}.</p>
+              <button onClick={() => { setQ(''); setCat('Software update'); }}>Check for updates…</button></div>] : []),
           ];
           if (!rows.length) return null;
           const resettable = c === 'Appearance' ? p.resetAppearance : c === 'Layout' ? p.resetLayout : SETTINGS.some(s => s.category === c) ? () => resetAll(c) : null;

@@ -275,3 +275,14 @@ class Updater(unittest.TestCase):
         (self.inbox / 'request.json').symlink_to(target)
         self.assertEqual(self.make().handle(), 1)
         self.assertIn('cannot be opened safely', self.status()['error'])
+
+
+class UpdaterPath(unittest.TestCase):
+    def test_commands_find_runuser_in_sbin(self):
+        """0.67.1 regression: on the server every check failed with "No such file or directory: 'runuser'" (/usr/sbin)."""
+        seen = []
+        u = updater.Updater(Path('/tmp'), os.environ.get('USER') or 'root', Path('/tmp'), Path('/tmp'),
+                            runner=lambda cmd, **kw: seen.append(kw['env']['PATH']) or subprocess.CompletedProcess(cmd, 0, '', ''))
+        u.run(['true'])
+        self.assertIn('/usr/sbin', seen[0].split(':'))
+        self.assertIn('/usr/sbin', u.env()['PATH'].split(':'))

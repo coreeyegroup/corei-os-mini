@@ -15,7 +15,7 @@ Must never: run git, a build or a deployment; write anywhere but the inbox; acce
 commit the updater found; hide that trading is interrupted for a minute or two during the restart.
 Dependencies: config_store (audit, transaction), alerts, platform_mode, the updater's inbox/outbox folders.
 Consumers: controls_api (/api/config/update…), ui/src/UpdatePanel.tsx.
-Architectural position: operations; Stage 7 · Settings.
+Architectural position: operations; Settings › Software update (main Settings).
 """
 from __future__ import annotations
 

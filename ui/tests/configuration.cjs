@@ -258,7 +258,7 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.match($('[aria-label="Setup path"]').textContent,/Next step · Risk: ICM_DEMO has no MAX_DAILY_LOSS/);
  assert.match($('[aria-label="Track"]').textContent,/Broker DEMO 1\/3 · target/);
  assert.match($('.su-steps').textContent,/✕2 · Risk.*soft.*blocked/);
- assert.deepEqual([...qa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['1 · Setup','2 · Connect','3 · Markets','4 · Risk','5 · Strategies','6 · Run','7 · Settings','8 · Integrate','9 · Admin']);
+ assert.deepEqual([...qa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['1 · Setup','2 · Connect','3 · Markets','4 · Risk','5 · Strategies','6 · Run','7 · Team & alerts','8 · Integrate','9 · Admin']);
  const beforeOv=requests.filter(r=>r.method!=='GET').length;
  w.prompt=()=>'ok';[...qa('.su-items button')].find(b=>/override for ICM_DEMO only/.test(b.textContent)).click();await tick();await tick();
  assert.equal(requests.filter(r=>r.method!=='GET').length,beforeOv,'a too-short reason asks nothing');
@@ -848,26 +848,6 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  pmAnswers.push('PRODUCTION','go live');button('Switch to Production…').click();for(let i=0;i<4;i++)await tick();
  assert.match(pmPane().textContent,/Now in production mode/);
  console.log('PASS: platform mode: administrator switches with a reason; Production and LIVE need typed words; reset only in Development, result listed.');
-
- // Settings › Update (0.67.0): check, blockers, acknowledgements + typed UPDATE, then live steps.
- nav('Update').click();for(let i=0;i<4;i++)await tick();
- const upPane=()=>$('[aria-label="Update"]');
- assert.match($('[aria-label="Why it cannot update now"]').textContent,/Not checked yet/);
- assert.ok(button('Update now…').disabled,'nothing to install yet');
- button('Check now').click();await tick();await tick();await new Promise(r=>setTimeout(r,4200));for(let i=0;i<4;i++)await tick();
- assert.match(upPane().textContent,/0\.66\.2.*GitHub main0\.67\.0.*2 new commit\(s\).*checks success/);
- assert.match(upPane().textContent,/What's new \(1\).*Settings › Update/);
- button('Update now…').click();await tick();
- const uf=$('[aria-label="Confirm update"]');
- assert.ok(button('Start update').disabled,'needs reason, every acknowledgement and UPDATE');
- fill(uf.querySelector('[aria-label="Update reason"]'),'install integration fixes');fill(uf.querySelector('[aria-label="Type UPDATE"]'),'UPDATE');await tick();
- assert.ok(button('Start update').disabled,'acknowledgements still missing');
- for(const c of uf.querySelectorAll('input[type=checkbox]'))c.click();await tick();
- assert.ok(!button('Start update').disabled);
- await submit(uf);for(let i=0;i<4;i++)await tick();
- assert.deepEqual(updPosts[1],{target_sha:'a'.repeat(40),reason:'install integration fixes',confirm:'UPDATE',acknowledged:['RESTART','PRODUCTION']});
- assert.match(upPane().textContent,/Running….*0\.66\.2 → 0\.67\.0.*Check GitHubDONE.*BuildRUNNING/);
- console.log('PASS: settings › update: check, blockers, acknowledgements and typed UPDATE, request with the exact commit, live steps.');
 
  // An observer sees configuration read-only and no Users section.
  session.roles=['OBSERVER'];if($('[aria-label="Close window"]'))$('[aria-label="Close window"]').click();await tick();

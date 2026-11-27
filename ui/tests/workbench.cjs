@@ -89,6 +89,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const overview={user:{username:'yatheesh',roles:['ADMIN']},feeds:{active_plans:1,collectors:1,live:0,problems:1,paused:false},order_sending:[{environment:'LIVE',enabled:false}],approvals:2,
    attention:[{severity:'CRITICAL',area:'Market data',title:'Broker refused the connector version',detail:'Update the SDK.',goto:{view:'Market data',section:'live'}}]};
  const prefPuts=[];let loggedOut=0;
+ const updPosts=[];let upd={installed:true,running:{version:'0.67.0',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,available:{checked_at:'2026-11-27T17:00:00Z',error:"[Errno 2] No such file or directory: 'runuser'"},
+   blockers:["The last GitHub check failed: [Errno 2] No such file or directory: 'runuser'"],acknowledgements:[{code:'RESTART',text:'Restart.'}],history:[],manual_commands:['git fetch origin'],status:null,log:''};
  sw.fetch=async(url,o={})=>{const j=b=>({ok:true,status:200,json:async()=>b});
    if(url.includes('/config/overview'))return j(JSON.parse(JSON.stringify(overview)));
    if(url.includes('/trading/topbar'))return j({kill_switches:{ACCOUNT:1},desks:{RUNNING:2,PAUSED:1},unknown_orders:1,approvals_waiting:0,server_time:'2026-11-26T05:00:00Z'});
@@ -96,6 +98,9 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.includes('/operator/logout')){loggedOut++;return j({});}
    if(url.includes('operator/session'))return j({username:'yatheesh',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
    if(url.includes('/api/workstation'))return j({project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:true,demo_enabled:false,capabilities:[]});
+   if(url.endsWith('/config/update/check')){updPosts.push('check');upd={...upd,can_update:true,blockers:[],available:{checked_at:'2026-11-27T18:00:00Z',behind:2,latest_version:'0.67.1',latest_sha:'a'.repeat(40),ci:'SUCCESS',migrations:[],commits:[{sha:'a'.repeat(40),subject:'Update in Settings',date:'2026-11-27T18:00:00Z'}]}};return j({requested:true});}
+   if(url.endsWith('/config/update/apply')){updPosts.push(JSON.parse(o.body));upd={...upd,can_update:false,update_running:true,status:{id:'upd-1',kind:'APPLY',state:'RUNNING',from_version:'0.67.0',to_version:'0.67.1',steps:[{name:'Build',state:'RUNNING',detail:''}]}};return j({id:'upd-1',target_version:'0.67.1'});}
+   if(url.endsWith('/config/update'))return j(JSON.parse(JSON.stringify(upd)));
    return j({items:[],counts:{},execution_controls:[],connections:[],accounts:[],controls:[],checklist:[],summary:{accounts:0,data_ready:0,trading_ready:0,with_warnings:0},pending_approvals:0,failed_alerts:0,four_eyes_live_changes:true,network:{}});};
  sw.eval(js);for(let i=0;i<6;i++)await tick();
  const shownS=()=>[...sw.document.querySelectorAll('.group.focused .view > div:not([hidden])')][0]||sw.document;
@@ -207,7 +212,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...st.querySelectorAll('.set-nav button')].find(b=>/^Layout/.test(b.textContent)).click();await tick();
  assert.ok(st.querySelector('#setting-activity .set-check input[type="checkbox"]'),'on/off settings: checkbox on the description line');
  [...st.querySelectorAll('.set-nav button')].find(b=>/^Appearance/.test(b.textContent)).click();await tick();
- assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','About']);
+ assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','Software update','About']);
  const setv=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new sw.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const search=st.querySelector('[aria-label="Search settings"]');setv(search,'time zone');await tick();
  const tz=st.querySelector('select[aria-label="Time zone"]');assert.ok(tz,'search finds the time zone');
@@ -218,6 +223,24 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...st.querySelectorAll('#setting-region\\.timezone button')].find(b=>b.title==='Reset to the default').click();await tick();
  assert.equal(st.querySelector('select[aria-label="Time zone"]').value,'LOCAL');
  setv(search,'');await tick();
+ // Software update is a main setting (0.67.1): a failed check says so; check, acknowledgement and typed UPDATE gate the request.
+ [...st.querySelectorAll('.set-nav button')].find(b=>/^About/.test(b.textContent)).click();await tick();
+ [...st.querySelectorAll('button')].find(b=>b.textContent==='Check for updates…').click();for(let i=0;i<4;i++)await tick();
+ const upPane=()=>st.querySelector('[aria-label="Update"]');assert.ok(upPane(),'About › Check for updates opens Software update');
+ assert.match(upPane().textContent,/Last check failed/);assert.doesNotMatch(upPane().textContent,/Up to date/);
+ const ubtn=t=>[...st.querySelectorAll('button')].find(b=>b.textContent===t);
+ assert.ok(ubtn('Update now…').disabled);
+ ubtn('Check now').click();await new Promise(r=>setTimeout(r,4300));for(let i=0;i<4;i++)await tick();
+ assert.match(upPane().textContent,/0\.67\.0.*GitHub main0\.67\.1.*2 new commit\(s\)/);
+ ubtn('Update now…').click();await tick();
+ const uf=st.querySelector('[aria-label="Confirm update"]');
+ setv(uf.querySelector('[aria-label="Update reason"]'),'install the fix');setv(uf.querySelector('[aria-label="Type UPDATE"]'),'UPDATE');await tick();
+ assert.ok(ubtn('Start update').disabled,'the restart must be acknowledged');
+ uf.querySelector('input[type=checkbox]').click();await tick();
+ uf.requestSubmit();for(let i=0;i<4;i++)await tick();
+ assert.deepEqual(updPosts,['check',{target_sha:'a'.repeat(40),reason:'install the fix',confirm:'UPDATE',acknowledged:['RESTART']}]);
+ assert.match(upPane().textContent,/Running….*0\.67\.0 → 0\.67\.1/);
+ console.log('PASS: settings › software update (also from About): failed check shown, acknowledgement and typed UPDATE gate the request.');
  [...st.querySelectorAll('.set-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
  assert.match(st.textContent,/Kill switches.*Changed by: Risk approver/);
  [...st.querySelectorAll('.set-nav button')].find(b=>/Keyboard shortcuts/.test(b.textContent)).click();await tick();
