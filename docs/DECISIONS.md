@@ -363,3 +363,27 @@ Decision:
 5. **One definition per component:** superseded Settings rules were deleted rather than overridden again.
 
 Status: accepted.
+
+## DEC-109 · Integration gateway for CORE-AI, n8n and other applications; password minimum 2 (release 0.65.0, 27 Nov 2026)
+
+Context: the owner asked for a professional integration layer so CORE-AI, n8n, AI agents and scripts can read COREI's
+data, run analysis, propose signals and place test orders, each with its own key and administrator-chosen permissions;
+and for workstation passwords to need only 2 characters.
+
+Decision:
+1. **One versioned facade** `/api/v1/automation` over the existing services (no second order path, no new
+   infrastructure). Scans reuse `studio_scan_runs` as jobs; risk assessment runs the real `risk.check` in a rolled-back
+   transaction; orders go through `oms.ticket`, so risk, setup gates, kill switches, order sending and audit all apply.
+2. **Per-application connections** with Bearer keys stored as SHA-256 hashes (shown once, expiry, rotation with grace,
+   revocation), granular permissions, resource scope where an empty list grants nothing, rate and job limits, networks.
+3. **No LIVE through integrations:** `orders.live_request`, `orders.approve`, `orders.execute`, `orders.modify` are
+   UNAVAILABLE and refused server-side; PAPER by default, DEMO only when the connection's environment and permission allow.
+4. **Honest data:** snapshots report quality, source, age and missing datasets (no OI, Greeks, option chains or depth
+   are collected), and are never silently truncated.
+5. **Webhooks** are signed (HMAC-SHA256 over timestamp + body), SSRF-checked, at least once with retries, and sent
+   outside database transactions.
+6. **Outbound calls to CORE-AI are deferred**; the CORE-AI contract is verified and documented.
+7. **Password minimum 2 characters** everywhere (server, screens, setup script), configurable upward with
+   `COREI_PASSWORD_MIN_LENGTH` for production.
+
+Status: accepted. Guide: `docs/INTEGRATION_GATEWAY.md`.

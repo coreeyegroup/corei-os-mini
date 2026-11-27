@@ -288,7 +288,8 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['5 · Strategies', [['strategies', 'Strategies & evidence'], ['deployments', 'Deployments']]],
   ['6 · Run', [['@My Workspaces:desks', 'Workspaces ↗'], ['controls', 'Order sending']]],
   ['7 · Settings', [['approvals', 'Approvals (four-eyes)'], ['alerts', 'Alerts'], ['users', 'Users & roles']]],
-  ['8 · Admin', [['audit', 'Audit log'], ['database', 'Database']]],
+  ['8 · Integrate', [['integrations', 'Integrations']]],
+  ['9 · Admin', [['audit', 'Audit log'], ['database', 'Database']]],
 ];
 /** Open a Setup menu item: a Setup section, or another stage's page for "@View:section". */
 export function openSetupItem(id: string, local: (id: string) => void) {

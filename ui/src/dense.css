@@ -779,3 +779,45 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 /* market data tiles: separate tiles, no grey filler cell */
 .mb-kpis { background: transparent !important; gap: 3px !important; }
 .mb-kpi { border: 1px solid var(--line); border-radius: 3px; }
+
+/* ==== 0.65.0 · Integrations (Setup › 8 · Integrate) ==== */
+.int { display: flex; flex-direction: column; gap: 6px; }
+.int-views { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.int-views button { border: 0 !important; border-radius: 0 !important; background: transparent; }
+.int-views button[aria-selected="true"] { background: var(--selection); color: var(--text); }
+.int-form { max-width: none !important; }
+.int-scopes { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+.int-scope-group { display: flex; flex-direction: column; gap: 2px; }
+.int-scope-group > b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 4px; }
+.int-scope-group label { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; line-height: 1.3; }
+.int-scope-group label.off { opacity: .45; cursor: not-allowed; }
+.int-scope-group label span small { display: block; color: var(--muted); font-size: 10.5px; }
+.int-rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.int-rule { border: 1px solid var(--line) !important; border-radius: 3px; padding: 4px 8px 6px !important; display: flex; flex-direction: column; gap: 3px; }
+.int-rule legend { font-size: 11px; color: var(--muted); padding: 0 4px; }
+.int-rule select[multiple] { width: 100%; height: auto !important; }
+.int-secret { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; padding: 6px 10px; margin: 0 0 6px;
+  border: 1px solid #e0a530; border-radius: 3px; background: color-mix(in srgb, #e0a530 10%, transparent); }
+.int-secret code { overflow-wrap: anywhere; font-size: 12px; user-select: all; }
+.int-secret small { grid-column: 1 / -1; color: var(--muted); }
+.int-snips { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px; }
+.int-snips > div { border: 1px solid var(--line); border-radius: 3px; padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; }
+.int-snips pre, .int-explorer pre { margin: 0; padding: 6px; background: var(--input); border-radius: 3px; font-size: 11.5px; overflow: auto; max-height: 180px; white-space: pre; }
+.int-snips button { align-self: flex-start; }
+.int-hook { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+.int-hook input[aria-label="Webhook URL"] { max-width: 560px; }
+.int-events { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 1px 10px; font-size: var(--fs-2); }
+.int-detail { margin-top: 6px; }
+.int-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0; }
+.int-chip { font-size: 11px; padding: 0 6px; border: 1px solid var(--line); border-radius: 3px; }
+.int-chip.act { border-color: #e0a530; color: #e0a530; }
+.pa-row.selected { background: var(--selection); }
+.int-explorer { display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); gap: 8px; min-height: 300px; }
+.int-explorer nav { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 3px; overflow: auto; max-height: 70vh; }
+.int-explorer nav button { display: flex; gap: 6px; align-items: center; text-align: left; border: 0 !important; border-radius: 0 !important; padding: 2px 8px !important;
+  background: transparent; font-family: var(--mono, monospace); font-size: 11.5px; }
+.int-explorer nav button[aria-current="true"] { background: var(--selection); }
+.int-explorer section h4 { display: flex; gap: 8px; align-items: center; margin: 0 0 4px; font-family: var(--mono, monospace); font-size: 12.5px; }
+.int-m { display: inline-block; min-width: 46px; text-align: center; font-size: 10px; font-weight: 700; border-radius: 2px; padding: 0 3px; color: #111; background: #8ab4f8; }
+.int-m.post { background: #81c995; } .int-m.delete { background: #f28b82; }
+@media (max-width: 900px) { .int-explorer { grid-template-columns: 1fr; } }

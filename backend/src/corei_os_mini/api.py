@@ -63,6 +63,9 @@ async def lifespan(_: FastAPI):
         execution.start()  # Stage 7 dispatcher and broker look-ups, Stage 8 periodic reconciliation
     if settings.database_url:
         tasks.append(asyncio.create_task(strategy_scan_runs.run_forever()))
+    if os.getenv('COREI_INTEGRATION_WEBHOOKS', 'on') != 'off' and settings.database_url:
+        from .integration import webhooks as int_webhooks
+        tasks.append(asyncio.create_task(int_webhooks.run_forever()))
     try:
         yield
     finally:
@@ -79,6 +82,10 @@ app = FastAPI(
 
 
 app.include_router(operator_router)
+# Integration gateway routes first: /api/config/integrations must not be taken by the generic /api/config/{entity} routes.
+from .integration import admin as integration_admin, gateway as integration_gateway  # noqa: E402
+app.include_router(integration_admin.router)
+app.include_router(integration_gateway.router)
 app.include_router(admin_router)
 # Strategy routes first: config_router's /api/config/{entity} would otherwise claim them.
 app.include_router(strategy_router)
@@ -98,6 +105,35 @@ app.include_router(trading_router)
 app.include_router(strategy_studio_router)
 app.include_router(strategy_scan_runs.router)
 app.include_router(config_router)
+
+# Integration gateway (0.65.0): /api/v1/automation for external applications, /api/config/integrations for administrators.
+from fastapi import Request as _Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from .integration.auth import GatewayError, log_usage, request_id as _int_request_id  # noqa: E402
+
+
+
+@app.exception_handler(GatewayError)
+async def _gateway_error(request: _Request, exc: GatewayError):
+    return JSONResponse({'error': {'code': exc.code, 'message': exc.message, 'request_id': _int_request_id(request)}}, status_code=exc.status,
+                        headers={**exc.headers, 'X-Request-ID': _int_request_id(request), 'Cache-Control': 'no-store', 'X-COREI-Error': exc.code})
+
+
+@app.middleware('http')
+async def _integration_usage(request: _Request, call_next):
+    if not request.url.path.startswith('/api/v1/automation') or request.url.path.endswith('/openapi.json'):
+        return await call_next(request)
+    import time as _time
+    from starlette.concurrency import run_in_threadpool
+    request.state.int_started = _time.monotonic()
+    rid = _int_request_id(request)
+    response = await call_next(request)
+    response.headers['X-Request-ID'] = rid
+    response.headers['X-COREI-API-Version'] = integration_gateway.API_VERSION
+    response.headers.setdefault('Cache-Control', 'no-store')
+    code = response.headers.get('x-corei-error')
+    await run_in_threadpool(log_usage, request, response.status_code, int(response.headers.get('content-length') or 0) or None, code)
+    return response
 
 @app.get("/health")
 def health(response: Response) -> dict[str, str | bool]:
@@ -261,6 +297,12 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def safe_validation(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/api/v1/automation'):
+        # Gateway: the standard error shape; field locations and problems only, never the submitted values.
+        from .integration.auth import request_id as _rid
+        return JSONResponse(status_code=422, content={'error': {
+            'code': 'INVALID_REQUEST', 'message': 'The request does not match the schema.', 'request_id': _rid(request),
+            'details': [{'field': '.'.join(str(x) for x in e.get('loc', [])), 'problem': e.get('msg')} for e in exc.errors()][:20]}})
     if request.url.path.startswith(('/api/config', '/api/operator', '/api/admin')):
         return JSONResponse(status_code=422, content={'detail': 'Invalid request body. Send a JSON object with the required fields.'})
     return await request_validation_exception_handler(request, exc)

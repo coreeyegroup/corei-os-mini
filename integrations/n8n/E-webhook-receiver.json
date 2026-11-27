@@ -1,0 +1,55 @@
+{
+  "name": "COREI E \u00b7 Receive and verify webhooks",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "corei-events",
+        "responseMode": "onReceived",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "name": "COREI webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "corei-events"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify X-COREI-Signature = sha256=HMAC_SHA256(secret, timestamp + '.' + rawBody)\n// Store the signing secret as the n8n environment variable COREI_WEBHOOK_SECRET (never inside the workflow).\nconst crypto = require('crypto');\nconst out = [];\nfor (const item of $input.all()) {\n  const h = item.json.headers; const ts = h['x-corei-timestamp'];\n  const raw = item.binary?.data ? Buffer.from(item.binary.data.data, 'base64').toString('utf8') : JSON.stringify(item.json.body);\n  const want = 'sha256=' + crypto.createHmac('sha256', $env.COREI_WEBHOOK_SECRET).update(ts + '.' + raw).digest('hex');\n  const fresh = Math.abs(Date.now() / 1000 - Number(ts)) < 300;\n  if (!fresh || want !== h['x-corei-signature']) throw new Error('COREI webhook signature check failed');\n  out.push({ json: { event: h['x-corei-event'], event_id: h['x-corei-event-id'], body: JSON.parse(raw) } });\n}\nreturn out;"
+      },
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "COREI webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Receives signed events. Delivery is at least once: de-duplicate on event_id. Requires the Code node to allow the crypto module (NODE_FUNCTION_ALLOW_BUILTIN=crypto)."
+  },
+  "pinData": {}
+}

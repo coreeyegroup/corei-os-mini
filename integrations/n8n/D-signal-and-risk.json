@@ -1,0 +1,98 @@
+{
+  "name": "COREI D \u00b7 Propose signal and assess risk",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/signals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"request_id\": \"sig-{{ $execution.id }}\",\n  \"instrument\": \"EURUSD\",\n  \"direction\": \"LONG\",\n  \"entry_condition\": \"Break above prior H1 high\",\n  \"stop_loss\": \"1.0800\",\n  \"targets\": [\n    \"1.0950\"\n  ],\n  \"strength\": \"0.6\",\n  \"confidence_kind\": \"SUBJECTIVE\",\n  \"valid_minutes\": 120,\n  \"evidence\": [\n    \"H4 uptrend\"\n  ],\n  \"opposing_evidence\": [\n    \"Event risk\"\n  ],\n  \"provenance\": {\n    \"application\": \"n8n\",\n    \"agent\": \"workflow-D\",\n    \"model\": \"none\"\n  }\n}"
+      },
+      "name": "Propose signal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/risk/assess",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"signal_id\": \"{{ $json.id }}\",\n  \"account_id\": \"<PAPER_ACCOUNT_ID>\",\n  \"side\": \"BUY\",\n  \"quantity\": \"1000\",\n  \"mode\": \"PAPER\"\n}"
+      },
+      "name": "Assess risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Propose signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Propose signal": {
+      "main": [
+        [
+          {
+            "node": "Assess risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "A signal never places an order. Set the paper account id. Needs: signals.propose, risk.assess, signals.validate."
+  },
+  "pinData": {}
+}

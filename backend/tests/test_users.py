@@ -64,8 +64,8 @@ class UsersAndRolesTests(unittest.TestCase):
         os.environ['COREI_OPERATOR_USER'] = 'Other'
         self.sign_in('Other', BOOT_PASSWORD, 401)
 
-        # Admin creates an observer and a trader; weak passwords are refused.
-        weak = owner.post('/api/admin/users', json={'username': 'olga', 'display_name': 'Olga', 'roles': ['OBSERVER'], 'temporary_password': 'aaaaaaaaaaaa'})
+        # Admin creates an observer and a trader; a password shorter than 2 characters is refused (no complexity rules).
+        weak = owner.post('/api/admin/users', json={'username': 'olga', 'display_name': 'Olga', 'roles': ['OBSERVER'], 'temporary_password': 'a'})
         self.assertEqual(weak.status_code, 422)
         olga = owner.post('/api/admin/users', json={'username': 'Olga', 'display_name': 'Olga Observer', 'roles': ['OBSERVER'],
                                                     'temporary_password': 'Temp-pass-4821'}).json()

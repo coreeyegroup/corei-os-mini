@@ -1,0 +1,61 @@
+{
+  "name": "COREI B \u00b7 Market snapshot for AI",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/market-data/snapshot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"request_id\": \"snap-{{ $execution.id }}\",\n  \"instruments\": [\n    \"EURUSD\"\n  ],\n  \"timeframes\": [\n    \"H4\",\n    \"H1\",\n    \"M15\"\n  ],\n  \"include\": [\n    \"instrument_metadata\",\n    \"latest_quote\",\n    \"candles\",\n    \"indicators\",\n    \"market_regime\",\n    \"data_quality\"\n  ],\n  \"format\": \"AI_COMPACT\",\n  \"candles_per_timeframe\": 100,\n  \"max_output_chars\": 16000\n}"
+      },
+      "name": "Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Builds an AI_COMPACT snapshot; check data_quality.state before using it. Needs: market_data.snapshot."
+  },
+  "pinData": {}
+}

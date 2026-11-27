@@ -1527,3 +1527,17 @@ description to read all of it). Settings › Appearance › Density › Comforta
 starts at 130px.
 
 Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh`.
+
+## Integration gateway for CORE-AI and n8n — release 0.65.0
+
+* **Setup › 8 · Integrate › Integrations:** one connection per application (CORE-AI, n8n, AI agent, Python, JavaScript,
+  research, dashboard, custom) with permissions, resource scope, limits and networks; keys shown once, rotation with
+  grace, revocation; a real Bearer test from the browser without your session; webhooks with signing secrets; usage
+  and signals; an API explorer with copy-ready URL, cURL, Python, JavaScript and n8n settings.
+* **API:** `https://corei-os-mini.coreeye.in/api/v1/automation` with `Authorization: Bearer <key>`; OpenAPI at
+  `/api/v1/automation/openapi.json`. Market snapshots for AI, scan jobs, candidate signals, risk assessment, paper
+  (and DEMO when granted) orders with idempotency keys. **LIVE orders are never available to integrations.**
+* **n8n:** importable workflows A–F in `integrations/n8n/` (no keys inside). Credential: Generic Credential Type ›
+  Bearer Auth › the raw key.
+* **Passwords:** minimum 2 characters (raise with `COREI_PASSWORD_MIN_LENGTH`).
+* Guide: `docs/INTEGRATION_GATEWAY.md` · decision DEC-109 · gaps: GAP register section S.
