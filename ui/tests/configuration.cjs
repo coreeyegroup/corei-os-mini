@@ -32,7 +32,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
-const intClients=[],intPosts=[],bearerCalls=[],modePuts=[],resets=[];
+const intClients=[],intPosts=[],bearerCalls=[],modePuts=[],resets=[],updPosts=[];
+let upd={installed:true,running:{version:'0.66.2',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,blockers:['Not checked yet: press Check now.'],acknowledgements:[{code:'RESTART',text:'Restart 1–3 minutes.'},{code:'PRODUCTION',text:'Production mode.'}],history:[],manual_commands:['git fetch origin'],available:null,status:null,log:''};
 let pm={mode:'PRODUCTION',allow_live_in_development:false,live_blocked:false,password_min:6,reset_allowed:false,version:1,updated_by:'system'};
 const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[],paperOrders=[],paperCloses=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
@@ -48,6 +49,11 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
     LIVE:{done:0,total:1,complete:false,next:null,gates:[gate('PEOPLE',1,'People and alerts','BLOCKED','SUPERVISED',[{gate:'PEOPLE',text:'Only 1 person can approve.',fix:'Add a second approver.',goto:{view:'Configuration',section:'users'}}])]}}});
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
+   if(url.endsWith('/config/update/check')){updPosts.push({kind:'check'});upd={...upd,can_update:true,blockers:[],available:{checked_at:'2026-11-27T18:00:00Z',behind:2,latest_version:'0.67.0',latest_sha:'a'.repeat(40),ci:'SUCCESS',migrations:[],commits:[{sha:'a'.repeat(40),subject:'Settings › Update',date:'2026-11-27T18:00:00Z'}]}};return ok({requested:true});}
+   if(url.endsWith('/config/update/apply')){const b=JSON.parse(options.body);updPosts.push(b);
+     upd={...upd,can_update:false,update_running:true,blockers:[],status:{id:'upd-1',kind:'APPLY',state:'RUNNING',from_version:'0.66.2',to_version:'0.67.0',requested_by:'risk-ops',steps:[{name:'Check GitHub',state:'DONE',detail:'0.66.2 → 0.67.0'},{name:'Build',state:'RUNNING',detail:''}]},log:'$ bash scripts/install-workstation.sh'};
+     return ok({id:'upd-1',target_version:'0.67.0'});}
+   if(url.endsWith('/config/update'))return ok(upd);
    if(url.endsWith('/config/platform-mode')&&method==='PUT'){const b=JSON.parse(options.body);modePuts.push(b);
      if(b.mode==='PRODUCTION'&&pm.mode!=='PRODUCTION'&&b.confirm!=='PRODUCTION')return {ok:false,status:422,json:async()=>({detail:'To switch to Production, confirm by typing PRODUCTION.'})};
      const dev=b.mode==='DEVELOPMENT',allow=dev&&b.allow_live_in_development;
@@ -842,6 +848,26 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  pmAnswers.push('PRODUCTION','go live');button('Switch to Production…').click();for(let i=0;i<4;i++)await tick();
  assert.match(pmPane().textContent,/Now in production mode/);
  console.log('PASS: platform mode: administrator switches with a reason; Production and LIVE need typed words; reset only in Development, result listed.');
+
+ // Settings › Update (0.67.0): check, blockers, acknowledgements + typed UPDATE, then live steps.
+ nav('Update').click();for(let i=0;i<4;i++)await tick();
+ const upPane=()=>$('[aria-label="Update"]');
+ assert.match($('[aria-label="Why it cannot update now"]').textContent,/Not checked yet/);
+ assert.ok(button('Update now…').disabled,'nothing to install yet');
+ button('Check now').click();await tick();await tick();await new Promise(r=>setTimeout(r,4200));for(let i=0;i<4;i++)await tick();
+ assert.match(upPane().textContent,/0\.66\.2.*GitHub main0\.67\.0.*2 new commit\(s\).*checks success/);
+ assert.match(upPane().textContent,/What's new \(1\).*Settings › Update/);
+ button('Update now…').click();await tick();
+ const uf=$('[aria-label="Confirm update"]');
+ assert.ok(button('Start update').disabled,'needs reason, every acknowledgement and UPDATE');
+ fill(uf.querySelector('[aria-label="Update reason"]'),'install integration fixes');fill(uf.querySelector('[aria-label="Type UPDATE"]'),'UPDATE');await tick();
+ assert.ok(button('Start update').disabled,'acknowledgements still missing');
+ for(const c of uf.querySelectorAll('input[type=checkbox]'))c.click();await tick();
+ assert.ok(!button('Start update').disabled);
+ await submit(uf);for(let i=0;i<4;i++)await tick();
+ assert.deepEqual(updPosts[1],{target_sha:'a'.repeat(40),reason:'install integration fixes',confirm:'UPDATE',acknowledged:['RESTART','PRODUCTION']});
+ assert.match(upPane().textContent,/Running….*0\.66\.2 → 0\.67\.0.*Check GitHubDONE.*BuildRUNNING/);
+ console.log('PASS: settings › update: check, blockers, acknowledgements and typed UPDATE, request with the exact commit, live steps.');
 
  // An observer sees configuration read-only and no Users section.
  session.roles=['OBSERVER'];if($('[aria-label="Close window"]'))$('[aria-label="Close window"]').click();await tick();

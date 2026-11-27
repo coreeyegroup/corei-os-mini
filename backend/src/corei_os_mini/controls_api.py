@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -428,3 +428,29 @@ def reset_test_data(payload: dict, response: Response, user: Principal = Depends
     from .config_api import parse
     response.headers['Cache-Control'] = 'no-store'
     return platform_mode.reset_test_data(user.username, parse(platform_mode.ResetIn, payload))
+
+
+# ---------- Settings › Update (0.67.0) ----------
+
+@router.get('/update')
+def get_update(response: Response, _: Principal = Depends(require_role('ADMIN'))):
+    from . import update
+    response.headers['Cache-Control'] = 'no-store'
+    return update.state()
+
+
+@router.post('/update/check')
+def check_update(response: Response, user: Principal = Depends(require_role('ADMIN'))):
+    from . import update
+    response.headers['Cache-Control'] = 'no-store'
+    return update.request_check(user.username)
+
+
+@router.post('/update/apply')
+def apply_update(payload: dict, request: Request, response: Response, user: Principal = Depends(require_role('ADMIN'))):
+    """Administrator, password asked again (428 until re-authenticated), reason, typed UPDATE, every acknowledgement."""
+    from . import update
+    from .config_api import parse
+    require_reauth(request, user)
+    response.headers['Cache-Control'] = 'no-store'
+    return update.request_apply(user.username, parse(update.ApplyIn, payload))

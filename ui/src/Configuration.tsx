@@ -15,6 +15,7 @@ import { SetupGates, SetupHome } from './SetupHome';
 import { FxRates } from './PaperAccounts';
 import Integrations from './Integrations';
 import PlatformMode from './PlatformMode';
+import UpdatePanel from './UpdatePanel';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -26,8 +27,8 @@ import { useViewVisible } from './visibility';
 import { Info } from './Info';
 
 export type Row = Record<string, any>;
-type Section = 'guide' | 'mode' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
-type Entity = Exclude<Section, 'guide' | 'mode' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
+type Section = 'guide' | 'mode' | 'update' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
+type Entity = Exclude<Section, 'guide' | 'mode' | 'update' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean; password_min?: number; platform_mode?: string };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -55,6 +56,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'alerts', label: 'Alerts', hint: 'E-mail, Telegram and webhook notifications' },
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
   { id: 'integrations', label: 'Integrations', hint: 'CORE-AI, n8n and other applications: connections, API keys, permissions, webhooks, usage, API explorer' },
+  { id: 'update', label: 'Update', hint: 'Check GitHub for a newer COREI-OS-MINI release and install it: backup, build, restart, verify, automatic rollback' },
   { id: 'mode', label: 'Platform mode', hint: 'Development (build and test) or Production (real trading): gates, LIVE, passwords, test data reset' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
   { id: 'database', label: 'Database', hint: 'Every table: add, edit and delete rows; add, change and drop columns; create and drop tables (Administrator; reason and password; audited)' },
@@ -1626,11 +1628,12 @@ function Records({ entity, refs, reloadRefs, canEdit, navigate, openId }: { enti
           {selected && ARCHIVABLE.includes(entity) && selected.status !== 'ARCHIVED' && <button type="button" disabled={busy} onClick={() => void archive()}>Archive</button>}
           {selected && <button type="button" className="danger" disabled={busy} onClick={() => void remove()}>Delete</button>}
           {selected && PURGEABLE.includes(entity) && <button type="button" className="danger" disabled={busy} onClick={() => void purge()}
-            title="Removes it and everything attached to it (collected data, plans, logins; for a server or provider its accounts too). Typed confirmation; audited.">Delete permanently…</button>}</div>
-        {selected && PURGEABLE.includes(entity) && <p className="cfg-note cfg-remove-help">
-          <b>Archive</b>: stop using it — hidden from lists, collection stops, kept with its history; restore any time (Show archived › set Inactive). ·{' '}
-          <b>Delete</b>: remove only this record, and only when nothing is attached; otherwise it says what is. ·{' '}
-          <b>Delete permanently</b>: remove it with everything attached ({entity === 'providers' ? 'its servers, accounts, collected data and logins' : entity === 'connections' ? 'its accounts, collected data and logins' : 'its collected data, plans and login'}); type its code to confirm; cannot be undone.</p>}
+            title="Removes it and everything attached to it (collected data, plans, logins; for a server or provider its accounts too). Typed confirmation; audited.">Delete permanently…</button>}
+          {selected && PURGEABLE.includes(entity) && <Info label="Archive, Delete or Delete permanently">
+            <b>Archive</b>: stop using it — hidden from lists, collection stops, kept with its history; restore any time (Show archived › set Inactive).<br />
+            <b>Delete</b>: remove only this record, and only when nothing is attached; otherwise it says what is.<br />
+            <b>Delete permanently</b>: remove it with everything attached ({entity === 'providers' ? 'its servers, accounts, collected data and logins' : entity === 'connections' ? 'its accounts, collected data and logins' : 'its collected data, plans and login'}); type its code to confirm; cannot be undone.</Info>}</div>
+
         {blocked && <p role="alert" className="cfg-error">{blocked} <button type="button" className="danger" onClick={() => void purge()}>Delete permanently…</button>{' '}
           <button type="button" onClick={() => { setBlocked(''); void archive(); }}>Archive…</button></p>}</div>
         : <p className="cfg-note">Read only. Changes need the Trading operations role.</p>}
@@ -2210,6 +2213,7 @@ export default function Configuration() {
         : id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
         : id === 'integrations' ? <Integrations isAdmin={user.roles.includes('ADMIN')} />
         : id === 'mode' ? <PlatformMode isAdmin={user.roles.includes('ADMIN')} />
+        : id === 'update' ? <UpdatePanel isAdmin={user.roles.includes('ADMIN')} />
         : id === 'bridges' ? <div className="cfg-pane"><BridgeNodes canEdit={canEdit} /></div>
         : id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : id === 'audit' ? <AuditLog />
         : id === 'users' ? <Users me={user} />

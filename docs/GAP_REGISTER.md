@@ -488,3 +488,16 @@ Open: reset covers paper accounts only (not DEMO broker positions, scan runs or 
 |---|---|---|
 | CF-1 | Any MT5 or FIX connection with a stored server credential (terminal bridge token, FIX login) could not be edited: every save was refused with "The stored credential does not match the new authentication method" because the check only knew REST authentication methods. Found by the owner editing clock and order rate on METAQUOTES_MT5_DEMO and VTMARKET_MT5_DEMO. | FIXED — checked per platform; TESTED (`test_mt5_connection_with_bridge_token_can_be_edited`, fails without the fix) |
 | CF-2 | After Upstox refused a revoked login ("401 UDAPI100050 Invalid token" — e.g. after registering static IPs, which invalidates the token), a fresh daily login was not noticed: the feed waited out its 5-minute back-off. Found on the live system 27 Nov 22:41–22:46 IST. | FIXED in 0.66.2 — the setup stamp includes the account's session token; the feed retries within 30 s of a new login; TESTED (`test_new_session_token_changes_the_setup_stamp`, fails without the fix) |
+
+## U. Settings › Update — 27 Nov 2026 (release 0.67.0)
+
+| ID | Criterion | Status |
+|---|---|---|
+| UP-1 | Administrator only; nothing starts before the updater is installed or before a check | TESTED (`test_nothing_starts_before_install_or_check_and_only_administrators`) |
+| UP-2 | Password again (428), typed UPDATE, exact latest commit, every acknowledgement; refused while an order's outcome is unknown; audited once per outcome | TESTED (`test_update_request_needs_password_confirmation_acknowledgements_and_quiet_orders`) |
+| UP-3 | Unverified checks / missing backup need their own acknowledgement; failed checks and unclean checkouts block | TESTED (two tests) |
+| UP-4 | Updater: lists commits and migrations; fast-forwards, builds, migrates, deploys, verifies | TESTED against real git repositories with build/migrate/deploy faked |
+| UP-5 | Updater: rollback to the previous commit on failure; manual commands when the rollback fails too | TESTED (faked deploy failures) |
+| UP-6 | Updater refusals change nothing (moved target, old request, local changes, failed/unknown checks, symlinked request) | TESTED |
+| UP-7 | systemd units, folder permissions, `runuser`, real build and restart on the server | NEEDS VERIFICATION after the first deploy of 0.67.0 (first update from the screen) |
+| UP-8 | Floating-window footer: one aligned row; help behind ⓘ (owner's screenshot 27 Nov) | Checked by screenshot; UI tests pass |

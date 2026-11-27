@@ -834,3 +834,28 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .pm-rules th[scope], .pm-rules tbody th { text-align: left; white-space: nowrap; color: var(--muted); font-weight: 600; }
 .pm-rules .on { background: var(--selection); }
 .pm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ==== 0.67.0 · floating-window footer: one aligned row; grows only for an error line ==== */
+.fw .fw-footer { height: auto; min-height: 34px; padding: 4px 22px 4px 10px; }   /* right: clear of the resize corner */
+.fw .fw-footer .cfg-footer-stack { gap: 4px; }
+.fw .fw-footer .cfg-actions { align-items: center; width: 100%; }
+.fw .fw-footer .cfg-actions .danger ~ .danger { margin-left: 0; }   /* Delete and Delete permanently stay together on the right */
+.fw .fw-footer .cfg-error { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-2); }
+
+/* ==== 0.67.0 · Settings › Update ==== */
+.up { display: flex; flex-direction: column; gap: 6px; }
+.up-versions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 10px; border: 1px solid var(--line); border-radius: 3px; }
+.up-versions > div { display: flex; flex-direction: column; line-height: 1.25; }
+.up-versions > div small { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.up-versions > div b { font-size: 15px; } .up-versions > div code { font-size: 11px; color: var(--muted); }
+.up-versions > div.new b { color: #4caf50; }
+.up-versions .up-meta { flex: 1; min-width: 220px; } .up-versions .up-meta small { text-transform: none; letter-spacing: 0; }
+.up-actions { display: flex; gap: 6px; align-items: center; }
+.up-blockers { margin: 0; padding: 4px 10px 4px 26px; border-left: 3px solid #e0a530; background: color-mix(in srgb, #e0a530 8%, transparent); }
+.up-form { max-width: none !important; } .up-ack { display: flex; gap: 6px; align-items: flex-start; line-height: 1.35; }
+.up-status h4 { margin: 4px 0; display: flex; gap: 6px; align-items: baseline; } .up-status h4 small { color: var(--muted); font-weight: 400; }
+.up-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.up-steps li { display: grid; grid-template-columns: 170px 80px minmax(0, 1fr); gap: 8px; padding: 1px 8px; border-left: 3px solid var(--line); }
+.up-steps li.done { border-left-color: #4caf50; } .up-steps li.running { border-left-color: #8ab4f8; }
+.up-steps li.failed, .up-steps li.refused { border-left-color: var(--danger); } .up-steps li small { color: var(--muted); overflow-wrap: anywhere; }
+.up-log { margin: 4px 0 0; padding: 6px; background: var(--input); border-radius: 3px; font-size: 11px; max-height: 260px; overflow: auto; white-space: pre-wrap; }

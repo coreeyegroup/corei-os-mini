@@ -1,4 +1,5 @@
-"""Deploy the new read-only workstation; preserve other Caddy sites and old apps."""
+"""Deploy the new read-only workstation; preserve other Caddy sites and old apps. Also installs the market-data services
+and the updater (Settings › Update, 0.67.0)."""
 from pathlib import Path
 import datetime
 import json
@@ -19,6 +20,9 @@ NIGHTLY = 'corei-os-mini-md-nightly'
 PORT = 18786
 MD_ROOT = Path('/var/lib/corei-os-mini/market-data')
 ENV_FILE = Path('/etc/corei-os-mini/workstation.env')
+UPDATER = 'corei-os-mini-updater'
+UPDATE_ROOT = Path('/var/lib/corei-os-mini/update')
+UPDATER_SCRIPT = Path('/usr/local/lib/corei-os-mini/corei-updater.py')
 
 
 def replace_site(text, block):
@@ -138,6 +142,68 @@ WantedBy=timers.target
           'backups to ' + backup_dir if backup_dir and len(writable) > 1 else 'backups OFF until COREI_BACKUP_DIR is set in ' + str(ENV_FILE))
 
 
+def prepare_update_folders(user):
+    """Settings › Update (0.67.0): the workstation may only drop a request in inbox (its own, 0700); results come back in
+    outbox (root-owned, readable by the user's group). Created before the service restarts so it may write the inbox."""
+    account = pwd.getpwnam(user)
+    for path, uid, gid, mode in ((UPDATE_ROOT.parent, 0, 0, 0o755), (UPDATE_ROOT, 0, 0, 0o755),
+                                 (UPDATE_ROOT / 'inbox', account.pw_uid, account.pw_gid, 0o700),
+                                 (UPDATE_ROOT / 'outbox', 0, account.pw_gid, 0o750)):
+        path.mkdir(mode=mode, parents=True, exist_ok=True)
+        if path.is_symlink():
+            sys.exit(f'{path} must not be a symbolic link; deployment stopped.')
+        os.chown(path, uid, gid)
+        os.chmod(path, mode)
+
+
+def install_updater(root, user):
+    """A root-owned copy of scripts/corei-updater.py and its systemd units: a path unit starts it when the workstation
+    leaves a request; a timer checks GitHub every 6 hours. The running updater is never restarted here."""
+    UPDATER_SCRIPT.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    tmp = UPDATER_SCRIPT.with_suffix('.tmp')
+    shutil.copyfile(root / 'scripts/corei-updater.py', tmp)
+    os.chown(tmp, 0, 0)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, UPDATER_SCRIPT)
+    units = {
+        UPDATER + '.service': f'''[Unit]
+Description=COREI-OS-MINI updater (Settings › Update)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I {UPDATER_SCRIPT} --repo {root} --user {user}
+TimeoutStartSec=2h
+''',
+        UPDATER + '.path': f'''[Unit]
+Description=Start the COREI-OS-MINI updater when the workstation asks
+
+[Path]
+PathExists={UPDATE_ROOT}/inbox/request.json
+Unit={UPDATER}.service
+
+[Install]
+WantedBy=paths.target
+''',
+        UPDATER + '.timer': f'''[Unit]
+Description=Check GitHub for a COREI-OS-MINI update every 6 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+Unit={UPDATER}.service
+
+[Install]
+WantedBy=timers.target
+''',
+    }
+    for name, text in units.items():
+        Path('/etc/systemd/system/' + name).write_text(text)
+    run('systemctl', 'daemon-reload')
+    run('systemctl', 'enable', '--now', UPDATER + '.path', UPDATER + '.timer')
+
+
 def main():
     if os.geteuid() != 0:
         sys.exit('Use bash scripts/deploy-workstation.sh')
@@ -178,6 +244,7 @@ def main():
     previous = os.readlink(current) if current.is_symlink() else None
     temp_link = base / ('current-' + stamp)
     temp_link.symlink_to(release)
+    prepare_update_folders(user)
     try:
         unit.write_text(f'''[Unit]
 Description=COREI-OS-MINI new workstation backend
@@ -200,6 +267,8 @@ ProtectHome=read-only
 UMask=0077
 # Bridge-node tunnel keys (scripts/enable-bridge-tunnels.sh); ignored when that folder does not exist.
 ReadWritePaths=-/var/lib/corei-os-mini/tunnel
+# Settings › Update: the workstation leaves requests here; the root updater does the work (scripts/corei-updater.py).
+ReadWritePaths=-{UPDATE_ROOT}/inbox
 
 [Install]
 WantedBy=multi-user.target
@@ -245,6 +314,10 @@ WantedBy=multi-user.target
         install_market_data(root, user, python)
     except Exception as exc:  # the web workstation stays deployed; the collector is reported
         print('WARNING: market-data services were not installed:', exc)
+    try:
+        install_updater(root, user)
+    except Exception as exc:  # the workstation stays deployed; updating keeps working by hand
+        print('WARNING: the updater (Settings › Update) was not installed:', exc)
     print('Deployed: https://' + HOST + '/')
     print('Caddy backup:', backup)
     print('Workstation deployed. Registry routes require operator login; provider connectivity and order submission remain unavailable.')
