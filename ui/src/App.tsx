@@ -431,6 +431,10 @@ export default function App() {
         <TopBarStatus overview={overview} signedOut={signedOut} setup={setupState} live={live} open={(v,section)=>{if(section)goto(v,section);go(v);}}/>
         <TopBarRight overview={overview} layout={layout} patch={p=>patch(p)} open={(v,section)=>{if(section)goto(v,section);go(v);}} onBell={()=>patch({bottom:true})}/>
       </header>
+      {overview?.platform_mode?.mode==='DEVELOPMENT'&&<button type="button" className="test-banner" role="status" aria-label="Test platform"
+        title="Development mode: PAPER and DEMO gates only warn; passwords need 2 characters; test data can be reset. Open Platform mode."
+        onClick={()=>goto('Configuration','mode')}>
+        <b>TEST</b><span>Development mode · gates warn only · {overview.platform_mode.allow_live_in_development?'LIVE allowed — real money possible':'LIVE order sending off'}</span></button>}
       <div className="shell">
         {appearance.activity && <nav className="activity" aria-label="Activities">
           {RAIL.map((v,i) => v==='-' ? <span key={'sep'+i} className="rail-sep" aria-hidden="true"/> : (

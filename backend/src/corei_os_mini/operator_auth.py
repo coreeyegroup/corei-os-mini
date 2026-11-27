@@ -75,15 +75,25 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-# Owner decision 27 Nov 2026 (development and testing platform): passwords need only 2 characters, no complexity rules.
-# A production server can raise the minimum with COREI_PASSWORD_MIN_LENGTH (e.g. 12) without a code change.
-PASSWORD_MIN = max(1, int(os.environ.get('COREI_PASSWORD_MIN_LENGTH', '2') or 2))
+# Owner decisions 27 Nov 2026: no complexity rules. Development mode: at least 2 characters (COREI_PASSWORD_MIN_LENGTH
+# changes it); Production mode: at least 6 (or COREI_PASSWORD_MIN_LENGTH if higher). Existing passwords keep working;
+# the rule applies when a password is set.
+PASSWORD_MIN = max(1, int(os.environ.get('COREI_PASSWORD_MIN_LENGTH', '2') or 2))   # the Development minimum
 Password = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
+def password_min() -> int:
+    from . import platform_mode
+    try:
+        return platform_mode.current()['password_min']
+    except Exception:  # noqa: BLE001 - no database yet (first setup): the stricter Production rule applies
+        return platform_mode.password_min_for('PRODUCTION')
+
+
 def password_rules(password: str, username: str) -> None:  # noqa: ARG001 - username kept for the call sites
-    if len(password) < PASSWORD_MIN:
-        raise HTTPException(422, f'Password must be at least {PASSWORD_MIN} characters.')
+    minimum = password_min()
+    if len(password) < minimum:
+        raise HTTPException(422, f'Password must be at least {minimum} characters.')
 
 
 # ---------- request guards and sessions ----------
@@ -231,8 +241,13 @@ def login(payload: Login, request: Request, response: Response):
 
 
 def _session_body(user: Principal) -> dict:
+    from . import platform_mode
+    try:
+        mode = platform_mode.current()
+    except Exception:  # noqa: BLE001 - mode unreadable: report the stricter defaults
+        mode = {'mode': 'PRODUCTION', 'password_min': platform_mode.password_min_for('PRODUCTION')}
     return {'username': user.username, 'display_name': user.display_name, 'roles': sorted(user.roles),
-            'must_change_password': user.must_change_password}
+            'must_change_password': user.must_change_password, 'platform_mode': mode['mode'], 'password_min': mode['password_min']}
 
 
 @router.get('/session')

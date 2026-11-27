@@ -299,7 +299,7 @@ const r = await fetch("https://corei-os-mini.coreeye.in/api/v1/automation/orders
 |---|---|---|
 | `COREI_INTEGRATION_WEBHOOKS` | `on` | `off` stops the webhook sender (deliveries stay queued) |
 | `COREI_WEBHOOK_ALLOW_PRIVATE` | `false` | Allow webhook destinations on private addresses |
-| `COREI_PASSWORD_MIN_LENGTH` | `2` | Minimum workstation password length; raise it (e.g. 12) for production |
+| `COREI_PASSWORD_MIN_LENGTH` | `2` | Password minimum in Development mode; Production mode uses 6 or this value if higher (DEC-110) |
 
 * Migration `052_integration_gateway.sql` only adds `int_*` tables; it changes no existing table.
 * Caddy exposes `/api/v1/automation*` (256 KB body limit) in `deploy/workstation.Caddyfile`.

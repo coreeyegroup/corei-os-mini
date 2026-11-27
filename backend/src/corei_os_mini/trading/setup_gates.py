@@ -19,6 +19,7 @@ second person. HARD gates are also checked at the order dispatcher (cached 30 s)
 Must never: tick a gate by hand; let an override outlive its expiry; let a person approve their own supervised override;
 turn order sending, a limit or a strategy on by itself.
 Dependencies: config_store, trading.governance, trading.readiness, strategy_registry (deployment track).
+In Development mode (platform_mode) PAPER and DEMO levels are lowered to WARN; LIVE levels never change.
 Consumers: config_store (order sending), strategy_registry (activation), trading.workspace_control (plan),
 trading.execution (dispatcher), trading_api (/api/trading/setup*), the Setup UI.
 Architectural position: cross-stage governance over Stages 1–8.
@@ -85,7 +86,15 @@ def policy(db) -> dict:
             if t in TRACKS and g in ENFORCED and lvl in LEVELS:
                 levels[t][g] = lvl
     max_hours = {'PAPER': 168, 'DEMO': 168, 'LIVE': 24, **(v.get('max_hours') or {})}
-    return {'preset': preset, 'levels': levels, 'custom': v.get('levels') or {}, 'target_track': v.get('target_track') or 'DEMO',
+    # Development mode (0.66.0): PAPER and DEMO gates only warn, so the platform can be tested as a user. LIVE gates keep
+    # their chosen levels: in Development LIVE is off unless an administrator allowed it, and then it stays strict.
+    from .. import platform_mode
+    development = platform_mode.is_development(db)
+    configured = {t: dict(v) for t, v in levels.items()}
+    if development:
+        for t in ('PAPER', 'DEMO'):
+            levels[t] = {g: ('WARN' if lvl in BLOCKING else lvl) for g, lvl in levels[t].items()}
+    return {'preset': preset, 'levels': levels, 'configured_levels': configured, 'development_mode': development, 'custom': v.get('levels') or {}, 'target_track': v.get('target_track') or 'DEMO',
             'default_hours': int(v.get('default_hours') or 24), 'max_hours': {k: int(x) for k, x in max_hours.items()}}
 
 

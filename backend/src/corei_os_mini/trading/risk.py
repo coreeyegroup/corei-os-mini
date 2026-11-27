@@ -306,6 +306,10 @@ def check(db, order: dict, deployment: dict | None, now: datetime, quote: dict |
         ctl = store.execution_controls(db).get(env) or {}
         if not ctl.get('trading_enabled'):
             reasons.append(f'ORDER_SENDING_OFF_{env}: order sending is off for {env} accounts (Setup › Order sending)')
+        elif env == 'LIVE':
+            from .. import platform_mode
+            if platform_mode.live_blocked(db):
+                reasons.append(platform_mode.LIVE_BLOCKED_REASON)
         from . import brokers
         cap = brokers.capability(db, order['account_id'])
         reasons += cap['reasons']

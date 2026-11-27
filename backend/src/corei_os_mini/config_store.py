@@ -838,6 +838,10 @@ def set_execution_control(actor: str, environment: str, enabled: bool, reason: s
         if before['version'] != version:
             raise HTTPException(409, 'This control was changed by someone else. Reload before changing it.')
         if enabled and environment == 'LIVE':
+            from . import platform_mode
+            if platform_mode.live_blocked(db):
+                raise HTTPException(409, 'The platform is in Development mode: LIVE order sending stays off. Switch to Production, '
+                                         'or allow LIVE in Development (Settings › Platform mode).')
             from .trading import readiness
             readiness.require_live_policy(db)  # limits, four-eyes, a second approver, an alert channel (or a recorded exception)
         if enabled and environment in ('DEMO', 'LIVE'):

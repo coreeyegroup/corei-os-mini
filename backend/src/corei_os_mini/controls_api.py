@@ -372,8 +372,10 @@ def overview(response: Response, user: Principal = Depends(current_user)):
         'steps': [{'step': c['step'], 'done': c['done'], 'section': c['section']} for c in checklist]}
     order = store.list_execution_controls()
     from .trading import readiness
+    from . import platform_mode
     with store.transaction('read') as db:
         live_policy = readiness.live_policy(db)
+        mode = platform_mode.get(db)
     live_on = any(o['trading_enabled'] for o in order if o['environment'] == 'LIVE')
     for u in live_policy['unmet']:
         attention.append({'severity': 'CRITICAL' if live_on else 'WARNING', 'area': 'LIVE readiness',
@@ -395,6 +397,34 @@ def overview(response: Response, user: Principal = Depends(current_user)):
             'order_sending': [{'environment': o['environment'], 'enabled': o['trading_enabled']} for o in order],
             'order_adapter': bool(store.ORDER_ADAPTERS),
             'live_policy': live_policy,
+            'platform_mode': {k: mode[k] for k in ('mode', 'allow_live_in_development', 'live_blocked', 'updated_by', 'updated_at')},
             'setup': setup,
             'approvals': approvals,
             'attention': sorted(attention, key=lambda a: {'CRITICAL': 0, 'WARNING': 1}.get(a['severity'], 2))}
+
+
+# ---------- platform mode (0.66.0) ----------
+
+@router.get('/platform-mode')
+def get_platform_mode(response: Response, _: str = Depends(require_operator)):
+    from . import platform_mode
+    response.headers['Cache-Control'] = 'no-store'
+    return platform_mode.current()
+
+
+@router.put('/platform-mode')
+def put_platform_mode(payload: dict, response: Response, user: Principal = Depends(require_role('ADMIN'))):
+    """Administrator only. Development ⇄ Production, and the "Allow LIVE in Development" option."""
+    from . import platform_mode
+    from .config_api import parse
+    response.headers['Cache-Control'] = 'no-store'
+    return platform_mode.set_mode(user.username, parse(platform_mode.ModeIn, payload))
+
+
+@router.post('/platform-mode/reset-test-data')
+def reset_test_data(payload: dict, response: Response, user: Principal = Depends(require_role('ADMIN'))):
+    """Development only, administrator only: paper accounts start fresh; old ones are archived with their history."""
+    from . import platform_mode
+    from .config_api import parse
+    response.headers['Cache-Control'] = 'no-store'
+    return platform_mode.reset_test_data(user.username, parse(platform_mode.ResetIn, payload))

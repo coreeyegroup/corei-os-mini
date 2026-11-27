@@ -7,7 +7,7 @@ the analysis snapshot returns provenance and quality and lists missing data inst
 candles (reporting it) or refuses rather than dropping a dataset; scan jobs are durable, de-duplicated, limited and
 cancellable; candidate signals keep their provenance and a risk assessment never creates an order; paper orders are
 idempotent on Idempotency-Key; LIVE is refused; webhooks refuse private destinations, are signed and keep one event id
-across retries; workstation alerts fan out to subscribed webhooks; passwords need only 2 characters.
+across retries; workstation alerts fan out to subscribed webhooks; passwords need only 2 characters (Development mode).
 """
 from __future__ import annotations
 
@@ -64,6 +64,9 @@ class Gateway(te.Execution):
     # ---------- passwords (owner decision 27 Nov 2026) ----------
 
     def test_password_minimum_is_two_characters_without_complexity(self):
+        # 0.66.0: 2 characters in Development mode (6 in Production: test_platform_mode).
+        v = self.ok(self.alice.get('/api/config/platform-mode'))['version']
+        self.ok(self.alice.put('/api/config/platform-mode', json={'mode': 'DEVELOPMENT', 'reason': 'test passwords', 'version': v}))
         self.ok(self.alice.post('/api/admin/users', json={'username': 'tester', 'display_name': 'Tester', 'roles': ['OBSERVER'], 'temporary_password': 'ab'}), 201)
         self.ok(self.alice.post('/api/admin/users', json={'username': 'tester2', 'display_name': 'T2', 'roles': ['OBSERVER'], 'temporary_password': 'a'}), 422)
 

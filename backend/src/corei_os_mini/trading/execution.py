@@ -62,6 +62,11 @@ def _lock(db, order_id) -> dict | None:
 
 # ---------- the gate just before sending ----------
 
+def _live_blocked(db) -> bool:
+    from .. import platform_mode
+    return platform_mode.live_blocked(db)
+
+
 def gate(db, o: dict) -> tuple[str | None, list[str]]:
     """(adapter, reasons): what still stops this approved order now (a kill switch engaged after approval, order
     sending turned off, no adapter). Risk's own limits were checked at approval."""
@@ -76,6 +81,9 @@ def gate(db, o: dict) -> tuple[str | None, list[str]]:
                      (str(o['account_id']),)).fetchone()['environment']
     if not (store.execution_controls(db).get(env) or {}).get('trading_enabled'):
         reasons.append(f'ORDER_SENDING_OFF_{env}: order sending is off for {env} accounts')
+    elif env == 'LIVE' and _live_blocked(db):
+        from .. import platform_mode
+        reasons.append(platform_mode.LIVE_BLOCKED_REASON)
     elif env == 'LIVE':
         # Checked again here, at the last moment: a switch turned on earlier, an exception that expired or a limit
         # removed since cannot let new LIVE risk through. Orders that only reduce a position still go.
