@@ -415,3 +415,17 @@ Decision (owner, 27 Nov 2026):
 7. Existing passwords keep working; the minimum applies when a password is set.
 
 Status: accepted.
+
+## DEC-111 · Settings › Update through a separate root updater (release 0.67.0, 27 Nov 2026)
+
+Context: the owner asked for an Update option in Settings that checks GitHub and installs the latest version, designed
+professionally with the controls and safety it needs. Deployment needs root; the workstation runs without root, with a
+read-only system and home folder.
+
+Decision: the workstation never runs git, builds or deployments. It checks that an update is safe now (no order in flight
+or unknown, fast-forward possible, checks not failed), asks for the password again, a reason, typed UPDATE and every
+acknowledgement, audits the request, and leaves a small request file. A fixed, root-owned updater started by systemd
+re-checks everything itself, backs up the database, fast-forwards to exactly the latest `main` commit, builds, migrates,
+deploys, verifies the running commit and rolls the code back automatically on failure. The design is in `docs/UPDATER.md`.
+
+Status: accepted. The first installation of the updater is by hand (a normal deploy installs it).

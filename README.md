@@ -1550,3 +1550,10 @@ Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh
   fresh (old ones archived with history); a **TEST** banner on every screen.
 * **Production:** strict gates; LIVE through Order sending with all its checks; passwords need 6 characters; no reset.
 * Decision DEC-110 · gaps: GAP register section T.
+
+## Settings › Update — release 0.67.0
+
+* **Setup › 7 · Settings › Update** (administrator): running vs GitHub version, what's new, Check now, **Update now** with
+  safety checks, acknowledgements, typed UPDATE and your password; live steps, log and history.
+* A separate root updater (installed by the deploy) backs up, updates, restarts, verifies and rolls back automatically.
+* Install 0.67.0 by hand once; later releases can be installed from the screen. Design: `docs/UPDATER.md` · DEC-111.

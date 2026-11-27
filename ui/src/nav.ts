@@ -287,7 +287,7 @@ export const SETUP_GROUPS: [string, [string, string][]][] = [
   ['4 · Risk', [['@Risk:limits', 'Profiles & limits ↗'], ['@Risk:kill', 'Kill switches ↗']]],
   ['5 · Strategies', [['strategies', 'Strategies & evidence'], ['deployments', 'Deployments']]],
   ['6 · Run', [['@My Workspaces:desks', 'Workspaces ↗'], ['controls', 'Order sending']]],
-  ['7 · Settings', [['approvals', 'Approvals (four-eyes)'], ['alerts', 'Alerts'], ['users', 'Users & roles']]],
+  ['7 · Settings', [['approvals', 'Approvals (four-eyes)'], ['alerts', 'Alerts'], ['users', 'Users & roles'], ['update', 'Update']]],
   ['8 · Integrate', [['integrations', 'Integrations']]],
   ['9 · Admin', [['mode', 'Platform mode'], ['audit', 'Audit log'], ['database', 'Database']]],
 ];
