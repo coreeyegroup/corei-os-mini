@@ -436,3 +436,34 @@ the pre-LIVE readiness policy.
 | PS-2 | No exchange trading calendar for India LIVE (build spec W1-6) | OPEN — before India LIVE |
 | PS-3 | No per-account entitlements (W1-7) | OPEN — before LIVE |
 | PS-4 | No PENDING_REPLACE (W1-1) | OPEN — before any LIVE order modify |
+
+## S. Integration gateway — 27 Nov 2026 (release 0.65.0)
+
+Acceptance criteria and evidence (backend `tests/test_integration_gateway.py`, UI `tests/configuration.cjs`):
+
+| ID | Criterion | Status |
+|---|---|---|
+| IG-1 | Password minimum 2 characters (server, UI, setup script) | TESTED (`test_password_minimum_is_two_characters_without_complexity`) |
+| IG-2 | Bearer refusals: missing, invalid, query-string, revoked, expired, disabled, network, rate limit | TESTED (`test_bearer_keys_every_refusal_has_a_reason_and_keys_are_never_stored`) |
+| IG-3 | Permissions per endpoint; UNAVAILABLE and LIVE permissions cannot be granted; empty scope grants nothing | TESTED |
+| IG-4 | Snapshot formats, quality, missing datasets, budget reduction, 413 | TESTED (AI_COMPACT; other formats share the shaping path) |
+| IG-5 | Scan jobs 202, duplicate request, concurrency limit, isolation between connections, cancel, job notice | TESTED |
+| IG-6 | Signals need provenance; risk assessment creates no order | TESTED |
+| IG-7 | Paper orders idempotent; LIVE refused; DEMO needs permission + environment + DEMO account | TESTED (DEMO refusals; a DEMO order reaching a broker NOT tested — no adapter) |
+| IG-8 | Webhooks: SSRF/http refusal, signature, event id, retry then send, alert fan-out | TESTED (local receiver mock) |
+| IG-9 | OpenAPI lists only gateway paths, each with its required permissions | TESTED |
+| IG-10 | Integrations screen: profile defaults, LIVE permission disabled, key shown once, real Bearer test without session cookie, explorer | TESTED (UI scenario with mocked server) |
+| IG-11 | n8n workflows A–F importable, credential by name, no secrets, no LIVE | TESTED (`test_n8n_workflows_are_importable_and_hold_no_secrets`, structure only); import into a real n8n — NEEDS VERIFICATION by the owner |
+| IG-12 | Bearer request through Caddy on the live site | NEEDS VERIFICATION after deploy (Test & setup tab) |
+
+Open gaps:
+
+| ID | Gap | Status |
+|---|---|---|
+| IG-G1 | Outbound COREI → CORE-AI calls | OPEN — contract documented |
+| IG-G2 | Real-time stream (WebSocket/SSE) | OPEN — webhooks and polling instead |
+| IG-G3 | Open interest, Greeks, option chains, market depth not collected (Upstox reader is quote polling + candles) | OPEN |
+| IG-G4 | `market_data` prices stored as DOUBLE PRECISION (pre-existing); the gateway returns strings | OPEN — schema change needs owner approval |
+| IG-G5 | Backtests through the gateway | OPEN |
+| IG-G6 | LIVE, approvals, release and amend through integrations | NOT OFFERED by design (DEC-109) |
+| IG-G7 | Rate limit counted from the usage table (one database) — fine for one server, not for several | ACCEPTED for the mini platform |

@@ -40,6 +40,15 @@ def enqueue(db, event: str, severity: str, title: str, body: str) -> int:
     for channel in channels:
         db.execute('INSERT INTO cfg_alert_outbox(event, severity, title, body, channel_id) VALUES (%s,%s,%s,%s,%s)',
                    (event, severity, title[:200], body[:2000], channel['id']))
+    # Integration webhooks (0.65.0): the same event, to subscribed applications. A savepoint keeps any problem here
+    # from aborting the caller's transaction; the alert itself is never affected.
+    try:
+        from .integration import catalog as int_catalog, webhooks as int_webhooks
+        with db.transaction():
+            int_webhooks.emit(db, int_catalog.ALERT_EVENT_MAP.get(event, 'system.alert'),
+                              {'alert_event': event, 'severity': severity, 'title': title[:200], 'body': body[:2000]})
+    except Exception:  # noqa: BLE001 - webhooks are optional; alerts must still be queued
+        log.debug('Integration webhook fan-out skipped', exc_info=True)
     return len(channels)
 
 

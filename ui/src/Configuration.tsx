@@ -13,6 +13,7 @@ import type { View } from './layout';
 import { goto, openSetupItem, SETUP_GROUPS, setupRowOf, takeStrategyRule, useSection, type StrategyRule } from './nav';
 import { SetupGates, SetupHome } from './SetupHome';
 import { FxRates } from './PaperAccounts';
+import Integrations from './Integrations';
 import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
@@ -24,8 +25,8 @@ import { useViewVisible } from './visibility';
 import { Info } from './Info';
 
 export type Row = Record<string, any>;
-type Section = 'guide' | 'gates' | 'paper' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
-type Entity = Exclude<Section, 'guide' | 'gates' | 'paper' | 'fx' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
+type Section = 'guide' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'providers' | 'connections' | 'accounts' | 'groups' | 'instruments' | 'mappings' | 'strategies' | 'deployments' | 'approvals' | 'controls' | 'alerts' | 'users' | 'audit' | 'database' | 'bridges';
+type Entity = Exclude<Section, 'guide' | 'gates' | 'paper' | 'integrations' | 'fx' | 'health' | 'brokers' | 'controls' | 'audit' | 'users' | 'strategies' | 'deployments' | 'approvals' | 'alerts' | 'database' | 'bridges'>;
 export type Navigate = (section: string, id?: string) => void;
 type Session = { username: string; display_name: string; roles: string[]; must_change_password: boolean };
 const ROLE_LABEL: Record<string, string> = { ADMIN: 'Administrator', TRADING_OPS: 'Trading operations', RISK_APPROVER: 'Risk approver', OBSERVER: 'Observer' };
@@ -52,6 +53,7 @@ const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: 'controls', label: 'Order sending', hint: 'Firm-wide switch per environment, and control policies' },
   { id: 'alerts', label: 'Alerts', hint: 'E-mail, Telegram and webhook notifications' },
   { id: 'users', label: 'Users', hint: 'Who can sign in and what each role may do' },
+  { id: 'integrations', label: 'Integrations', hint: 'CORE-AI, n8n and other applications: connections, API keys, permissions, webhooks, usage, API explorer' },
   { id: 'audit', label: 'Audit log', hint: 'Every configuration and control change' },
   { id: 'database', label: 'Database', hint: 'Every table: add, edit and delete rows; add, change and drop columns; create and drop tables (Administrator; reason and password; audited)' },
 ];
@@ -2031,8 +2033,8 @@ function ChangePassword({ session, done, cancel }: { session: Session; done: () 
   return <form className="cfg-form cfg-password" onSubmit={submit} aria-label="Change password">
     {session.must_change_password && <p className="cfg-note">Your password was set by an administrator. Choose your own password to continue.</p>}
     <Field label="Current password"><input required type="password" autoComplete="current-password" value={current} onChange={e => setCurrent(e.target.value)} /></Field>
-    <Field label="New password" hint="At least 12 characters, not containing your username"><input required minLength={12} type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} /></Field>
-    <Field label="Repeat new password"><input required minLength={12} type="password" autoComplete="new-password" value={again} onChange={e => setAgain(e.target.value)} /></Field>
+    <Field label="New password" hint="At least 2 characters"><input required minLength={2} type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} /></Field>
+    <Field label="Repeat new password"><input required minLength={2} type="password" autoComplete="new-password" value={again} onChange={e => setAgain(e.target.value)} /></Field>
     {error && <p role="alert" className="cfg-error">{error}</p>}
     <div className="cfg-actions"><button className="primary" disabled={busy}>Change password</button>{cancel && <button type="button" onClick={cancel}>Cancel</button>}</div>
   </form>;
@@ -2083,13 +2085,13 @@ function Users({ me }: { me: Session }) {
           {self && <small>You cannot change your own roles or status.</small>}
         </fieldset>
         {draft.id ? <Field label="Status"><Choice label="Status" value={draft.status} disabled={self} options={[['ACTIVE', 'Active'], ['DISABLED', 'Disabled (cannot sign in)']]} onChange={v => setDraft({ ...draft, status: v })} /></Field>
-          : <Field label="Temporary password" hint="At least 12 characters. The user must change it at first sign-in."><input aria-label="Temporary password" required minLength={12} type="password" autoComplete="new-password" value={draft.temporary_password} onChange={e => setDraft({ ...draft, temporary_password: e.target.value })} /></Field>}
+          : <Field label="Temporary password" hint="At least 2 characters. The user must change it at first sign-in."><input aria-label="Temporary password" required minLength={2} type="password" autoComplete="new-password" value={draft.temporary_password} onChange={e => setDraft({ ...draft, temporary_password: e.target.value })} /></Field>}
         {error && <p role="alert" className="cfg-error">{error}</p>}{notice && <p role="status" className="cfg-ok">{notice}</p>}
         <div className="cfg-actions"><button className="primary" disabled={busy || !draft.roles.length}>{draft.id ? 'Save changes' : 'Create user'}</button></div>
       </form>
       {draft.id && !self && <form className="cfg-credential" onSubmit={e => { e.preventDefault(); void resetPassword(); }}>
         <h3>Reset password</h3><p className="cfg-note">Sets a temporary password, unlocks the account and ends the user's sessions.</p>
-        <Field label="New temporary password"><input aria-label="New temporary password" required minLength={12} type="password" autoComplete="new-password" value={reset} onChange={e => setReset(e.target.value)} /></Field>
+        <Field label="New temporary password"><input aria-label="New temporary password" required minLength={2} type="password" autoComplete="new-password" value={reset} onChange={e => setReset(e.target.value)} /></Field>
         <div className="cfg-actions"><button disabled={busy}>Reset password</button></div></form>}
     </FloatingWindow>}
   </div>;
@@ -2204,6 +2206,7 @@ export default function Configuration() {
         : id === 'brokers' ? <div className="cfg-pane ct-pane"><ConnectTree navigate={navigate} canEdit={canEdit} changed={() => void loadRefs()} focus={id === section ? openId.id : undefined} /></div>
         : id === 'approvals' ? <div className="cfg-pane"><Approvals me={user.username} roles={user.roles} changed={() => void loadRefs()} /></div>
         : id === 'alerts' ? <div className="cfg-pane"><Alerts canEdit={canEdit} /></div>
+        : id === 'integrations' ? <Integrations isAdmin={user.roles.includes('ADMIN')} />
         : id === 'bridges' ? <div className="cfg-pane"><BridgeNodes canEdit={canEdit} /></div>
         : id === 'controls' ? <div className="cfg-pane"><OrderSending changed={() => void loadRefs()} roles={user.roles} /><Policies roles={user.roles} changed={() => void loadRefs()} /></div> : id === 'audit' ? <AuditLog />
         : id === 'users' ? <Users me={user} />

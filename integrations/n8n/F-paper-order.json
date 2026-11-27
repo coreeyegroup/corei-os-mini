@@ -1,0 +1,107 @@
+{
+  "name": "COREI F \u00b7 Paper order (preview then submit)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/orders/preview",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"account_id\": \"<PAPER_ACCOUNT_ID>\",\n  \"instrument\": \"EURUSD\",\n  \"side\": \"BUY\",\n  \"quantity\": \"1000\",\n  \"order_type\": \"MARKET\",\n  \"mode\": \"PAPER\"\n}"
+      },
+      "name": "Preview",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/orders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=order-{{ $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"account_id\": \"<PAPER_ACCOUNT_ID>\",\n  \"instrument\": \"EURUSD\",\n  \"side\": \"BUY\",\n  \"quantity\": \"1000\",\n  \"order_type\": \"MARKET\",\n  \"mode\": \"PAPER\"\n}"
+      },
+      "name": "Submit paper order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview": {
+      "main": [
+        [
+          {
+            "node": "Submit paper order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "PAPER only; LIVE is refused by the gateway. The Idempotency-Key makes retries safe. Needs: orders.preview, orders.paper."
+  },
+  "pinData": {}
+}

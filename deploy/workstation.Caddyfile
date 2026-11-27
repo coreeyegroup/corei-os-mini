@@ -55,6 +55,15 @@ corei-os-mini.coreeye.in {
         }
         reverse_proxy 127.0.0.1:18786
     }
+    # Integration gateway (0.65.0): Bearer-key access for CORE-AI, n8n and other applications; every route checks its own
+    # permission and resource scope. Requests are small JSON (snapshots, scans, signals, paper orders).
+    @automation path /api/v1/automation /api/v1/automation/*
+    handle @automation {
+        request_body {
+            max_size 256KB
+        }
+        reverse_proxy 127.0.0.1:18786
+    }
     @research {
         method GET
         path /api/research/v1/capabilities /api/research/v1/bars

@@ -32,9 +32,9 @@ else:
     username = input('New workstation username [coreeye]: ').strip() or 'coreeye'
 if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username):
     sys.exit('Use 1–64 letters, numbers, underscores, dots or hyphens.')
-password = getpass.getpass('New workstation password (at least 6 characters): ')
-if len(password) < 6 or len(password) > 256:
-    sys.exit('Password must contain 6–256 characters. Nothing changed.')
+password = getpass.getpass('New workstation password (at least 2 characters): ')
+if len(password) < 2 or len(password) > 256:
+    sys.exit('Password must contain 2–256 characters. Nothing changed.')
 if password != getpass.getpass('Confirm password: '):
     sys.exit('Passwords differ. Nothing changed.')
 salt = secrets.token_hex(16)

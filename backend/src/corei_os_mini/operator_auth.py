@@ -75,16 +75,15 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-Password = Annotated[str, StringConstraints(min_length=12, max_length=256)]
+# Owner decision 27 Nov 2026 (development and testing platform): passwords need only 2 characters, no complexity rules.
+# A production server can raise the minimum with COREI_PASSWORD_MIN_LENGTH (e.g. 12) without a code change.
+PASSWORD_MIN = max(1, int(os.environ.get('COREI_PASSWORD_MIN_LENGTH', '2') or 2))
+Password = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
-def password_rules(password: str, username: str) -> None:
-    if len(password) < 12:
-        raise HTTPException(422, 'Password must be at least 12 characters.')
-    if username.lower() in password.lower():
-        raise HTTPException(422, 'Password must not contain the username.')
-    if len(set(password)) < 6:
-        raise HTTPException(422, 'Password is too simple.')
+def password_rules(password: str, username: str) -> None:  # noqa: ARG001 - username kept for the call sites
+    if len(password) < PASSWORD_MIN:
+        raise HTTPException(422, f'Password must be at least {PASSWORD_MIN} characters.')
 
 
 # ---------- request guards and sessions ----------

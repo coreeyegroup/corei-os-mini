@@ -1,0 +1,92 @@
+{
+  "name": "COREI A \u00b7 Connection test",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/auth/test",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Auth test",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.COREI_BASE_URL || 'https://corei-os-mini.coreeye.in' }}/api/v1/automation/capabilities",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Capabilities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "name": "COREI Gateway"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Auth test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth test": {
+      "main": [
+        [
+          {
+            "node": "Capabilities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Checks the Bearer key and lists granted permissions. Needs: any valid key."
+  },
+  "pinData": {}
+}

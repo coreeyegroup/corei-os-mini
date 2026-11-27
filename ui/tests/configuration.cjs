@@ -32,6 +32,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
      return {...r,platform:c.platform,environment:c.environment,connection_code:c.code,provider_code:'ICM',data_blockers:blockers,
        trading_blockers:[...blockers,...(controls[c.environment].trading_enabled?[]:['ORDER_SENDING_OFF_'+c.environment])]};}
    return r;};
+const intClients=[],intPosts=[],bearerCalls=[];
 const setupOverrides=[],setupPolicyPuts=[],paperRows=[],paperPosts=[],paperFunds=[],fxRows=[],paperOrders=[],paperCloses=[];
 const gate=(id,step,name,state,level,items)=>({id,step,name,unlocks:'Orders',level,state,items,open_items:state==='DONE'?[]:items,overrides:[],goto:{view:'Configuration',section:'accounts'}});
 const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides:[],
@@ -46,6 +47,23 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
     LIVE:{done:0,total:1,complete:false,next:null,gates:[gate('PEOPLE',1,'People and alerts','BLOCKED','SUPERVISED',[{gate:'PEOPLE',text:'Only 1 person can approve.',fix:'Add a second approver.',goto:{view:'Configuration',section:'users'}}])]}}});
  w.fetch=async(url,options={})=>{
    const method=options.method||'GET';requests.push({url,method,body:options.body});
+   if(url.includes('/api/v1/automation/openapi.json'))return ok({paths:{'/api/v1/automation/auth/test':{get:{'x-required-scopes':[]}},
+     '/api/v1/automation/market-data/snapshot':{post:{summary:'Market snapshot','x-required-scopes':['market_data.snapshot'],requestBody:{content:{'application/json':{}}}}}}});
+   if(url.includes('/api/v1/automation/')){bearerCalls.push({url,headers:options.headers||{},credentials:options.credentials});
+     if(url.endsWith('/auth/test'))return ok({authenticated:true,connection:'core-ai',key_prefix:'ABCDEFGHJK',scopes:['system.read','signals.propose']});
+     if(url.endsWith('/capabilities'))return ok({scopes:[{scope:'system.read',granted:true},{scope:'orders.live_request',granted:false}]});
+     return ok({total:3,items:[]});}
+   if(url.endsWith('/config/integrations/catalog'))return ok({scopes:[{scope:'system.read',group:'System',label:'Platform health',status:'AVAILABLE',note:''},
+     {scope:'signals.propose',group:'Signals',label:'Submit candidate signals',status:'AVAILABLE',note:''},
+     {scope:'orders.paper',group:'Orders',label:'Place paper orders',status:'AVAILABLE',note:''},
+     {scope:'orders.live_request',group:'Orders',label:'Request LIVE orders',status:'UNAVAILABLE',note:'Not enabled.'}],
+     profiles:{CORE_AI:{scopes:['system.read','signals.propose']},N8N:{scopes:['system.read']}},events:{'job.completed':'A job finished','signal.created':'A signal'}});
+   if(/\/config\/integrations\/ic-1\/keys$/.test(url)&&method==='POST'){const k={id:'k1',prefix:'ABCDEFGHJK',state:'ACTIVE',label:'issued',created_at:'2026-11-27T00:00:00Z',created_by:'risk-ops'};
+     intClients[0].keys=[k];return ok({...k,key:'corei_ABCDEFGHJK_'+'x'.repeat(43)},201);}
+   if(/\/config\/integrations\/ic-1\/(webhooks|usage|signals)$/.test(url))return ok({items:[],deliveries:[],recent:[],by_endpoint_24h:[]});
+   if(url.endsWith('/config/integrations')&&method==='POST'){const b=JSON.parse(options.body);intPosts.push(b);
+     intClients.push({...b,id:'ic-1',version:1,keys:[],usage_24h:{requests:0},jobs:{running:0,failed:0},allowed_networks:b.allowed_networks});return ok(intClients[0],201);}
+   if(url.endsWith('/config/integrations'))return ok({items:intClients,overview:{connections:intClients.length,active:intClients.length,disabled:0,requests_24h:0}});
    if(url.endsWith('/trading/paper-accounts')&&method==='POST'){const b=JSON.parse(options.body);paperPosts.push(b);const a={id:'pa-'+paperRows.length,version:1,status:'ACTIVE',starting_amount:b.amount,equity:b.amount,return_pct:'0.00',drawdown_pct:'0.00',complete:true,missing_fx:[],open_positions:0,runs:0,fills:0,...b,commission_per_lot:b.commission_per_lot,asset_classes:b.asset_classes,markets:b.markets,instruments:b.instruments};paperRows.push(a);return ok(a,201);}
    if(/\/trading\/paper-accounts\/[^/]+\/funds$/.test(url)){const b=JSON.parse(options.body);paperFunds.push(b);paperRows[0].starting_amount=b.amount;return ok(paperRows[0]);}
    if(/\/trading\/paper-accounts\/pa-0$/.test(url))return ok({...paperRows[0],created_at:'2026-11-20T04:30:00Z',balance:'2500012.50',realised:'12.50',unrealised:'-3.10',exposure:'24000.00',leverage:'0.01',
@@ -226,7 +244,7 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  assert.match($('[aria-label="Setup path"]').textContent,/Next step · Risk: ICM_DEMO has no MAX_DAILY_LOSS/);
  assert.match($('[aria-label="Track"]').textContent,/Broker DEMO 1\/3 · target/);
  assert.match($('.su-steps').textContent,/✕2 · Risk.*soft.*blocked/);
- assert.deepEqual([...qa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['1 · Setup','2 · Connect','3 · Markets','4 · Risk','5 · Strategies','6 · Run','7 · Settings','8 · Admin']);
+ assert.deepEqual([...qa('.cfg-nav .cfg-nav-group')].map(g=>g.textContent),['1 · Setup','2 · Connect','3 · Markets','4 · Risk','5 · Strategies','6 · Run','7 · Settings','8 · Integrate','9 · Admin']);
  const beforeOv=requests.filter(r=>r.method!=='GET').length;
  w.prompt=()=>'ok';[...qa('.su-items button')].find(b=>/override for ICM_DEMO only/.test(b.textContent)).click();await tick();await tick();
  assert.equal(requests.filter(r=>r.method!=='GET').length,beforeOv,'a too-short reason asks nothing');
@@ -767,9 +785,37 @@ const setupStatus=()=>({checked_at:'2026-11-26T00:00:00Z',pending:null,overrides
  vis('.cfg-table tbody tr')[0].click();await tick();
  assert.ok(byLabel('Administrator').matches(':disabled'));
  console.log('PASS: administrator manages users and roles; own roles locked.');
+ // Integrations: a connection per application, a key shown once, a real Bearer test without the session, an explorer with permissions.
+ w.confirm=()=>true;if($('[aria-label="Close window"]'))$('[aria-label="Close window"]').click();await tick();
+ nav('Integrations').click();for(let i=0;i<4;i++)await tick();
+ assert.match($('[aria-label="Integrations"]').textContent,/No integration yet/);
+ button('+ New connection').click();await tick();
+ const f=$('[aria-label="New connection"]');assert.ok(f,'connection form');
+ assert.ok(f.querySelector('[aria-label="orders.live_request"]').disabled,'LIVE order permission cannot be ticked');
+ assert.deepEqual([...f.querySelectorAll('.int-scopes input:checked')].map(x=>x.getAttribute('aria-label')).sort(),['signals.propose','system.read'],'profile defaults');
+ fill(f.querySelector('[aria-label="Code"]'),'core-ai');fill(f.querySelector('[aria-label="Name"]'),'CORE-AI Financial Intelligence');await tick();
+ await submit(f);
+ assert.deepEqual([intPosts[0].code,intPosts[0].client_type,intPosts[0].environment,intPosts[0].access.accounts.all,intPosts[0].access.accounts.ids],['core-ai','CORE_AI','PAPER',false,[]]);
+ for(let i=0;i<3;i++)await tick();
+ const pane=$('[aria-label="Connection core-ai"]');assert.ok(pane,'connection detail opens');
+ [...pane.querySelectorAll('[role="tab"]')].find(b=>b.textContent==='Keys').click();await tick();
+ [...pane.querySelectorAll('button')].find(b=>b.textContent==='+ Issue key').click();for(let i=0;i<3;i++)await tick();
+ assert.match($('.int-secret').textContent,/corei_ABCDEFGHJK_x+.*cannot show it again/);
+ [...$('[aria-label="Connection core-ai"]').querySelectorAll('[role="tab"]')].find(b=>b.textContent==='Test & setup').click();await tick();
+ fill(byLabel('Key to test'),'corei_ABCDEFGHJK_'+'x'.repeat(43));await tick();
+ button('Run Bearer test').click();for(let i=0;i<4;i++)await tick();
+ assert.equal(bearerCalls[0].headers.Authorization,'Bearer corei_ABCDEFGHJK_'+'x'.repeat(43));
+ assert.equal(bearerCalls[0].credentials,'omit','the test never sends the session cookie');
+ assert.equal(bearerCalls[0].headers['x-corei-request'],undefined,'nor the workstation header');
+ assert.match($('[aria-label="Test results"]').textContent,/✓Authentication \(Bearer\)200connection core-ai.*✓Capability discovery.*✓Data retrieval: instruments2003 instrument/);
+ assert.match($('.int-snips').textContent,/Generic Credential Type[\s\S]*Bearer Auth[\s\S]*raw key only/);
+ [...$('[aria-label="Integrations views"]').querySelectorAll('button')].find(b=>b.textContent==='API explorer').click();for(let i=0;i<3;i++)await tick();
+ [...$('.int-explorer nav').querySelectorAll('button')].find(b=>/market-data\/snapshot/.test(b.textContent)).click();await tick();
+ assert.match($('[aria-label="Endpoint detail"]').textContent,/POST.*PermissionMARKET_DATA\.SNAPSHOT|Permissionmarket_data\.snapshot/i);
+ console.log('PASS: integrations: connection from a profile (LIVE permission disabled), key shown once, real Bearer test without the session, API explorer with required permissions.');
 
  // An observer sees configuration read-only and no Users section.
- session.roles=['OBSERVER'];$('[aria-label="Close window"]').click();await tick();
+ session.roles=['OBSERVER'];if($('[aria-label="Close window"]'))$('[aria-label="Close window"]').click();await tick();
  vis('.cfg-user .link').find(b=>b.textContent==='Sign out').click();await tick();
  const signin2=$('.cfg-signin form');fill(signin2.querySelector('[autocomplete="username"]'),'olga');fill(signin2.querySelector('[type="password"]'),'x');await submit(signin2);
  assert.ok(!vis('.cfg-nav button').some(b=>b.textContent.includes('Users')));
