@@ -519,3 +519,12 @@ Open: reset covers paper accounts only (not DEMO broker positions, scan runs or 
 | FX-9 | `test_collector_end_to_end` depended on the wall clock (failed weekends/nights after the FX close) | FIXED — session pinned in the test |
 | FX-10 | Single-user self-confirmation in the remaining places where the code checks "different person" through a shared rule: change requests, LIVE deployments, workspace start/apply, held orders, gate loosening, calculation versions | Implemented through one rule; held orders and readiness TESTED end to end, others share the same function |
 | FX-11 | 0.68.1: Settings › Software update › Start update seemed stuck: the server asked for the password again (428) but the password prompt was registered per screen and answered by the most recently opened one — absent in Settings, or open inside a hidden tab | FIXED — one prompt owned by the app shell, above every screen; per-screen copies removed; TESTED (UI `workbench.cjs`: prompt shown in Settings, not hidden, request retried) |
+
+## W. Mode chip, simpler limits, tab strips — 28 Nov 2026 (release 0.69.0)
+
+| ID | Criterion | Status |
+|---|---|---|
+| MW-1 | Top-bar Mode chip (DEV/PROD · TEAM/SINGLE); menu switches Development ⇄ Production, LIVE in Development, Team ⇄ Single user, reset test data, with the page's reasons and typed words; Platform mode also in the main Settings | TESTED (UI `workbench.cjs`) |
+| MW-2 | Risk › Limits: pick who (firm/account/strategy/instrument/deployment), one grid of every limit kind with the firm fallback, change/add/remove with one reason and one save; copy from another target; the full list opens a target | TESTED (UI `trading.cjs`) |
+| MW-3 | Tab strips: no native scrollbar over tab names (Chrome's `scrollbar-width` overrode the 2px styling); 2px see-through overlay on hover; the wheel scrolls tabs sideways | Checked by screenshot; overflow behaviour not testable in jsdom |
+| MW-4 | E-mail alerts need COREI_SMTP_* on the server (owner saw "E-mail is not configured") | Documented (configuration, not code) |

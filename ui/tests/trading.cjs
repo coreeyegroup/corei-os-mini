@@ -197,7 +197,10 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
    if(/\/trading\/governance\/strategy_evidence$/.test(url)&&method==='PUT'){govProfile=body.profile;return ok({profile:body.profile});}
    if(url.endsWith('/trading/risk/presets')){if(!body.dry_run)presetApplied=true;return ok({account:'VTM_A',currency:'USD',equity:body.equity||'100000.00',equity_source:body.equity?'entered':'COREI book',profile:body.profile,
      limits:[{kind:'MAX_DAILY_LOSS',value:'300.00',basis:'3% of equity',current:'100',action:'KEEP_TIGHTER'},{kind:'MAX_ORDER_NOTIONAL',value:'20000.00',basis:'200% of equity',current:null,action:'CREATE'}]});}
-   if(url.includes('/trading/risk/limits'))return ok({items:[],kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
+   if(url.includes('/trading/risk/limits')&&method!=='GET')return ok({});
+   if(url.includes('/trading/risk/limits'))return ok({items:[{id:'L1',scope:'ACCOUNT',target_id:'a1',target_name:'VTM_A',kind:'MAX_DAILY_LOSS',value:'100',enabled:true,note:'',version:3,updated_at:now,updated_by:'risk-ops'},
+     {id:'L2',scope:'FIRM',target_id:null,target_name:null,kind:'MAX_POSITION_QTY',value:'10',enabled:true,note:'',version:1,updated_at:now,updated_by:'risk-ops'}],
+     kinds:{MAX_DAILY_LOSS:'Largest loss today (account currency); breach stops new orders',MAX_POSITION_QTY:'Largest net position per instrument (contracts / lots)'}});
    if(url.includes('/trading/algorithms'))return ok({items:[{id:'EMA_CROSSOVER',label:'EMA crossover',description:'Long when the fast EMA crosses above the slow EMA',equation:'LONG when EMA(fast) crosses above EMA(slow)',strength_equation:'strength = 100 × |gap| ÷ ATR',
      schema:{properties:{timeframe:{enum:['M5','H1'],default:'H1'},direction:{default:'BOTH'},fast:{type:'integer',default:9},slow:{type:'integer',default:21}}}},
      {id:'SIGNAL_BLEND',label:'Signal blend',description:'Weighted Stage 3 signals',equation:'combined = Σ wᵢ · scoreᵢ ÷ Σ |wᵢ|',strength_equation:'strength = clamp(|combined|, 10, 100)',
@@ -546,6 +549,28 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  promptAnswer='institutional desk';fill($('[aria-label="strategy_evidence profile"]'),'INSTITUTIONAL');await settle(6);
  assert.deepEqual(calls.findLast(c=>c.url.endsWith('/governance/strategy_evidence')).body,{profile:'INSTITUTIONAL',overrides:{},reason:'institutional desk'});
  console.log('PASS: risk: profile presets preview first, keep tighter limits, apply with a reason; governance profiles change with a reason.');
+ // Limits (0.69.0): pick who, one grid of every limit kind, the firm value it falls back to, one reason, one save.
+ nav('Limits').click();await settle(6);
+ const grid=$('[aria-label="Set limits"]');assert.ok(grid,'the grid opens on the first account');
+ assert.equal($('[aria-label="Target"]').value,'a1');
+ assert.equal(grid.querySelector('[aria-label^="Largest loss today"][inputmode]').value,'100');
+ assert.match(grid.textContent,/Largest net position.*10/,'firm value shown as the fallback');
+ const save=()=>[...grid.querySelectorAll('button')].find(b=>/^Save/.test(b.textContent));
+ assert.ok(save().disabled,'nothing changed yet');
+ fill(grid.querySelector('[aria-label^="Largest loss today"][inputmode]'),'250');fill(grid.querySelector('[aria-label^="Largest net position"][inputmode]'),'5');await settle();
+ assert.match(save().textContent,/Save 2 changes/);assert.ok(save().disabled,'a reason is needed');
+ fill(grid.querySelector('[aria-label="Reason for these changes"]'),'size the demo account');await settle();
+ const beforeLimits=calls.length;await submit(grid);await settle(4);
+ const writes=calls.slice(beforeLimits).filter(c=>c.url.includes('/risk/limits')&&c.method!=='GET');
+ assert.deepEqual(writes.map(c=>[c.method,c.url.replace(/.*risk\/limits/,''),c.body&&c.body.value]),[['PUT','/L1','250'],['POST','','5']]);
+ assert.deepEqual([writes[0].body.version,writes[0].body.reason,writes[1].body.scope,writes[1].body.target_id],[3,'size the demo account','ACCOUNT','a1']);
+ fill(grid.querySelector('[aria-label^="Largest loss today"][inputmode]'),'');fill(grid.querySelector('[aria-label="Reason for these changes"]'),'remove daily loss');await settle();
+ const beforeDel=calls.length;await submit(grid);await settle(3);
+ assert.ok(calls.slice(beforeDel).some(c=>c.method==='DELETE'&&/limits\/L1\?reason=remove%20daily%20loss/.test(c.url)),'emptying a value removes that limit');
+ [...$$('[aria-label="Limits view"] button')].find(b=>/All limits/.test(b.textContent)).click();await settle();
+ $$('.rl-row')[1].click();await settle();
+ assert.ok($('[aria-label="Limits for"] [aria-checked="true"]').textContent.startsWith('Firm'),'a row in the list opens its target');
+ console.log('PASS: risk limits: pick who, one grid with firm fallbacks, change/add/remove with one reason and one save; the full list opens a target.');
  nav('Stress tests').click();await settle(6);
  assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');

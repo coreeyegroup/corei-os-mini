@@ -1566,3 +1566,12 @@ Update: `git pull --ff-only origin main` and `bash scripts/deploy-workstation.sh
   environment, an account's broker login and usernames stay fixed. Symbol mappings can apply to an **account group**.
 * Market data plans: display name, fixed saving, one-step creation from a broker symbol (instrument + mapping + plan).
 * DEC-112 · GAP register section V.
+
+## Mode chip, simpler limits — release 0.69.0
+
+* **Top bar › Mode** (e.g. `PROD · TEAM`): switch Development/Production, allow LIVE in Development, Team/Single user,
+  reset test data — same safety steps as Settings › Platform mode (also new in the main Settings).
+* **Risk › Limits**: pick who, set every limit in one grid (empty = no limit; firm fallback shown), one reason, one save.
+* Tab strips no longer show a scrollbar over the tab names; the mouse wheel scrolls them.
+* E-mail alerts: set `COREI_SMTP_HOST`, `COREI_SMTP_PORT`, `COREI_SMTP_USER`, `COREI_SMTP_PASSWORD`, `COREI_SMTP_FROM` in
+  `/etc/corei-os-mini/workstation.env` and restart the service.

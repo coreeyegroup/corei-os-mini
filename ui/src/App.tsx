@@ -26,6 +26,7 @@ import { SecondaryBar } from "./SecondaryBar";
 import { TopBarStatus, TopBarRight } from "./TopBar";
 import { setting, useSettings } from "./userSettings";
 import { helpInline, Info, installNoteToggle } from "./Info";
+import { installStripScroll } from "./stripScroll";
 import { MenuBar, CommandPalette, ResizeHandle, type Command } from "./WorkbenchControls";
 import {
   defaults,
@@ -85,6 +86,7 @@ function stored() {
 export default function App() {
   useSettings();
   installNoteToggle();
+  installStripScroll();
   const [launch] = useState(() => launchContext(window.location.search));
   const [appearance,setAppearance]=useState<Appearance>(()=>{try{return restoreAppearance(localStorage.getItem(appearanceKey));}catch{return {...defaultAppearance};}});
   const [pinned,setPinned]=useState<View[]>(()=>{try{const x=JSON.parse(localStorage.getItem('corei-os-mini.pins.v1')||'[]');return Array.isArray(x)?views.filter(v=>x.includes(v)):[];}catch{return [];}});

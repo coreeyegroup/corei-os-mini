@@ -12,6 +12,7 @@
  * Dependencies: GET /trading/topbar, nav.Overview, userSettings. Consumers: App header.
  * Architectural position: UI shell.
  */
+import ModeMenu from './ModeMenu';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './Configuration';
 import type { View } from './layout';
@@ -53,6 +54,7 @@ export function TopBarStatus({ overview, signedOut, setup, live, open }: { overv
   const kills = Object.entries(top?.kill_switches ?? {}).filter(([, n]) => n > 0);
   const running = top?.desks?.RUNNING ?? 0, paused = top?.desks?.PAUSED ?? 0;
   return <div className="status-chips" aria-label="Live status">
+    {on('mode') && <ModeMenu openPage={() => open('Settings', 'platform-mode')} />}
     {kills.length > 0 && <button className="chip bad" title="Engaged kill switches by scope" onClick={() => open('Risk', 'kill')}>
       ⛔ Kill {kills.map(([s, n]) => `${s.toLowerCase()} ${n}`).join(' · ')}</button>}
     {(top?.unknown_orders ?? 0) > 0 && <button className="chip bad" title="Orders whose outcome at the broker is unknown. They are never resent; resolve them on the Orders page." onClick={() => open('Execution')}>

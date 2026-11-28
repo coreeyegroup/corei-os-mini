@@ -694,8 +694,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 /* tab strips scroll with the wheel / trackpad; a 2px line appears only on hover, never over the labels */
 .tabs, .sw-bar, .sw-tabs, .menubar, .pd-tabs [role="tablist"] { scrollbar-width: none; }
 .tabs::-webkit-scrollbar, .sw-bar::-webkit-scrollbar, .sw-tabs::-webkit-scrollbar, .menubar::-webkit-scrollbar, .pd-tabs [role="tablist"]::-webkit-scrollbar { height: 0; width: 0; }
-.tabs:hover, .sw-tabs:hover { scrollbar-width: thin; }
-.tabs:hover::-webkit-scrollbar, .sw-tabs:hover::-webkit-scrollbar { height: 2px; }
+/* 0.69.0: tab strips never show the native scrollbar (it covered tab names); see stripScroll.ts for the overlay. */
 
 /* heights: compact default, comfortable = VS Code defaults */
 .tabs, .tab, .tab-tools button { height: 30px !important; min-height: 30px !important; }
@@ -872,3 +871,34 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 
 /* ==== 0.68.1 · the one password prompt sits above every window and screen ==== */
 .cfg-modal { z-index: 1100; }
+
+/* ==== 0.69.0 · tab strips: thin see-through position bar over the bottom edge, wheel scrolls sideways ==== */
+.tabs, .sw-tabs { scrollbar-width: none !important; position: relative; }
+.tabs::-webkit-scrollbar, .sw-tabs::-webkit-scrollbar { display: none; }
+.tabs.strip-over::after, .sw-tabs.strip-over::after { content: ''; position: absolute; bottom: 0; height: 2px; left: var(--strip-x, 0); width: var(--strip-w, 0);
+  background: color-mix(in srgb, var(--muted) 55%, transparent); border-radius: 2px; pointer-events: none; z-index: 3; opacity: 0; transition: opacity .15s; }
+.tabs.strip-over:hover::after, .sw-tabs.strip-over:hover::after { opacity: 1; }
+
+/* ==== 0.69.0 · top-bar Mode chip and menu ==== */
+.mode-menu { position: relative; display: inline-flex; align-items: center; }
+.mode-chip.dev { border-color: #e0a530; color: #e0a530; } .mode-chip.prod { border-color: #4caf50; color: #4caf50; }
+.mode-pop { min-width: 300px; right: auto; left: 0; display: flex; flex-direction: column; padding: 4px 0; }
+.mode-pop .mode-now { margin: 2px 10px 6px; font-size: var(--fs-2); line-height: 1.4; color: var(--muted); }
+.mode-pop .mode-now b { color: var(--text); }
+.mode-pop button[role="menuitem"] { display: flex; flex-direction: column; align-items: flex-start; gap: 0; text-align: left; border: 0 !important; border-radius: 0 !important;
+  background: transparent; padding: 4px 10px !important; height: auto !important; }
+.mode-pop button[role="menuitem"]:hover { background: var(--selection); }
+.mode-pop button[role="menuitem"] small { color: var(--muted); font-size: 10.5px; }
+.mode-pop button.danger b { color: var(--danger); }
+.mode-msg { position: absolute; top: 100%; left: 0; z-index: 40; margin-top: 4px; max-width: 360px; padding: 4px 8px; border-radius: 3px; font-size: var(--fs-2);
+  background: var(--surface); border: 1px solid var(--line); cursor: pointer; } .mode-msg.bad { border-color: var(--danger); color: var(--danger); }
+
+/* ==== 0.69.0 · Risk › Limits: pick who, one grid, one save ==== */
+.rl-bar { flex-wrap: wrap; gap: 6px; }
+.rl-views, .rl-scopes { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.rl-views button, .rl-scopes button { border: 0 !important; border-radius: 0 !important; background: transparent; }
+.rl-views button[aria-selected="true"], .rl-scopes button[aria-checked="true"] { background: var(--selection); color: var(--text); }
+.rl-grid input[inputmode] { width: 140px; text-align: right; }
+.rl-grid tr.rl-dirty td:first-child { box-shadow: inset 3px 0 0 #e0a530; }
+.rl-save input { flex: 1; min-width: 240px; max-width: 520px; }
+.rl-row { cursor: pointer; } .rl-row:hover { background: var(--selection); }
