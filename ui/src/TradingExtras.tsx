@@ -6,7 +6,7 @@
  * dashboard, breaks, reconciliation runs, broker book, TCA, trade journal, statements, order audit trail, exports.
  * Must never: decide anything itself (the backend decides; these screens show and ask). */
 import GraphWorkbench from './calc/GraphWorkbench';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useState, type FormEvent, type ReactNode } from 'react';
 import { api, Choice, Field } from './Configuration';
 import { Formulas } from './SignalLibrary';
 import { goto, openAccountView, openOrder, useAccountView } from './nav';
@@ -28,22 +28,26 @@ const days = (n: number) => <>{[1, 7, 30, 90, 365].map(d => <option key={d} valu
 
 /* ---------- Stage 5 · Risk: VaR, margin, stress ---------- */
 
-export function VarMargin() {
+export function VarMargin({ ctx }: { ctx?: Ctx }) {
   const [data, error] = useData<Row>('trading/risk/var', 60_000);
+  const [open, setOpen] = useState<string | null>(null);
+  const items: Row[] = data?.items ?? [];
+  // One row per account (0.69.2) so 100+ accounts stay readable; click a row for its instruments.
   return <section className="intel"><Msg error={error} />
-    {(data?.items ?? []).map((v: Row) => <div key={v.account_id} className="st-card">
-      <b>{v.account_code}</b> <small className="cfg-note">equity {money(v.equity, v.currency)}</small>
-      {v.error ? <p className="cfg-error">VaR not available: {v.error}</p> : <Kpis items={[
-        [`VaR ${v.confidence}% (1 ${v.timeframe} bar)`, money(v.var, v.currency), `Loss not exceeded on ${v.confidence}% of the ${v.bars} past bars`],
-        ['VaR % of equity', `${v.var_pct ?? '–'}%`], ['Expected shortfall', money(v.es, v.currency), 'Average loss beyond the VaR'], ['Worst bar', money(v.worst, v.currency)],
-        ['Margin in use', money(v.margin?.used, v.currency), `Position value ÷ leverage ${v.margin?.leverage}`],
-        ['Broker margin', v.margin?.broker_margin != null ? money(v.margin.broker_margin, v.currency) : '–', 'From the latest broker book (real accounts)']]} />}
-      {!v.error && <Table cols={[['Instrument', r => r.symbol], ['Position value', r => money(r.value, v.currency)], ['Average loss in the worst bars', r => money(r.tail_loss, v.currency)]]}
-        rows={v.positions ?? []} empty="No positions." rowKey={r => r.instrument_id} />}
-    </div>)}
-    {data && !(data.items ?? []).length && <p className="cfg-note">No open positions: nothing at risk.</p>}
-    <p className="cfg-note">Historical simulation: today's positions × each past bar's price change, on the bars every held instrument shares (Execution settings › VaR sets the confidence,
-      timeframe and look-back). Use the MAX_VAR_PCT, MAX_MARGIN_PCT and MAX_LEVERAGE limits to refuse orders that would go past them.</p></section>;
+    {ctx && <div className="intel-bar"><button onClick={() => ctx.open('var-settings')}>VaR settings</button></div>}
+    {items.length > 0 && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Equity</th><th>VaR</th><th>VaR % equity</th>
+      <th>Expected shortfall</th><th>Worst bar</th><th>Margin in use</th><th>Broker margin</th></tr></thead><tbody>
+      {items.map((v: Row) => <Fragment key={v.account_id}><tr className="rl-click" onClick={() => setOpen(open === v.account_id ? null : v.account_id)}>
+        <td><b>{v.account_code}</b> <small className="cfg-note">{open === v.account_id ? '▾' : '▸'}</small></td><td>{money(v.equity, v.currency)}</td>
+        {v.error ? <td colSpan={6} className="cfg-error">VaR not available: {v.error}</td> : <>
+          <td title={`Loss not exceeded on ${v.confidence}% of the ${v.bars} past ${v.timeframe} bars`}>{money(v.var, v.currency)} <small className="cfg-note">{v.confidence}% · 1 {v.timeframe}</small></td>
+          <td>{v.var_pct ?? '–'}%</td><td>{money(v.es, v.currency)}</td><td>{money(v.worst, v.currency)}</td>
+          <td title={`Position value ÷ leverage ${v.margin?.leverage}`}>{money(v.margin?.used, v.currency)}</td><td>{v.margin?.broker_margin != null ? money(v.margin.broker_margin, v.currency) : '–'}</td></>}</tr>
+        {open === v.account_id && !v.error && <tr><td colSpan={8}><Table cols={[['Instrument', r => r.symbol], ['Position value', r => money(r.value, v.currency)], ['Average loss in the worst bars', r => money(r.tail_loss, v.currency)]]}
+          rows={v.positions ?? []} empty="No positions." rowKey={r => r.instrument_id} /></td></tr>}</Fragment>)}</tbody></table></div>}
+    {data && !items.length && <p className="cfg-note">No open positions: nothing at risk.</p>}
+    <p className="cfg-note">Historical simulation: today's positions × each past bar's price change, on the bars every held instrument shares (Risk › VaR settings sets the confidence,
+      timeframe and look-back). Expected shortfall is the average loss beyond the VaR. Use the MAX_VAR_PCT, MAX_MARGIN_PCT and MAX_LEVERAGE limits to refuse orders that would go past them.</p></section>;
 }
 
 export function Stress({ ctx }: { ctx: Ctx }) {
@@ -68,8 +72,10 @@ export function Stress({ ctx }: { ctx: Ctx }) {
       <div className="cfg-actions"><button className="primary">Save</button><button type="button" onClick={() => setF(null)}>Cancel</button></div></form>}
     <Msg error={error || err} />
     <Table cols={[['Scenario', s => <><b>{s.name}</b><br /><small className="cfg-note">{s.description}</small></>],
-      ['Shocks', s => <small>{s.shocks.map((x: Row) => `${x.match === 'ALL' ? 'all' : x.value} ${Number(x.pct) > 0 ? '+' : ''}${x.pct}%`).join(' · ')}</small>],
-      ['P&L if it happened', s => signed(s.total)], ['By account', s => <small>{s.by_account.map((a: Row) => `${a.account} ${Number(a.pnl).toFixed(2)}`).join(' · ') || '–'}</small>],
+      ['Shocks', s => <small>{s.shocks.map((x: Row) => `${x.match === 'ALL' ? 'everything' : x.match === 'CURRENCY' ? `quoted in ${x.value}` : x.value} ${Number(x.pct) > 0 ? '+' : ''}${x.pct}%`).join(' · ')}</small>],
+      ['P&L if it happened', s => Object.keys(s.totals ?? {}).length ? Object.entries(s.totals).map(([c, v]) => <div key={c}>{signed(v, c)}</div>) : '–'],
+      ['By account', s => s.by_account.length ? <details><summary>{s.by_account.length} account{s.by_account.length === 1 ? '' : 's'}</summary>
+        {s.by_account.map((a: Row) => <div key={a.account_id}><small>{a.account}</small> {money(a.pnl, a.currency)}</div>)}</details> : '–'],
       ['', s => ctx.canRisk && <>{<button onClick={() => setF({ ...s, reason: '' })}>Edit</button>}{!s.builtin && <button onClick={() => del(s)}>Delete</button>}</>]]}
       rows={data?.scenarios ?? []} empty="No scenarios." />
     {(data?.missing?.length ?? 0) > 0 && <p className="cfg-error">Not valued (no price or FX rate): {data!.missing.join('; ')}</p>}
