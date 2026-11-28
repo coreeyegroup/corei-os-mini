@@ -918,3 +918,5 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .rl-item small.rl-none { color: #e0a530; }
 .rl-who { margin: 0 0 4px; }
 @media (max-width: 900px) { .rl-split { grid-template-columns: 1fr; } }
+.intel-inline { display: flex; gap: 4px; align-items: center; } .intel-inline input { min-width: 180px; }
+.rl-click { cursor: pointer; } .rl-click:hover td { background: var(--hover, rgba(127,127,127,.08)); }

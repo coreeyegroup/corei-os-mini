@@ -177,8 +177,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      fills:[{id:'f1',quantity:'0.1',price:'1.08011',quote_bid:'1.08',quote_ask:'1.0801',realised_pnl:'0',currency:'USD'}],risk:{approved:true,inputs:{position_before:'0',position_after:'0.1',limits:{}}}});
    if(url.endsWith('/trading/orders')&&method==='POST')return ok({...order,id:'o2',duplicate:calls.filter(c=>c.url.endsWith('/trading/orders')&&c.method==='POST'&&c.body.ticket_key===body.ticket_key).length>1},201);
    if(url.includes('/trading/orders'))return ok({items:[order]});
-   if(url.includes('/trading/risk/kill-switches')&&method==='POST'){const k={id:'k'+kills.length,...body,engaged:true,target_name:'VTM_A',engaged_by:'risk-ops',engaged_at:now,automatic:false};kills.push(k);return ok(k,201);}
-   if(url.includes('/trading/risk/kill-switches'))return ok({items:kills});
+   if(url.includes('/trading/risk/kill-switches/')&&url.endsWith('/release')){const k=kills.find(x=>url.includes('/'+x.id+'/'));k.engaged=false;return ok(k);}
+   if(url.includes('/trading/risk/kill-switches')&&method==='POST'){const same=kills.find(x=>x.engaged&&x.scope===body.scope&&x.target_id===body.target_id);if(same)return ok(same);const k={id:'k'+kills.length,...body,engaged:true,target_name:'VTM_A',engaged_by:'risk-ops',engaged_at:now,automatic:false};kills.push(k);return ok(k,201);}
+   if(url.includes('/trading/risk/kill-switches'))return ok({items:kills.filter(k=>k.engaged||url.includes('history'))});
    if(url.includes('/trading/risk/decisions'))return ok({items:[{
      id:'r1',order_id:'o1',at:now,account_code:'VTM_A',symbol:'EURUSD',side:'BUY',requested_qty:'0.001',approved_qty:'0.001',
      approved:true,reasons:[],inputs:{mode:'PAPER',position_before:'0',position_after:'0.001',limits:{MAX_ORDER_QTY:'0.01'},
@@ -279,7 +280,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
      first_seen:now,last_seen:now,state:'OPEN'}]});
    if(url.includes('/trading/posttrade/tca'))return ok({by:'account',currency:'USD',slippage_cost_total:'12.5',commission_total:'-2.1',rows:[{label:'VTM_A',orders:4,fill_rate_pct:'100',reject_rate_pct:0,fills:4,
      avg_slippage_bps:'0.19',slippage_cost:'12.5',price_improved:1,worse_than_arrival:3,latency_avg_ms:140,latency_p95_ms:210,latency_max_ms:230,commission:'-2.1'}],note:'Slippage = fill vs arrival.'});
-   if(url.includes('/trading/risk/stress'))return ok({scenarios:[{id:'s1',name:'Everything −5%',description:'',builtin:true,shocks:[{match:'ALL',value:'',pct:'-5'}],total:'-540.20',by_account:[{account:'VTM_A',pnl:'-540.20'}]}],missing:[]});
+   if(url.includes('/trading/risk/stress'))return ok({scenarios:[{id:'s1',name:'Everything −5%',description:'',builtin:true,shocks:[{match:'ALL',value:'',pct:'-5'}],total:'-540.20',totals:{USD:'-540.20'},by_account:[{account:'VTM_A',account_id:'a1',currency:'USD',pnl:'-540.20'}]}],missing:[]});
    if(url.includes('/trading/formulas'))return ok({stages:{Signals:[{name:'EMA trend (EMA_TREND)',equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)',variables:'fast = 9, slow = 21',code:'trading/signal_library.py · EMA_TREND'}],
      Risk:[{name:'Margin and leverage',equation:'margin = Σ value ÷ account leverage',code:'trading/risk.py: margin'}],Intelligence:[{name:'RSI(14) — rsi14',equation:'RSI = 100 − 100 ÷ (1 + RS)',code:'intel/indicators.py: rsi'}]}});
    if(url.includes('/trading/signal-library/catalogue'))return ok({items:[{kind:'EMA_TREND',label:'EMA trend',family:'Trend',defaults:{fast:9,slow:21,scale:1},equation:'score = clamp(100 × (EMA(fast) − EMA(slow)) ÷ (scale × ATR14), −100, +100)',detail:'Trend',horizon:'days'},
@@ -500,6 +501,9 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.deepEqual($$('.st-timeline li b').map(b=>b.textContent),['new','approved','submitted','acknowledged','filled']);
  button('Inspect risk checks').click();await settle(6);
  assert.ok(calls.some(c=>c.url.includes('/trading/risk/decisions?limit=200&order_id=o1')));
+ fill($('[aria-label="Search risk checks"]'),'nothing-like-this');await settle();
+ assert.match($('.intel-table').textContent,/No risk checks match/);fill($('[aria-label="Search risk checks"]'),'vtm');await settle();
+ assert.deepEqual($$('.intel-table th').slice(0,3).map(t=>t.textContent),['Time','Result','Reasons'],'result and reasons come first');
  button('Inspect check').click();await settle(3);
  assert.match($('.fw').textContent,/MAX_ORDER_QTY0\.0010\.01ACCOUNTWithin limit/);
  button('Inspect order').click();await settle(6);
@@ -525,14 +529,33 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok(calls.some(c=>c.url.endsWith('/trading/orders/o9/check-broker')&&c.method==='POST'));
  console.log('PASS: execution: a real order asks for confirmation (LIVE called out); unknown orders are looked up at the broker, never re-sent.');
 
- // Risk: a kill switch needs a scope, a target and a reason.
+ // Risk (0.69.2): the dashboard lists every account with its own limits and kill state, not only those with exposure.
  await go('Risk');
+ nav('Dashboard').click();await settle(6);
+ assert.match($$('.intel-table').find(t=>/Own limits/.test(t.textContent)).textContent,/VTM_A.*1.*ICM_L.*none · firm only/);
+ $$('[aria-label="Risk workflow"] ~ label input, .intel-check input').find(i=>i.parentElement.textContent.includes('without their own limits')).click();await settle(2);
+ assert.doesNotMatch($$('.intel-table').find(t=>/Own limits/.test(t.textContent)).textContent,/VTM_A/,'gap filter keeps only accounts without limits');
+ console.log('PASS: risk dashboard: every account with its own limits, kill state and exposure; accounts without limits can be listed alone.');
+ // Kill switches use the same target list as Limits: tick one or many, one reason, release with an inline reason.
  nav('Kill switches').click();await settle(6);
  button('Engage a kill switch').click();await settle();
- fill($('[aria-label="Target"]'),'a1');fill($('[aria-label="Kill reason"]'),'broker incident');await settle();
- await submit($('.intel-edit'));
+ const kl=$('[aria-label="Choose who"]');assert.ok(kl,'same list as Limits, not a dropdown');
+ [...kl.querySelectorAll('.rl-item span')].find(x=>/VTM_A/.test(x.textContent)).click();await settle();
+ fill($('[aria-label="Kill reason"]'),'broker incident');await settle();
+ await submit($('.intel-edit'));await settle(3);
  assert.deepEqual(calls.filter(c=>c.url.includes('kill-switches')&&c.method==='POST')[0].body,{scope:'ACCOUNT',target_id:'a1',reason:'broker incident'});
- console.log('PASS: risk: a kill switch is engaged with a scope, a target and a reason.');
+ button('Engage a kill switch').click();await settle();
+ for(const cb of $('[aria-label="Choose who"]').querySelectorAll('.rl-item input[type=checkbox]'))if(!cb.checked)cb.click();await settle();
+ assert.match(button('Stop new orders (2)').textContent,/\(2\)/);
+ fill($('[aria-label="Kill reason"]'),'server outage');await settle();
+ let kb=calls.length;await submit($('.intel-edit'));await settle(4);
+ assert.deepEqual(calls.slice(kb).filter(c=>c.url.endsWith('kill-switches')&&c.method==='POST').map(c=>c.body.target_id),['a1','a2'],'one switch per ticked account');
+ const rb=$$('.intel-table button').find(b=>b.textContent==='Release');rb.click();await settle();
+ fill($('[aria-label="Release reason"]'),'broker back online');await settle();
+ kb=calls.length;await submit($('.intel-inline'));await settle(3);
+ assert.deepEqual(calls.slice(kb).find(c=>c.url.endsWith('/release')).body,{reason:'broker back online'},'inline reason, no browser prompt');
+ assert.equal($$('.intel-table button').filter(b=>b.textContent==='Release').length,1,'the released switch leaves the list');
+ console.log('PASS: risk: kill switches tick one or many targets from the Limits list with one reason; release asks for a reason inline.');
  nav('Limits').click();await settle(8);
  assert.match($('[aria-label="Risk profiles"]').textContent,/DEMO accounts below the minimum: VTM_A has no MAX_DAILY_LOSS/);
  const beforePreset=calls.filter(c=>c.method!=='GET').length;
@@ -584,7 +607,7 @@ const settle=async(n=8)=>{for(let i=0;i<n;i++)await tick();};
  assert.ok($('[aria-label="Limits for"] [aria-checked="true"]').textContent.startsWith('Firm'),'a row in the list opens its target');
  console.log('PASS: risk limits at scale: searchable list grouped by server, one or many ticked, one grid with firm values, one reason and one save; emptying removes only for one target.');
  nav('Stress tests').click();await settle(6);
- assert.match($('.intel-table').textContent,/Everything −5%.*-540/);
+ assert.match($('.intel-table').textContent,/Everything −5%.*-540.*USD.*1 account/);
  console.log('PASS: risk: stress scenarios show the P&L of today\'s positions under each shock.');
 
  await go('Portfolio');

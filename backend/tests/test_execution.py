@@ -338,6 +338,9 @@ class Execution(tt.Trading):
         st = self.ok(self.alice.get('/api/trading/risk/stress'))
         down = next(s for s in st['scenarios'] if s['name'] == 'Everything −5%')
         self.assertLess(Decimal(down['total']), 0)
+        # 0.69.2: totals per currency; accounts in different currencies are never added together.
+        self.assertEqual(list(down['totals']), [down['by_account'][0]['currency']])
+        self.assertEqual(Decimal(down['totals'][down['by_account'][0]['currency']]), Decimal(down['total']))
         sc = self.ok(self.alice.post('/api/trading/risk/scenarios', json={'name': 'EUR −2%', 'shocks': [{'match': 'SYMBOL', 'value': 'eurusd', 'pct': '-2'}],
                                                                          'reason': 'desk scenario'}), 201)
         self.assertEqual(sc['shocks'][0]['value'], 'EURUSD')

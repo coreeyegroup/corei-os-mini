@@ -356,18 +356,19 @@ export function StrategiesView() {
 
 const SCOPES: [string, string][] = [['FIRM', 'Firm (everything)'], ['ACCOUNT', 'Account'], ['STRATEGY', 'Strategy'], ['INSTRUMENT', 'Instrument'], ['DEPLOYMENT', 'Deployment']];
 
-function TargetPicker({ scope, value, change }: { scope: string; value: string; change: (v: string) => void }) {
-  const l = Lists();
-  const opts: [string, string][] = scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code} · ${a.environment}`]) : scope === 'STRATEGY' ? l.strategies.map((s: Row) => [s.id, s.code])
-    : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol]) : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d)]) : [];
-  if (scope === 'FIRM') return null;
-  return <Field label="Which"><select aria-label="Target" required value={value} onChange={e => change(e.target.value)}><option value="">Choose…</option>{opts.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></Field>;
-}
 
 function RiskOverview({ ctx }: { ctx: Ctx }) {
   const [ov, overviewError] = useData<Row>('trading/overview', 15_000);
   const [exp, exposureError] = useData<Row>('trading/risk/exposure', 20_000);
   const [kills, switchError] = useData<Row>('trading/risk/kill-switches', 15_000);
+  const [lims] = useData<Row>('trading/risk/limits', 30_000);
+  const l = Lists(), [q, setQ] = useState(''), [gaps, setGaps] = useState(false);
+  // Coverage (0.69.2): every account, not only those with exposure, so an account with no limits is visible.
+  const expo = new Map((exp?.accounts ?? []).map((a: Row) => [a.account_id, a]));
+  const limitsOf = (id: string) => (lims?.items ?? []).filter((x: Row) => x.scope === 'ACCOUNT' && x.target_id === id && x.enabled !== false).length;
+  const firmKill = (kills?.items ?? []).some((k: Row) => k.scope === 'FIRM');
+  const killed = (id: string) => firmKill || (kills?.items ?? []).some((k: Row) => k.scope === 'ACCOUNT' && k.target_id === id);
+  const cover = targetsOf('ACCOUNT', l).filter(([id, n, g]) => (!q || `${n} ${g}`.toLowerCase().includes(q.toLowerCase())) && (!gaps || !limitsOf(id)));
   return <section className="intel">
     <div className="intel-bar" aria-label="Risk workflow">
       <button onClick={() => ctx.open('limits')}>Review limits</button>
@@ -382,37 +383,88 @@ function RiskOverview({ ctx }: { ctx: Ctx }) {
       ['Open positions', ov.positions], ['Working orders', ov.open_orders]]} />}
     {ov?.limits === 0 && !overviewError && <p className="cfg-error">No risk limits are enabled. Other pre-trade checks still apply. <button onClick={() => ctx.open('limits')}>Review limit configuration</button></p>}
     {(kills?.items ?? []).length > 0 && <><h4>Kill switches on</h4><ul>{kills!.items.map((k: Row) => <li key={k.id}><b>{k.scope.toLowerCase()} {k.target_name}</b> — {k.reason} <small className="cfg-note">({k.automatic ? 'automatic' : k.engaged_by}, {when(k.engaged_at)})</small></li>)}</ul></>}
-    <h4>Accounts with valued exposure</h4>
-    <div className="intel-bar"><button onClick={() => goto('Portfolio', 'accounts')}>View portfolio accounts</button></div>
-    <table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Equity</th><th>Today</th><th>Drawdown</th><th>Gross exposure</th><th>Net exposure</th></tr></thead><tbody>
-      {(exp?.accounts ?? []).map((a: Row) => <tr key={a.account_id}><td>{a.account_code}</td><td>{money(a.equity, a.currency)}</td><td className={Number(a.day_pnl) >= 0 ? 'up' : 'down'}>{money(a.day_pnl, a.currency)}</td>
-        <td>{a.drawdown_pct}%</td><td>{money(a.gross, a.currency)}</td><td>{money(a.net, a.currency)}</td></tr>)}
-      {exp && !exp.accounts.length && <tr><td colSpan={6} className="cfg-note">No valued exposure to display. Check Portfolio for flat accounts or holdings awaiting valuation.</td></tr>}</tbody></table>
-    <p className="cfg-note">Account totals can combine paper and broker positions. Open an individual risk check to see its order mode, recorded inputs and applicable limits.</p>
+    <h4>Account coverage</h4>
+    <div className="intel-bar"><input aria-label="Search accounts" placeholder={`Search ${l.accounts.length} accounts…`} value={q} onChange={e => setQ(e.target.value)} />
+      <label className="intel-check"><input type="checkbox" checked={gaps} onChange={e => setGaps(e.target.checked)} /> Only accounts without their own limits</label>
+      <button onClick={() => goto('Portfolio', 'accounts')}>View portfolio accounts</button></div>
+    <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Account</th><th>Server</th><th>Own limits</th><th>Kill switch</th><th>Equity</th><th>Today</th><th>Drawdown</th><th>Gross exposure</th></tr></thead><tbody>
+      {cover.map(([id, n, g]) => { const a = expo.get(id) as Row | undefined, c = limitsOf(id);
+        return <tr key={id}><td>{n}</td><td><small>{g}</small></td>
+          <td><button className="link" onClick={() => ctx.open('limits')}>{c ? c : <span className="rl-none">none · firm only</span>}</button></td>
+          <td>{killed(id) ? <button className="link" onClick={() => ctx.open('kill')}>{pill('on', 'live')}</button> : '–'}</td>
+          <td>{a ? money(a.equity, a.currency) : '–'}</td><td className={a && Number(a.day_pnl) < 0 ? 'down' : 'up'}>{a ? money(a.day_pnl, a.currency) : '–'}</td>
+          <td>{a ? `${a.drawdown_pct}%` : '–'}</td><td>{a ? money(a.gross, a.currency) : <small className="cfg-note">flat or not valued</small>}</td></tr>; })}
+      {!cover.length && <tr><td colSpan={8} className="cfg-note">No accounts match.</td></tr>}</tbody></table></div>
+    <p className="cfg-note">"Own limits" counts enabled limits set on the account itself; firm limits apply to every account. Account totals can combine paper and broker positions. Open an individual risk check to see its order mode, recorded inputs and applicable limits.</p>
   </section>;
 }
 
 function KillSwitches({ ctx }: { ctx: Ctx }) {
   const [history, setHistory] = useState(false), [data, error, reload] = useData<Row>(`trading/risk/kill-switches${history ? '?history=true' : ''}`, 15_000, [history]);
+  const l = Lists();
   const [f, setF] = useState<Row | null>(null), [err, setErr] = useState(''), [msg, setMsg] = useState('');
-  const engage = async (e: FormEvent) => { e.preventDefault(); if (!f) return;
-    try { await api('trading/risk/kill-switches', 'POST', { scope: f.scope, target_id: f.scope === 'FIRM' ? null : f.target_id, reason: f.reason }); setF(null); setMsg('Kill switch on: new orders in that scope are refused.'); reload(); } catch (x) { setErr((x as Error).message); } };
+  const [rel, setRel] = useState<{ id: string; reason: string } | null>(null);
+  const on = (data?.items ?? []).filter((k: Row) => k.engaged);
+  const count = (id: string) => on.filter((k: Row) => k.target_id === id).length;
+  // One kill switch per ticked target (0.69.2): same list as Limits, so 100+ accounts stay manageable.
+  const engage = async (e: FormEvent) => { e.preventDefault(); if (!f) return; setErr('');
+    const ids: (string | null)[] = f.scope === 'FIRM' ? [null] : f.picked;
+    if (!ids.length) { setErr('Tick at least one target.'); return; }
+    let done = 0;
+    try { for (const id of ids) { await api('trading/risk/kill-switches', 'POST', { scope: f.scope, target_id: id, reason: f.reason }); done++; }
+      setF(null); setMsg(`Kill switch on for ${done} target${done === 1 ? '' : 's'}: new orders there are refused.`); }
+    catch (x) { setErr(`${done} of ${ids.length} engaged; stopped at: ${(x as Error).message}`); }
+    reload(); };
+  const release = async (e: FormEvent) => { e.preventDefault(); if (!rel) return;
+    try { await api(`trading/risk/kill-switches/${rel.id}/release`, 'POST', { reason: rel.reason }); setRel(null); setMsg('Released.'); reload(); } catch (x) { setErr((x as Error).message); } };
   return <section className="intel">
-    <div className="intel-bar">{(ctx.canOps || ctx.canRisk) && <button className="danger" onClick={() => setF({ scope: 'ACCOUNT', target_id: '', reason: '' })}>Engage a kill switch</button>}
+    <div className="intel-bar">{(ctx.canOps || ctx.canRisk) && <button className="danger" onClick={() => setF({ scope: 'ACCOUNT', picked: [], reason: '' })}>Engage a kill switch</button>}
       <label className="intel-check"><input type="checkbox" checked={history} onChange={e => setHistory(e.target.checked)} /> Show released</label></div>
     <Msg error={error || err} notice={msg} />
     {f && <form className="cfg-form intel-edit" onSubmit={engage}>
-      <Field label="Scope"><Choice label="Kill scope" value={f.scope} options={SCOPES} onChange={v => setF({ ...f, scope: v, target_id: '' })} /></Field>
-      <TargetPicker scope={f.scope} value={f.target_id} change={v => setF({ ...f, target_id: v })} />
+      <Field label="Scope"><Choice label="Kill scope" value={f.scope} options={SCOPES} onChange={v => setF({ ...f, scope: v, picked: [] })} /></Field>
+      {f.scope !== 'FIRM' && <div className="rl-split firm"><TargetList all={targetsOf(f.scope, l)} picked={f.picked} setPicked={p => setF({ ...f, picked: p })} count={count} flag="Not stopped" zero="–" /></div>}
+      {f.scope === 'FIRM' && <p className="cfg-error">Firm-wide: every account, strategy and instrument stops taking new orders.</p>}
       <Field label="Reason"><input aria-label="Kill reason" required minLength={5} value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
-      <div className="cfg-actions"><button className="danger">Stop new orders</button><button type="button" onClick={() => setF(null)}>Cancel</button></div></form>}
-    <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Reason</th><th>By</th><th>Since</th><th>State</th><th /></tr></thead><tbody>
-      {(data?.items ?? []).map((k: Row) => <tr key={k.id}><td>{k.scope.toLowerCase()}</td><td>{k.target_name}</td><td>{k.reason}</td><td>{k.automatic ? 'automatic (loss limit)' : k.engaged_by}</td><td><small>{when(k.engaged_at)}</small></td>
-        <td>{k.engaged ? pill('on', 'live') : <small>released by {k.released_by}: {k.release_reason}</small>}</td>
-        <td>{k.engaged && ctx.canRisk && <button onClick={() => { const r = window.prompt('Reason for releasing this kill switch'); if (r) void api(`trading/risk/kill-switches/${k.id}/release`, 'POST', { reason: r }).then(() => { setMsg('Released.'); reload(); }).catch(e => setErr((e as Error).message)); }}>Release</button>}</td></tr>)}
+      <div className="cfg-actions"><button className="danger">Stop new orders{f.scope !== 'FIRM' && f.picked.length ? ` (${f.picked.length})` : ''}</button><button type="button" onClick={() => setF(null)}>Cancel</button></div></form>}
+    <table className="cfg-table compact intel-table"><thead><tr><th>State</th><th>Scope</th><th>Which</th><th>Reason</th><th>By</th><th>Since</th><th /></tr></thead><tbody>
+      {(data?.items ?? []).map((k: Row) => <tr key={k.id}><td>{k.engaged ? pill('on', 'live') : <small>released by {k.released_by}: {k.release_reason}</small>}</td>
+        <td>{k.scope.toLowerCase()}</td><td>{k.target_name}</td><td>{k.reason}</td><td>{k.automatic ? 'automatic (loss limit)' : k.engaged_by}</td><td><small>{when(k.engaged_at)}</small></td>
+        <td>{k.engaged && ctx.canRisk && (rel?.id === k.id
+          ? <form className="intel-inline" onSubmit={release}><input aria-label="Release reason" required minLength={5} autoFocus placeholder="Reason for releasing" value={rel!.reason} onChange={e => setRel({ id: k.id, reason: e.target.value })} />
+              <button className="primary">Release</button><button type="button" onClick={() => setRel(null)}>Cancel</button></form>
+          : <button onClick={() => setRel({ id: k.id, reason: '' })}>Release</button>)}</td></tr>)}
       {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No kill switch is on.</td></tr>}</tbody></table>
     <p className="cfg-note">A kill switch stops new orders in its scope. An operator's Flatten (Portfolio › Positions) still closes positions. Releasing needs the Risk approver role and a reason; a loss-limit stop is engaged automatically and released by a person.</p>
   </section>;
+}
+
+/** Targets of a scope as [id, label, group]; accounts grouped by broker server (shared by Limits and Kill switches). */
+function targetsOf(scope: string, l: ReturnType<typeof Lists>): [string, string, string][] {
+  return scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code}${a.name && a.name !== a.code ? ' · ' + a.name : ''}`, `${a.connection_name ?? a.connection_code ?? 'Server'} · ${a.environment}`])
+    : scope === 'STRATEGY' ? l.strategies.map((x: Row) => [x.id, x.code, 'Strategies']) : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol, i.asset_class ?? 'Instruments'])
+    : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d), d.account_code ?? 'Deployments']) : [];
+}
+
+/** Searchable list of targets grouped by server; tick one, many or a whole group; click a name to pick only it.
+ *  `count` shows a number per target (limits set, kill switches on); `flag` filters to the ones with none. */
+function TargetList({ all, picked, setPicked, count, flag, zero = 'none' }: { all: [string, string, string][]; picked: string[]; setPicked: (p: string[]) => void;
+  count: (id: string) => number; flag: string; zero?: string }) {
+  const [q, setQ] = useState(''), [only, setOnly] = useState(false);
+  const shown = all.filter(([id, n, g]) => (!q || `${n} ${g}`.toLowerCase().includes(q.toLowerCase())) && (!only || !count(id)));
+  const groups = [...new Set(shown.map(x => x[2]))];
+  const toggle = (ids: string[], on: boolean) => setPicked(on ? [...new Set([...picked, ...ids])] : picked.filter(x => !ids.includes(x)));
+  return <aside className="rl-list" aria-label="Choose who">
+    <div className="rl-find"><input aria-label="Search targets" placeholder={`Search ${all.length}…`} value={q} onChange={e => setQ(e.target.value)} />
+      <label><input type="checkbox" checked={only} onChange={e => setOnly(e.target.checked)} /> {flag}</label></div>
+    <small className="cfg-note">{picked.length ? `${picked.length} ticked · ` : ''}{shown.length} shown{picked.length ? <> · <button type="button" className="link" onClick={() => setPicked([])}>clear</button></> : null}</small>
+    <div className="rl-scroll">{groups.map(g => { const ids = shown.filter(x => x[2] === g).map(x => x[0]), allOn = ids.every(id => picked.includes(id));
+      return <div key={g} className="rl-group"><label className="rl-ghead"><input type="checkbox" aria-label={`All of ${g}`} checked={allOn} onChange={e => toggle(ids, e.target.checked)} /> <b>{g}</b> <small>{ids.length}</small></label>
+        {shown.filter(x => x[2] === g).map(([id, n]) => <label key={id} className={`rl-item ${picked.includes(id) ? 'on' : ''}`}>
+          <input type="checkbox" aria-label={n} checked={picked.includes(id)} onChange={e => toggle([id], e.target.checked)} />
+          <span onClick={e => { e.preventDefault(); setPicked([id]); }}>{n}</span><small className={count(id) || zero !== 'none' ? '' : 'rl-none'}>{count(id) ? (zero === 'none' ? count(id) : 'on') : zero}</small></label>)}</div>; })}
+      {!shown.length && <p className="cfg-note">Nothing matches.</p>}</div>
+  </aside>;
 }
 
 /** Limits (0.69.1, owner: "10+ brokers, 100+ accounts must not be confusing"): a searchable list of targets grouped
@@ -425,17 +477,12 @@ function Limits({ ctx }: { ctx: Ctx }) {
   const kinds: Row = data?.kinds ?? {};
   const items: Row[] = data?.items ?? [];
   const [scope, setScope] = useState('ACCOUNT'), [view, setView] = useState<'edit' | 'all'>('edit');
-  const [picked, setPicked] = useState<string[]>([]), [q, setQ] = useState(''), [missing, setMissing] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
   const [draft, setDraft] = useState<Record<string, { value: string; enabled: boolean }>>({});
   const [reason, setReason] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [busy, setBusy] = useState(false);
-  // [id, label, group] per scope; accounts are grouped by their broker server.
-  const all: [string, string, string][] = scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code}${a.name && a.name !== a.code ? ' · ' + a.name : ''}`, `${a.connection_name ?? a.connection_code ?? 'Server'} · ${a.environment}`])
-    : scope === 'STRATEGY' ? l.strategies.map((x: Row) => [x.id, x.code, 'Strategies']) : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol, i.asset_class ?? 'Instruments'])
-    : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d), d.account_code ?? 'Deployments']) : [];
+  const all = targetsOf(scope, l);
   const of = (sc: string, t: string) => items.filter(x => x.scope === sc && (sc === 'FIRM' || x.target_id === t));
   const count = (t: string) => of(scope, t).length;
-  const shown = all.filter(([id, n, g]) => (!q || `${n} ${g}`.toLowerCase().includes(q.toLowerCase())) && (!missing || !count(id)));
-  const groups = [...new Set(shown.map(x => x[2]))];
   const targets = scope === 'FIRM' ? [''] : picked;
   const one = targets.length === 1;
   const existing: Record<string, Row> = one ? Object.fromEntries(of(scope, targets[0]).map(x => [x.kind, x])) : {};
@@ -445,7 +492,6 @@ function Limits({ ctx }: { ctx: Ctx }) {
   const changes = Object.keys(kinds).filter(k => { const d = draft[k], e = existing[k]; if (!d) return false;
     if (!one) return d.value.trim() !== '';   // several targets: only filled values are set
     return e ? (d.value.trim() === '' || d.value.trim() !== String(e.value) || d.enabled !== e.enabled) : d.value.trim() !== ''; });
-  const toggle = (ids: string[], on: boolean) => setPicked(p => on ? [...new Set([...p, ...ids])] : p.filter(x => !ids.includes(x)));
   const save = async (e: FormEvent) => {
     e.preventDefault(); setErr(''); setMsg('');
     if (!targets.length) { setErr('Tick who the limits are for.'); return; }
@@ -474,17 +520,7 @@ function Limits({ ctx }: { ctx: Ctx }) {
     </div>
     <Msg error={error || err} notice={msg} />
     {view === 'edit' ? <div className={`rl-split ${scope === 'FIRM' ? 'firm' : ''}`}>
-      {scope !== 'FIRM' && <aside className="rl-list" aria-label="Choose who">
-        <div className="rl-find"><input aria-label="Search targets" placeholder={`Search ${all.length}…`} value={q} onChange={e => setQ(e.target.value)} />
-          <label><input type="checkbox" checked={missing} onChange={e => setMissing(e.target.checked)} /> No limits</label></div>
-        <small className="cfg-note">{picked.length ? `${picked.length} ticked · ` : ''}{shown.length} shown{picked.length ? <> · <button type="button" className="link" onClick={() => setPicked([])}>clear</button></> : null}</small>
-        <div className="rl-scroll">{groups.map(g => { const ids = shown.filter(x => x[2] === g).map(x => x[0]), allOn = ids.every(id => picked.includes(id));
-          return <div key={g} className="rl-group"><label className="rl-ghead"><input type="checkbox" aria-label={`All of ${g}`} checked={allOn} onChange={e => toggle(ids, e.target.checked)} /> <b>{g}</b> <small>{ids.length}</small></label>
-            {shown.filter(x => x[2] === g).map(([id, n]) => <label key={id} className={`rl-item ${picked.includes(id) ? 'on' : ''}`}>
-              <input type="checkbox" aria-label={n} checked={picked.includes(id)} onChange={e => toggle([id], e.target.checked)} />
-              <span onClick={e => { e.preventDefault(); setPicked([id]); }}>{n}</span><small className={count(id) ? '' : 'rl-none'}>{count(id) || 'none'}</small></label>)}</div>; })}
-          {!shown.length && <p className="cfg-note">Nothing matches.</p>}</div>
-      </aside>}
+      {scope !== 'FIRM' && <TargetList all={all} picked={picked} setPicked={setPicked} count={count} flag="No limits" />}
       <form className="rl-form" onSubmit={save} aria-label="Set limits">
         <p className="rl-who">{scope === 'FIRM' ? <b>Firm — applies to everything</b> : !targets.length ? 'Tick who the limits are for (click a name to open just that one).'
           : one ? <b>{all.find(x => x[0] === targets[0])?.[1]}</b> : <><b>{targets.length} {scope.toLowerCase()}s</b> · values you fill are set on all of them; empty fields leave each as it is</>}</p>
@@ -516,6 +552,7 @@ function Decisions() {
   const { accounts } = Lists();
   const [filter, setFilter] = useState('');
   const [account, setAccount] = useState('');
+  const [q, setQ] = useState('');
   const [focus, setFocus] = useState<{ id: string; label: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
@@ -534,7 +571,9 @@ function Decisions() {
   if (account) query.set('account_id', account);
   if (focus) query.set('order_id', focus.id);
   const [data, error, reload] = useData<Row>(`trading/risk/decisions?${query}`, 20_000);
-  const rows: Row[] = data?.items ?? [];
+  const all: Row[] = data?.items ?? [];
+  // Text search over the loaded checks: symbol, account, strategy or a refusal reason (e.g. MAX_VAR_PCT).
+  const rows = q ? all.filter(d => `${d.symbol} ${d.account_code} ${d.strategy_code ?? ''} ${JSON.stringify(d.reasons ?? [])}`.toLowerCase().includes(q.toLowerCase())) : all;
   const detail = rows.find(row => row.id === selected);
   return <section className="intel">
     {focus && <div className="intel-bar"><strong>Order · {focus.label}</strong><button onClick={clearRiskOrder}>Show all orders</button></div>}
@@ -543,14 +582,15 @@ function Decisions() {
       {!focus && <select aria-label="Risk account" value={account} onChange={e => { setAccount(e.target.value); setSelected(null); }}>
         <option value="">All accounts</option>{accounts.map((a: Row) => <option key={a.id} value={a.id}>{a.code} · {a.environment}</option>)}
       </select>}
+      <input aria-label="Search risk checks" placeholder="Search symbol, account, reason…" value={q} onChange={e => setQ(e.target.value)} />
       <button onClick={reload}>Reload checks</button>
-      {data && <small className="cfg-note">{rows.length} shown · latest 200 matching checks</small>}
+      {data && <small className="cfg-note">{rows.length} shown{q ? ` of ${all.length}` : ''} · latest 200 matching checks</small>}
     </div>
     <Msg error={error} />
     {!data && !error && <p role="status">Loading risk checks…</p>}
-    {data && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Strategy</th><th>Instrument</th><th>Account</th><th>Side</th><th>Requested</th><th>Result</th><th>Reasons</th><th /></tr></thead><tbody>
-      {rows.map(d => <tr key={d.id}><td><small>{when(d.at)}</small></td><td>{d.strategy_code ?? '—'}</td><td>{d.symbol}</td><td>{d.account_code}</td><td>{d.side}</td>
-        <td>{d.requested_qty}</td><td>{d.approved ? pill('approved', 'ok') : pill('refused', 'live')}</td><td><Reasons list={d.reasons} /></td>
+    {data && <div className="cfg-scroll"><table className="cfg-table compact intel-table"><thead><tr><th>Time</th><th>Result</th><th>Reasons</th><th>Account</th><th>Instrument</th><th>Side</th><th>Requested</th><th>Strategy</th><th /></tr></thead><tbody>
+      {rows.map(d => <tr key={d.id}><td><small>{when(d.at)}</small></td><td>{d.approved ? pill('approved', 'ok') : pill('refused', 'live')}</td><td><Reasons list={d.reasons} /></td>
+        <td>{d.account_code}</td><td>{d.symbol}</td><td>{d.side}</td><td>{d.requested_qty}</td><td>{d.strategy_code ?? '—'}</td>
         <td><button onClick={() => setSelected(d.id)}>Inspect check</button></td></tr>)}
       {!rows.length && <tr><td colSpan={9} className="cfg-note">No risk checks match this selection.</td></tr>}</tbody></table></div>}
     {detail && <RiskCheckDetail row={detail} close={() => setSelected(null)} />}
@@ -601,7 +641,7 @@ export function RiskView() {
     { id: 'limits', label: 'Limits', group: 'Work', hint: 'Order size and value, position, working orders, orders per minute, daily loss, drawdown, exposure, margin, leverage, VaR, price deviation — per scope.', render: ctx => <Limits ctx={ctx} /> },
     { id: 'decisions', label: 'Risk checks', group: 'Monitor', hint: 'Every pre-trade check with its result and reasons.', render: () => <Decisions /> },
     { id: 'exposure', label: 'Exposure', group: 'Monitor', hint: 'Net and gross position value per account and instrument.', render: () => <Exposure /> },
-    { id: 'var', label: 'VaR and margin', group: 'Monitor', hint: 'How much each account could lose in a bad bar, and the margin in use.', render: () => <VarMargin /> },
+    { id: 'var', label: 'VaR and margin', group: 'Monitor', hint: 'How much each account could lose in a bad bar, and the margin in use.', render: ctx => <VarMargin ctx={ctx} /> },
     { id: 'stress', label: 'Stress tests', group: 'Monitor', hint: 'Today\'s positions under price shocks: everything, an asset class, a currency or one symbol.', render: ctx => <Stress ctx={ctx} /> },
     { id: 'var-settings', label: 'VaR settings', group: 'Configure', hint: 'Confidence, horizon and look-back of the VaR.', render: ctx => <SettingsForm canEdit={ctx.canRisk} fields={['var_confidence', 'var_timeframe', 'var_lookback_bars']} /> },
     { id: 'formulas', label: 'Calculations & formulas', group: 'Configure', hint: 'Every pre-trade check: limits, loss and drawdown, exposure, margin and leverage, price deviation, stale price, VaR, ES and stress.', render: () => <Formulas stage="Risk" /> },

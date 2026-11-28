@@ -184,7 +184,9 @@ def stress(db, account_id=None) -> dict:
     """Every scenario on today's positions (every account with positions, or one)."""
     ids = [account_id] if account_id else [r['account_id'] for r in db.execute('SELECT DISTINCT account_id FROM pf_positions WHERE quantity <> 0').fetchall()]
     books = {str(a): _book(db, a, None) for a in ids}
-    codes = {str(r['id']): r['code'] for r in db.execute('SELECT id, code FROM cfg_accounts').fetchall()}
+    accts = {str(r['id']): r for r in db.execute('SELECT id, code, base_currency FROM cfg_accounts').fetchall()}
+    codes = {a: r['code'] for a, r in accts.items()}
+    ccy = {a: r['base_currency'] for a, r in accts.items()}
     out = []
     for sc in scenarios(db):
         rows, total = [], {}
@@ -197,7 +199,12 @@ def stress(db, account_id=None) -> dict:
                 total[aid] = total.get(aid, ZERO) + pnl
                 rows.append({'account': codes.get(aid), 'symbol': b['symbol'], 'value': b['value'].quantize(Decimal('0.01')),
                              'shock_pct': pct, 'pnl': pnl})
+        # Per currency (0.69.2): accounts in USD and INR must never be added into one number.
+        totals: dict[str, Decimal] = {}
+        for a, v in total.items():
+            totals[ccy.get(a) or '?'] = totals.get(ccy.get(a) or '?', ZERO) + v
         out.append({'id': sc['id'], 'name': sc['name'], 'description': sc['description'], 'builtin': sc['builtin'], 'shocks': sc['shocks'],
-                    'total': sum(total.values(), ZERO), 'by_account': [{'account': codes.get(a), 'account_id': a, 'pnl': v} for a, v in total.items()],
+                    'totals': totals, 'total': next(iter(totals.values())) if len(totals) == 1 else None,
+                    'by_account': [{'account': codes.get(a), 'account_id': a, 'currency': ccy.get(a), 'pnl': v} for a, v in total.items()],
                     'positions': rows})
     return {'scenarios': out, 'missing': [f"{codes.get(a)} {b['symbol']}: no {b['missing']}" for a, bk in books.items() for b in bk if b['value'] is None]}
