@@ -902,3 +902,19 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent, #3b8
 .rl-grid tr.rl-dirty td:first-child { box-shadow: inset 3px 0 0 #e0a530; }
 .rl-save input { flex: 1; min-width: 240px; max-width: 520px; }
 .rl-row { cursor: pointer; } .rl-row:hover { background: var(--selection); }
+/* 0.69.1 · limits at scale: list of targets (grouped by server) beside the grid */
+.rl-profiles > summary { cursor: pointer; color: var(--muted); padding: 2px 0; }
+.rl-split { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 8px; align-items: start; }
+.rl-split.firm { grid-template-columns: minmax(0, 1fr); }
+.rl-list { border: 1px solid var(--line); border-radius: 3px; display: flex; flex-direction: column; min-height: 0; }
+.rl-find { display: flex; gap: 6px; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.rl-find input[aria-label="Search targets"] { flex: 1; min-width: 0; }
+.rl-list > small { padding: 2px 8px; }
+.rl-scroll { overflow: auto; max-height: 60vh; }
+.rl-ghead { display: flex; gap: 6px; align-items: center; padding: 3px 6px; background: var(--input); position: sticky; top: 0; }
+.rl-ghead small, .rl-item small { margin-left: auto; color: var(--muted); }
+.rl-item { display: flex; gap: 6px; align-items: center; padding: 1px 6px 1px 18px; cursor: pointer; }
+.rl-item.on { background: var(--selection); } .rl-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-item small.rl-none { color: #e0a530; }
+.rl-who { margin: 0 0 4px; }
+@media (max-width: 900px) { .rl-split { grid-template-columns: 1fr; } }
