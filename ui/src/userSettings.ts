@@ -20,7 +20,7 @@ export type SettingDef = {
 };
 
 export const TOPBAR_ITEMS: [string, string][] = [
-  ['feeds', 'Feeds'], ['orders', 'Order sending'], ['kill', 'Kill switches'], ['setup', 'Setup progress'], ['approvals', 'Approvals'],
+  ['mode', 'Mode (Development/Production · Team/Single user)'], ['feeds', 'Feeds'], ['orders', 'Order sending'], ['kill', 'Kill switches'], ['setup', 'Setup progress'], ['approvals', 'Approvals'],
   ['desks', 'Running workspaces'], ['clock', 'Market clock'], ['layout', 'Layout controls'],
 ];
 

@@ -415,33 +415,85 @@ function KillSwitches({ ctx }: { ctx: Ctx }) {
   </section>;
 }
 
+/** Limits (0.69.0, owner: "selection, navigation, edit process not simple"): pick who (firm, an account, a strategy,
+ *  an instrument, a deployment), see every limit kind for them in one grid (empty = no limit; the firm value it falls
+ *  back to is shown), edit the numbers, give one reason, save once. Copy from another target; the full list is one tab
+ *  away and each row opens its target. Values stay strings (exact decimals). */
 function Limits({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/risk/limits', 30_000);
-  const [f, setF] = useState<Row | null>(null), [err, setErr] = useState(''), [msg, setMsg] = useState('');
+  const l = Lists();
   const kinds: Row = data?.kinds ?? {};
-  const save = async (e: FormEvent) => { e.preventDefault(); if (!f) return;
-    const body = { scope: f.scope, target_id: f.scope === 'FIRM' ? null : f.target_id, kind: f.kind, value: String(f.value), enabled: !!f.enabled, note: f.note ?? '', reason: f.reason };
-    try { if (f.id) await api(`trading/risk/limits/${f.id}`, 'PUT', { ...body, version: f.version }); else await api('trading/risk/limits', 'POST', body); setF(null); setMsg('Saved.'); reload(); } catch (x) { setErr((x as Error).message); } };
-  return <section className="intel">
+  const items: Row[] = data?.items ?? [];
+  const [scope, setScope] = useState('ACCOUNT'), [target, setTarget] = useState('');
+  const [view, setView] = useState<'edit' | 'all'>('edit');
+  const [draft, setDraft] = useState<Record<string, { value: string; enabled: boolean }>>({});
+  const [reason, setReason] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [busy, setBusy] = useState(false);
+  const targets: [string, string][] = scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code} · ${a.environment}`]) : scope === 'STRATEGY' ? l.strategies.map((x: Row) => [x.id, x.code])
+    : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol]) : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d)]) : [];
+  const tgt = scope === 'FIRM' ? '' : target;
+  const of = (sc: string, t: string) => items.filter(x => x.scope === sc && (sc === 'FIRM' || x.target_id === t));
+  const existing: Record<string, Row> = Object.fromEntries(of(scope, tgt).map(x => [x.kind, x]));
+  const firm: Record<string, Row> = Object.fromEntries(of('FIRM', '').map(x => [x.kind, x]));
+  const count = (sc: string, t: string) => of(sc, t).length;
+  useEffect(() => { if (scope !== 'FIRM' && !target && targets.length) setTarget(targets[0][0]); }, [scope, targets.length]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const key = `${scope}:${tgt}:${items.map(x => x.id + x.version).join(',')}`;
+  useEffect(() => { setDraft(Object.fromEntries(Object.keys(kinds).map(k => [k, { value: existing[k]?.value ?? '', enabled: existing[k]?.enabled ?? true }]))); setErr(''); }, [key, Object.keys(kinds).length]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const changes = Object.keys(kinds).filter(k => { const d = draft[k], e = existing[k]; if (!d) return false;
+    return e ? (d.value.trim() === '' || d.value.trim() !== String(e.value) || d.enabled !== e.enabled) : d.value.trim() !== ''; });
+  const copyFrom = (t: string) => { const src = Object.fromEntries(of(scope, t).map(x => [x.kind, x])); setDraft(d => Object.fromEntries(Object.keys(kinds).map(k => [k, src[k] ? { value: String(src[k].value), enabled: !!src[k].enabled } : d[k] ?? { value: '', enabled: true }]))); };
+  const save = async (e: FormEvent) => {
+    e.preventDefault(); setErr(''); setMsg('');
+    if (scope !== 'FIRM' && !tgt) { setErr('Choose who the limits are for.'); return; }
+    setBusy(true); let done = 0;
+    try {
+      for (const k of changes) {
+        const d = draft[k], ex = existing[k], value = d.value.trim();
+        if (ex && value === '') await api(`trading/risk/limits/${ex.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
+        else if (ex) await api(`trading/risk/limits/${ex.id}`, 'PUT', { scope, target_id: tgt || null, kind: k, value, enabled: d.enabled, note: ex.note ?? '', reason, version: ex.version });
+        else await api('trading/risk/limits', 'POST', { scope, target_id: tgt || null, kind: k, value, enabled: d.enabled, note: '', reason });
+        done++;
+      }
+      setMsg(`Saved ${done} change${done === 1 ? '' : 's'}.`); setReason(''); reload();
+    } catch (x) { setErr(`${(x as Error).message}${done ? ` (${done} change(s) saved before this)` : ''}`); reload(); } finally { setBusy(false); }
+  };
+  const open = (sc: string, t: string) => { setScope(sc); setTarget(t ?? ''); setView('edit'); };
+  return <section className="intel rl">
     <RiskProfiles canRisk={!!ctx.canRisk} onApplied={reload} />
-    {ctx.canRisk && <div className="intel-bar"><button className="primary" onClick={() => setF({ scope: 'ACCOUNT', target_id: '', kind: 'MAX_DAILY_LOSS', value: '', enabled: true, note: '', reason: '' })}>Add a limit</button></div>}
+    <div className="intel-bar rl-bar">
+      <div role="tablist" aria-label="Limits view" className="rl-views">{([['edit', 'Set limits'], ['all', `All limits (${items.length})`]] as const).map(([v, t]) =>
+        <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}>{t}</button>)}</div>
+      {view === 'edit' && <>
+        <div role="radiogroup" aria-label="Limits for" className="rl-scopes">{SCOPES.map(([v, t]) =>
+          <button key={v} type="button" role="radio" aria-checked={scope === v} onClick={() => { setScope(v); setTarget(''); }}>{t.replace(' (everything)', '')}</button>)}</div>
+        {scope !== 'FIRM' && <select aria-label="Target" value={target} onChange={e => setTarget(e.target.value)}>
+          {targets.map(([id, n]) => <option key={id} value={id}>{n} · {count(scope, id)} limit(s)</option>)}</select>}
+        {scope !== 'FIRM' && targets.some(([id]) => id !== target && count(scope, id) > 0) && ctx.canRisk &&
+          <select aria-label="Copy limits from" value="" onChange={e => { if (e.target.value) copyFrom(e.target.value); }}>
+            <option value="">Copy from…</option>{targets.filter(([id]) => id !== target && count(scope, id) > 0).map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select>}
+      </>}
+    </div>
     <Msg error={error || err} notice={msg} />
-    {f && <form className="cfg-form intel-edit" onSubmit={save}>
-      {f.id ? <p className="cfg-note">Editing {f.scope.toLowerCase()} · {f.target_name ?? 'Firm'}. Choose Add a limit to use a different scope or target.</p> :
-      <div className="cfg-pair"><Field label="Scope"><Choice label="Limit scope" value={f.scope} options={SCOPES} onChange={v => setF({ ...f, scope: v, target_id: '' })} /></Field>
-        <TargetPicker scope={f.scope} value={f.target_id} change={v => setF({ ...f, target_id: v })} /></div>}
-      <Field label="Limit" hint={kinds[f.kind]}><select aria-label="Limit kind" disabled={!!f.id} value={f.kind} onChange={e => setF({ ...f, kind: e.target.value })}>{Object.entries(kinds).map(([k, t]) => <option key={k} value={k}>{t as string}</option>)}</select></Field>
-      <Field label="Value"><input aria-label="Limit value" required inputMode="decimal" value={f.value} onChange={e => setF({ ...f, value: e.target.value })} /></Field>
-      <label><input type="checkbox" checked={!!f.enabled} onChange={e => setF({ ...f, enabled: e.target.checked })} /> In force</label>
-      <Field label="Note"><input aria-label="Limit note" value={f.note ?? ''} onChange={e => setF({ ...f, note: e.target.value })} /></Field>
-      <Field label="Reason (audit log)"><input aria-label="Limit reason" required minLength={5} value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
-      <div className="cfg-actions"><button className="primary">Save limit</button><button type="button" onClick={() => setF(null)}>Cancel</button></div></form>}
-    <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Limit</th><th>Value</th><th>State</th><th>Changed</th><th /></tr></thead><tbody>
-      {(data?.items ?? []).map((l: Row) => <tr key={l.id}><td>{l.scope.toLowerCase()}</td><td>{l.target_name}</td><td>{kinds[l.kind] ?? l.kind}</td><td><b>{l.value}</b></td>
-        <td>{l.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(l.updated_at)} · {l.updated_by}</small></td>
-        <td>{ctx.canRisk && <><button onClick={() => setF({ ...l, reason: '' })}>Edit</button> <button onClick={() => { const r = window.prompt('Reason for deleting this limit'); if (r) void api(`trading/risk/limits/${l.id}?reason=${encodeURIComponent(r)}`, 'DELETE').then(() => reload()).catch(e => setErr((e as Error).message)); }}>Delete</button></>}</td></tr>)}
-      {data && !(data.items ?? []).length && <tr><td colSpan={7} className="cfg-note">No limits yet. Start with a daily loss and a position limit per account.</td></tr>}</tbody></table>
-    <p className="cfg-note">The tightest limit of each kind applies. Orders that reduce a position skip the position, exposure and loss limits. Breaching an account's daily-loss or drawdown limit engages the account's kill switch automatically; a daily-loss limit set on a strategy or a run stops only those runs.</p>
+    {view === 'edit' ? <form className="rl-form" onSubmit={save} aria-label="Set limits">
+      <table className="cfg-table compact intel-table rl-grid"><thead><tr><th>Limit</th><th>Value</th><th>In force</th><th>Falls back to (firm)</th><th>Last change</th></tr></thead><tbody>
+        {Object.entries(kinds).map(([k, label]) => { const d = draft[k] ?? { value: '', enabled: true }, ex = existing[k], dirty = changes.includes(k);
+          return <tr key={k} className={dirty ? 'rl-dirty' : ''}><td title={k}>{label as string}</td>
+            <td><input aria-label={`${label as string} value`} inputMode="decimal" disabled={!ctx.canRisk} placeholder="no limit" value={d.value}
+              onChange={e => setDraft(x => ({ ...x, [k]: { ...d, value: e.target.value } }))} /></td>
+            <td><input type="checkbox" aria-label={`${label as string} in force`} disabled={!ctx.canRisk || d.value.trim() === ''} checked={d.enabled}
+              onChange={e => setDraft(x => ({ ...x, [k]: { ...d, enabled: e.target.checked } }))} /></td>
+            <td>{scope !== 'FIRM' && firm[k] ? <small>{String(firm[k].value)}{firm[k].enabled ? '' : ' (off)'}</small> : <small className="cfg-note">—</small>}</td>
+            <td><small>{ex ? `${when(ex.updated_at)} · ${ex.updated_by}` : ''}</small></td></tr>; })}
+      </tbody></table>
+      {ctx.canRisk && <div className="intel-bar rl-save">
+        <input aria-label="Reason for these changes" placeholder="Reason (audit log, at least 5 characters)" minLength={5} required value={reason} onChange={e => setReason(e.target.value)} />
+        <button className="primary" disabled={busy || !changes.length || reason.trim().length < 5}>Save {changes.length || ''} change{changes.length === 1 ? '' : 's'}</button>
+        <button type="button" disabled={!changes.length} onClick={() => setDraft(Object.fromEntries(Object.keys(kinds).map(k => [k, { value: existing[k]?.value ?? '', enabled: existing[k]?.enabled ?? true }])))}>Undo</button>
+        <small className="cfg-note">Empty a value to remove that limit.</small></div>}
+    </form> : <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Limit</th><th>Value</th><th>State</th><th>Changed</th></tr></thead><tbody>
+      {items.map((x: Row) => <tr key={x.id} className="rl-row" tabIndex={0} title="Open these limits" onClick={() => open(x.scope, x.target_id)}><td>{x.scope.toLowerCase()}</td><td>{x.target_name ?? 'Firm'}</td><td>{kinds[x.kind] ?? x.kind}</td><td><b>{x.value}</b></td>
+        <td>{x.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(x.updated_at)} · {x.updated_by}</small></td></tr>)}
+      {data && !items.length && <tr><td colSpan={6} className="cfg-note">No limits yet. Choose Set limits, pick an account and fill in a daily loss and a position limit.</td></tr>}</tbody></table>}
+    <p className="cfg-note">The tightest limit of each kind applies (firm, account, strategy, instrument, deployment). Orders that reduce a position skip the position, exposure and loss limits. Breaching an account's daily-loss or drawdown limit engages the account's kill switch automatically.</p>
   </section>;
 }
 

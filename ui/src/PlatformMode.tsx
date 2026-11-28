@@ -26,13 +26,12 @@ const RULES: [string, string, string][] = [
   ['Test data reset', 'Available (paper accounts start fresh; history kept)', 'Not available'],
 ];
 
-export default function PlatformMode({ isAdmin }: { isAdmin: boolean }) {
-  const [m, error, reload] = useData<Row>('config/platform-mode', 15_000);
+/** The switching actions, shared by this page and the top bar's Mode menu (0.69.0): same reasons, typed words and
+ *  password prompts wherever they are used. */
+export function useModeActions(m: Row | null | undefined, reload: () => void) {
   const [msg, setMsg] = useState({ error: '', notice: '' });
   const [busy, setBusy] = useState(false);
   const [reset, setReset] = useState<Row | null>(null);
-  if (!m) return <div className="cfg-pane"><Msg error={error} />{!error && <p role="status">Loading…</p>}</div>;
-  const dev = m.mode === 'DEVELOPMENT';
   const ask = (q: string) => { const r = window.prompt(q + ' (at least 5 characters)')?.trim(); if (r !== undefined && r.length < 5) setMsg({ error: 'Nothing was done: a reason of at least 5 characters is needed.', notice: '' }); return r && r.length >= 5 ? r : null; };
   const run = async (f: () => Promise<Row>, ok: (r: Row) => string) => {
     setBusy(true); setMsg({ error: '', notice: '' });
@@ -40,21 +39,45 @@ export default function PlatformMode({ isAdmin }: { isAdmin: boolean }) {
     catch (e) { setMsg({ error: (e as Error).message, notice: '' }); } finally { setBusy(false); }
   };
   const put = (mode: string, allow: boolean, confirm = '') => {
+    if (!m) return;
     const reason = ask(`Reason for ${mode === m.mode ? (allow ? 'allowing' : 'stopping') + ' LIVE in Development' : 'switching to ' + mode.toLowerCase()}`);
     if (!reason) return;
     void run(() => api('config/platform-mode', 'PUT', { mode, allow_live_in_development: allow, confirm, reason, version: m.version }),
       r => `Now in ${r.mode.toLowerCase()} mode.` + (r.live_switched_off ? ' LIVE order sending was turned off.' : ''));
   };
-  const toProduction = () => { const c = window.prompt('Switch to Production: gates become strict and passwords need 6 characters. Type PRODUCTION to confirm.'); if (c !== null) put('PRODUCTION', false, c.trim()); };
-  const toDevelopment = () => { if (window.confirm('Switch to Development? PAPER and DEMO gates will only warn, and LIVE order sending will be turned OFF.')) put('DEVELOPMENT', false); };
-  const allowLive = () => { const c = window.prompt('Allow LIVE order sending in Development? It stays OFF until someone turns it on in Order sending, with all LIVE checks. Type LIVE to confirm.'); if (c !== null) put('DEVELOPMENT', true, c.trim()); };
-  const doReset = () => {
-    const c = window.prompt('Reset test data: every active paper account is archived (its history kept) and replaced by a fresh copy with the same settings. Accounts with active runs are skipped. Type RESET to confirm.');
-    if (c === null) return;
-    const reason = ask('Reason for resetting test data'); if (!reason) return;
-    void run(async () => { const r = await api('config/platform-mode/reset-test-data', 'POST', { confirm: c.trim(), reason }); setReset(r); return r; },
-      r => `${r.reset.length} paper account(s) reset, ${r.skipped.length} skipped.`);
+  const operating = (target: 'SOLO' | 'TEAM') => {
+    if (!m) return;
+    let confirm = '';
+    if (target === 'SOLO') { const c = window.prompt('Run as a single user? You will confirm your own LIVE actions (password and reason still asked; all audited). Type SOLO to confirm.'); if (c === null) return; confirm = c.trim(); }
+    const reason = ask(target === 'SOLO' ? 'Reason for running as a single user' : 'Reason for switching to Team (four-eyes)'); if (!reason) return;
+    void run(() => api('config/platform-mode/operating', 'PUT', { operating: target, confirm, reason, version: m.version }),
+      () => target === 'SOLO' ? 'Now a single user: you confirm your own LIVE actions.' : 'Now a team: a different person confirms LIVE actions.');
   };
+  return {
+    msg, setMsg, busy, reset,
+    toProduction: () => { const c = window.prompt('Switch to Production: gates become strict and passwords need 6 characters. Type PRODUCTION to confirm.'); if (c !== null) put('PRODUCTION', false, c.trim()); },
+    toDevelopment: () => { if (window.confirm('Switch to Development? PAPER and DEMO gates will only warn, and LIVE order sending will be turned OFF.')) put('DEVELOPMENT', false); },
+    allowLive: () => { const c = window.prompt('Allow LIVE order sending in Development? It stays OFF until someone turns it on in Order sending, with all LIVE checks. Type LIVE to confirm.'); if (c !== null) put('DEVELOPMENT', true, c.trim()); },
+    stopLive: () => put('DEVELOPMENT', false),
+    toSolo: () => operating('SOLO'),
+    toTeam: () => operating('TEAM'),
+    doReset: () => {
+      const c = window.prompt('Reset test data: every active paper account is archived (its history kept) and replaced by a fresh copy with the same settings. Accounts with active runs are skipped. Type RESET to confirm.');
+      if (c === null) return;
+      const reason = ask('Reason for resetting test data'); if (!reason) return;
+      void run(async () => { const r = await api('config/platform-mode/reset-test-data', 'POST', { confirm: c.trim(), reason }); setReset(r); return r; },
+        r => `${r.reset.length} paper account(s) reset, ${r.skipped.length} skipped.`);
+    },
+  };
+}
+
+export default function PlatformMode({ isAdmin }: { isAdmin: boolean }) {
+  const [m, error, reload] = useData<Row>('config/platform-mode', 15_000);
+  const act = useModeActions(m, reload);
+  const { msg, busy, reset, toProduction, toDevelopment, allowLive, doReset } = act;
+  if (!m) return <div className="cfg-pane"><Msg error={error} />{!error && <p role="status">Loading…</p>}</div>;
+  const dev = m.mode === 'DEVELOPMENT';
+  const put = (_mode: string, _allow: boolean) => act.stopLive();
   return <div className="cfg-pane pm" aria-label="Platform mode">
     <Msg error={msg.error || error} notice={msg.notice} />
     <div className={`pm-now ${dev ? 'dev' : 'prod'}`} role="status">
@@ -79,8 +102,8 @@ export default function PlatformMode({ isAdmin }: { isAdmin: boolean }) {
       <span>{m.operating === 'SOLO' ? 'One person confirms their own LIVE actions (password and reason still asked)' : 'LIVE actions are confirmed by a different person (four-eyes)'}</span>
       <Info label="About Team and Single user">Team suits a firm or institution: changes to LIVE, LIVE deployments and workspace starts, held LIVE orders, loosening LIVE gates and calculation versions need a second person. Single user suits one trader: the same steps are confirmed by you, with your password and a reason where asked, and every step is in the audit log. Switch any time.</Info>
       {isAdmin && (m.operating === 'SOLO'
-        ? <button disabled={busy} onClick={() => { const reason = ask('Reason for switching to Team (four-eyes)'); if (reason) void run(() => api('config/platform-mode/operating', 'PUT', { operating: 'TEAM', reason, version: m.version }), () => 'Now a team: a different person confirms LIVE actions.'); }}>Switch to Team…</button>
-        : <button disabled={busy} onClick={() => { const c = window.prompt('Run as a single user? You will confirm your own LIVE actions (password and reason still asked; all audited). Type SOLO to confirm.'); if (c === null) return; const reason = ask('Reason for running as a single user'); if (reason) void run(() => api('config/platform-mode/operating', 'PUT', { operating: 'SOLO', confirm: c.trim(), reason, version: m.version }), () => 'Now a single user: you confirm your own LIVE actions.'); }}>Switch to Single user…</button>)}
+        ? <button disabled={busy} onClick={act.toTeam}>Switch to Team…</button>
+        : <button disabled={busy} onClick={act.toSolo}>Switch to Single user…</button>)}
     </div>
     {reset && <table className="cfg-table" aria-label="Reset result"><thead><tr><th>Paper account</th><th>Result</th></tr></thead>
       <tbody>{reset.reset.map((r: Row) => <tr key={r.old}><td>{r.old}</td><td>archived · fresh copy {r.new}</td></tr>)}

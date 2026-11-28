@@ -89,6 +89,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const overview={user:{username:'yatheesh',roles:['ADMIN']},feeds:{active_plans:1,collectors:1,live:0,problems:1,paused:false},order_sending:[{environment:'LIVE',enabled:false}],approvals:2,
    attention:[{severity:'CRITICAL',area:'Market data',title:'Broker refused the connector version',detail:'Update the SDK.',goto:{view:'Market data',section:'live'}}]};
  const prefPuts=[];let loggedOut=0;
+ const modeCalls=[];let pmode={mode:'PRODUCTION',operating:'TEAM',allow_live_in_development:false,live_blocked:false,version:4};
  const updPosts=[],reauths=[];let reauthed=false;let upd={installed:true,running:{version:'0.67.0',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,available:{checked_at:'2026-11-27T17:00:00Z',error:"[Errno 2] No such file or directory: 'runuser'"},
    blockers:["The last GitHub check failed: [Errno 2] No such file or directory: 'runuser'"],acknowledgements:[{code:'RESTART',text:'Restart.'}],history:[],manual_commands:['git fetch origin'],status:null,log:''};
  sw.fetch=async(url,o={})=>{const j=b=>({ok:true,status:200,json:async()=>b});
@@ -97,6 +98,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.includes('/operator/prefs')){if(o.method==='PUT')prefPuts.push([url.split('/prefs/')[1],JSON.parse(o.body).value]);return j({});}
    if(url.includes('/operator/logout')){loggedOut++;return j({});}
    if(url.includes('operator/session'))return j({username:'yatheesh',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
+   if(url.endsWith('/config/platform-mode/operating')&&o.method==='PUT'){const b=JSON.parse(o.body);modeCalls.push(b);pmode={...pmode,operating:b.operating,version:pmode.version+1};return j(pmode);}
+   if(url.endsWith('/config/platform-mode'))return j(JSON.parse(JSON.stringify(pmode)));
    if(url.includes('/api/workstation'))return j({project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:true,demo_enabled:false,capabilities:[]});
    if(url.endsWith('/config/update/check')){updPosts.push('check');upd={...upd,can_update:true,blockers:[],available:{checked_at:'2026-11-27T18:00:00Z',behind:2,latest_version:'0.67.1',latest_sha:'a'.repeat(40),ci:'SUCCESS',migrations:[],commits:[{sha:'a'.repeat(40),subject:'Update in Settings',date:'2026-11-27T18:00:00Z'}]}};return j({requested:true});}
    if(url.endsWith('/operator/reauth')){reauths.push(JSON.parse(o.body));reauthed=true;return j({ok:true});}
@@ -214,7 +217,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  [...st.querySelectorAll('.set-nav button')].find(b=>/^Layout/.test(b.textContent)).click();await tick();
  assert.ok(st.querySelector('#setting-activity .set-check input[type="checkbox"]'),'on/off settings: checkbox on the description line');
  [...st.querySelectorAll('.set-nav button')].find(b=>/^Appearance/.test(b.textContent)).click();await tick();
- assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','Software update','About']);
+ assert.deepEqual([...st.querySelectorAll('.set-nav button')].map(b=>b.firstChild.textContent),['Appearance','Layout','Time & region','Trading','Startup','Top bar','Keyboard shortcuts','Firm settings','Platform mode','Software update','About']);
  const setv=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new sw.Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));};
  const search=st.querySelector('[aria-label="Search settings"]');setv(search,'time zone');await tick();
  const tz=st.querySelector('select[aria-label="Time zone"]');assert.ok(tz,'search finds the time zone');
@@ -279,6 +282,17 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const ib=sw.document.querySelector('.group.focused .stage-head .info-btn');assert.ok(ib,'stage header has ⓘ');assert.equal(sw.document.querySelector('.group.focused .st-question'),null,'no always-on stage text');
  ib.click();await tick();assert.match(sw.document.querySelector('.info-pop').textContent,/This stage answers:/);
  assert.ok(sw.document.querySelector('.app.help-icon'));
+ // Mode chip (0.69.0): shows how the platform runs and switches it with the same reason and typed word as the page.
+ const chip=sw.document.querySelector('.mode-chip');assert.ok(chip,'Mode chip in the top bar');
+ assert.equal(chip.textContent,'PROD · TEAM');
+ chip.click();await tick();
+ const mmenu=sw.document.querySelector('[role="menu"][aria-label="Mode"]');
+ assert.match(mmenu.textContent,/Production.*strict gates.*Team.*Switch to Development….*Switch to Single user….*Platform mode settings…/);
+ const answers=['SOLO','one trader'];sw.prompt=()=>answers.shift()??null;
+ [...mmenu.querySelectorAll('button')].find(b=>/Switch to Single user/.test(b.textContent)).click();for(let i=0;i<6;i++)await tick();
+ assert.deepEqual(modeCalls[0],{operating:'SOLO',confirm:'SOLO',reason:'one trader',version:4});
+ assert.equal(sw.document.querySelector('.mode-chip').textContent,'PROD · SINGLE');
+ console.log('PASS: mode chip shows Production/Development and Team/Single user; its menu switches with the typed word and a reason.');
  // Platform mode (0.66.0): no banner in Production; a TEST banner on every screen in Development, linking to Platform mode.
  assert.equal(sw.document.querySelector('.test-banner'),null,'no banner in Production');
  overview.platform_mode={mode:'DEVELOPMENT',allow_live_in_development:false,live_blocked:true};
