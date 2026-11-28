@@ -19,7 +19,7 @@ import DatabaseEditor from './DatabaseEditor';
 import FloatingWindow from './FloatingWindow';
 import { BridgeNodes } from './BridgeNodes';
 import ConnectTree from './ConnectTree';
-import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, ReauthDialog, SymbolSpecs } from './ConfigControls';
+import { AccountRoutes, Alerts, Approvals, BrokerLogin, BrokerRead, CredentialUse, HealthBoard, ImportAccounts, Policies, SymbolSpecs } from './ConfigControls';
 import { BlendEditor } from './SignalLibrary';
 import { SubWorkspace } from './SubWorkspace';
 import { useViewVisible } from './visibility';
@@ -113,8 +113,9 @@ export const BLOCKERS: Record<string, string> = {
 
 class ApiError extends Error {}
 
-/** Registered by each signed-in screen (Configuration, Infrastructure): asks for the password
- *  again and resolves true when done. The most recently opened screen asks. */
+/** One password prompt for the whole workstation, registered by the app shell (0.68.1). Before, every screen
+ *  registered its own and the most recently opened answered — often a screen in a hidden tab, so the prompt was
+ *  invisible and the action (e.g. Settings › Software update › Start update) seemed stuck. */
 const reauthHandlers: (() => Promise<boolean>)[] = [];
 const reauthenticate = () => reauthHandlers.length ? reauthHandlers[reauthHandlers.length - 1]() : null;
 export function addReauthHandler(handler: () => Promise<boolean>): () => void {
@@ -2137,7 +2138,6 @@ export default function Configuration() {
   useEffect(() => { if (new URLSearchParams(window.location.search).get('section') === 'update') goto('Settings', 'software-update'); }, []);
   const [section, setSection] = useSection<Section>('Configuration', 'guide', SECTIONS.map(x => x.id)), [refs, setRefs] = useState<Record<string, Row[]>>({ providers: [], connections: [], instruments: [], groups: [], accounts: [] });
   const [summary, setSummary] = useState<Row | null>(null), [openId, setOpenId] = useState<{ id?: string; n: number }>({ n: 0 });
-  const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   // The broker's redirect result, shown once: the address is cleaned so a saved link never repeats an old message.
   const [brokerLogin] = useState(() => new URLSearchParams(window.location.search).get('broker_login'));
   const [brokerReason] = useState(() => new URLSearchParams(window.location.search).get('reason')), [loginShown, setLoginShown] = useState(false);
@@ -2150,8 +2150,6 @@ export default function Configuration() {
       setRefs({ providers: p.items, connections: c.items, instruments: i.items, groups: g.items, accounts: a.items }); setSummary(s);
     } catch (e) { if ((e as any).status === 401) setUser(null); else setError((e as Error).message); }
   }
-  // Sensitive actions answer 428: ask for the password again, then the request is retried.
-  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   // Window positions and list views follow the user to other devices.
   useEffect(() => {
     if (!user || user.must_change_password) return;
@@ -2239,6 +2237,5 @@ export default function Configuration() {
         : <Records key={id} entity={id as Entity} refs={refs} reloadRefs={() => void loadRefs()} canEdit={canEdit} navigate={navigate}
             openId={openId.id && id === section ? `${openId.id}` : undefined} />}</Fragment>} />
     </section>
-    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }

@@ -8,8 +8,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { openWorkspace } from './workspaceLinks';
 import { SubWorkspace } from './SubWorkspace';
 import { useViewVisible } from './visibility';
-import { addReauthHandler, api } from './Configuration';
-import { ReauthDialog } from './ConfigControls';
+import { api } from './Configuration';
 import { SignIn } from './Infrastructure';
 import Stage from './Pipeline';
 import { PIPELINE, stageOf } from './flow';
@@ -76,8 +75,7 @@ export default function StageShell({ view, sections, title, allPanels = true, de
   all.sort((a, b) => GROUPS.indexOf(a.group as typeof GROUPS[number]) - GROUPS.indexOf(b.group as typeof GROUPS[number]));
   const [tab, setTab] = useSection<string>(view, defaultSection ?? all[0].id, all.map(s => s.id));
   useEffect(() => { publishSections(view, all.map(s => ({ id: s.id, label: s.label, group: s.group }))); }, [view, all.map(s => s.id).join()]);
-  const [user, setUser] = useState<Row | null | undefined>(undefined), [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
-  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
+  const [user, setUser] = useState<Row | null | undefined>(undefined);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check(); window.addEventListener('corei-session', check); return () => window.removeEventListener('corei-session', check);
@@ -103,7 +101,6 @@ export default function StageShell({ view, sections, title, allPanels = true, de
         render={id => <div className="cfg-pane">{id === 'workspace' ? <Workspace view={view} sections={sections.map(x => ({ ...x, render: () => x.render(ctx) }))} alone={setTab} />
           : id === 'stage' ? <Stage view={view} open={v => goto(v)} /> : (all.find(x => x.id === id) ?? all[0]).render(ctx)}</div>} />
     </section>
-    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }
 

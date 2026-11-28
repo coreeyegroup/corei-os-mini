@@ -14,7 +14,8 @@ import Sidebar, { Feeds, MarketWatch } from "./Sidebar";
 import Toolbox from "./Toolbox";
 import Stage from "./Pipeline";
 import { PIPELINE, stageOf } from "./flow";
-import { api } from "./Configuration";
+import { addReauthHandler, api } from "./Configuration";
+import { ReauthDialog } from "./ConfigControls";
 import { DESTINATIONS, goto, type Overview as OverviewData } from "./nav";
 import { initialLayout, launchContext, openWorkspace, useAddressBar } from "./workspaceLinks";
 import "./workspaces.css";
@@ -90,6 +91,10 @@ export default function App() {
   const [closed,setClosed]=useState<View[]>([]);
   const [context,setContext]=useState<{view:View;group:number;x:number;y:number}|null>(null);
   const [appearanceError,setAppearanceError]=useState('');
+  // The one password prompt (0.68.1): any request answered 428 (password needed again) asks here, on top of every
+  // screen, then is retried — wherever it came from (Settings › Software update, Setup, a hidden tab…).
+  const [reauth,setReauth]=useState<((ok:boolean)=>void)|null>(null);
+  useEffect(()=>addReauthHandler(()=>new Promise<boolean>(resolve=>setReauth(()=>resolve))),[]);
   const appearancePatch=(p:Partial<Appearance>)=>setAppearance(a=>({...a,...p}));
   useEffect(()=>{
     document.documentElement.dataset.theme=appearance.theme;
@@ -524,6 +529,7 @@ export default function App() {
         <button onClick={()=>setContext(null)}>Dismiss · Esc</button>
       </div></div>}
       {palette && <CommandPalette commands={commands} dismiss={()=>setPalette(false)}/>}
+      {reauth && <ReauthDialog done={ok=>{reauth(ok);setReauth(null);}}/>}
       {help && <div className="overlay" onClick={()=>setHelp(false)}><div className="palette guide" role="dialog" aria-modal="true" aria-label="Workbench guide" onClick={e=>e.stopPropagation()}><h2>Working faster</h2><button autoFocus onClick={()=>setHelp(false)}>Close guide · Esc</button>
         <p><b>Ctrl K</b> goes to any screen or section by typing a few letters. The rail on the left shows the main areas; a red number means something there needs attention. Click a status chip at the top to go straight to it.</p>
         <p>Two levels, as in VS Code. <b>Main workspaces</b>: Market data, Market intelligence, Signals, Strategies, Risk, Portfolio, Execution, Post-trade, Setup — each its own tab (top right: <b>Split</b>, <b>New tab</b>, <b>New window</b>). <b>Sub-workspace</b>: inside each, that domain's items are sub-tabs (the side bar opens them); <b>+ Open…</b> adds one, × closes, drag a sub-tab or use <b>Split</b> to see items side by side; ↗ ⧉ open one item in a new tab or window. Right-click a main tab to pin it.</p>

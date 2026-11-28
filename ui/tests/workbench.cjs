@@ -89,7 +89,7 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  const overview={user:{username:'yatheesh',roles:['ADMIN']},feeds:{active_plans:1,collectors:1,live:0,problems:1,paused:false},order_sending:[{environment:'LIVE',enabled:false}],approvals:2,
    attention:[{severity:'CRITICAL',area:'Market data',title:'Broker refused the connector version',detail:'Update the SDK.',goto:{view:'Market data',section:'live'}}]};
  const prefPuts=[];let loggedOut=0;
- const updPosts=[];let upd={installed:true,running:{version:'0.67.0',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,available:{checked_at:'2026-11-27T17:00:00Z',error:"[Errno 2] No such file or directory: 'runuser'"},
+ const updPosts=[],reauths=[];let reauthed=false;let upd={installed:true,running:{version:'0.67.0',commit:'b0b0b0b0b0b0'},update_running:false,can_update:false,available:{checked_at:'2026-11-27T17:00:00Z',error:"[Errno 2] No such file or directory: 'runuser'"},
    blockers:["The last GitHub check failed: [Errno 2] No such file or directory: 'runuser'"],acknowledgements:[{code:'RESTART',text:'Restart.'}],history:[],manual_commands:['git fetch origin'],status:null,log:''};
  sw.fetch=async(url,o={})=>{const j=b=>({ok:true,status:200,json:async()=>b});
    if(url.includes('/config/overview'))return j(JSON.parse(JSON.stringify(overview)));
@@ -99,6 +99,8 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
    if(url.includes('operator/session'))return j({username:'yatheesh',roles:['ADMIN','TRADING_OPS'],must_change_password:false});
    if(url.includes('/api/workstation'))return j({project_id:'corei-os-mini',contract_version:2,release:'t',database_connected:true,demo_enabled:false,capabilities:[]});
    if(url.endsWith('/config/update/check')){updPosts.push('check');upd={...upd,can_update:true,blockers:[],available:{checked_at:'2026-11-27T18:00:00Z',behind:2,latest_version:'0.67.1',latest_sha:'a'.repeat(40),ci:'SUCCESS',migrations:[],commits:[{sha:'a'.repeat(40),subject:'Update in Settings',date:'2026-11-27T18:00:00Z'}]}};return j({requested:true});}
+   if(url.endsWith('/operator/reauth')){reauths.push(JSON.parse(o.body));reauthed=true;return j({ok:true});}
+   if(url.endsWith('/config/update/apply')&&!reauthed)return {ok:false,status:428,json:async()=>({detail:'Enter your password again to continue.'})};
    if(url.endsWith('/config/update/apply')){updPosts.push(JSON.parse(o.body));upd={...upd,can_update:false,update_running:true,status:{id:'upd-1',kind:'APPLY',state:'RUNNING',from_version:'0.67.0',to_version:'0.67.1',steps:[{name:'Build',state:'RUNNING',detail:''}]}};return j({id:'upd-1',target_version:'0.67.1'});}
    if(url.endsWith('/config/update'))return j(JSON.parse(JSON.stringify(upd)));
    return j({items:[],counts:{},execution_controls:[],connections:[],accounts:[],controls:[],checklist:[],summary:{accounts:0,data_ready:0,trading_ready:0,with_warnings:0},pending_approvals:0,failed_alerts:0,four_eyes_live_changes:true,network:{}});};
@@ -238,9 +240,16 @@ const tick=()=>new Promise(r=>setTimeout(r,40));
  assert.ok(ubtn('Start update').disabled,'the restart must be acknowledged');
  uf.querySelector('input[type=checkbox]').click();await tick();
  uf.requestSubmit();for(let i=0;i<4;i++)await tick();
+ // 0.68.1: the server asks for the password again (428); the one app-level prompt appears on top and the request is retried.
+ const dlg=sw.document.querySelector('[aria-label="Confirm with your password"]');
+ assert.ok(dlg,'the password prompt is shown in Settings, not only inside Setup');
+ assert.ok(!dlg.closest('[hidden]'),'and it is not inside a hidden tab');
+ setv(dlg.querySelector('[aria-label="Your password"]'),'operator-password');dlg.querySelector('form').requestSubmit();for(let i=0;i<6;i++)await tick();
+ assert.deepEqual(reauths,[{password:'operator-password'}]);
+ assert.equal(sw.document.querySelector('[aria-label="Confirm with your password"]'),null,'prompt closes');
  assert.deepEqual(updPosts,['check',{target_sha:'a'.repeat(40),reason:'install the fix',confirm:'UPDATE',acknowledged:['RESTART']}]);
  assert.match(upPane().textContent,/Running….*0\.67\.0 → 0\.67\.1/);
- console.log('PASS: settings › software update (also from About): failed check shown, acknowledgement and typed UPDATE gate the request.');
+ console.log('PASS: settings › software update (also from About): failed check shown, acknowledgement and typed UPDATE gate the request; the password prompt appears on top and the request is retried.');
  [...st.querySelectorAll('.set-nav button')].find(b=>/Firm settings/.test(b.textContent)).click();await tick();
  assert.match(st.textContent,/Kill switches.*Changed by: Risk approver/);
  [...st.querySelectorAll('.set-nav button')].find(b=>/Keyboard shortcuts/.test(b.textContent)).click();await tick();

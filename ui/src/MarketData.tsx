@@ -2,8 +2,7 @@
  * Live prices and collectors · Plans (matrix + form with size estimate) · Quality and
  * broker comparison · Events · Backfill · Controls · Archive and backups. */
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { addReauthHandler, api, Field } from './Configuration';
-import { ReauthDialog } from './ConfigControls';
+import { api, Field } from './Configuration';
 import FloatingWindow from './FloatingWindow';
 import SourceBoard, { HEALTH } from './SourceBoard';
 import { SignIn } from './Infrastructure';
@@ -43,8 +42,6 @@ const groupOf = (id: string) => id === 'workspace' ? 'All' : ['dashboard', 'live
 export default function MarketData() {
   useEffect(() => { publishSections('Market data', TABS.map(t => ({ id: t.id, label: t.label, group: groupOf(t.id) }))); }, []);
   const [user, setUser] = useState<Row | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Market data', 'workspace', TABS.map(t => t.id));
-  const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
-  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check();
@@ -69,7 +66,6 @@ export default function MarketData() {
           sections={TABS.filter(t => t.id !== 'workspace').map(t => ({ id: t.id, label: t.label, hint: t.hint, render: () => panel(t.id), group: groupOf(t.id) }))} />
           : panel(id as Tab)}</div>} />
     </section>
-    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }
 

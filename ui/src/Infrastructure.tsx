@@ -3,8 +3,7 @@
  * Every change asks for a reason and (within the policy window) the password again, and is
  * logged before and after. Secret columns are never shown or editable. */
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { addReauthHandler, api, Field } from './Configuration';
-import { ReauthDialog } from './ConfigControls';
+import { api, Field } from './Configuration';
 import { publishSections, takeTable, useSection } from './nav';
 import { SubWorkspace } from './SubWorkspace';
 import { Info } from './Info';
@@ -27,8 +26,6 @@ const bytes = (n: number) => n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? 
 
 export default function Infrastructure() {
   const [user, setUser] = useState<Session | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Infrastructure', 'health', TABS.map(t => t.id));
-  const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
-  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check();
@@ -56,7 +53,6 @@ export default function Infrastructure() {
           : id === 'database' ? <div className="cfg-pane"><Database /></div>
           : <div className="cfg-pane"><Edits /></div>} />
     </section>
-    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }
 

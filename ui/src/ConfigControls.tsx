@@ -228,7 +228,7 @@ export function ReauthDialog({ done }: { done: (ok: boolean) => void }) {
   return <div className="cfg-modal" role="dialog" aria-modal="true" aria-label="Confirm with your password">
     <form className="cfg-form cfg-modal-box" onSubmit={submit}>
       <h3>Confirm it is you</h3>
-      <p className="cfg-note">This action changes passwords, order sending, approvals or policies. Enter your COREI password to continue.</p>
+      <p className="cfg-note">This action changes passwords, order sending, approvals, policies or installs a software update. Enter your COREI password to continue.</p>
       <Field label="Your password"><input aria-label="Your password" type="password" autoComplete="current-password" autoFocus required value={password} onChange={e => setPassword(e.target.value)} /></Field>
       {error && <p role="alert" className="cfg-error">{error}</p>}
       <div className="cfg-actions"><button className="primary" disabled={busy}>Confirm</button><button type="button" onClick={() => done(false)}>Cancel</button></div>

@@ -6,8 +6,7 @@
  * compare) and Pipeline (stage map).
  * Must never: change market data or orders. */
 import { Fragment, useEffect, useState } from 'react';
-import { addReauthHandler, api } from './Configuration';
-import { ReauthDialog } from './ConfigControls';
+import { api } from './Configuration';
 import { SignIn } from './Infrastructure';
 import { EngineSettings, IntelDashboard, InstrumentView, Screener, SessionsView } from './IntelBoard';
 import { CalendarView, CorrelationView, IndicatorsView, RulesView, SourcesView, StrengthView, WatchlistsView } from './IntelWorkspace';
@@ -49,7 +48,6 @@ const TABS = Object.keys(HINTS) as Tab[];
 
 export default function Intelligence({ open }: { open: (v: View) => void }) {
   const [user, setUser] = useState<Record<string, any> | null | undefined>(undefined), [tab, setTab] = useSection<Tab>('Intelligence', 'workspace', TABS);
-  const [reauth, setReauth] = useState<((ok: boolean) => void) | null>(null);
   const canEdit = (user?.roles ?? []).includes('TRADING_OPS') || (user?.roles ?? []).includes('ADMIN');
   const [pick, setPick] = useState<Record<string, any> | null>(null), [items, setItems] = useState<Record<string, any>[]>([]);
   const scanEvidence = useScanEvidence('chart');
@@ -57,7 +55,6 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
     if (scanEvidence) setPick({ ...scanEvidence, scanTimeframe: scanEvidence.timeframe });
   }, [scanEvidence]);
   useEffect(() => { if (tab === 'instrument' || tab === 'workspace') void api('intel/screener?timeframe=H1').then(d => setItems(d.items)).catch(() => undefined); }, [tab]);
-  useEffect(() => addReauthHandler(() => new Promise<boolean>(resolve => setReauth(() => resolve))), []);
   useEffect(() => {
     const check = () => void api('operator/session').then(s => setUser(s?.username ? s : null)).catch(() => setUser(null));
     check(); window.addEventListener('corei-session', check); return () => window.removeEventListener('corei-session', check);
@@ -83,7 +80,6 @@ export default function Intelligence({ open }: { open: (v: View) => void }) {
           its.filter(([x]) => x !== 'stage' && x !== 'workspace').map(([x, label]) => ({ id: x, label, group: g, hint: HINTS[x as Tab], render: () => panel(x as Tab) })))} />
           : id === 'stage' ? <Stage view="Intelligence" open={open} /> : panel(id as Tab)}</div>} />
     </section>
-    {reauth && <ReauthDialog done={ok => { reauth(ok); setReauth(null); }} />}
   </div>;
 }
 
