@@ -415,85 +415,100 @@ function KillSwitches({ ctx }: { ctx: Ctx }) {
   </section>;
 }
 
-/** Limits (0.69.0, owner: "selection, navigation, edit process not simple"): pick who (firm, an account, a strategy,
- *  an instrument, a deployment), see every limit kind for them in one grid (empty = no limit; the firm value it falls
- *  back to is shown), edit the numbers, give one reason, save once. Copy from another target; the full list is one tab
- *  away and each row opens its target. Values stay strings (exact decimals). */
+/** Limits (0.69.1, owner: "10+ brokers, 100+ accounts must not be confusing"): a searchable list of targets grouped
+ *  by broker server, with the limit count and a "no limits" filter; tick one or many (or a whole server); every limit
+ *  kind in one grid; one reason, one save. One target: the grid shows its values (empty = remove). Several: only the
+ *  values you fill are set on all of them, the rest stays as it is. Values stay strings (exact decimals). */
 function Limits({ ctx }: { ctx: Ctx }) {
   const [data, error, reload] = useData<Row>('trading/risk/limits', 30_000);
   const l = Lists();
   const kinds: Row = data?.kinds ?? {};
   const items: Row[] = data?.items ?? [];
-  const [scope, setScope] = useState('ACCOUNT'), [target, setTarget] = useState('');
-  const [view, setView] = useState<'edit' | 'all'>('edit');
+  const [scope, setScope] = useState('ACCOUNT'), [view, setView] = useState<'edit' | 'all'>('edit');
+  const [picked, setPicked] = useState<string[]>([]), [q, setQ] = useState(''), [missing, setMissing] = useState(false);
   const [draft, setDraft] = useState<Record<string, { value: string; enabled: boolean }>>({});
   const [reason, setReason] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [busy, setBusy] = useState(false);
-  const targets: [string, string][] = scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code} · ${a.environment}`]) : scope === 'STRATEGY' ? l.strategies.map((x: Row) => [x.id, x.code])
-    : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol]) : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d)]) : [];
-  const tgt = scope === 'FIRM' ? '' : target;
+  // [id, label, group] per scope; accounts are grouped by their broker server.
+  const all: [string, string, string][] = scope === 'ACCOUNT' ? l.accounts.map((a: Row) => [a.id, `${a.code}${a.name && a.name !== a.code ? ' · ' + a.name : ''}`, `${a.connection_name ?? a.connection_code ?? 'Server'} · ${a.environment}`])
+    : scope === 'STRATEGY' ? l.strategies.map((x: Row) => [x.id, x.code, 'Strategies']) : scope === 'INSTRUMENT' ? l.instruments.map((i: Row) => [i.id, i.symbol, i.asset_class ?? 'Instruments'])
+    : scope === 'DEPLOYMENT' ? l.deployments.map((d: Row) => [d.id, depName(d), d.account_code ?? 'Deployments']) : [];
   const of = (sc: string, t: string) => items.filter(x => x.scope === sc && (sc === 'FIRM' || x.target_id === t));
-  const existing: Record<string, Row> = Object.fromEntries(of(scope, tgt).map(x => [x.kind, x]));
+  const count = (t: string) => of(scope, t).length;
+  const shown = all.filter(([id, n, g]) => (!q || `${n} ${g}`.toLowerCase().includes(q.toLowerCase())) && (!missing || !count(id)));
+  const groups = [...new Set(shown.map(x => x[2]))];
+  const targets = scope === 'FIRM' ? [''] : picked;
+  const one = targets.length === 1;
+  const existing: Record<string, Row> = one ? Object.fromEntries(of(scope, targets[0]).map(x => [x.kind, x])) : {};
   const firm: Record<string, Row> = Object.fromEntries(of('FIRM', '').map(x => [x.kind, x]));
-  const count = (sc: string, t: string) => of(sc, t).length;
-  useEffect(() => { if (scope !== 'FIRM' && !target && targets.length) setTarget(targets[0][0]); }, [scope, targets.length]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const key = `${scope}:${tgt}:${items.map(x => x.id + x.version).join(',')}`;
+  const key = `${scope}:${targets.join(',')}:${items.map(x => x.id + x.version).join(',')}`;
   useEffect(() => { setDraft(Object.fromEntries(Object.keys(kinds).map(k => [k, { value: existing[k]?.value ?? '', enabled: existing[k]?.enabled ?? true }]))); setErr(''); }, [key, Object.keys(kinds).length]);   // eslint-disable-line react-hooks/exhaustive-deps
   const changes = Object.keys(kinds).filter(k => { const d = draft[k], e = existing[k]; if (!d) return false;
+    if (!one) return d.value.trim() !== '';   // several targets: only filled values are set
     return e ? (d.value.trim() === '' || d.value.trim() !== String(e.value) || d.enabled !== e.enabled) : d.value.trim() !== ''; });
-  const copyFrom = (t: string) => { const src = Object.fromEntries(of(scope, t).map(x => [x.kind, x])); setDraft(d => Object.fromEntries(Object.keys(kinds).map(k => [k, src[k] ? { value: String(src[k].value), enabled: !!src[k].enabled } : d[k] ?? { value: '', enabled: true }]))); };
+  const toggle = (ids: string[], on: boolean) => setPicked(p => on ? [...new Set([...p, ...ids])] : p.filter(x => !ids.includes(x)));
   const save = async (e: FormEvent) => {
     e.preventDefault(); setErr(''); setMsg('');
-    if (scope !== 'FIRM' && !tgt) { setErr('Choose who the limits are for.'); return; }
+    if (!targets.length) { setErr('Tick who the limits are for.'); return; }
     setBusy(true); let done = 0;
     try {
-      for (const k of changes) {
-        const d = draft[k], ex = existing[k], value = d.value.trim();
-        if (ex && value === '') await api(`trading/risk/limits/${ex.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
-        else if (ex) await api(`trading/risk/limits/${ex.id}`, 'PUT', { scope, target_id: tgt || null, kind: k, value, enabled: d.enabled, note: ex.note ?? '', reason, version: ex.version });
-        else await api('trading/risk/limits', 'POST', { scope, target_id: tgt || null, kind: k, value, enabled: d.enabled, note: '', reason });
-        done++;
+      for (const t of targets) {
+        const ex: Record<string, Row> = Object.fromEntries(of(scope, t).map(x => [x.kind, x]));
+        for (const k of changes) {
+          const d = draft[k], value = d.value.trim(), cur = ex[k], body = { scope, target_id: t || null, kind: k, value, enabled: d.enabled, note: cur?.note ?? '', reason };
+          if (cur && value === '') await api(`trading/risk/limits/${cur.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
+          else if (cur) { if (String(cur.value) === value && cur.enabled === d.enabled) continue; await api(`trading/risk/limits/${cur.id}`, 'PUT', { ...body, version: cur.version }); }
+          else await api('trading/risk/limits', 'POST', body);
+          done++;
+        }
       }
-      setMsg(`Saved ${done} change${done === 1 ? '' : 's'}.`); setReason(''); reload();
+      setMsg(`Saved ${done} change${done === 1 ? '' : 's'}${targets.length > 1 ? ` on ${targets.length} targets` : ''}.`); setReason(''); reload();
     } catch (x) { setErr(`${(x as Error).message}${done ? ` (${done} change(s) saved before this)` : ''}`); reload(); } finally { setBusy(false); }
   };
-  const open = (sc: string, t: string) => { setScope(sc); setTarget(t ?? ''); setView('edit'); };
   return <section className="intel rl">
-    <RiskProfiles canRisk={!!ctx.canRisk} onApplied={reload} />
+    <details className="rl-profiles"><summary>Fill from a profile · governance</summary><RiskProfiles canRisk={!!ctx.canRisk} onApplied={reload} /></details>
     <div className="intel-bar rl-bar">
       <div role="tablist" aria-label="Limits view" className="rl-views">{([['edit', 'Set limits'], ['all', `All limits (${items.length})`]] as const).map(([v, t]) =>
         <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}>{t}</button>)}</div>
-      {view === 'edit' && <>
-        <div role="radiogroup" aria-label="Limits for" className="rl-scopes">{SCOPES.map(([v, t]) =>
-          <button key={v} type="button" role="radio" aria-checked={scope === v} onClick={() => { setScope(v); setTarget(''); }}>{t.replace(' (everything)', '')}</button>)}</div>
-        {scope !== 'FIRM' && <select aria-label="Target" value={target} onChange={e => setTarget(e.target.value)}>
-          {targets.map(([id, n]) => <option key={id} value={id}>{n} · {count(scope, id)} limit(s)</option>)}</select>}
-        {scope !== 'FIRM' && targets.some(([id]) => id !== target && count(scope, id) > 0) && ctx.canRisk &&
-          <select aria-label="Copy limits from" value="" onChange={e => { if (e.target.value) copyFrom(e.target.value); }}>
-            <option value="">Copy from…</option>{targets.filter(([id]) => id !== target && count(scope, id) > 0).map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select>}
-      </>}
+      {view === 'edit' && <div role="radiogroup" aria-label="Limits for" className="rl-scopes">{SCOPES.map(([v, t]) =>
+        <button key={v} type="button" role="radio" aria-checked={scope === v} onClick={() => { setScope(v); setPicked([]); }}>{t.replace(' (everything)', '')}</button>)}</div>}
     </div>
     <Msg error={error || err} notice={msg} />
-    {view === 'edit' ? <form className="rl-form" onSubmit={save} aria-label="Set limits">
-      <table className="cfg-table compact intel-table rl-grid"><thead><tr><th>Limit</th><th>Value</th><th>In force</th><th>Falls back to (firm)</th><th>Last change</th></tr></thead><tbody>
-        {Object.entries(kinds).map(([k, label]) => { const d = draft[k] ?? { value: '', enabled: true }, ex = existing[k], dirty = changes.includes(k);
-          return <tr key={k} className={dirty ? 'rl-dirty' : ''}><td title={k}>{label as string}</td>
-            <td><input aria-label={`${label as string} value`} inputMode="decimal" disabled={!ctx.canRisk} placeholder="no limit" value={d.value}
-              onChange={e => setDraft(x => ({ ...x, [k]: { ...d, value: e.target.value } }))} /></td>
-            <td><input type="checkbox" aria-label={`${label as string} in force`} disabled={!ctx.canRisk || d.value.trim() === ''} checked={d.enabled}
-              onChange={e => setDraft(x => ({ ...x, [k]: { ...d, enabled: e.target.checked } }))} /></td>
-            <td>{scope !== 'FIRM' && firm[k] ? <small>{String(firm[k].value)}{firm[k].enabled ? '' : ' (off)'}</small> : <small className="cfg-note">—</small>}</td>
-            <td><small>{ex ? `${when(ex.updated_at)} · ${ex.updated_by}` : ''}</small></td></tr>; })}
-      </tbody></table>
-      {ctx.canRisk && <div className="intel-bar rl-save">
-        <input aria-label="Reason for these changes" placeholder="Reason (audit log, at least 5 characters)" minLength={5} required value={reason} onChange={e => setReason(e.target.value)} />
-        <button className="primary" disabled={busy || !changes.length || reason.trim().length < 5}>Save {changes.length || ''} change{changes.length === 1 ? '' : 's'}</button>
-        <button type="button" disabled={!changes.length} onClick={() => setDraft(Object.fromEntries(Object.keys(kinds).map(k => [k, { value: existing[k]?.value ?? '', enabled: existing[k]?.enabled ?? true }])))}>Undo</button>
-        <small className="cfg-note">Empty a value to remove that limit.</small></div>}
-    </form> : <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Limit</th><th>Value</th><th>State</th><th>Changed</th></tr></thead><tbody>
-      {items.map((x: Row) => <tr key={x.id} className="rl-row" tabIndex={0} title="Open these limits" onClick={() => open(x.scope, x.target_id)}><td>{x.scope.toLowerCase()}</td><td>{x.target_name ?? 'Firm'}</td><td>{kinds[x.kind] ?? x.kind}</td><td><b>{x.value}</b></td>
+    {view === 'edit' ? <div className={`rl-split ${scope === 'FIRM' ? 'firm' : ''}`}>
+      {scope !== 'FIRM' && <aside className="rl-list" aria-label="Choose who">
+        <div className="rl-find"><input aria-label="Search targets" placeholder={`Search ${all.length}…`} value={q} onChange={e => setQ(e.target.value)} />
+          <label><input type="checkbox" checked={missing} onChange={e => setMissing(e.target.checked)} /> No limits</label></div>
+        <small className="cfg-note">{picked.length ? `${picked.length} ticked · ` : ''}{shown.length} shown{picked.length ? <> · <button type="button" className="link" onClick={() => setPicked([])}>clear</button></> : null}</small>
+        <div className="rl-scroll">{groups.map(g => { const ids = shown.filter(x => x[2] === g).map(x => x[0]), allOn = ids.every(id => picked.includes(id));
+          return <div key={g} className="rl-group"><label className="rl-ghead"><input type="checkbox" aria-label={`All of ${g}`} checked={allOn} onChange={e => toggle(ids, e.target.checked)} /> <b>{g}</b> <small>{ids.length}</small></label>
+            {shown.filter(x => x[2] === g).map(([id, n]) => <label key={id} className={`rl-item ${picked.includes(id) ? 'on' : ''}`}>
+              <input type="checkbox" aria-label={n} checked={picked.includes(id)} onChange={e => toggle([id], e.target.checked)} />
+              <span onClick={e => { e.preventDefault(); setPicked([id]); }}>{n}</span><small className={count(id) ? '' : 'rl-none'}>{count(id) || 'none'}</small></label>)}</div>; })}
+          {!shown.length && <p className="cfg-note">Nothing matches.</p>}</div>
+      </aside>}
+      <form className="rl-form" onSubmit={save} aria-label="Set limits">
+        <p className="rl-who">{scope === 'FIRM' ? <b>Firm — applies to everything</b> : !targets.length ? 'Tick who the limits are for (click a name to open just that one).'
+          : one ? <b>{all.find(x => x[0] === targets[0])?.[1]}</b> : <><b>{targets.length} {scope.toLowerCase()}s</b> · values you fill are set on all of them; empty fields leave each as it is</>}</p>
+        <table className="cfg-table compact intel-table rl-grid"><thead><tr><th>Limit</th><th>Value</th><th>In force</th><th>Firm</th>{one && <th>Last change</th>}</tr></thead><tbody>
+          {Object.entries(kinds).map(([k, label]) => { const d = draft[k] ?? { value: '', enabled: true }, ex = existing[k];
+            return <tr key={k} className={changes.includes(k) ? 'rl-dirty' : ''}><td title={k}>{label as string}</td>
+              <td><input aria-label={`${label as string} value`} inputMode="decimal" disabled={!ctx.canRisk || !targets.length} placeholder={one || scope === 'FIRM' ? 'no limit' : 'unchanged'} value={d.value}
+                onChange={e => setDraft(x => ({ ...x, [k]: { ...d, value: e.target.value } }))} /></td>
+              <td><input type="checkbox" aria-label={`${label as string} in force`} disabled={!ctx.canRisk || d.value.trim() === ''} checked={d.enabled}
+                onChange={e => setDraft(x => ({ ...x, [k]: { ...d, enabled: e.target.checked } }))} /></td>
+              <td><small>{scope !== 'FIRM' && firm[k] ? String(firm[k].value) : '—'}</small></td>
+              {one && <td><small>{ex ? `${when(ex.updated_at)} · ${ex.updated_by}` : ''}</small></td>}</tr>; })}
+        </tbody></table>
+        {ctx.canRisk && <div className="intel-bar rl-save">
+          <input aria-label="Reason for these changes" placeholder="Reason (audit log, at least 5 characters)" minLength={5} required value={reason} onChange={e => setReason(e.target.value)} />
+          <button className="primary" disabled={busy || !changes.length || !targets.length || reason.trim().length < 5}>Save{targets.length > 1 ? ` for ${targets.length}` : ''}</button>
+          <button type="button" disabled={!changes.length} onClick={() => setDraft(Object.fromEntries(Object.keys(kinds).map(k => [k, { value: existing[k]?.value ?? '', enabled: existing[k]?.enabled ?? true }])))}>Undo</button></div>}
+      </form>
+    </div> : <table className="cfg-table compact intel-table"><thead><tr><th>Scope</th><th>Which</th><th>Limit</th><th>Value</th><th>State</th><th>Changed</th></tr></thead><tbody>
+      {items.map((x: Row) => <tr key={x.id} className="rl-row" tabIndex={0} title="Open these limits" onClick={() => { setScope(x.scope); setPicked(x.target_id ? [x.target_id] : []); setView('edit'); }}>
+        <td>{x.scope.toLowerCase()}</td><td>{x.target_name ?? 'Firm'}</td><td>{kinds[x.kind] ?? x.kind}</td><td><b>{x.value}</b></td>
         <td>{x.enabled ? pill('in force', 'ok') : pill('off', 'off')}</td><td><small>{when(x.updated_at)} · {x.updated_by}</small></td></tr>)}
-      {data && !items.length && <tr><td colSpan={6} className="cfg-note">No limits yet. Choose Set limits, pick an account and fill in a daily loss and a position limit.</td></tr>}</tbody></table>}
-    <p className="cfg-note">The tightest limit of each kind applies (firm, account, strategy, instrument, deployment). Orders that reduce a position skip the position, exposure and loss limits. Breaching an account's daily-loss or drawdown limit engages the account's kill switch automatically.</p>
+      {data && !items.length && <tr><td colSpan={6} className="cfg-note">No limits yet.</td></tr>}</tbody></table>}
+    <p className="cfg-note">The tightest limit of each kind applies (firm, account, strategy, instrument, deployment). Orders that reduce a position skip the position, exposure and loss limits. Breaching an account's daily-loss or drawdown limit engages its kill switch automatically.</p>
   </section>;
 }
 
